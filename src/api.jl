@@ -894,13 +894,20 @@ end
 
 """
     GenericOpenAIEndpoint <: OpenAIWireEndpoint
+    GenericOpenAIEndpoint(base_url, api_key, key_env="")
 
 Configurable endpoint for any OpenAI-compatible API provider. Supports Chat Completions,
 Embeddings, and (where the provider implements it) the Responses API.
 
 # Fields
 - `base_url::String`: Base URL without trailing slash (e.g., `"http://localhost:11434"`)
-- `api_key::String`: API key for Bearer auth. Use `""` for local servers with no auth.
+- `api_key::String`: API key for Bearer auth, sent as is when not empty.
+- `key_env::String`: The environment variable that holds the key when `api_key` is empty,
+  read each time a request is built, so a missing variable fails that request, naming it;
+  `""` reads none.
+
+An empty key, given or read, sends no `Authorization` header: use `""` for local servers
+with no auth.
 
 # Example
 ```julia
@@ -908,15 +915,16 @@ Embeddings, and (where the provider implements it) the Responses API.
 chat = Chat(service=GenericOpenAIEndpoint("http://localhost:8000", ""),
             model="Qwen/Qwen3-8B")
 
-# Mistral
-mistral = GenericOpenAIEndpoint("https://api.mistral.ai", ENV["MISTRAL_API_KEY"])
-chat = Chat(service=mistral, model="mistral-large-latest")
+# Mistral: GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")
+chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")
 ```
 """
 struct GenericOpenAIEndpoint <: OpenAIWireEndpoint
     base_url::String
     api_key::String
+    key_env::String
 end
+GenericOpenAIEndpoint(base_url, api_key) = GenericOpenAIEndpoint(base_url, api_key, "")
 
 """
     ServiceEndpointSpec
@@ -1134,7 +1142,7 @@ struct OllamaEndpoint <: OpenAIWireEndpoint
     end
 end
 
-function OllamaEndpoint(; base_url::AbstractString=_ollama_host_url(get(ENV, "OLLAMA_HOST", "")),
+function OllamaEndpoint(; base_url::AbstractString=_ollama_host_url(get(ENV, OLLAMA_HOST, "")),
                         keep_alive::Union{Real,Nothing}=nothing, truncate::Bool=false,
                         shift::Union{Bool,Nothing}=nothing, runner::Union{Symbol,Nothing}=nothing, options...)
     unknown = setdiff(keys(options), fieldnames(OllamaOptions))
@@ -1158,24 +1166,34 @@ function Base.show(io::IO, e::OllamaEndpoint)
 end
 
 """
-    MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"]) -> GenericOpenAIEndpoint
+    MistralEndpoint(; api_key=nothing) -> GenericOpenAIEndpoint
 
-Pre-configured endpoint for [Mistral AI](https://mistral.ai) API.
+Pre-configured endpoint for [Mistral AI](https://mistral.ai) API. A given `api_key` is sent
+as is; without one the key is read from `MISTRAL_API_KEY` each time a request is built
+(`GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")`), so building the
+endpoint needs no key and a missing variable fails the request, naming it.
 """
-MistralEndpoint(; api_key::String=ENV["MISTRAL_API_KEY"]) = GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
+MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
+    isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
+                         GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
 
 """
     DeepSeekEndpoint <: OpenAIWireEndpoint
+    DeepSeekEndpoint(; api_key=nothing)
 
 Pre-configured endpoint for [DeepSeek](https://deepseek.com) API. Supports chat completions,
 tool calling, FIM completion, and prefix completion.
 
+`api_key::Union{String,Nothing}`: a given key is sent as is; `nothing` (the default) reads
+`DEEPSEEK_API_KEY` each time a request is built, so building the endpoint needs no key and a
+missing variable fails the request, naming it.
+
 FIM and prefix completion use the beta base URL (`https://api.deepseek.com/beta`).
 """
 struct DeepSeekEndpoint <: OpenAIWireEndpoint
-    api_key::String
+    api_key::Union{String,Nothing}
 end
-DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)
+DeepSeekEndpoint(; api_key::Union{String,Nothing}=nothing) = DeepSeekEndpoint(api_key)
 
 # Render a stored API key as a short, non-reversible marker: a few leading
 # characters (only when the key is long enough that those aren't the whole
@@ -1195,12 +1213,16 @@ function Base.show(io::IO, e::GenericOpenAIEndpoint)
     show(io, e.base_url)
     print(io, ", ")
     show(io, _redact_api_key(e.api_key))
+    isempty(e.key_env) || (print(io, ", "); show(io, e.key_env))
     print(io, ")")
 end
 
+# An endpoint that reads its key per request shows as the call that builds it, the variable named
+# in a comment; a given key is redacted.
 function Base.show(io::IO, e::DeepSeekEndpoint)
+    key = e.api_key
     print(io, "DeepSeekEndpoint(")
-    show(io, _redact_api_key(e.api_key))
+    isnothing(key) ? print(io, "#= ", DEEPSEEK_API_KEY, " =#") : show(io, _redact_api_key(key))
     print(io, ")")
 end
 

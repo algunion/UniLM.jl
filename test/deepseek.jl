@@ -174,3 +174,58 @@ end
     @test u == TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, cached_tokens=768,
                           prompt_audio_tokens=12, completion_audio_tokens=17)
 end
+
+@testset "DeepSeekEndpoint and MistralEndpoint read their key when a request is sent" begin
+    withenv("DEEPSEEK_API_KEY" => nothing, "MISTRAL_API_KEY" => nothing) do
+        @test DeepSeekEndpoint() isa DeepSeekEndpoint                 # no KeyError at construction
+        @test MistralEndpoint() isa GenericOpenAIEndpoint
+        r = chatrequest!(Chat(service=DeepSeekEndpoint(), messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]);
+                         config=RequestConfig(max_attempts=1))
+        @test r isa LLMCallError && occursin("DEEPSEEK_API_KEY", r.error)
+        @test_throws KeyError UniLM.auth_header(MistralEndpoint())    # a missing variable throws: no request goes out without it
+        r = chatrequest!(Chat(service=MistralEndpoint(), model="mistral-large-latest",
+                              messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]); config=RequestConfig(max_attempts=1))
+        @test r isa LLMCallError && occursin("MISTRAL_API_KEY", r.error)
+    end
+    withenv("DEEPSEEK_API_KEY" => "sk-test-1", "MISTRAL_API_KEY" => "sk-test-2") do
+        @test ("Authorization" => "Bearer sk-test-1") in UniLM.auth_header(DeepSeekEndpoint())
+        @test ("Authorization" => "Bearer sk-test-2") in UniLM.auth_header(MistralEndpoint())
+    end
+    shown = sprint(show, DeepSeekEndpoint(api_key="sk-secret-123456"))
+    @test !occursin("secret-123456", shown) && occursin("[redacted]", shown)
+    @test occursin("DEEPSEEK_API_KEY", sprint(show, DeepSeekEndpoint()))        # names the variable, never a key
+    @test UniLM._MODEL_ID_PREFIXES.anthropic == ("claude-",)
+end
+
+@testset "a key variable is read on every request; a given key is sent as is" begin
+    lazy = (DeepSeekEndpoint() => "DEEPSEEK_API_KEY", MistralEndpoint() => "MISTRAL_API_KEY")
+    for (ep, var) in lazy, key in ("sk-first", "sk-second")        # one endpoint, its variable changed between requests
+        withenv(var => key) do
+            @test ("Authorization" => "Bearer $key") in UniLM.auth_header(ep)
+        end
+    end
+    given = (DeepSeekEndpoint(api_key="sk-given") => "DEEPSEEK_API_KEY", MistralEndpoint(api_key="sk-given") => "MISTRAL_API_KEY",
+             GenericOpenAIEndpoint("http://127.0.0.1:8000", "sk-given", "UNILM_TEST_KEY") => "UNILM_TEST_KEY")
+    for (ep, var) in given, value in (nothing, "sk-env")            # unset: never read; set: never preferred
+        withenv(var => value) do
+            @test ("Authorization" => "Bearer sk-given") in UniLM.auth_header(ep)
+        end
+    end
+    no_auth = ["Content-Type" => "application/json"]
+    @test UniLM.auth_header(GenericOpenAIEndpoint("http://127.0.0.1:8000", "")) == no_auth
+    withenv("MISTRAL_API_KEY" => "") do                             # an empty key, given or read, sends none
+        @test UniLM.auth_header(MistralEndpoint()) == no_auth
+    end
+    sub = GenericOpenAIEndpoint(SubString("http://127.0.0.1:8000/v1", 1, 21), SubString("k-1", 1, 1))
+    @test (sub.base_url, sub.api_key, sub.key_env) == ("http://127.0.0.1:8000", "k", "")
+    withenv("DEEPSEEK_API_KEY" => "sk-env-secret-1", "MISTRAL_API_KEY" => "sk-env-secret-2") do
+        for ep in (DeepSeekEndpoint(), DeepSeekEndpoint(api_key="sk-given"), MistralEndpoint())
+            @test (@inferred UniLM.auth_header(ep)) isa Vector{Pair{String,String}}
+        end
+        for (ep, var) in lazy
+            shown = sprint(show, ep)
+            @test occursin(var, shown) && !occursin("secret", shown)  # the variable, never its value
+            @test eval(Meta.parse(shown)) == ep                         # valid Julia that builds the same endpoint
+        end
+    end
+end

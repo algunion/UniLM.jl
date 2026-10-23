@@ -16,15 +16,11 @@ using UniLM
 export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_docs_ids, _drift_named_models,
        _openai_drift, _anthropic_drift, _gemini_drift
 
-# The id prefixes of each provider's models. An id UniLM names is checked against the listing of
-# the provider whose prefix it carries; an id with none of them — a local Ollama model such as
+# An id UniLM names is checked against the listing of the provider whose prefix
+# (`UniLM._MODEL_ID_PREFIXES`) it carries; an id with none of them — a local Ollama model such as
 # gemma4:e4b, a Jev model — is no listing's to check.
-const _DRIFT_PREFIXES = (openai=("gpt-", "chatgpt-", "text-embedding-", "omni-moderation-", "o1", "o3", "o4"),
-                         anthropic=("claude-",),
-                         gemini=("gemini-", "gemma-"))
-
 _drift_provider(id::AbstractString)::Union{Symbol,Nothing} =
-    findfirst(prefixes -> any(p -> startswith(id, p), prefixes), _DRIFT_PREFIXES)
+    findfirst(prefixes -> any(p -> startswith(id, p), prefixes), UniLM._MODEL_ID_PREFIXES)
 
 # A model id as source quotes it: lower-case words joined by single dots or hyphens.
 const _DRIFT_QUOTED_ID = r"\"([a-z0-9]+(?:[.\-][a-z0-9]+)*)\""

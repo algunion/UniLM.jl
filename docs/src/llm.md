@@ -1434,7 +1434,8 @@ to every turn of the loop and passed through unchanged (so they need `stream=tru
 - A dispatcher's `String` result is sent as is, any other value JSON-encoded; a throwing
   dispatcher sends `"Error: <message>"` and records a failed `ToolCallOutcome`; an
   `InterruptException`, a `ReplayMissError` or a `RecordingWriteError` propagates after
-  the interrupted turn is removed from `chat`.
+  the interrupted turn is removed from `chat` — the latter two also inside the exception
+  that carries them (a fetched stream's `TaskFailedException`), which propagates whole.
 - On `max_turns` exhaustion `response` is the last real response, `completed=false`,
   `llm_error = "max turns (N) exhausted"`.
 - `cancel` (default: the ambient token) scopes every turn and dispatch; a cancelled loop

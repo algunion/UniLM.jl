@@ -120,7 +120,9 @@ end
 Call `dispatcher(name, args)`, wrap result in [`FunctionCallResult`](@ref),
 return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes, except an
 `InterruptException`, a [`ReplayMissError`](@ref) and a
-[`RecordingWriteError`](@ref), which propagate.
+[`RecordingWriteError`](@ref), which propagate — the latter two also from inside the
+exception that carries them, such as the `TaskFailedException` a dispatcher that
+`fetch`es a streamed call gets, which propagates whole.
 The model reads the result as text: a `String` is passed through, any other value
 is JSON-encoded (`JSON.json`), never sent as its Julia `repr`.
 """
@@ -136,8 +138,12 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
         # as a tool failure and swallowed — propagate it before any conversion. So
         # must a request a recorded-answers scope cannot replay, and a paid answer
         # whose recording was lost: as a tool error the model would read it and the
-        # loop would go on without the answer, or without its recording.
-        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
+        # loop would go on without the answer, or without its recording. Either can
+        # arrive wrapped — a streamed call's task throws it, and `fetch` raises the
+        # task's `TaskFailedException` — so the whole chain is searched, and what the
+        # dispatcher threw is rethrown as it is, its trace kept.
+        e isa InterruptException && rethrow()
+        isnothing(_find_exception(x -> x isa Union{ReplayMissError,RecordingWriteError}, e)) || rethrow()
         # Store the tool's own message faithfully: `error("x")` carries it verbatim
         # in `.msg`, and any other error renders through `showerror` (its
         # human-readable form, e.g. `KeyError: key "x" not found`). `string(e)` would
@@ -168,8 +174,8 @@ _tool_output(o::ToolCallOutcome)::String = o.success ? string(o.result.result) :
 # in this task. `n > 1` runs up to `n` at once on spawned tasks and emits after all have
 # finished, so the next request does not depend on completion order. An exception
 # escaping a dispatch (`_dispatch_tool` lets only an InterruptException, a
-# ReplayMissError or a RecordingWriteError through) propagates once the in-flight
-# dispatches are done.
+# ReplayMissError or a RecordingWriteError through, the latter two also inside the
+# exception that carries them) propagates once the in-flight dispatches are done.
 function _run_calls(emit::Function, dispatch::Function, calls::AbstractVector,
                     tok::Union{Nothing,CancelToken}, n::Int)::Bool
     if n == 1
@@ -266,9 +272,10 @@ requested them.
   dispatch propagates, after the interrupted turn is removed from `chat` (with any
   results already appended), so the conversation stays sendable. So does a
   [`ReplayMissError`](@ref) or a [`RecordingWriteError`](@ref) from a request the
-  dispatcher made inside a [`with_recorded_answers`](@ref) scope: as a tool error, the
-  model would read it and the loop would go on without the answer, or without its
-  recording.
+  dispatcher made inside a [`with_recorded_answers`](@ref) scope — for a streamed call
+  the dispatcher `fetch`es, the `TaskFailedException` that carries it, whole: as a tool
+  error, the model would read it and the loop would go on without the answer, or
+  without its recording.
 
 # Example
 ```julia

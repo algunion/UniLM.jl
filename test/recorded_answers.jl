@@ -1313,6 +1313,38 @@ end
     @test e isa ReplayMissError && e.path == "/v1/systemone"
 end
 
+@testset "recorded LLM answers — a dispatcher's fetched stream that loses its recording or misses stops the loop" begin
+    # A dispatcher that fetches a streamed call gets its lost write, or a later hop's miss, inside
+    # the TaskFailedException `fetch` raises. As a tool error the model would read it and the loop
+    # would go on; the loop throws that exception whole instead.
+    gap = _ra_dir("llm-dispatch-stream-gap")             # a continued stream without its second hop
+    _rl_online(() -> with_recorded_answers(_rl_gemini_continuation_stream, gap; mode=:record))
+    rm(only(f for f in readdir(gap; join=true)
+            if get(JSON.parsefile(f)["request"]["body"], "continuationToken", nothing) == "tok-1"))
+    lost_dir = _ra_dir("llm-dispatch-stream-lost")
+    lost = (name, args) -> with_recorded_answers(lost_dir; mode=:record) do
+        rm(lost_dir; force=true, recursive=true)
+        write(lost_dir, "")                              # a file by the time the streamed reply arrives
+        _rl_openai_stream()
+        "5"
+    end
+    missed = (name, args) -> (with_recorded_answers(_rl_gemini_continuation_stream, gap); "5")
+    _rl_online() do
+        for (dispatcher, cause, sent) in ((lost, RecordingWriteError, 2), (missed, ReplayMissError, 1)), n in (1, 2)
+            chat = _rl_loop_chat()
+            for loop in (() -> tool_loop!(chat, dispatcher; config=_RL_CFG, tool_concurrency=n),
+                         () -> tool_loop(_rl_loop_respond(), dispatcher; config=_RL_CFG, tool_concurrency=n))
+                before = _RL_HITS[]
+                e = _ra_caught(loop)
+                @test e isa TaskFailedException && _rl_unwrap(e) isa cause   # the fetched task's failure, whole
+                @test _RL_HITS[] == before + sent       # the first turn (and the lost stream); no second turn
+                ispath(lost_dir) && rm(lost_dir; recursive=true)
+            end
+            @test length(chat) == 2                     # the chat loop's turn is rolled back
+        end
+    end
+end
+
 @testset "recorded answers — the id header is kept by name, and a recording without one is System One's" begin
     source = JSON.parse(read(_ra_file(_ra_dir("replay"), _ra_request()), String))
     @test source["response"]["request_id_header"] == "x-typesafe-request-id"

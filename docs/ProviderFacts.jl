@@ -313,6 +313,14 @@ end
 # Every capability an endpoint of the registry declares, sorted.
 const _CAPABILITIES = sort!(unique!([c for e in REGISTRY for ep in e.endpoints for c in provider_capabilities(ep)]))
 
+"""
+    DECISION_CAPABILITIES
+
+The capabilities a decision entry's at-a-glance table reports: all of `TYPESAFEServiceEndpoint`'s,
+the endpoint that serves decisions and nothing else, sorted.
+"""
+const DECISION_CAPABILITIES = sort!(collect(provider_capabilities(TYPESAFEServiceEndpoint)))
+
 # The capabilities of `_CAPABILITIES` that some endpoint of the entry has.
 _capabilities(e::ProviderEntry)::Vector{Symbol} =
     filter(c -> any(ep -> has_capability(ep, c), e.endpoints), _CAPABILITIES)
@@ -340,17 +348,19 @@ end
 The entry's facts in one row — Endpoint | Key variables | Default model | Supports, and for a
 language-model entry Not available: how code names each endpoint (primary first), the
 environment variables the entry reads, its default model ("—": a call names one), the
-capabilities some endpoint of it has, and the capabilities other registry endpoints declare
-that none of its endpoints has.
+capabilities some endpoint of it has (for a decision entry, those of `DECISION_CAPABILITIES`),
+and the capabilities other registry endpoints declare that none of its endpoints has.
 """
 function at_a_glance(key::Symbol)::Markdown.MD
     e = entry(key)
     has = _capabilities(e)
     header = ["Endpoint", "Key variables", "Default model", "Supports"]
-    row = Any[_endpoints(e), _codes(e.key_vars), _model(e.default_model), _codes(has)]
+    row = Any[_endpoints(e), _codes(e.key_vars), _model(e.default_model)]
     if e.chapter == llm
         push!(header, "Not available")
-        push!(row, _codes(setdiff(_CAPABILITIES, has)))
+        push!(row, _codes(has), _codes(setdiff(_CAPABILITIES, has)))
+    else
+        push!(row, _codes(filter(in(DECISION_CAPABILITIES), has)))
     end
     _table(header, Vector{Any}[row])
 end
@@ -370,14 +380,15 @@ function capability_matrix()::Markdown.MD
 end
 
 """
-    on_your_provider(feature::Symbol) -> Markdown.MD
+    on_your_provider(chapter::Chapter, feature::Symbol) -> Markdown.MD
 
-One row per entry with a section for `feature`, in registry order: the entry's name, linking
-that section. An `ArgumentError` when no entry has one.
+One row per entry of `chapter` with a section for `feature`, in registry order: the entry's
+name, linking that section. An `ArgumentError` when no entry of `chapter` has one.
 """
-function on_your_provider(feature::Symbol)::Markdown.MD
-    rows = Vector{Any}[Any[_cell(_ref(e.name, e.features[feature]))] for e in REGISTRY if haskey(e.features, feature)]
-    isempty(rows) && throw(ArgumentError("no provider entry has a section for the feature :$feature"))
+function on_your_provider(chapter::Chapter, feature::Symbol)::Markdown.MD
+    rows = Vector{Any}[Any[_cell(_ref(e.name, e.features[feature]))]
+                       for e in REGISTRY if e.chapter == chapter && haskey(e.features, feature)]
+    isempty(rows) && throw(ArgumentError("no $chapter entry has a section for the feature :$feature"))
     _table(["Provider"], rows)
 end
 
@@ -460,26 +471,41 @@ const _UNPREFIXED = ("chat-latest" => :openai,)
 # builds leaves the documented prices as UniLM ships them.
 const _PRICES = Dict{String,UniLM.PriceRow}(DEFAULT_PRICING)
 
-# The price table of a priced model id: the one whose prefix it carries, or the one
-# `_UNPREFIXED` gives it. An id in no table, or in two, stops the load.
-function _price_table(id::String)::Symbol
-    tables = Symbol[t for (t, prefixes) in pairs(_MODEL_PREFIXES) if any(p -> startswith(id, p), prefixes)]
-    append!(tables, (t for (unprefixed, t) in _UNPREFIXED if unprefixed == id))
-    length(tables) == 1 || error("the DEFAULT_PRICING row $(repr(id)) is in ",
-        isempty(tables) ? "no price table" : "the price tables " * join(tables, " and "),
-        ": give it one table's prefix, or one unprefixed entry")
-    only(tables)
-end
+"""
+    PriceTableError(id, tables)
 
-# Each price table's model ids, sorted.
-const _PRICE_IDS = let ids = Dict{Symbol,Vector{String}}(t => String[] for t in keys(_MODEL_PREFIXES))
-    foreach(id -> push!(ids[_price_table(id)], id), keys(_PRICES))
-    for (id, _) in _UNPREFIXED
-        haskey(_PRICES, id) || error("the unprefixed price id $(repr(id)) has no DEFAULT_PRICING row")
+Thrown when this file is loaded and the priced model `id` is in no price table, or in more than
+one: `tables` lists the tables it is in.
+"""
+struct PriceTableError <: Exception
+    id::String
+    tables::Vector{Symbol}
+end
+Base.showerror(io::IO, e::PriceTableError) =
+    print(io, "PriceTableError: the DEFAULT_PRICING row ", repr(e.id), " is in ",
+          isempty(e.tables) ? "no price table" : "the price tables " * join(e.tables, " and "),
+          ": give it one table's prefix, or one unprefixed entry")
+
+# Each price table's model ids in `pricing`, sorted. An id belongs to the table whose prefix it
+# carries, or to the one `unprefixed` gives it; an id in no table, or in two, is a
+# `PriceTableError`, and an unprefixed id that `pricing` lacks an `ArgumentError`.
+function _price_partition(pricing::AbstractDict{String},
+                          unprefixed::Tuple{Vararg{Pair{String,Symbol}}}=_UNPREFIXED)::Dict{Symbol,Vector{String}}
+    ids = Dict{Symbol,Vector{String}}(t => String[] for t in keys(_MODEL_PREFIXES))
+    for id in keys(pricing)
+        tables = Symbol[t for (t, prefixes) in pairs(_MODEL_PREFIXES) if any(p -> startswith(id, p), prefixes)]
+        append!(tables, (t for (u, t) in unprefixed if u == id))
+        length(tables) == 1 || throw(PriceTableError(id, tables))
+        push!(ids[only(tables)], id)
+    end
+    for (id, _) in unprefixed
+        haskey(pricing, id) || throw(ArgumentError("the unprefixed price id $(repr(id)) has no DEFAULT_PRICING row"))
     end
     foreach(sort!, values(ids))
     ids
 end
+
+const _PRICE_IDS = _price_partition(_PRICES)
 
 # A per-token USD rate in dollars per million tokens, to the cent at least: 7.5e-8 → "0.075",
 # 1.0e-5 → "10.00".

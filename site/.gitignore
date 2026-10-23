@@ -17,6 +17,7 @@
 /src/navigation.json
 /public/assets/
 /public/anchors.json
+/public/anchor-aliases.json
 
 # production
 /build

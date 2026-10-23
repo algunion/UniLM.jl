@@ -1,0 +1,60 @@
+{
+  "1.-Upload-the-file": [
+    "/guide/fixture/"
+  ],
+  "@ref-target": [
+    "/guide/fixture/"
+  ],
+  "Base.push!-Tuple{Chat, Message}": [
+    "/api/fixture/"
+  ],
+  "Callouts-and-details": [
+    "/guide/fixture/"
+  ],
+  "Classify": [
+    "/api/fixture/"
+  ],
+  "Code": [
+    "/guide/fixture/"
+  ],
+  "Conversations": [
+    "/api/fixture/",
+    "/unlisted/"
+  ],
+  "Fixture:-Docstrings": [
+    "/api/fixture/"
+  ],
+  "Fixture:-Every-Construct": [
+    "/guide/fixture/"
+  ],
+  "Fixture:-Unlisted": [
+    "/unlisted/"
+  ],
+  "Key-Features": [
+    "/"
+  ],
+  "Tables-and-images": [
+    "/guide/fixture/"
+  ],
+  "Text-and-links": [
+    "/guide/fixture/"
+  ],
+  "UniLM.jl": [
+    "/"
+  ],
+  "UniLM.nl_classify": [
+    "/api/fixture/"
+  ],
+  "What-is-UniLM.jl?": [
+    "/"
+  ],
+  "escaped-text": [
+    "/guide/fixture/"
+  ],
+  "h4-anchor": [
+    "/guide/fixture/"
+  ],
+  "jev_output": [
+    "/guide/fixture/"
+  ]
+}

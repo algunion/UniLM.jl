@@ -2,23 +2,23 @@
 
 import { usePathname } from 'next/navigation'
 
-import { isCurrentRoute, navigation } from '@/lib/navigation'
+import { trailOf } from '@/lib/navigation'
 
 export function DocsHeader({ title }: { title?: string }) {
   let pathname = usePathname()
-  let section = navigation.find((section) =>
-    section.links.find((link) => isCurrentRoute(link.href, pathname)),
-  )
+  let trail = trailOf(pathname)
 
-  if (!title && !section) {
+  if (!title && !trail) {
     return null
   }
 
   return (
     <header className="mb-9 space-y-1">
-      {section && (
+      {trail && (
         <p className="font-display text-sm font-medium text-sky-500">
-          {section.title}
+          {trail.family === undefined
+            ? trail.group
+            : `${trail.family} · ${trail.group}`}
         </p>
       )}
       {title && (

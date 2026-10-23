@@ -182,6 +182,10 @@ end
         r = chatrequest!(Chat(service=DeepSeekEndpoint(), messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]);
                          config=RequestConfig(max_attempts=1))
         @test r isa LLMCallError && occursin("DEEPSEEK_API_KEY", r.error)
+        @test_throws KeyError UniLM.auth_header(MistralEndpoint())    # a missing variable throws: no request goes out without it
+        r = chatrequest!(Chat(service=MistralEndpoint(), model="mistral-large-latest",
+                              messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]); config=RequestConfig(max_attempts=1))
+        @test r isa LLMCallError && occursin("MISTRAL_API_KEY", r.error)
     end
     withenv("DEEPSEEK_API_KEY" => "sk-test-1", "MISTRAL_API_KEY" => "sk-test-2") do
         @test ("Authorization" => "Bearer sk-test-1") in UniLM.auth_header(DeepSeekEndpoint())

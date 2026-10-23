@@ -92,11 +92,12 @@ out wherever their rates differ, so a model's own audio price applies where it l
 per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00 on `gemini-3-flash-preview` and
 `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite` — and otherwise the row's input rate, since
 an input price that names no modality, or names audio among the others, is every modality's (Gemini
-4 Argon, 3.8 and 3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview). Audio
-on a model the page prices without audio (the image models) or does not list is estimated at `0.0`,
-with one warning per model and endpoint, and so is a Gemini call that counts audio and cache hits:
-its usage does not say how many cached tokens are audio, whose cache price the page lists apart or
-not at all.
+4 Argon, 3.8 and 3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview). Their
+cache prices name no modality either, so a cache hit beside audio bills at the row's cached rate.
+Audio on a model the page prices without audio (the image models) or does not list is estimated at
+`0.0`, with one warning per model and endpoint, and so is a call that counts audio and cache hits
+on one of the four models with an audio price of their own: its usage does not say how many cached
+tokens are audio, whose cache price the page lists apart.
 `GEMINIOpenAIServiceEndpoint` reports no audio count — a clip's tokens are in `prompt_tokens`
 alone — so its audio input is priced at the text rate: a lower bound on the four models with an
 audio price of their own, for which such a request warns once per model. Send audio through
@@ -207,8 +208,8 @@ lower bound. A stream stopped, cancelled, timed out or cut off, or ended by an e
 a request's input when its stream starts, and Gemini the usage so far on every chunk, while
 OpenAI reports it after the finish reason, so a stopped OpenAI stream adds nothing. A continued
 Gemini turn that fails or is stopped adds the replies it had received. A request stopped before
-any usage arrived adds nothing, though the provider bills it; so does an attempt UniLM retried,
-and a stream the provider ended with an error event.
+any usage arrived adds nothing, though the provider bills it; so do an attempt UniLM retried,
+a stream the provider ended with an error event, and an unstreamed reply UniLM could not decode.
 
 !!! warning "Auto-accumulation always uses the default pricing table"
     `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`

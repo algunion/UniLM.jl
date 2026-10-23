@@ -813,13 +813,16 @@ const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Union{Float64,Nothing}}(
 _gemini_own_audio_rate(model::AbstractString)::Bool = !isnothing(get(_GEMINI_AUDIO_INPUT_RATES, model, nothing))
 
 # The audio rate a usage's audio input bills at, `rates` being the model's price row, or `nothing`
-# where none applies: the model has no entry above; the reply also counts audio
-# output, which no table here prices; or the call also read the cache, since the cached-audio
-# prices the page lists differ from the cached-text ones (or it lists none) and a usage does not
-# say how many cached tokens are audio.
+# where none applies: the model has no entry above; the reply also counts audio output, which no
+# table here prices; or the call also read the cache on a model with an audio price of its own,
+# whose cached-audio price the page lists apart from the cached-text one while a usage does not
+# say how many cached tokens are audio. A one-price model's cache price names no modality either,
+# so its cache hits bill at the row's cached rate whatever they hold.
 function _gemini_audio_rate(model::String, u::TokenUsage, rates::PriceRow)::Union{Float64,Nothing}
-    (u.completion_audio_tokens > 0 || u.cached_tokens > 0 || !haskey(_GEMINI_AUDIO_INPUT_RATES, model)) && return nothing
-    something(_GEMINI_AUDIO_INPUT_RATES[model], rates.input)
+    (u.completion_audio_tokens > 0 || !haskey(_GEMINI_AUDIO_INPUT_RATES, model)) && return nothing
+    own = _GEMINI_AUDIO_INPUT_RATES[model]
+    isnothing(own) && return rates.input
+    u.cached_tokens > 0 ? nothing : own
 end
 
 # The models whose table bills a prompt over 200K tokens at long-context rates, the whole request:

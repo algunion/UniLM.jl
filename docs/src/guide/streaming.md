@@ -94,8 +94,9 @@ An exception thrown by `callback` or `on_tool_call` ends the call: `fetch` retur
 `LLMCallError` (or `ResponseCallError`) whose `cause` is that exception. The call is
 never retried, nothing is appended to the chat, and no callback runs after it. On a Chat,
 the usage the provider had reported by then is added to `cumulative_cost`, as for a stop
-([Cumulative cost](@ref cost_guide)): a reply whose finish reason had arrived was answered
-and billed whole. A user `InterruptException` is the exception to that rule: it
+([Cumulative cost](@ref cost_guide)): a reply whose final usage had arrived counts whole.
+OpenAI sends that usage after the finish reason, so an exception thrown on its finish chunk
+adds nothing. A user `InterruptException` is the exception to that rule: it
 propagates, so `fetch` throws a `TaskFailedException` wrapping it.
 
 ### Streamed Tool Calls

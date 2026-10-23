@@ -45,11 +45,13 @@ Gemini or Interactions result at the input price Google's pricing page states fo
 by the billed tier and a long prompt's multiples as text is: the model's own audio price where
 the page lists one apart (`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash`,
 `gemini-2.5-flash-lite`), else the row's input rate, since the page spells modalities out
-wherever their rates differ and an input price that names none is every modality's. Any other
-audio — on a model the page prices without audio (the image models) or does not list, on another
-endpoint, Gemini audio output, or Gemini audio in a call that also hit the cache (a usage does
-not say how many cached tokens are audio, whose cache price the page lists apart or not at all)
-— leaves the estimate at `0.0`, with one warning per model and endpoint.
+wherever their rates differ and an input price that names none is every modality's; a cache hit
+bills at the row's cached rate, since a one-price model's cache price names no modality either.
+Any other audio — on a model the page prices without audio (the image models) or does not list,
+on another endpoint, Gemini audio output, or audio in a call that also hit the cache on a model
+with its own audio price (a usage does not say how many cached tokens are audio, and the page
+lists that model's cached audio apart) — leaves the estimate at `0.0`, with one warning per
+model and endpoint.
 `GEMINIOpenAIServiceEndpoint` reports no audio count, so its audio input is priced at the text
 rate, a lower bound where the model's audio price is its own; such a request warns once per model.
 Off-peak discounts, other multimodal rates and hosted-tool fees are not included.
@@ -309,7 +311,8 @@ received before the failure or stop, and the usage a stream had reported when it
 cancelled, timed out, cut off or ended by an exception from its `callback` or `on_tool_call`
 — Anthropic reports a request's input when its stream starts and Gemini the usage so far on
 every chunk, while OpenAI reports it after the finish reason. A request stopped before any
-usage arrived adds nothing, though the provider bills it, as do an attempt that was retried
-and a stream the provider ended with an error event.
+usage arrived adds nothing, though the provider bills it, as do an attempt that was retried,
+a stream the provider ended with an error event, and an unstreamed reply UniLM could not
+decode.
 """
 cumulative_cost(chat::Chat)::Float64 = chat._cumulative_cost[]

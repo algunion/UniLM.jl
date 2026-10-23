@@ -1238,10 +1238,18 @@ end
     long = TokenUsage(prompt_tokens=250_000, completion_tokens=1_000, total_tokens=251_000, prompt_audio_tokens=200_000)
     @test cost("gemini-3.1-pro-preview", long) ≈ (250_000 * 4.00 + 1_000 * 18.00) / 1_000_000   # "$4.00, prompts > 200k"
     @test cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.75, 0.75, 3.75)
+    # A one-price model's cache price names no modality either (3.6 Flash "$0.075", 2.5 Pro "$0.125, prompts
+    # <= 200k tokens $0.25, prompts > 200k"), so a cache hit beside audio bills at the row's cached rate,
+    # whatever the cached tokens hold, at a long prompt's multiples as text.
+    @test (@test_logs cost("gemini-3.6-flash", heard(cached=500))) ≈ (510 * 0.75 + 500 * 0.075 + 1 * 3.75) / 1_000_000
+    long_cached = TokenUsage(prompt_tokens=250_000, completion_tokens=1_000, total_tokens=251_000,
+                             cached_tokens=50_000, prompt_audio_tokens=200_000)
+    @test (@test_logs cost("gemini-2.5-pro", long_cached)) ≈ (200_000 * 2.50 + 50_000 * 0.25 + 1_000 * 15.00) / 1_000_000
     # Unpriced, with one warning per model: an id the table has no entry for, whatever row a caller adds — a
     # near-miss id, or an image model whose input price excludes audio ("$1.50 (text/image/video)") — any
-    # audio output, and a cache hit beside audio: the cached-audio rates the page lists differ from the
-    # cached-text ones, and the usage does not say how many cached tokens are audio.
+    # audio output, and a cache hit beside audio on a model with an audio price of its own: the page lists
+    # its cached audio apart (3.1 Flash-Lite "$0.025 (text / image / video) $0.05 (audio)"), and the usage
+    # does not say how many cached tokens are audio.
     says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
     for model in ("gemini-3.1-flash-lite-preview", "gemini-nano-banana-2.1")
         @test (@test_logs (:warn, says) cost(model, heard(); pricing=Dict(model => UniLM._price(1.50, 0.15, 10.0)))) === 0.0

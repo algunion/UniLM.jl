@@ -44,9 +44,12 @@
   GPT-5.6 Sol's rules. A refusal names the model, the efforts it takes and the next one up,
   or `Respond` for `"max"`. `service_tier` is checked per API: Chat Completions takes `"auto"`, `"default"`,
   `"flex"`, `"scale"`, `"priority"` and `"fast"`, Responses also `"ultrafast"` on GPT-6
-  Astra and GPT-6.1 Sol. Upgrading: use `"low"` for `"minimal"`; send `"max"` and the
-  Astra and 6.1 Sol tools through `Respond`; set `reasoning_effort="none"` for Chat tools,
-  and on GPT-6 Sol and Luna for sampling controls.
+  Astra and GPT-6.1 Sol. Every rule model refuses `prompt_cache_retention`, GPT-6.1 Sol now
+  too, which 0.25's prefix rule did not reach (see Changed). Upgrading: use `"low"` for
+  `"minimal"`; send `"max"` and the Astra and 6.1 Sol tools through `Respond`; set
+  `reasoning_effort="none"` for Chat tools, and on GPT-6 Sol and Luna for sampling
+  controls; set a cache lifetime with `prompt_cache_options` instead of
+  `prompt_cache_retention`.
 - **`output_text` returns the answer only.** A Responses message the model labels
   `phase: "commentary"` — an intermediate update, such as a preamble before a tool call —
   is left out, so a turn that stops at its commentary has no text yet; a message without a
@@ -347,13 +350,15 @@
   long prompt's multiples — the model's own audio price where the page lists one apart (3.1
   Flash-Lite \$0.50 per 1M, 3 Flash Preview and 2.5 Flash \$1.00, 2.5 Flash-Lite \$0.30),
   else its input price, which covers every modality when it names none or names audio among
-  them. Other counted audio — a model the page prices without audio or does not list,
-  another endpoint (Azure, DeepSeek, generic, custom), Gemini audio output, Gemini audio in
-  a call that also hit the cache — is estimated at `0.0`, with one warning per model and
-  endpoint, like an unpriced model. `GEMINIOpenAIServiceEndpoint` counts no audio apart, so
-  its audio input is priced at the text rate, a lower bound on the four models with an
-  audio price of their own, for which a request carrying a sound clip warns once per
-  model; send audio through `GEMINIServiceEndpoint` for an exact estimate.
+  them (a cache hit on such a model bills at its cached rate). Other counted audio — a
+  model the page prices without audio or does not list, another endpoint (Azure, DeepSeek,
+  generic, custom), Gemini audio output, audio in a call that also hit the cache on one of
+  the four models with an audio price of their own — is estimated at `0.0`, with one
+  warning per model and endpoint, like an unpriced model. `GEMINIOpenAIServiceEndpoint`
+  counts no audio apart, so its audio input is priced at the text rate, a lower bound on
+  the four models with an audio price of their own, for which a request carrying a sound
+  clip warns once per model; send audio through `GEMINIServiceEndpoint` for an exact
+  estimate.
 - **An embeddings reply without usage says its estimate is `0.0`.** `estimated_cost` of an
   embeddings result whose reply reported no usage — `GEMINIOpenAIServiceEndpoint`'s never
   does — warns once per model, as for a model without a price row.
@@ -367,10 +372,11 @@
   (`rate_limit_exceeded`, generateContent's `RESOURCE_EXHAUSTED`) are still retried.
 - **`prompt_cache_retention` and `prompt_cache_options` are no longer refused together.**
   The Responses reference lists the two fields independently and documents
-  `prompt_cache_options` for gpt-5.6 and later. The GPT-6 and GPT-5.6 rule models, GPT-6.1
-  Sol now included, refuse `prompt_cache_retention`, since `prompt_cache_options` sets their
-  cache lifetime; on older models UniLM sends both unchecked and the server checks them
-  (the reference takes only `"24h"` retention on gpt-5.5 and gpt-5.5-pro).
+  `prompt_cache_options` for gpt-5.6 and later. The GPT-6 and GPT-5.6 rule models refuse
+  `prompt_cache_retention`, since `prompt_cache_options` sets their cache lifetime (GPT-6.1
+  Sol's refusal is new: see Breaking); on older models UniLM sends both unchecked and leaves
+  them to the server (the reference takes only `"24h"` retention on gpt-5.5 and
+  gpt-5.5-pro).
 - **Decisions usage reports cache writes and the tier.** `token_usage` of an OpenAI
   Decisions answer counts `cache_write_tokens` (the 12-hour ones in
   `cache_write_extended_tokens`) and keeps a reported `service_tier`; the price is
@@ -408,18 +414,20 @@
   that ends without committing — stopped, cancelled, timed out, cut off, or ended by an
   exception from its `callback` or `on_tool_call` — adds the usage its provider had
   reported by then, a lower bound of the bill: Anthropic reports a request's input when
-  its stream starts, Gemini the usage so far on every chunk, and a reply whose finish had
-  arrived counts whole. A request stopped before any usage arrived adds nothing, though the
-  provider bills it (OpenAI reports usage after the finish reason), nor does an attempt
-  that was retried or a stream the provider ended with an error event. 0.25 added nothing
-  for such a turn.
+  its stream starts, Gemini the usage so far on every chunk, and a reply whose final usage
+  had arrived counts whole. A request stopped before any usage arrived adds nothing, though
+  the provider bills it (OpenAI reports usage only after the finish reason), nor does an
+  attempt that was retried or a stream the provider ended with an error event. 0.25 added
+  nothing for such a turn.
 - **Streamed `GEMINIOpenAIServiceEndpoint` turns are costed.** A stream with no
   `stream_options` asks for `include_usage`, as Google's compatibility page does, so its
   usage arrives and is priced; without it the turn reported no usage and accrued `\$0`.
 - **`realtime_receive` keeps its idle bound while a send is parked.** Its guard closed the
   WebSocket, which waits for the send lock that a `realtime_send` parked on a peer that
   stopped reading holds, so the read could outlast `stream_idle_timeout`; it now ends the
-  read and the connection without that lock, and the parked send throws too.
+  read and the connection without that lock, and the parked send throws too — except on a
+  session over the caller's own stream (`HTTP.WebSockets.open(io)`), whose parked send waits
+  until the caller closes that stream.
 - **Attachment refusals say what to do.** An attachment built from a `data:` URL is
   refused as a URL, saying to pass the bytes it holds, where 0.25 tried to open it as a
   file (`SystemError`); and an `EmbeddingInput` given another kind of attachment (a

@@ -109,6 +109,20 @@ end
         @test_throws ErrorException path check_old_anchors(out, toml, list)
     end
 end
+@testset "redirects — a route with an empty, . or .. segment is refused, naming its file and the route" begin
+    for (old, new) in (("g//x", "g//r"), ("./x", "./a"), ("../escaped", "b/../a"))
+        # the export in a folder of its own, so that a stub written at "../escaped" stays in a fresh temp dir
+        out = mv(fixture_out(pages = ["a/", "b/", "g/r/"], anchors = Dict("kept" => ["/a/"])),
+                 joinpath(mktempdir(), "out"))
+        toml = fixture_toml(routes = Dict(old => "a"))
+        @test_throws ErrorException [toml, old] write_stubs(out, "", toml)
+        toml = fixture_toml(routes = Dict("old" => new))
+        @test_throws ErrorException [toml, new] write_stubs(out, "", toml)
+        @test_throws ErrorException new stub_map(out, new, fixture_toml())
+        write(joinpath(out, "anchors.json"), JSON.json(Dict("kept" => ["/$new/"])))
+        @test_throws ErrorException [joinpath(out, "anchors.json"), new] stub_map(out, "a/", fixture_toml())
+    end
+end
 @testset "redirects — the CLI writes the stubs and exits 1 while an id of v0.26.0 resolves nowhere" begin
     ids = readlines(joinpath(@__DIR__, "anchors-v0.26.0.txt"))
     @test length(ids) == 139 && issorted(ids) && allunique(ids)

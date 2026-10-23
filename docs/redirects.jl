@@ -13,8 +13,19 @@ using JSON, TOML
 
 export stub_map, write_stubs, check_old_anchors
 
-"The route `r` with no leading slash and one trailing slash: `\"/guide/x\"` is `\"guide/x/\"`, the home page `\"\"`."
-route(r::AbstractString)::String = (s = strip(r, '/'); isempty(s) ? "" : string(s, '/'))
+"""
+    route(r, from) -> String
+
+The route `r` with no leading slash and one trailing slash: `"/guide/x"` is `"guide/x/"`, the home page `""`. A route
+with an empty, `.` or `..` segment is an error naming `from`, the file or argument it came from: a stub's relative
+links climb one `../` per segment, and its path must stay inside the export.
+"""
+function route(r::AbstractString, from::String)::String
+    s = strip(r, '/')
+    isempty(s) && return ""
+    any(in(("", ".", "..")), eachsplit(s, '/')) && error("$from: the route $(repr(r)) has an empty, . or .. segment")
+    string(s, '/')
+end
 
 "The table `name` of `t`, the parsed file `toml`, of strings; anything else is an error naming the file and key."
 function string_table(t::Dict{String,Any}, name::String, toml::String)::Dict{String,String}
@@ -29,7 +40,8 @@ end
 
 The redirect table `toml`, parsed: `routes` maps each old route to the route that replaced it, both normalised by
 `route`, and `aliases` each retired anchor id to its successor id. The file holds exactly the tables `[routes]` and
-`[anchors]`, of string values; anything else, or two old routes that normalise alike, is an error.
+`[anchors]`, of string values; anything else, a route that `route` refuses, or two old routes that normalise alike,
+is an error.
 """
 struct Config
     routes::Dict{String,String}
@@ -41,8 +53,9 @@ function Config(toml::String)
         error("$toml: expected exactly the tables [routes] and [anchors], found $(sort!(collect(keys(t))))")
     routes = Dict{String,String}()
     for (old, new) in string_table(t, "routes", toml)
-        haskey(routes, route(old)) && error("$toml: [routes] lists the route $(repr(route(old))) twice")
-        routes[route(old)] = route(new)
+        r = route(old, toml)
+        haskey(routes, r) && error("$toml: [routes] lists the route $(repr(r)) twice")
+        routes[r] = route(new, toml)
     end
     Config(routes, string_table(t, "anchors", toml))
 end
@@ -51,8 +64,8 @@ end
     read_anchors(out) -> Dict{String,Vector{String}}
 
 `<out>/anchors.json`: each anchor id of the built site with the routes that define it, normalised by `route`. A
-missing file, or one that is not a JSON object mapping each id to a non-empty array of routes, is an error naming
-its path.
+missing file, one that is not a JSON object mapping each id to a non-empty array of routes, or a route that `route`
+refuses, is an error naming its path.
 """
 function read_anchors(out::String)::Dict{String,Vector{String}}
     path = joinpath(out, "anchors.json")
@@ -63,7 +76,7 @@ function read_anchors(out::String)::Dict{String,Vector{String}}
     end
     a isa AbstractDict && all(rs -> rs isa AbstractVector && !isempty(rs) && all(r -> r isa String, rs), values(a)) ||
         error("$path: not a JSON object mapping each anchor id to the routes that define it")
-    Dict{String,Vector{String}}(id => route.(rs) for (id, rs) in a)
+    Dict{String,Vector{String}}(id => route.(rs, path) for (id, rs) in a)
 end
 
 """
@@ -76,7 +89,7 @@ does not define and that several routes or none define is left out: its reader g
 are normalised by `route`.
 """
 stub_map(out::String, target::String, toml::String)::Dict{String,String} =
-    stub_map(read_anchors(out), Config(toml).aliases, route(target))
+    stub_map(read_anchors(out), Config(toml).aliases, route(target, "stub_map's target"))
 
 """
     stub_map(anchors, aliases, target) -> Dict{String,String}

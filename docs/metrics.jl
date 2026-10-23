@@ -7,9 +7,9 @@ The acceptance numbers of the manual's provider entries, measured on the pages u
 - Other-provider share (`share`): of an entry's pages, of a reader's path (`reader_path`: the
   entry's pages and the concept pages they link to) and of each concept page, the fraction of
   prose lines (`prose_lines`) that hold a token of another provider (`provider_tokens`). The body
-  of an Evidence box — a `!!! details` admonition whose title starts with "Evidence" — is no
-  prose: it names the model and version a claim was measured on, provenance rather than
-  guidance. Every other admonition is prose.
+  of an Evidence box — a `!!! details` admonition whose title starts with "Evidence", read where
+  and as Julia's Markdown reads it — is no prose: it names the model and version a claim was
+  measured on, provenance rather than guidance. Every other admonition is prose.
 - Concept-page code (`concept_code_violations`): the endpoints and model ids named in code outside
   the binding lines of the page's binding block, and that block's breaches of its bounds.
 - Placement ledgers (`check_ledger`): every passage of an audit placed exactly once, from its
@@ -82,20 +82,26 @@ function _outside_code(lines::Vector{SubString{String}}, file::String)::Vector{S
 end
 _outside_code(text::String, file::String)::Vector{SubString{String}} = _outside_code(split(text, '\n'), file)
 
-const _EVIDENCE = r"^(\s*)!!!\s+details\s+\"Evidence"
+# The opening line of an Evidence box, as Julia's Markdown reads an admonition (Julia 1.13,
+# stdlib Markdown/src/Common/block.jl:207-225): `!!! ` where the line starts (no indentation: the
+# block parser tries it at the line's start, parse/parse.jl:86-93), then, stripped, the category,
+# one space and the title in double quotes, nothing after them. Any other line — indented, spaced
+# otherwise, with more text after the title — is no admonition to Julia, so what follows is prose.
+const _EVIDENCE = r"^!!! \s*details \"Evidence.*\"\s*$"
 
-# Whether each of `lines` is in the body of an Evidence box — a `!!! details` admonition outside
-# code (`outside`: the lines with code emptied) whose title starts with "Evidence": the lines
-# after its opening line that are blank or indented deeper than it.
+# Whether each of `lines` is in the body of an Evidence box (its opening line found in `outside`,
+# the lines with code emptied): the lines after it that start with four spaces or a tab, or are
+# blank — only " \t\r" in them —, up to the first other line, as Julia's admonition parser takes
+# its body (Markdown/src/Common/block.jl:229-236; blank lines per Markdown/src/parse/util.jl:11
+# and :59-63).
 function _in_evidence(lines::AbstractVector{<:AbstractString}, outside::AbstractVector{<:AbstractString})::BitVector
     body = falses(length(lines))
-    depth::Union{Int,Nothing} = nothing                      # the open box's indentation
+    open = false
     for (n, line) in pairs(lines)
-        if !isnothing(depth) && (isempty(strip(line)) || length(line) - length(lstrip(line)) > depth)
+        if open && (startswith(line, "    ") || startswith(line, '\t') || all(in(" \t\r"), line))
             body[n] = true
         else
-            m = match(_EVIDENCE, outside[n])
-            depth = isnothing(m) ? nothing : length(m[1])
+            open = occursin(_EVIDENCE, outside[n])
         end
     end
     body
@@ -105,11 +111,14 @@ end
     prose_lines(text::String; file::String = "string") -> Vector{Tuple{Int,String}}
 
 The prose of a page, each line with its number: the non-blank lines outside fenced blocks, table
-rows (lines starting with `|`) and the bodies of Evidence boxes (`!!! details` admonitions whose
-title starts with "Evidence": provenance, not guidance). Headings and every other admonition's
-body are prose. A fence opens on a run of three or more backticks or tildes at any indentation,
-so a fence inside an admonition is code, and closes on the same run; one never closed is a
-`PageError` naming `file` and the line.
+rows (lines starting with `|`) and the bodies of Evidence boxes — provenance, not guidance. An
+Evidence box is the admonition Julia's Markdown reads from a line `!!! details "Evidence…"` that
+starts the line, with nothing after the title; its body is the lines after it indented four
+spaces or a tab, and blank lines. A box nested in a list or another admonition is not recognised:
+its body counts as prose. Headings and every other admonition's body are prose. A fence opens on
+a run of three or more backticks or tildes at any indentation, so a fence inside an admonition
+is code, and closes on the same run; one never closed is a `PageError` naming `file` and the
+line.
 """
 function prose_lines(text::String; file::String="string")::Vector{Tuple{Int,String}}
     lines = split(text, '\n')

@@ -88,7 +88,7 @@ end
     @test all(e -> all(v -> provider_tokens("Set $v.") == [(Set([e.provider]), v)], e.key_vars), REGISTRY)
     @test provider_tokens("Set AZURE_OPENAI_API_KEY, not OPENAI_API_KEY.") ==
           [(Set([:azure]), "AZURE_OPENAI_API_KEY"), (Set([:openai]), "OPENAI_API_KEY")]
-    @test share([fixture_page("Set `OPENAI_API_KEY` before running.")], nothing) == 1          # the review's probe
+    @test share([fixture_page("Set `OPENAI_API_KEY` before running.")], nothing) == 1          # a key variable alone names its provider
     @test share([fixture_page("Point OLLAMA_HOST at the server.\nNeutral line.\n")], :openai) ≈ 1 / 2
     @test share([fixture_page("Point OLLAMA_HOST at the server.\nNeutral line.\n")], :ollama_decisions) == 0
 end
@@ -97,6 +97,13 @@ end
     @test share([fixture_page("Neutral prose.\n\n" * box * "\nNeutral again.\n")], nothing) == 0
     @test share([fixture_page(box * "Claude, after the box.\n")], nothing) ≈ 1 / 2              # a dedented line ends it
     @test share([fixture_page(box * "\n!!! note \"Measured\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 3
+    # Julia's admonition body takes only lines indented four spaces or a tab, and blank lines
+    @test share([fixture_page(box * " Claude answers here.\n Gemini too.\n")], nothing) ≈ 2 / 3
+    @test share([fixture_page(box * "\n   Claude answers here.\n")], nothing) ≈ 1 / 2
+    for opener in ["!!! details  \"Evidence\"", "!!! details \"Evidence\" (measured)", "!!! details \"Evidence",
+                   "!!!\tdetails \"Evidence\"", "  !!! details \"Evidence\""]         # no admonition to Julia: prose
+        @test share([fixture_page(opener * "\n    Measured on Jev.\n")], nothing) ≈ 1 / 2
+    end
 end
 @testset "metrics — fenced code, nested fences and table rows are never prose; an unclosed fence is refused" begin
     page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n\n" *
@@ -124,10 +131,10 @@ end
     code(page, text) = (dir = fixture_docsrc(page => text); (joinpath(dir, page), concept_code_violations(joinpath(dir, page))))
     bind(lines...) = "```julia\n" * join(lines, '\n') * "\n```\n"
     openai, gemini = "service, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"", "gemini, gemini_model = GEMINIServiceEndpoint, \"gemini-3.8-flash\""
-    probe = bind(openai, gemini) * "\n" * bind("respond(\"again\"; service=gemini, model=gemini_model)")   # the review's probe
-    page, found = code("guide/agentic.md", probe)                               # a language-model page binds one endpoint
+    aliased = bind(openai, gemini) * "\n" * bind("respond(\"again\"; service=gemini, model=gemini_model)")   # a second provider
+    page, found = code("guide/agentic.md", aliased)                               # a language-model page binds one endpoint
     @test length(found) == 1 && startswith(only(found), "$page:3: GEMINIServiceEndpoint")
-    @test last(code("guide/system_one.md", probe)) == String[]                 # a Decisions page binds two
+    @test last(code("guide/system_one.md", aliased)) == String[]                 # a Decisions page binds two
     @test length(last(code("guide/system_one.md", bind(openai, gemini, "local_model = OllamaEndpoint(), \"qwen3:4b\"")))) == 1
     @test length(last(code("guide/agentic.md", bind("service, model = OPENAIServiceEndpoint, \"claude-haiku-5-5\"")))) == 1
     @test last(code("guide/system_one.md", bind("service, model = TYPESAFEServiceEndpoint, \"jev-latest\"", "pinned = \"jev-1.13.0\""))) ==
@@ -211,7 +218,7 @@ end
     @test length(ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\tPrompt caching on every provider", deleted)) == 1   # the heading
     @test length(ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\t$(body[1:23])", deleted)) == 1                     # 23 characters
     @test ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\t$(body[1:24])", deleted) == String[]                      # 24
-    @test length(ledger("u:1\tdocs/src/index.md:20\tx.md#x_cache\tPrompt caching",                                     # the review's probe
+    @test length(ledger("u:1\tdocs/src/index.md:20\tx.md#x_cache\tPrompt caching",                                     # shifted, too short
                         "u:2\tdocs/src/index.md:16\tx.md#x_cache\tcaching")) == 4
 end
 @testset "metrics — the command line takes --ledgers and --atoms together or not at all" begin

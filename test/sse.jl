@@ -1098,6 +1098,11 @@ end
 
 @testset "driver — a Chat stream ends at [DONE], not at the end of its HTTP body" begin
     chunks = [sse_text("hi"), sse_text(""; finish="stop") * "data: [DONE]\n\n"]
+    # Both tests read pooling off the peers, so they start from an empty pool. The client these
+    # calls share keeps at most 64 idle connections in all and drops a dead one only when its own
+    # host is asked for again, so the closed servers of earlier tests can fill it; a full pool
+    # closes every finished connection rather than keeping it.
+    HTTP.close_idle_connections!()
 
     @testset "a body held open after [DONE] holds neither the final callback nor the result" begin
         srv = peer_sse_server(chunks; hold=20.0)

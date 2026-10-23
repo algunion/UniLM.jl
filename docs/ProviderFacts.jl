@@ -451,15 +451,38 @@ function claude_family_table()::Markdown.MD
             "Thinking prefix check", "Fast mode", "inference_geo"], rows)
 end
 
+# The refusal the generateContent encoder's check gives every thinking level of Gemini 2.5, which
+# takes a thinkingBudget there instead.
+_budget_refusal(err)::Bool = err isa ArgumentError && occursin("generateContent uses thinkingBudget", err.msg)
+
+# A model's thinking levels on generateContent: those the check its encoder runs
+# (`_gemini_thinking_level(…; native=true)`) accepts, or "—" and the check's own reason where it
+# refuses them all. Only that refusal is caught; any other error propagates.
+function _generate_content_cell(model::String, levels::Vector{String})::Vector{Any}
+    taken = String[]
+    reason = nothing
+    for level in levels
+        try
+            push!(taken, UniLM._gemini_thinking_level(model, level; native=true))
+        catch err
+            _budget_refusal(err) || rethrow()
+            reason = err.msg
+        end
+    end
+    isempty(taken) && !isnothing(reason) ? _cell("— ($reason)") : _codes(taken)
+end
+
 """
     gemini_thinking_table() -> Markdown.MD
 
-One row per Gemini model with thinking levels, sorted by id: the levels it takes.
+One row per Gemini model with thinking levels, sorted by id: the levels `respond` takes on the
+Interactions API, and those `Chat` takes on generateContent, as the check that encoder runs
+answers — where it refuses them all, "—" and the reason it gives.
 """
 function gemini_thinking_table()::Markdown.MD
-    rows = Vector{Any}[Any[_cell(_code(id)), _codes(levels)]
+    rows = Vector{Any}[Any[_cell(_code(id)), _codes(levels), _generate_content_cell(id, levels)]
                        for (id, levels) in sort!(collect(UniLM._GEMINI_THINKING_LEVELS); by=first)]
-    _table(["Model", "Thinking levels"], rows)
+    _table(["Model", "Levels with respond (Interactions)", "Levels with Chat (generateContent)"], rows)
 end
 
 # ── Price tables ─────────────────────────────────────────────────────────────

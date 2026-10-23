@@ -69,3 +69,12 @@ end
           ("gpt-6-sol", [:openai, :jev])
     @test_throws ArgumentError ProviderFacts._price_partition(Dict("gpt-6-sol" => row))  # "chat-latest" is unpriced
 end
+@testset "ProviderFacts — the Gemini table asks the generateContent encoder's check which levels it takes" begin
+    rows = only(gemini_thinking_table().content).rows[2:end]
+    model(r) = only(r[1]).code
+    levels(cell) = [c.code for c in cell if c isa Markdown.Code]
+    twofive = filter(r -> startswith(model(r), "gemini-2.5-"), rows)
+    @test !isempty(twofive) && all(r -> isempty(levels(r[3])), twofive)        # thinkingBudget, not levels
+    @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
+    @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", ["minimal"])  # other refusals propagate
+end

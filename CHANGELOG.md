@@ -96,7 +96,8 @@
   mono) through a `v1/realtime/translations` session on `gpt-realtime-translate` into
   `language` and returns the translated text; any other file throws `ArgumentError` naming
   the conversion, the `translate(::TranscriptionRequest)` method is gone, and the call needs
-  `:realtime`. Speech already in the target language can come back as empty text. It
+  `:realtime`. Speech already in the target language can come back as empty text, and a
+  short clip's translation varies from call to call. It
   observes the ambient `CancelToken`. Upgrading: call `translate(path; language)` with a
   WAV file.
 - **`AudioFailure.status` may be `nothing`**: a failure a Realtime session reports as an

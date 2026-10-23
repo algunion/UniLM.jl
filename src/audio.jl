@@ -573,7 +573,9 @@ sets the target language (the session's `audio.output.language`, such as `"fr"` 
 unless named), streams the audio in 200 ms frames, closes the session and joins the translated
 transcript. The session also returns translated speech, which `translate` does not keep. Speech
 already in the target language can come back as empty text: an English clip translated into English
-did.
+did. A short clip's translation also varies from call to call: of ten translations into English of a
+two-second French sentence made with [`speak`](@ref), one came back empty and six named words the
+sentence does not have (October 2026).
 
 `path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation session
 takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear interpolation

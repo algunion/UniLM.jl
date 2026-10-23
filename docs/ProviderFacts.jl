@@ -245,7 +245,7 @@ const REGISTRY = _validated([
         pages=["providers/azure.md"], start_id="azure_start",
         features=_features(:azure, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
             :cost, :limits, :failures, :models)),
-        tokens=["Azure OpenAI", "Azure", "AZUREServiceEndpoint", "AZURE_OPENAI_", _MODEL_PREFIXES.openai...]),
+        tokens=["Azure OpenAI", "Azure", "AZUREServiceEndpoint", "AZURE_OPENAI_", "GPT-", _MODEL_PREFIXES.openai...]),
     ProviderEntry(key=:deepseek, chapter=llm, provider=:deepseek, name="DeepSeek",
         endpoints=[DeepSeekEndpoint()], usage="DeepSeekEndpoint()", key_vars=[UniLM.DEEPSEEK_API_KEY],
         default_model=UniLM.default_model(DeepSeekEndpoint()),

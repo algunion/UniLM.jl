@@ -71,13 +71,15 @@ end
 @testset "metrics — GPT- names and CamelCase identifiers count for their provider; a lowercase run never does" begin
     page(line) = fixture_page(line * "\nNeutral line.\n")
     @test share([page("GPT-6 Sol answers.")], :anthropic) ≈ 1 / 2
+    @test share([page("Azure OpenAI deploys GPT-5.2.")], :azure) == 0                # Azure's own model names
+    @test share([page("Azure OpenAI deploys GPT-5.2.")], :anthropic) ≈ 1 / 2
     @test share([page("OllamaOptions sets num_ctx.")], :ollama) == 0
     @test share([page("OllamaOptions sets num_ctx.")], :openai) ≈ 1 / 2
     @test share([page("TypeSafeProtocol is the wire.")], :jev) == 0
     @test share([page("TypeSafeProtocol is the wire.")], :openai) ≈ 1 / 2
     @test all(r -> share([page("The Jevons paradox: cheaper calls, more calls.")], r) == 0, [nothing; [e.key for e in REGISTRY]])
     @test provider_tokens("OpenAIDecisionsProtocol, OllamaSystemOneProtocol and GenericOpenAIEndpoint; GPT-5.4 mini") ==
-          [(Set([:openai]), "OpenAI"), (Set([:ollama]), "Ollama"), (Set([:openai]), "GPT-")]
+          [(Set([:openai]), "OpenAI"), (Set([:ollama]), "Ollama"), (Set([:openai, :azure]), "GPT-")]
 end
 @testset "metrics — fenced code, nested fences and table rows are never prose; an unclosed fence is refused" begin
     page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n\n" *

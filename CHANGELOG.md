@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.26.0 (2026-10-2x)
+## 0.26.0
 
 ### Breaking
 - **Current default models.** `Chat` and `Respond` on `OPENAIServiceEndpoint` default to

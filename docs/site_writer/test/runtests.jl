@@ -4,6 +4,7 @@
 #   julia --startup-file=no --project=docs docs/site_writer/test/runtests.jl
 
 using Documenter, Test
+import JSON
 
 include(joinpath(@__DIR__, "..", "SiteWriter.jl"))
 using .SiteWriter: SiteMarkdoc, WriterError
@@ -33,8 +34,8 @@ Base.show(io::IO, ::MIME"image/png", ::Picture) = write(io, UInt8[0x89, 0x50, 0x
 end
 
 const FIXTURE_PAGES = ["Home" => "index.md",
-                       "Guide" => ["Everything" => "guide.md", "Escaping" => "escaping.md"],
-                       "Reference" => ["API" => "api.md"]]
+    "Chapter" => ["Guide" => ["Everything" => "guide.md", "Escaping" => "escaping.md"], "Reference" => ["API" => "api.md"]]]
+const SITE = mktempdir()  # the site the fixture manual is built into
 
 build(root::String, site::String; pages = [], modules = [WriterFixture]) =
     makedocs(; root, source = "src", build = mktempdir(), sitename = "Fixture", format = SiteMarkdoc(site),
@@ -56,6 +57,7 @@ function build_error(files::Dict{String,String}; modules = [WriterFixture])
     end
 end
 build_error(markdown::String; modules = [WriterFixture]) = build_error(Dict("index.md" => markdown); modules)
+fixture_error(pages) = try build(joinpath(@__DIR__, "fixture"), mktempdir(); pages); nothing catch err; err end
 
 "Loads the package `name` with the file `src/<name>.jl` holding `source`: its docstrings then have a package source."
 function load_package(name::String, source::String)
@@ -137,20 +139,19 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
     end
 
     @testset "the fixture manual" begin
-        site = mktempdir()
-        app = joinpath(site, "src", "app")
+        app = joinpath(SITE, "src", "app")
         mkpath(joinpath(app, "gone"))
         write(joinpath(app, "gone", "page.md"), "a page an earlier build wrote")
         write(joinpath(app, "layout.tsx"), "the site's own file")
-        build(joinpath(@__DIR__, "fixture"), site; pages = FIXTURE_PAGES)
+        build(joinpath(@__DIR__, "fixture"), SITE; pages = FIXTURE_PAGES)
 
         @test !ispath(joinpath(app, "gone"))
         @test read(joinpath(app, "layout.tsx"), String) == "the site's own file"
         @test sort([relpath(joinpath(d, f), app) for (d, _, fs) in walkdir(app) for f in fs if f == "page.md"]) ==
               ["api/page.md", "escaping/page.md", "guide/page.md", "page.md"]
-        @test read(joinpath(site, "public", "assets", "logo.svg"), String) ==
+        @test read(joinpath(SITE, "public", "assets", "logo.svg"), String) ==
               read(joinpath(@__DIR__, "fixture", "src", "assets", "logo.svg"), String)
-        @test read(joinpath(site, "src", "navigation.json"), String) == """
+        @test read(joinpath(SITE, "src", "navigation.json"), String) == """
             [
               {
                 "title": "Introduction",
@@ -162,24 +163,29 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
                 ]
               },
               {
-                "title": "Guide",
-                "links": [
+                "title": "Chapter",
+                "groups": [
                   {
-                    "title": "Everything",
-                    "href": "/guide/"
+                    "title": "Guide",
+                    "links": [
+                      {
+                        "title": "Everything",
+                        "href": "/guide/"
+                      },
+                      {
+                        "title": "Escaping",
+                        "href": "/escaping/"
+                      }
+                    ]
                   },
                   {
-                    "title": "Escaping",
-                    "href": "/escaping/"
-                  }
-                ]
-              },
-              {
-                "title": "Reference",
-                "links": [
-                  {
-                    "title": "API",
-                    "href": "/api/"
+                    "title": "Reference",
+                    "links": [
+                      {
+                        "title": "API",
+                        "href": "/api/"
+                      }
+                    ]
                   }
                 ]
               }
@@ -188,6 +194,22 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         for page in ("page.md", "guide/page.md", "api/page.md", "escaping/page.md")
             expected = read(joinpath(@__DIR__, "expected", replace(page, "/" => "_")), String)
             @test read(joinpath(app, page), String) == expected
+        end
+    end
+
+    @testset "navigation — a chapter of sections is written as a family of groups" begin
+        nav = JSON.parsefile(joinpath(SITE, "src", "navigation.json"))
+        @test nav[1]["title"] == "Introduction" && nav[1]["links"] == [Dict("title" => "Home", "href" => "/")]
+        fam = nav[2]
+        @test fam["title"] == "Chapter" && !haskey(fam, "links") && [g["title"] for g in fam["groups"]] == ["Guide", "Reference"]
+        @test fam["groups"][1]["links"] == [Dict("title" => "Everything", "href" => "/guide/"), Dict("title" => "Escaping", "href" => "/escaping/")]
+    end
+    @testset "navigation — refused shapes" begin
+        for (pages, what) in [["Home" => "index.md", "C" => ["guide.md", "S" => ["api.md"]]] => "a section mixing pages and sections: C",
+                              ["Home" => "index.md", "A" => ["B" => ["C" => ["guide.md"]]], "api.md"] => "a section nested three deep: A",
+                              [Documenter.hide("Home" => "index.md", ["api.md"])] => "a page with sub-pages: index.md"]
+            err = fixture_error(pages)
+            @test err isa WriterError && err.page == "make.jl `pages`" && occursin(what, err.what)
         end
     end
 

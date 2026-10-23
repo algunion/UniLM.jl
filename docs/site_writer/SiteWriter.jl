@@ -38,8 +38,9 @@ manual into the site directory `site`:
 
 - `src/app/<route>/page.md` for every page: `P.md` is served at `/P/`, `index.md`
   at `/` (the pages written by an earlier build are removed first);
-- `src/navigation.json`: the sidebar, one group per section of `pages`, the
-  top-level pages first as "Introduction";
+- `src/navigation.json`: the sidebar, the top-level pages first as the group
+  "Introduction", then per section of `pages` a group of its pages or a family
+  whose groups are its sections;
 - `public/assets/`: a copy of the manual's `assets/` directory.
 
 Nothing is written unless every page converts.
@@ -305,17 +306,31 @@ function read_site(doc::Documenter.Document)
     pages
 end
 
-"The sidebar: the top-level pages as \"Introduction\", then one group per section of `pages`."
-function navigation(doc::Documenter.Document, pages::Vector{Page})
+"""
+The sidebar: the top-level pages as the group `(title = "Introduction", links)`, then per
+section of `pages` a group `(title, links)` of its pages or a family `(title, groups)` whose
+groups are its sections. Throws a `WriterError` for a section mixing pages and sections, a
+section nested three deep, a page with sub-pages or a hidden page.
+"""
+function navigation(doc::Documenter.Document, pages::Vector{Page})::Vector{Any}
     titles = Dict(p.key => p.title for p in pages)
+    refuse(what::String) = throw(WriterError("make.jl `pages`", what))
+    issection(nn::Documenter.NavNode) = nn.page === nothing
     function link(nn::Documenter.NavNode)
-        nn.page === nothing && throw(WriterError("make.jl `pages`", "a section nested in a section"))
-        nn.visible || throw(WriterError("make.jl `pages`", "a hidden page, $(nn.page)"))
+        isempty(nn.children) || refuse("a page with sub-pages: $(nn.page)")
+        nn.visible || refuse("a hidden page, $(nn.page)")
         (title = something(nn.title_override, titles[nn.page]), href = route(nn.page))
     end
-    singles = [link(nn) for nn in doc.internal.navtree if nn.page !== nothing]
-    sections = [(title = nn.title_override, links = [link(c) for c in nn.children])
-                for nn in doc.internal.navtree if nn.page === nothing]
+    group(nn::Documenter.NavNode) = (title = nn.title_override, links = map(link, nn.children))
+    function section(nn::Documenter.NavNode)
+        title, children = nn.title_override, nn.children
+        all(!issection, children) && return group(nn)
+        all(issection, children) || refuse("a section mixing pages and sections: $title")
+        any(s -> any(issection, s.children), children) && refuse("a section nested three deep: $title")
+        (; title, groups = map(group, children))
+    end
+    singles = [link(nn) for nn in doc.internal.navtree if !issection(nn)]
+    sections = Any[section(nn) for nn in doc.internal.navtree if issection(nn)]
     isempty(singles) ? sections : [(title = "Introduction", links = singles); sections]
 end
 

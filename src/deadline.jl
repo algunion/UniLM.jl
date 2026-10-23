@@ -76,10 +76,10 @@ _remaining_s(cfg::RequestConfig, t0::UInt64)::Float64 =
 
 # Walk an exception's wrapping chain looking for the first exception matching
 # `pred`. An exception delivered into a task mid-request can surface
-# arbitrarily nested (TaskFailedException, CompositeException, and wrappers that
-# carry their cause as .error or .cause — HTTP.jl's ConnectError, DNSError and
-# TLS errors use .cause); matching on the chain keeps classification independent
-# of which layer caught first.
+# arbitrarily nested (TaskFailedException, CompositeException, CapturedException,
+# and wrappers that carry their cause as .error or .cause — HTTP.jl's ConnectError,
+# DNSError and TLS errors use .cause); matching on the chain keeps classification
+# independent of which layer caught first.
 function _find_exception(pred::Function, e)
     e isa Exception && pred(e) && return e
     if e isa TaskFailedException
@@ -93,6 +93,10 @@ function _find_exception(pred::Function, e)
             found = _find_exception(pred, inner)
             found !== nothing && return found
         end
+    elseif e isa CapturedException
+        # `asyncmap` throws one (in a dispatcher, an MCP handler); this package and HTTP.jl never do, so request errors classify as before.
+        found = _find_exception(pred, e.ex)
+        found !== nothing && return found
     end
     for name in (:error, :cause)
         if e isa Exception && hasproperty(e, name)

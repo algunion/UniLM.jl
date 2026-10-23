@@ -1061,7 +1061,8 @@ _rl_openai_stream_nocb() =
 _rl_respond_stream_nocb() =
     fetch(respond(Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input="Say hello.", stream=true); config=_RL_RETRYING))
 _rl_unwrap(e) = e isa TaskFailedException ? _rl_unwrap(e.task.exception) :
-                e isa CompositeException ? _rl_unwrap(first(e.exceptions)) : e
+                e isa CompositeException ? _rl_unwrap(first(e.exceptions)) :
+                e isa CapturedException ? _rl_unwrap(e.ex) : e
 
 # A replayed stream whose callback cancels the call at its first delta.
 function _rl_cancelled_replay()
@@ -1317,9 +1318,9 @@ end
 @testset "recorded LLM answers — a fetched stream's lost write or miss stops a tool loop and answers an MCP client -32603" begin
     # A dispatcher or an MCP tool handler that fetches a streamed call gets its lost write, or a
     # later hop's miss, inside the TaskFailedException `fetch` raises (out of an @sync block,
-    # inside a CompositeException). As a tool error the model would read it, a local path with
-    # it, and go on; a loop throws that exception whole instead, and an MCP server logs it and
-    # answers the generic -32603.
+    # inside a CompositeException; out of an asyncmap, inside a CapturedException). As a tool
+    # error the model would read it, a local path with it, and go on; a loop throws that
+    # exception whole instead, and an MCP server logs it and answers the generic -32603.
     gap = _ra_dir("llm-dispatch-stream-gap")             # a continued stream without its second hop
     _rl_online(() -> with_recorded_answers(_rl_gemini_continuation_stream, gap; mode=:record))
     rm(only(f for f in readdir(gap; join=true)
@@ -1336,10 +1337,12 @@ end
         @sync @async missed(name, args)
         "5"
     end
+    mapped = (name, args) -> only(asyncmap(_ -> missed(name, args), 1:1))   # and out of an asyncmap
     _rl_online() do
         for (dispatcher, wrapper, cause, sent) in ((lost, TaskFailedException, RecordingWriteError, 2),
                                                    (missed, TaskFailedException, ReplayMissError, 1),
-                                                   (synced, CompositeException, ReplayMissError, 1)), n in (1, 2)
+                                                   (synced, CompositeException, ReplayMissError, 1),
+                                                   (mapped, CapturedException, ReplayMissError, 1)), n in (1, 2)
             chat = _rl_loop_chat()
             for loop in (() -> tool_loop!(chat, dispatcher; config=_RL_CFG, tool_concurrency=n),
                          () -> tool_loop(_rl_loop_respond(), dispatcher; config=_RL_CFG, tool_concurrency=n))
@@ -1351,7 +1354,7 @@ end
             end
             @test length(chat) == 2                     # the chat loop's turn is rolled back
         end
-        for (handler, dir) in ((lost, lost_dir), (missed, gap), (synced, gap))
+        for (handler, dir) in ((lost, lost_dir), (missed, gap), (synced, gap), (mapped, gap))
             server = MCPServer("fetched-stream", "1.0.0")
             register_tool!(server, "add", "Adds two numbers", Dict{String,Any}("type" => "object"),
                            args -> handler("add", args))

@@ -70,3 +70,10 @@ nothing
     Hidden until opened, with `code`.
 
 See [`WriterFixture.greet`](@ref) and [`WriterFixture.Greeting`](@ref).
+
+## Generated
+
+```@eval
+import Markdown
+Markdown.parse("| Provider | Start |\n| :--- | :--- |\n| Fixture | [`WriterFixture.greet`](@ref) |\n")
+```

@@ -24,13 +24,20 @@ for (let page of await glob('**/page.md', { cwd: app })) {
   await rm(join(app, page))
 }
 await removeEmptyDirs(app)
-await rm(join(site, 'public/assets'), { recursive: true, force: true })
+// public/: the assets, and the anchor maps that move a reader to an anchor on
+// another page (src/app/layout.tsx)
+const publicFiles = ['assets', 'anchors.json', 'anchor-aliases.json']
+for (let name of publicFiles) {
+  await rm(join(site, 'public', name), { recursive: true, force: true })
+}
 
 await cp(join(site, 'fixtures/app'), app, { recursive: true })
 await cp(
   join(site, 'fixtures/navigation.json'),
   join(site, 'src/navigation.json'),
 )
-await cp(join(site, 'fixtures/assets'), join(site, 'public/assets'), {
-  recursive: true,
-})
+for (let name of publicFiles) {
+  await cp(join(site, 'fixtures', name), join(site, 'public', name), {
+    recursive: true,
+  })
+}

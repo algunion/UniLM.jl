@@ -4,6 +4,7 @@
 #   julia --startup-file=no --project=docs docs/site_writer/test/runtests.jl
 
 using Documenter, Test
+import JSON
 
 include(joinpath(@__DIR__, "..", "SiteWriter.jl"))
 using .SiteWriter: SiteMarkdoc, WriterError
@@ -33,29 +34,28 @@ Base.show(io::IO, ::MIME"image/png", ::Picture) = write(io, UInt8[0x89, 0x50, 0x
 end
 
 const FIXTURE_PAGES = ["Home" => "index.md",
-                       "Guide" => ["Everything" => "guide.md", "Escaping" => "escaping.md"],
-                       "Reference" => ["API" => "api.md"]]
+    "Chapter" => ["Guide" => ["Everything" => "guide.md", "Escaping" => "escaping.md"], "Reference" => ["API" => "api.md"]]]
+const SITE = mktempdir()  # the site the fixture manual is built into
 
 build(root::String, site::String; pages = [], modules = [WriterFixture]) =
     makedocs(; root, source = "src", build = mktempdir(), sitename = "Fixture", format = SiteMarkdoc(site),
              remotes = nothing, doctest = false, checkdocs = :none, modules, pages,
              warnonly = [:missing_docs, :cross_references])
 
-"The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
-function build_error(files::Dict{String,String}; modules = [WriterFixture])
+"Builds a manual of `files` (path under `src/` => Markdown); returns the site directory it wrote."
+function build_site(files::Dict{String,String}; pages = [], modules = [WriterFixture])
     root = mktempdir()
     for (path, markdown) in files
         mkpath(dirname(joinpath(root, "src", path)))
         write(joinpath(root, "src", path), markdown)
     end
-    try
-        build(root, joinpath(root, "site"); modules)
-        nothing
-    catch err
-        err
-    end
+    build(root, joinpath(root, "site"); pages, modules)
+    joinpath(root, "site")
 end
+"The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
+build_error(files::Dict{String,String}; modules = [WriterFixture]) = try build_site(files; modules); nothing catch err; err end
 build_error(markdown::String; modules = [WriterFixture]) = build_error(Dict("index.md" => markdown); modules)
+fixture_error(pages) = try build(joinpath(@__DIR__, "fixture"), mktempdir(); pages); nothing catch err; err end
 
 "Loads the package `name` with the file `src/<name>.jl` holding `source`: its docstrings then have a package source."
 function load_package(name::String, source::String)
@@ -137,20 +137,19 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
     end
 
     @testset "the fixture manual" begin
-        site = mktempdir()
-        app = joinpath(site, "src", "app")
+        app = joinpath(SITE, "src", "app")
         mkpath(joinpath(app, "gone"))
         write(joinpath(app, "gone", "page.md"), "a page an earlier build wrote")
         write(joinpath(app, "layout.tsx"), "the site's own file")
-        build(joinpath(@__DIR__, "fixture"), site; pages = FIXTURE_PAGES)
+        build(joinpath(@__DIR__, "fixture"), SITE; pages = FIXTURE_PAGES)
 
         @test !ispath(joinpath(app, "gone"))
         @test read(joinpath(app, "layout.tsx"), String) == "the site's own file"
         @test sort([relpath(joinpath(d, f), app) for (d, _, fs) in walkdir(app) for f in fs if f == "page.md"]) ==
               ["api/page.md", "escaping/page.md", "guide/page.md", "page.md"]
-        @test read(joinpath(site, "public", "assets", "logo.svg"), String) ==
+        @test read(joinpath(SITE, "public", "assets", "logo.svg"), String) ==
               read(joinpath(@__DIR__, "fixture", "src", "assets", "logo.svg"), String)
-        @test read(joinpath(site, "src", "navigation.json"), String) == """
+        @test read(joinpath(SITE, "src", "navigation.json"), String) == """
             [
               {
                 "title": "Introduction",
@@ -162,24 +161,29 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
                 ]
               },
               {
-                "title": "Guide",
-                "links": [
+                "title": "Chapter",
+                "groups": [
                   {
-                    "title": "Everything",
-                    "href": "/guide/"
+                    "title": "Guide",
+                    "links": [
+                      {
+                        "title": "Everything",
+                        "href": "/guide/"
+                      },
+                      {
+                        "title": "Escaping",
+                        "href": "/escaping/"
+                      }
+                    ]
                   },
                   {
-                    "title": "Escaping",
-                    "href": "/escaping/"
-                  }
-                ]
-              },
-              {
-                "title": "Reference",
-                "links": [
-                  {
-                    "title": "API",
-                    "href": "/api/"
+                    "title": "Reference",
+                    "links": [
+                      {
+                        "title": "API",
+                        "href": "/api/"
+                      }
+                    ]
                   }
                 ]
               }
@@ -191,10 +195,48 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         end
     end
 
+    @testset "navigation — a chapter of sections is written as a family of groups" begin
+        nav = JSON.parsefile(joinpath(SITE, "src", "navigation.json"))
+        @test nav[1]["title"] == "Introduction" && nav[1]["links"] == [Dict("title" => "Home", "href" => "/")]
+        fam = nav[2]
+        @test fam["title"] == "Chapter" && !haskey(fam, "links") && [g["title"] for g in fam["groups"]] == ["Guide", "Reference"]
+        @test fam["groups"][1]["links"] == [Dict("title" => "Everything", "href" => "/guide/"), Dict("title" => "Escaping", "href" => "/escaping/")]
+    end
+    @testset "navigation — a section of pages is written as a group, after the top-level pages" begin
+        site = mktempdir()
+        build(joinpath(@__DIR__, "fixture"), site; pages = ["G" => ["guide.md"], "index.md"])
+        @test JSON.parsefile(joinpath(site, "src", "navigation.json")) ==
+              [Dict("title" => "Introduction", "links" => [Dict("title" => "Fixture Home", "href" => "/")]),
+               Dict("title" => "G", "links" => [Dict("title" => "Everything", "href" => "/guide/")])]
+    end
+    @testset "navigation — refused shapes" begin
+        for (pages, what) in [["Home" => "index.md", "C" => ["guide.md", "S" => ["api.md"]]] => "a section mixing pages and sections: C",
+                              ["Home" => "index.md", "A" => ["B" => ["C" => ["guide.md"]]], "api.md"] => "a section nested three deep: A",
+                              [Documenter.hide("Home" => "index.md", ["api.md"])] => "a page with sub-pages: index.md"]
+            err = fixture_error(pages)
+            @test err isa WriterError && err.page == "make.jl `pages`" && occursin(what, err.what)
+        end
+    end
+
+    @testset "@eval — the Markdown it returns is written, its @ref links resolved" begin
+        page = read(joinpath(SITE, "src", "app", "guide", "page.md"), String)
+        @test occursin("| Fixture | [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) |", page)
+    end
+    @testset "anchors.json — every anchor, page titles included, maps to the routes that define it" begin
+        anchors = JSON.parsefile(joinpath(SITE, "public", "anchors.json"))
+        @test anchors["fixture_home"] == ["/"] && anchors["Everything"] == ["/guide/"]
+        @test anchors["Main.WriterFixture.greet"] == ["/api/"]
+        @test all(rs -> !isempty(rs) && issorted(rs) && all(r -> startswith(r, "/") && endswith(r, "/"), rs), values(anchors))
+    end
+    @testset "anchors.json — a heading slug on two pages lists both routes" begin
+        site = build_site(Dict("index.md" => "# Home\n\n## Usage\n\nx\n", "a.md" => "# A\n\n## Usage\n\ny\n"); pages = ["index.md", "a.md"])
+        @test JSON.parsefile(joinpath(site, "public", "anchors.json"))["Usage"] == ["/", "/a/"]
+    end
+
     @testset "what the site cannot show stops the build, naming the page and the node" begin
         @testset "$named" for (markdown, named) in [
             "```@raw html\n<b>x</b>\n```" => "Documenter.RawNode",
-            "```@eval\nimport Markdown\nMarkdown.parse(\"evaluated\")\n```" => "Documenter.EvalNode",
+            "```@eval\nimport Markdown\nMarkdown.parse(\"## H\")\n```" => "a level-2 heading nested inside a block",
             "```@repl\n1 + 1\n```" => "Documenter.MultiCodeBlock",
             "```@index\n```" => "Documenter.IndexNode",
             "```@contents\n```" => "Documenter.ContentsNode",

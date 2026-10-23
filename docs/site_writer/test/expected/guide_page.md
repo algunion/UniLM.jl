@@ -91,3 +91,9 @@ Hidden until opened\, with `code`\.
 {% /details %}
 
 See [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) and [`WriterFixture.Greeting`](/api/#Main.WriterFixture.Greeting)\.
+
+## Generated {% id="Generated" %}
+
+| Provider | Start |
+| :--- | :--- |
+| Fixture | [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) |

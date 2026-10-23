@@ -21,7 +21,7 @@ import {
 import { Dialog, DialogPanel } from '@headlessui/react'
 import clsx from 'clsx'
 
-import { navigation } from '@/lib/navigation'
+import { trailOf } from '@/lib/navigation'
 import { type Result } from '@/markdoc/search.mjs'
 
 type EmptyObject = Record<string, never>
@@ -32,6 +32,11 @@ type Autocomplete = AutocompleteApi<
   React.MouseEvent,
   React.KeyboardEvent
 >
+
+// the route of the page a result belongs to
+function pageOf(result: Result) {
+  return result.url.split('#')[0]
+}
 
 function SearchIcon(props: React.ComponentPropsWithoutRef<'svg'>) {
   return (
@@ -98,7 +103,13 @@ function useAutocomplete({
             {
               sourceId: 'documentation',
               getItems() {
-                return search(query, { limit: 5 })
+                // a page's sections next to each other, the pages in the
+                // order of their best match
+                let results = search(query, { limit: 10 })
+                let pages = [...new Set(results.map(pageOf))]
+                return pages.flatMap((page) =>
+                  results.filter((result) => pageOf(result) === page),
+                )
               },
               getItemUrl({ item }) {
                 return item.url
@@ -167,10 +178,8 @@ function SearchResult({
 }) {
   let id = useId()
 
-  let sectionTitle = navigation.find((section) =>
-    section.links.find((link) => link.href === result.url.split('#')[0]),
-  )?.title
-  let hierarchy = [sectionTitle, result.pageTitle].filter(
+  let trail = trailOf(pageOf(result))
+  let hierarchy = [trail?.family, trail?.group, result.pageTitle].filter(
     (x): x is string => typeof x === 'string',
   )
 

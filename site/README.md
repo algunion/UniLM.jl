@@ -14,8 +14,8 @@ into this directory, and the site renders it.
    julia --project=docs docs/make.jl
    ```
 
-   This writes `src/app/**/page.md`, `src/navigation.json` and
-   `public/assets/`, all gitignored.
+   This writes `src/app/**/page.md`, `src/navigation.json`, `public/assets/`
+   and `public/anchors.json`, all gitignored.
 
 2. Build the static site:
 
@@ -30,7 +30,7 @@ into this directory, and the site renders it.
    `NEXT_PUBLIC_DOCS_VERSION` sets the version label in the header: `dev` (the
    default), `stable` or a release such as `v0.22.0`.
 
-`npm run fixtures` replaces the generated pages with the three sample pages in
+`npm run fixtures` replaces the generated pages with the four sample pages in
 `fixtures/`, written in the writer's output format, so the site can be built
 and reviewed without generating the manual. `npm run dev` serves the site with
 live reload; `npm run lint` and `npx tsc --noEmit` check the code.

@@ -204,6 +204,13 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         @test fam["title"] == "Chapter" && !haskey(fam, "links") && [g["title"] for g in fam["groups"]] == ["Guide", "Reference"]
         @test fam["groups"][1]["links"] == [Dict("title" => "Everything", "href" => "/guide/"), Dict("title" => "Escaping", "href" => "/escaping/")]
     end
+    @testset "navigation — a section of pages is written as a group, after the top-level pages" begin
+        site = mktempdir()
+        build(joinpath(@__DIR__, "fixture"), site; pages = ["G" => ["guide.md"], "index.md"])
+        @test JSON.parsefile(joinpath(site, "src", "navigation.json")) ==
+              [Dict("title" => "Introduction", "links" => [Dict("title" => "Fixture Home", "href" => "/")]),
+               Dict("title" => "G", "links" => [Dict("title" => "Everything", "href" => "/guide/")])]
+    end
     @testset "navigation — refused shapes" begin
         for (pages, what) in [["Home" => "index.md", "C" => ["guide.md", "S" => ["api.md"]]] => "a section mixing pages and sections: C",
                               ["Home" => "index.md", "A" => ["B" => ["C" => ["guide.md"]]], "api.md"] => "a section nested three deep: A",

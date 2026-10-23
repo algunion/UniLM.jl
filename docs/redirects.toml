@@ -1,0 +1,9 @@
+# Links into earlier versions of the documentation site that keep working after a page or an anchor moves;
+# docs/redirects.jl reads this file once the site is built.
+#
+# [routes]   old route = the route that replaced it, e.g. "guide/responses_api" = "providers/openai/responses".
+#            A stub at the old route forwards its readers there, to the anchor they followed where it still exists.
+# [anchors]  retired anchor id = its successor, an id that a page of the site defines.
+[routes]
+
+[anchors]

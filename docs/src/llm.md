@@ -2119,6 +2119,14 @@ TypeSafe retries carry `X-TypeSafe-Retry-Count` (`"1"` on the second attempt).
 Every System One exchange uses one connection pool per process (256 idle
 connections per host, kept 30 s), created by the first live request.
 
+```@setup generated
+# generated:decision-provider-contracts (written by docs/regions.jl)
+```
+
+```@setup generated
+# /generated:decision-provider-contracts
+```
+
 ### Provider protocol (public, not exported)
 
 ```julia
@@ -2467,6 +2475,14 @@ timestamps) are documented only for `whisper-1` and `diarized_json` (speaker lab
 OpenAI and `translate` need `:realtime`; `speak` on `GEMINIServiceEndpoint` is Gemini TTS.
 
 ---
+
+```@setup generated
+# generated:provider-contracts (written by docs/regions.jl)
+```
+
+```@setup generated
+# /generated:provider-contracts
+```
 
 ## Provider Capabilities
 

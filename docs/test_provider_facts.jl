@@ -78,3 +78,84 @@ end
     @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
     @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", ["minimal"])  # other refusals propagate
 end
+@testset "ProviderFacts — regions regenerate and staleness is detected, in both marker forms" begin
+    html = "a\n\n<!-- generated:providers -->\n\nold\n\n<!-- /generated:providers -->\n\nb\n"
+    fence = "a\n\n```@setup generated\n# generated:provider-contracts (written by docs/regions.jl)\n```\n\nold\n\n```@setup generated\n# /generated:provider-contracts\n```\n\nb\n"
+    for text in (html, fence)
+        out = apply_regions(text)
+        @test !occursin("\nold\n", out) && apply_regions(out) == out           # regenerated, idempotent
+        @test startswith(out, "a\n\n") && endswith(out, "\n\nb\n")
+        mktemp() do p, io; write(io, text); close(io); @test length(stale_regions(p)) == 1; end
+    end
+    @test occursin("Anthropic", apply_regions(html))
+end
+@testset "ProviderFacts — region markers are parsed strictly; each refusal names the file and the line" begin
+    O, C = "<!-- generated:providers -->", "<!-- /generated:providers -->"
+    FO = "```@setup generated\n# generated:provider-contracts (written by docs/regions.jl)\n```"
+    FC = "```@setup generated\n# /generated:provider-contracts\n```"
+    function refusal(text)                          # the file and line the parser names; `nothing` when it accepts
+        try apply_regions(text; file="f.txt"); nothing
+        catch err; err isa ProviderFacts.RegionError || rethrow(); (err.file, err.line) end
+    end
+    @test refusal("a\n\n$O\n\nold\n\n$C\n\n$FO\n\nold\n\n$FC\n\nb\n") === nothing         # both forms in one file
+    @test refusal("a\n\n$O\n\nold\n") == ("f.txt", 3)                                    # not closed
+    @test refusal("a\n\n$O\n\n$FO\n\n$FC\n\n$C\n\nb\n") == ("f.txt", 5)                   # opened inside another
+    @test refusal("a\n\n$O\n\n$FC\n\n$C\n\nb\n") == ("f.txt", 5)                          # another region closes inside it
+    @test refusal("a\n\n$C\n\nb\n") == ("f.txt", 3)                                      # closed, never opened
+    @test refusal("a\n\n$O\n\n$C\n\n$O\n\n$C\n\nb\n") == ("f.txt", 7)                     # marked twice
+    @test refusal("a\n\n<!-- generated:provider -->\n\n<!-- /generated:provider -->\n\nb\n") == ("f.txt", 3)  # unknown
+    @test refusal("a\n\n<!-- generated:provider-contracts -->\n\n<!-- /generated:provider-contracts -->\n\nb\n") ==
+          ("f.txt", 3)                                                                   # a region of the other form
+    @test refusal("a\n\n$O\n\n<!-- /generated:providers --> -->\n\nb\n") == ("f.txt", 5)   # a closing marker's prefix
+    @test refusal("a\n\n```@setup generated\nx = 1\n```\n\nb\n") == ("f.txt", 3)          # a setup block marking nothing
+    @test refusal("a\n$O\n\n$C\n\nb\n") == ("f.txt", 2)                                  # no blank line above
+    @test refusal("a\n\n$O\nold\n\n$C\n\nb\n") == ("f.txt", 3)                           # none below
+    @test refusal("a\n\n$O\n\nold\n$C\n\nb\n") == ("f.txt", 6)                           # none above the closing one
+    @test refusal("a\n\n$O\n\n$C\n") == ("f.txt", 5)                                     # the file ends after it
+    mktemp() do p, io
+        write(io, "a\n\n$O\n\n"); close(io)
+        err = try stale_regions(p); nothing catch e; e end
+        @test err isa ProviderFacts.RegionError && (err.file, err.line) == (p, 3) &&
+              startswith(sprint(showerror, err), "RegionError: $p:3: ")
+    end
+    @test_throws ArgumentError region_text("provider")
+end
+@testset "ProviderFacts — a region holds its text between blank lines and is stale when one byte differs" begin
+    O, C = "<!-- generated:providers -->", "<!-- /generated:providers -->"
+    FO = "```@setup generated\n# generated:provider-contracts (written by docs/regions.jl)\n```"
+    FC = "```@setup generated\n# /generated:provider-contracts\n```"
+    two = "a\n\n$FO\n\nold\n\n$FC\n\n$O\n\nold\n\n$C\n\nb\n"
+    current = apply_regions(two)
+    @test occursin("$FO\n\n$(region_text("provider-contracts"))\n$FC\n\n$O\n\n$(region_text("providers"))\n$C\n\nb\n", current)
+    stale(text) = mktemp() do p, io; write(io, text); close(io); stale_regions(p) end
+    @test stale(two) == ["provider-contracts", "providers"]                             # in file order
+    @test stale(current) == String[]
+    @test stale(replace(current, "`gpt-6-luna`\n" => "`gpt-6-luna` \n")) == ["providers"]
+end
+@testset "ProviderFacts — each region lists its chapters' entries, linked the way its file is read" begin
+    items(name) = [only(i).content for i in Markdown.parse(region_text(name)).content[2].items]
+    in_order(chapters...) = [e for e in REGISTRY if e.chapter in chapters]
+    for (name, entries) in ("provider-contracts" => in_order(ProviderFacts.llm),
+                            "decision-provider-contracts" => in_order(ProviderFacts.decisions),
+                            "providers" => in_order(ProviderFacts.llm, ProviderFacts.decisions))
+        md = Markdown.parse(region_text(name))
+        @test length(md.content) == 2 && md.content[1] isa Markdown.Header && !hasvalue(convert(MarkdownAST.Node, md))
+        @test [only(p[1].text) for p in items(name)] == [e.name for e in entries]
+        @test all(zip(items(name), entries)) do (p, e)                                  # usage, key variables, default model
+            [c.code for c in p if c isa Markdown.Code] == ["service = $(e.usage)"; e.key_vars; something(e.default_model, String[])]
+        end
+    end
+    @test [p[1].url for p in items("provider-contracts")] == ["@ref " * e.start_id for e in in_order(ProviderFacts.llm)]
+    url(key) = only(p[1].url for p in items("providers") if only(p[1].text) == entry(key).name)
+    @test url(:openai) == "https://algunion.github.io/UniLM.jl/dev/providers/openai/"          # an index.md page
+    @test url(:local_servers) == "https://algunion.github.io/UniLM.jl/dev/providers/local_servers/"
+    @test url(:openai_decisions) == "https://algunion.github.io/UniLM.jl/dev/decisions/openai/"
+    @test endswith(region_text("provider-contracts"),
+                   "`service = MistralEndpoint()`; reads `MISTRAL_API_KEY`; no default model (a call names one)\n")
+    @test occursin("`; reads no environment variable; no default model", region_text("providers"))
+end
+@testset "ProviderFacts — llm.md and llms.txt hold their regions, well marked" begin
+    regions(path) = first.(ProviderFacts._regions(split(read(path, String), '\n'), path))
+    @test regions(joinpath(@__DIR__, "src", "llm.md")) == ["decision-provider-contracts", "provider-contracts"]
+    @test regions(joinpath(dirname(@__DIR__), "llms.txt")) == ["providers"]
+end

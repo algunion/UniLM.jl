@@ -11,6 +11,9 @@ own: `Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)`. Each returns a
 holding one table and nothing else. A cell is a `Vector{Any}` of inline elements — text, inline
 code, `@ref` links —, the form Documenter converts without raw values, and rows come in a fixed
 order, so a table generated twice is the same bytes.
+
+The same entries fill the generated regions of `docs/src/llm.md` and `llms.txt`, which
+`docs/regions.jl` rewrites, so readers of those files as they are see the facts too.
 """
 module ProviderFacts
 
@@ -18,9 +21,13 @@ using Markdown
 using Printf: @sprintf
 using UniLM
 
+# The site writer's rule for the route a page is served at, which `llms.txt` links need.
+isdefined(Main, :SiteWriter) || Base.include(Main, joinpath(@__DIR__, "site_writer", "SiteWriter.jl"))
+using Main.SiteWriter: route
+
 export Chapter, ProviderEntry, NEUTRAL_TOKENS, REGISTRY, CONCEPT_PAGES, entry, provider_table, at_a_glance,
        capability_matrix, on_your_provider, openai_model_rules, claude_family_table, gemini_thinking_table,
-       price_rows, price_table
+       price_rows, price_table, region_text, apply_regions, stale_regions
 
 # ── Table cells ──────────────────────────────────────────────────────────────
 
@@ -562,6 +569,170 @@ rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file w
 function price_table(table::Symbol)::Markdown.MD
     _table(["Model", "Input (USD per 1M tokens)", "Cached input (USD per 1M tokens)", "Output (USD per 1M tokens)"],
            Vector{Any}[_price_row(id, _PRICES[id]) for id in price_rows(table)])
+end
+
+# ── Generated regions ────────────────────────────────────────────────────────
+
+"""
+    MarkerForm
+
+How a file marks the regions `docs/regions.jl` writes: the lines of the marker that opens a
+region and of the one that closes it, `NAME` standing for the region's name, and whether the
+region links with `@ref`s, which Documenter resolves, or with the site's URLs, for a file read
+as it is.
+"""
+struct MarkerForm
+    opening::Vector{String}
+    closing::Vector{String}
+    refs::Bool
+end
+
+# Documenter's Markdown has no HTML — a comment would show as a paragraph —, so a page marks a
+# region with `@setup` blocks, which run a comment and render nothing.
+const _SETUP_BLOCKS = MarkerForm(["```@setup generated", "# generated:NAME (written by docs/regions.jl)", "```"],
+                                 ["```@setup generated", "# /generated:NAME", "```"], true)
+# A plain-text file marks a region with HTML comments.
+const _HTML_COMMENTS = MarkerForm(["<!-- generated:NAME -->"], ["<!-- /generated:NAME -->"], false)
+
+# Each generated region: the form of its markers, the heading its text opens with, and the
+# chapters whose entries it lists.
+const _REGIONS = Dict{String,@NamedTuple{form::MarkerForm, heading::String, chapters::Vector{Chapter}}}(
+    "provider-contracts" => (form=_SETUP_BLOCKS, heading="## Provider Contracts", chapters=[llm]),
+    "decision-provider-contracts" => (form=_SETUP_BLOCKS, heading="### Decision provider contracts",
+                                      chapters=[decisions]),
+    "providers" => (form=_HTML_COMMENTS, heading="## Providers", chapters=[llm, decisions]))
+
+_region_names()::String = join(sort!(collect(keys(_REGIONS))), ", ")
+
+# The development build of the manual, where the site serves each page at its route.
+const _SITE = "https://algunion.github.io/UniLM.jl/dev"
+
+# An entry's line: its name linking its start page, the `service` that selects it, the
+# environment variables it reads and its default model.
+function _contract(e::ProviderEntry, refs::Bool)::String
+    link = refs ? "@ref " * e.start_id : _SITE * route(first(e.pages))
+    vars = isempty(e.key_vars) ? "no environment variable" : join(("`$v`" for v in e.key_vars), ", ")
+    model = isnothing(e.default_model) ? "no default model (a call names one)" : "default model `$(e.default_model)`"
+    "- [$(e.name)]($link): `service = $(e.usage)`; reads $vars; $model"
+end
+
+"""
+    region_text(name::String) -> String
+
+The text of the generated region `name`: its heading, a blank line, and one line per entry of
+its chapters in registry order — the entry's name linking its start page (an `@ref` in
+`docs/src/llm.md`, the page's URL on the site in `llms.txt`), the `service` that selects it,
+the environment variables it reads and its default model —, every line ending in a newline.
+An `ArgumentError` naming the regions when there is no region `name`.
+"""
+function region_text(name::String)::String
+    r = get(_REGIONS, name) do
+        throw(ArgumentError("no generated region $(repr(name)); the regions are $(_region_names())"))
+    end
+    string(r.heading, "\n\n", (_contract(e, r.form.refs) * "\n" for e in REGISTRY if e.chapter in r.chapters)...)
+end
+
+"""
+    RegionError(file, line, message)
+
+Thrown when the region markers of `file` break a rule; `line` is the first line of the marker
+at fault.
+"""
+struct RegionError <: Exception
+    file::String
+    line::Int
+    message::String
+end
+Base.showerror(io::IO, e::RegionError) = print(io, "RegionError: ", e.file, ":", e.line, ": ", e.message)
+
+# A marker in a file: its region's name, whether it opens the region, and its lines.
+const _Marker = @NamedTuple{name::String, opens::Bool, span::UnitRange{Int}}
+
+# Every marker a file may hold, as lines — the opening and the closing one of each region, in
+# the region's form —, and what the first line of a marker of either form starts with.
+const _MARKERS = [(name=name, opens=opens, lines=replace.(opens ? r.form.opening : r.form.closing, "NAME" => name))
+                  for (name, r) in _REGIONS for opens in (true, false)]
+const _MARKER_STARTS = unique!([String(first(split(first(m), "NAME")))
+                                for f in (_SETUP_BLOCKS, _HTML_COMMENTS) for m in (f.opening, f.closing)])
+
+# Whether line `j` of a text split at '\n' is blank; the piece after a final newline is no line.
+_blank(lines::AbstractVector{<:AbstractString}, j::Int)::Bool = 1 <= j < length(lines) && isempty(lines[j])
+
+# The marker at line `i`, or `nothing` when the line does not start like one. A `RegionError`
+# when it does and the lines from it are not exactly a region's marker, or when the marker does
+# not stand between blank lines.
+function _marker(lines::AbstractVector{<:AbstractString}, i::Int, file::String)::Union{_Marker,Nothing}
+    any(s -> startswith(lines[i], s), _MARKER_STARTS) || return nothing
+    k = findfirst(m -> view(lines, i:min(lastindex(lines), i + length(m.lines) - 1)) == m.lines, _MARKERS)
+    isnothing(k) && throw(RegionError(file, i, "$(repr(String(lines[i]))) starts like a marker and begins no " *
+                                               "marker of the regions $(_region_names())"))
+    m = _MARKERS[k]
+    span = i:(i + length(m.lines) - 1)
+    _blank(lines, first(span) - 1) && _blank(lines, last(span) + 1) ||
+        throw(RegionError(file, i, "the marker of region $(m.name) does not stand between blank lines"))
+    (name=m.name, opens=m.opens, span=span)
+end
+
+# The regions `lines` marks, in order: each one's name and the lines between its markers. A
+# region unclosed, opened or closed inside another, or marked twice is a `RegionError` naming
+# `file` and the line, as are the refusals of `_marker`.
+function _regions(lines::AbstractVector{<:AbstractString}, file::String)::Vector{Pair{String,UnitRange{Int}}}
+    regions = Pair{String,UnitRange{Int}}[]
+    open::Union{_Marker,Nothing} = nothing              # the opening marker of the region being read
+    for i in eachindex(lines)
+        m = _marker(lines, i, file)
+        isnothing(m) && continue
+        if m.opens
+            isnothing(open) || throw(RegionError(file, i,
+                "region $(m.name) opens inside region $(open.name), opened at line $(first(open.span))"))
+            any(r -> first(r) == m.name, regions) && throw(RegionError(file, i, "region $(m.name) is marked twice"))
+            open = m
+        else
+            isnothing(open) && throw(RegionError(file, i, "region $(m.name) closes and is not open"))
+            open.name == m.name || throw(RegionError(file, i,
+                "region $(m.name) closes inside region $(open.name), opened at line $(first(open.span))"))
+            push!(regions, m.name => (last(open.span) + 1):(first(m.span) - 1))
+            open = nothing
+        end
+    end
+    isnothing(open) || throw(RegionError(file, first(open.span), "region $(open.name) is not closed"))
+    regions
+end
+
+# The lines region `name` holds between its markers: a blank line, its text, a blank line.
+_content(name::String)::Vector{SubString{String}} = split("\n" * region_text(name), '\n')
+
+"""
+    apply_regions(text::String; file::String = "string") -> String
+
+`text` with every region it marks holding its current text — between the region's markers a
+blank line, `region_text(name)` and a blank line — and every other byte unchanged. Markers
+take either form: `@setup generated` blocks or HTML comments. A `RegionError` naming `file`
+and the line when a region is unclosed, opened or closed inside another, marked twice or
+unknown, when a marker does not stand between blank lines, or when a line starts like a
+marker and is not one.
+"""
+function apply_regions(text::String; file::String="string")::String
+    lines = split(text, '\n')
+    out = SubString{String}[]
+    from = 1                                            # the first line not yet copied
+    for (name, inside) in _regions(lines, file)
+        append!(out, view(lines, from:(first(inside) - 1)), _content(name))
+        from = last(inside) + 1
+    end
+    join(append!(out, view(lines, from:lastindex(lines))), '\n')
+end
+
+"""
+    stale_regions(path::String) -> Vector{String}
+
+The regions of the file at `path`, in file order, whose lines between the markers differ from
+those `apply_regions` writes, byte for byte; empty when every region is current. The refusals
+are `apply_regions`'s, naming `path`.
+"""
+function stale_regions(path::String)::Vector{String}
+    lines = split(read(path, String), '\n')
+    [name for (name, inside) in _regions(lines, path) if view(lines, inside) != _content(name)]
 end
 
 end # module

@@ -2179,12 +2179,14 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r[
 
 Identical requests are not answered identically, so tests and docs builds
 replay recorded answers. Inside the scope, every `ask` (hence `ask_each`,
-`nl_dispatch`, `nl_classify` and `@branch`) and `list_models`, and every non-streaming
-`chatrequest!`, `respond` and `embeddingrequest!` (hence `tool_loop!` and
-`tool_loop`), exchanges through `dir`; everything else, including streaming,
-reaches the network as usual (images, audio, files, MCP, the Responses lifecycle
-operations), in every mode. Scopes cover spawned tasks and nest (an inner scope's
-service is the enclosing scope).
+`nl_dispatch`, `nl_classify` and `@branch`) and TypeSafe's `list_models`, every
+`chatrequest!` and `respond`, streamed or not, and `embeddingrequest!` (hence `tool_loop!`
+and `tool_loop`), the Responses lifecycle operations (`get_response`, `delete_response`,
+`list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`),
+`fim_complete` and `prefix_complete` exchange through `dir`; everything else reaches
+the network as usual (images, audio, files, batch, moderation, the other model
+listings, Ollama's pulls, realtime, MCP), in every mode. Scopes cover spawned tasks and
+nest (an inner scope's service is the enclosing scope).
 
 ```julia
 with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
@@ -2192,16 +2194,22 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #                 (an unrecorded verb behaves as outside the scope); no recording or an
     #                 unreadable one throws ReplayMissError
     # :record         call the service; write each HTTP 200 to dir, replacing any earlier file
+    #                 (a request repeated identically, as a polling loop's, leaves its last 200)
     # :record_missing replay what dir holds; call and record the rest; an unreadable
-    #                 file throws ReplayMissError (never overwritten)
+    #                 file throws ReplayMissError (never overwritten); a recorded 200 replays before
+    #                 any request is sent, so a polling loop gets its first status on every later poll
     # both recording modes create dir and prove it writable before f runs (else ArgumentError);
     #   a recording that cannot be written after a paid answer throws RecordingWriteError out
     #   of the verb, and out of a tool loop whose dispatcher made the request
+    # a streamed call: a miss on its first request is thrown by the verb; its lost recording, or a
+    #   miss on a later request of a turn the provider continues, is thrown inside its task, so fetch
+    #   (and tool_loop! on a streamed chat) throws a TaskFailedException whose task.exception it is
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
     #   System One backend other than TypeSafe ("/<namespace>/v1/systemone");
-    #   a System One request keyed on more (TypeSafe's long_context as a sorted name=<JSON> line,
-    #   image-part digests) appends "\n" * that text to the body it is keyed on;
+    #   a request keyed on more (TypeSafe's long_context, list_input_items' limit, order and after,
+    #   as sorted name=<JSON> lines; System One image-part digests) appends "\n" * that text to the
+    #   body it is keyed on;
     #   body = the exact body (for System One, the wire's record_body: Ollama's without
     #   keep_alive, OpenAI's without prompt_cache_key, safety_identifier and prompt_cache_options), except that in its
     #   top-level "tools" array an MCP tool's ("type": "mcp") "authorization" and "headers", a
@@ -2213,24 +2221,29 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   request ("images") and the image/audio of an Ollama /api/embed item (`record_body`, the body keyed);
     #   media sent another way (Ollama chat "images", "input_audio") is written as sent
     # {"request": {method, path, body, key_extra (only when not empty)},
-    #  "response": {status, request_id, request_id_header, body}, "recorded_at"}
-    #   request_id_header: "x-typesafe-request-id" | "x-request-id" | "request-id", the one header
-    #   kept; absent when the reply carried no id, and in recordings made before it existed,
-    #   which replay their id as "x-typesafe-request-id"
+    #  "response": {status, request_id, request_id_header, headers, body | stream}, "recorded_at"}
+    #   request_id_header: "x-typesafe-request-id" | "x-request-id" | "request-id", the header that
+    #   carried request_id; absent when the reply carried no id, and in recordings made before it
+    #   existed, which replay their id as "x-typesafe-request-id"
+    #   headers: each of "x-typesafe-request-id", "x-request-id", "request-id" and
+    #   "x-gemini-service-tier" (the tier Gemini billed) that the reply carried; a replay gives them
+    #   back; absent in recordings made before it existed, which give back their request id alone
+    #   stream: a streamed reply's body split at "\n" (in place of body), replayed through the
+    #   stream's parsers and callbacks; recorded only when the reply is whole and read with no stop
 
-struct ReplayMissError <: Exception       # thrown out of the recorded verbs, never a *CallError
+struct ReplayMissError <: Exception       # thrown by the recorded verbs (or a stream's task), never a *CallError
     dir::String
     key::String
-    method::String                        # "POST" | "GET"
+    method::String                        # "POST" | "GET" | "DELETE"
     path::String                          # as keyed: "/v1/systemone" | "/<namespace>/v1/systemone" | "/v1/models" | …
-    body::String                          # as keyed: credentials "<redacted>", data-URL images as digests ("" for GET),
-                                          #   then "\n" * key_extra if any
+    body::String                          # as keyed: credentials "<redacted>", data-URL images as digests ("" when
+                                          #   none is sent), then "\n" * key_extra if any
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
 end
 
 struct RecordingWriteError <: Exception   # a paid answer whose recording could not be written;
-    file::String                          #   thrown out of the recorded verbs and the tool loops,
-    cause::Exception                      #   never a *CallError; an MCP handler's: -32603, logged
+    file::String                          #   thrown by the recorded verbs (or a stream's task) and the
+    cause::Exception                      #   tool loops, never a *CallError; an MCP handler's: -32603, logged
 end
 ```
 

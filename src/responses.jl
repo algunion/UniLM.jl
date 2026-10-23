@@ -1714,9 +1714,11 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
 Send a request to the OpenAI Responses API.
 
 Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`. Inside a
-[`with_recorded_answers`](@ref) scope a non-streaming request passes through the
-recordings, and one the scope cannot replay throws [`ReplayMissError`](@ref)
-instead of returning a `ResponseCallError`; a streamed call is never recorded.
+[`with_recorded_answers`](@ref) scope the request passes through the recordings,
+streamed or not, and one the scope cannot replay throws [`ReplayMissError`](@ref)
+instead of returning a `ResponseCallError`; a streamed response whose recording cannot
+be written throws [`RecordingWriteError`](@ref) inside the returned task, so `fetch`
+raises a `TaskFailedException` whose `task.exception` is that error.
 
 Per-call `config::RequestConfig` overrides timeouts and the retry budget
 (`max_attempts`); the process/scoped defaults apply otherwise.

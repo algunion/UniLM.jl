@@ -5,10 +5,11 @@
 # probabilities move between byte-identical calls, and on an ambiguous input the
 # winner can flip; a language model's reply varies from call to call — so a test
 # or a docs build that calls it live cannot be reproduced. Inside
-# `with_recorded_answers` the HTTP exchange of `ask` and `list_models` (and so of
-# `nl_dispatch`, `nl_classify` and `@branch`) and of the non-streaming
-# `chatrequest!`, `respond` and `embeddingrequest!` (and so of the tool loops)
-# passes through a directory of recordings on its way to the network.
+# `with_recorded_answers` the HTTP exchange of `ask` and TypeSafe's `list_models` (and
+# so of `nl_dispatch`, `nl_classify` and `@branch`), of `chatrequest!` and `respond`,
+# streamed or not, and `embeddingrequest!` (and so of the tool loops), of the Responses
+# lifecycle calls and of `fim_complete` and `prefix_complete` passes through a
+# directory of recordings on its way to the network.
 #
 # A recording is keyed by the exact request bytes, never a canonical form: the
 # order of Choice options and of the state's keys moves the answer, so a
@@ -25,17 +26,23 @@
 Thrown inside a [`with_recorded_answers`](@ref) scope when a request cannot be
 replayed — in `:replay` mode the directory holds no recording of it, or in
 `:replay` or `:record_missing` mode its recording file cannot be read as one — by
-the verbs the scope records: [`ask`](@ref) and [`list_models`](@ref) (and so
-[`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)), and the
-non-streaming [`chatrequest!`](@ref), [`respond`](@ref) and
-[`embeddingrequest!`](@ref) (and so [`tool_loop!`](@ref) and [`tool_loop`](@ref)).
-A verb the scope does not record — a streamed call, images, files, audio, MCP, the
-Responses lifecycle calls — never throws it: it behaves exactly as outside the
-scope. It is thrown rather than returned as the verb's call error
-([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), [`ResponseCallError`](@ref),
-[`EmbeddingCallError`](@ref)): a gap in the recordings is not a service failure,
-and a caller's `r isa SystemOneSuccess || fallback()` path must not absorb it as if
-it were one.
+the verbs the scope records: [`ask`](@ref) and TypeSafe's [`list_models`](@ref) (and
+so [`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)),
+[`chatrequest!`](@ref) and [`respond`](@ref), streamed or not, and
+[`embeddingrequest!`](@ref) (and so [`tool_loop!`](@ref) and [`tool_loop`](@ref)), the
+Responses lifecycle calls ([`get_response`](@ref), [`delete_response`](@ref),
+[`list_input_items`](@ref), [`cancel_response`](@ref), [`compact_response`](@ref),
+[`count_input_tokens`](@ref)), [`fim_complete`](@ref) and [`prefix_complete`](@ref).
+A verb the scope does not record — images, audio, files, MCP, … — never throws it: it
+behaves exactly as outside the scope. A streamed call throws it for its first request
+before returning its task; a miss on a later request of the turn (a reply the
+provider continues) is thrown inside that task, so `fetch` — and [`tool_loop!`](@ref)
+on a streamed chat — throws a `TaskFailedException` whose `task.exception` is it. It
+is thrown rather than returned as the verb's call error ([`SystemOneCallError`](@ref),
+[`LLMCallError`](@ref), [`ResponseCallError`](@ref), [`EmbeddingCallError`](@ref),
+[`FIMCallError`](@ref)): a gap in the recordings is not a service failure, and a
+caller's `r isa SystemOneSuccess || fallback()` path must not absorb it as if it were
+one.
 
 # Fields
 - `dir::String`: the recordings directory that was searched.
@@ -48,19 +55,22 @@ it were one.
 - `body::String`: what the key was computed over after the request line — the body
   as its backend keys it, with the credentials [`with_recorded_answers`](@ref) never
   writes replaced by `"<redacted>"` and each base64 `data:` URL by its digest
-  (empty for `GET /v1/models`), followed, for a System One request whose
-  backend keys more than its body (its provider options, the digests of its image
-  parts), by a newline and that canonical text.
+  (empty for a request that sends none, such as `GET /v1/models`), followed, for a
+  request keyed on more than its body (a System One request's provider options or
+  the digests of its image parts, [`list_input_items`](@ref)' `limit`, `order` and
+  `after`), by a newline and that canonical text.
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
-  than 200, a `body` that is not a JSON object, a `request_id` that is neither
-  a string nor null, or a `request_id_header` other than `"x-typesafe-request-id"`,
-  `"x-request-id"` and `"request-id"`.
+  than 200, a `body` that is not a JSON object (for a streamed request, a `stream`
+  that is not an array of strings), a `request_id` that is neither a string nor
+  null, a `request_id_header` other than `"x-typesafe-request-id"`,
+  `"x-request-id"` and `"request-id"`, or a `headers` that is not an object of
+  string values named among those three and `"x-gemini-service-tier"`.
 
 `showerror` names the request line, the start of the key, what the request asked
-for — a System One request's questions, any other request's `model` — the
-directory or (for an unreadable recording) the file, and how to record the
-answer: with `TYPESAFE_API_KEY` set for a TypeSafe request, with access to the
+for — a System One request's questions, any other request's `model` when its body
+names one — the directory or (for an unreadable recording) the file, and how to
+record the answer: with `TYPESAFE_API_KEY` set for a TypeSafe request, with access to the
 provider — its API key, or a local server running — for any other. An unreadable
 file must be deleted first, because `:record_missing` never overwrites one.
 """
@@ -104,11 +114,15 @@ Thrown inside a [`with_recorded_answers`](@ref) scope in `:record` or
 `:record_missing` mode when the service has answered a request, and billed it, but
 its recording cannot be written — the directory was removed or replaced after the
 scope checked it, or the disk is full. The verbs the scope records throw it —
-[`ask`](@ref), [`list_models`](@ref), and the non-streaming [`chatrequest!`](@ref),
-[`respond`](@ref) and [`embeddingrequest!`](@ref) — and so do the calls built on
-them: [`nl_dispatch`](@ref), [`nl_classify`](@ref), [`@branch`](@ref) and the tool
-loops, a request made by a loop's dispatcher included. It is thrown rather than
-returned as the verb's call error: the answer was paid for, and a caller's
+[`ask`](@ref), TypeSafe's [`list_models`](@ref), [`chatrequest!`](@ref),
+[`respond`](@ref), [`embeddingrequest!`](@ref), the Responses lifecycle calls
+([`get_response`](@ref), …), [`fim_complete`](@ref) and [`prefix_complete`](@ref) —
+and so do the calls built on them: [`nl_dispatch`](@ref), [`nl_classify`](@ref),
+[`@branch`](@ref) and the tool loops, a request made by a loop's dispatcher included.
+A streamed call reads its reply inside the task it returns and throws it there, so
+`fetch` — and [`tool_loop!`](@ref) on a streamed chat — throws a `TaskFailedException`
+whose `task.exception` is it. It is thrown rather than returned as the verb's call
+error: the answer was paid for, and a caller's
 `r isa SystemOneSuccess || fallback()` path must not absorb the lost write as a
 service failure. An MCP server tool handler's is answered, like a
 [`ReplayMissError`](@ref), with the generic JSON-RPC `-32603` and logged, never
@@ -147,29 +161,37 @@ const _ANSWER_SCOPE = ScopedValue{Union{Nothing,_AnswerScope}}(nothing)
 
 Run `f()` with the service exchanges inside it passing through the recordings in
 `dir`, and return `f()`'s value. Recorded: [`ask`](@ref) (and so
-[`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)),
-[`list_models`](@ref), and the non-streaming [`chatrequest!`](@ref) (with its
-keyword form and [`tool_loop!`](@ref)), [`respond`](@ref) (with its convenience
-forms and [`tool_loop`](@ref)) and [`embeddingrequest!`](@ref); everything else,
-including streaming, reaches the network as usual — a streamed call, images,
-audio, files, MCP, the Responses lifecycle operations and every other verb behave
-inside a scope exactly as outside it.
+[`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)), TypeSafe's
+[`list_models`](@ref), [`chatrequest!`](@ref) (with its keyword form and
+[`tool_loop!`](@ref)) and [`respond`](@ref) (with its convenience forms and
+[`tool_loop`](@ref)), streamed or not, [`embeddingrequest!`](@ref), the Responses
+lifecycle calls ([`get_response`](@ref), [`delete_response`](@ref),
+[`list_input_items`](@ref), [`cancel_response`](@ref), [`compact_response`](@ref),
+[`count_input_tokens`](@ref)), [`fim_complete`](@ref) and [`prefix_complete`](@ref).
+Everything else reaches the network as usual — images, audio, files, batch,
+moderation, the model listings other than TypeSafe's, Ollama's model pulls, realtime,
+MCP and every other verb behave inside a scope exactly as outside it.
 
 A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced; one recorded answer, replayed, can.
 
 - `:replay` (the default): no recorded verb reaches the network or needs an API
-  key; a verb the scope does not record — a streamed call, images, files, audio,
-  MCP, the Responses lifecycle calls — behaves exactly as outside the scope. A
-  request with no recording, or with a recording file that cannot be read as
-  one, throws [`ReplayMissError`](@ref) out of the verb itself (and so out of the
-  tool loops). `dir` must exist.
+  key; a verb the scope does not record — images, audio, files, MCP, … — behaves
+  exactly as outside the scope. A request with no recording, or with a recording
+  file that cannot be read as one, throws [`ReplayMissError`](@ref) out of the verb
+  itself (and so out of the tool loops; for a later request of a streamed turn, out
+  of the call's task, as below). `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
-  `dir`, replacing an earlier recording of the same request, readable or not. A
-  non-200 result is returned as usual and never recorded.
+  `dir`, replacing an earlier recording of the same request, readable or not, so a
+  request repeated identically — a polling loop's — leaves the last 200 it got,
+  which a `:replay` scope then gives every repetition. A non-200 result is returned
+  as usual and never recorded.
 - `:record_missing`: replay what `dir` holds, and send the rest to the service,
-  recording their 200s. An unreadable recording throws `ReplayMissError` here
-  too instead of being overwritten: delete the file to record it again.
+  recording their 200s. A recording is replayed before any request is sent, so once
+  a request's 200 is recorded an identical request replays it: a polling loop
+  records the first status it gets and gets it back on every later poll. An
+  unreadable recording throws `ReplayMissError` here too instead of being
+  overwritten: delete the file to record it again.
 
 A recording is written after the service has answered, and billed, so both
 recording modes create `dir` if needed and prove it writable — a file is created
@@ -181,7 +203,12 @@ the directory was removed or replaced, the disk is full — throws
 (and so out of `nl_dispatch`, `nl_classify`, `@branch` and the tool loops, a
 dispatcher's own request included) instead of returning its call error: the
 answer was paid for, and a caller's `r isa SystemOneSuccess || fallback()` path
-must not absorb the lost write as a service failure.
+must not absorb the lost write as a service failure. A streamed call reads its
+reply inside the task it returns, so its lost write — and a miss on a later request
+of a turn the provider continues (Gemini 4 Argon's long decode) — is thrown inside
+that task: `fetch`, and so [`tool_loop!`](@ref) on a streamed chat, throws a
+`TaskFailedException` whose `task.exception` is the error. A miss on the first
+request is thrown by the streamed verb itself.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the
@@ -189,12 +216,13 @@ path of the request URL alone: never its host, nor its query, which can carry a
 credential. A System One backend other than TypeSafe files its requests under a
 namespace of its own, `"/<namespace>/v1/systemone"`, so the same question asked of
 two backends is two recordings; a System One request that carries an option its
-backend keys (TypeSafe's `long_context`) or image parts appends a newline and
-their canonical text — options as sorted `name=value` lines with JSON values,
-parts as their names and SHA-256 digests — to the body it is keyed on, so a
-request without them keeps its key; and a System One backend keys its body
-without the options that change how a request is served but never what it is
-answered — Ollama's `keep_alive`, OpenAI's `prompt_cache_key` and
+backend keys (TypeSafe's `long_context`) or image parts, and a
+[`list_input_items`](@ref) request, whose query names the page, append a newline and
+their canonical text — options and the page's `limit`, `order` and `after` as sorted
+`name=value` lines with JSON values, parts as their names and SHA-256 digests — to
+the body they are keyed on, so a request without them keeps its key; and a System
+One backend keys its body without the options that change how a request is served
+but never what it is answered — Ollama's `keep_alive`, OpenAI's `prompt_cache_key` and
 `safety_identifier` — which are sent, and neither keyed nor written, so the same
 question replays one recording whatever they are. The key is never a canonical
 form of the request: the order of Choice options and of the state's keys moves
@@ -212,23 +240,30 @@ that base64 text, in the key, the file and a `ReplayMissError`: a recording
 names the media it answered without holding their bytes, and other media is
 another request. The file holds the
 request (with that canonical text as `key_extra` when there is one), the response
-body with its request id and the name of the header that carried it
-(`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
-recording, pretty-printed so a diff is readable; the API key, the headers, an
-MCP tool's `authorization` and `headers`, and the bytes of media sent as a
-base64 `data:` URL or as a System One image part are never written. Media sent
+body — for a streamed request, the lines of the streamed body (`stream`) — with its
+request id, the name of the header that carried it (`x-typesafe-request-id`,
+`x-request-id` or `request-id`) and the headers a replay gives back (`headers`: the
+request-id headers and `x-gemini-service-tier`, the tier Gemini billed the reply at,
+those the reply carried), and the time of recording, pretty-printed so a diff is
+readable; the API key, every other header, an MCP tool's `authorization` and
+`headers`, and the bytes of media sent as a base64 `data:` URL or as a System One
+image part are never written. Media sent
 as bare base64 is written as sent — Ollama's chat `images`, an `input_audio`
 clip — except the images and sound clips of an [`Embeddings`](@ref) request to
 an [`OllamaEndpoint`](@ref) and the images of a System One request to one: they
 are keyed and written as their digests, `data:<mime>;sha256,<hex>`, as the same
 media sent as a data URL would be.
-A recording without that name replays its id as `x-typesafe-request-id`. Files are
-written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
-can record at once. A replayed answer goes through the same decoding as a live
+A replay gives back the headers its recording kept; a recording made before they
+were kept gives back its request id alone, under the header it names
+(`x-typesafe-request-id` when it names none). Files are written atomically (a
+temporary file in `dir`, then a rename), so concurrent tasks can record at once. A
+replayed answer goes through the same decoding as a live
 200 and has the same type and fields: a `Chat` gets the reply appended and its
-cost accumulated, and `Embeddings` get their vectors. A cancelled token ends a
-call before any recording is read, exactly as it ends one before anything is
-sent.
+cost accumulated, and `Embeddings` get their vectors. A replayed stream is read
+through the same parsers and callbacks as a live one, with no first-byte deadline or
+idle guard; a stream is recorded only when its reply is whole and was read with no
+stop. A cancelled token ends a call before any recording is read, exactly as it ends
+one before anything is sent.
 
 The scope is a `ScopedValue`, so it covers the tasks started inside `f`
 (`Threads.@spawn`, `asyncmap`). Scopes nest: an inner scope's service is the

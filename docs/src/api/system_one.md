@@ -620,16 +620,18 @@ UniLM.SystemOneWire
 A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced. [`with_recorded_answers`](@ref)
 records a real answer once and replays it offline. Inside its scope, `ask` and
-`list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`) and the non-streaming
-[`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
-so the tool loops) exchange through a directory of recordings keyed by the exact
+TypeSafe's `list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`),
+[`chatrequest!`](@ref) and [`respond`](@ref), streamed or not, and
+[`embeddingrequest!`](@ref) (and so the tool loops), the Responses lifecycle calls,
+[`fim_complete`](@ref) and [`prefix_complete`](@ref) exchange through a directory of
+recordings keyed by the exact
 request bytes — with any credential the body carries redacted, every base64
 `data:` URL it carries (an image, a PDF, audio, any media) replaced by the
 SHA-256 of its base64 text, and a System One backend's options that change how
 a request is served left out (media sent as bare base64 are written as sent, such
 as Ollama's chat `images` or an `input_audio` clip, except the images of an Ollama
 System One request and the media of an Ollama embeddings request, keyed and written
-by digest too); a streamed call and
+by digest too); images, audio, files, MCP and
 every other verb reach the network as usual. In the default `:replay` mode no
 recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws

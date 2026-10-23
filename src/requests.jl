@@ -1917,10 +1917,11 @@ a running stream is immune to later changes of the process-default configuration
 `first` is the source of the first request when it was looked up at call entry too
 (`_first_stream_source`).
 
-The returned task throws only for a user `InterruptException` (every other failure is a
-typed result value), so `fetch` then raises a `TaskFailedException` whose
-`task.exception` is the `InterruptException` — callers catching interrupts around
-`fetch` must unwrap it.
+The returned task throws only for a user `InterruptException` and, inside a
+`with_recorded_answers` scope, for a `RecordingWriteError` or the `ReplayMissError` of a
+request it looks up itself (every other failure is a typed result value), so `fetch`
+then raises a `TaskFailedException` whose `task.exception` is that exception — callers
+catching these around `fetch` must unwrap it.
 """
 function _chatrequeststream(chat::Chat, body, callback=nothing; on_tool_call=nothing,
                             cfg::RequestConfig=_resolve_config(nothing),
@@ -1944,8 +1945,12 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the
 recordings, and one the scope cannot replay — no recording in `:replay` mode, or a
 recording file that cannot be read — throws [`ReplayMissError`](@ref) instead of
-returning: a gap in the recordings is not a service failure. A streamed call is
-never recorded.
+returning: a gap in the recordings is not a service failure. A streamed call passes
+through them too, replayed through the same callbacks: a miss on its first request is
+thrown by `chatrequest!` itself, while its reply's lost recording
+([`RecordingWriteError`](@ref)), or a miss on a later request of a turn the provider
+continues, is thrown inside the task, so `fetch` raises a `TaskFailedException` whose
+`task.exception` is that error.
 
 Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
 typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives

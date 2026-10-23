@@ -30,7 +30,7 @@ It also has one **System One** surface, which answers enumerated questions about
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
 - ⚖️ **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama ([Backends](@ref system_one_backends)): `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev, OpenAI and local vision models), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
 - 🔀 **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
-- 🤝 **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
+- 🤝 **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the LLM calls, streamed or not, once and replays them, so tests run without keys
 - 📊 **Embeddings** — text embedding generation
 - 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax

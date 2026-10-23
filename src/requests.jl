@@ -621,6 +621,95 @@ function _http_open(f::Function, method::AbstractString, url::AbstractString, he
     end
 end
 
+# ─── Recorded streams ────────────────────────────────────────────────────────
+# Inside a `with_recorded_answers` scope a streamed request is answered by a recording or
+# by the network (`_stream_source`, src/recorded_answers.jl). A stream driver reads either
+# through its own body, `consume(io)`, so a replay goes through the parsers, callbacks
+# and result rules of the live stream it recorded.
+
+"""
+    _StreamRecording(headers, lines)
+
+A recorded stream: the response headers a recording keeps (`_KEPT_HEADERS`), and the
+body split at every `'\\n'`, so that the body is `join(lines, "\\n")` exactly — a CR
+before a newline stays at the end of its line, and a body that the server did not end
+with a newline ends with a non-empty line.
+"""
+struct _StreamRecording
+    headers::Vector{Pair{String,String}}
+    lines::Vector{String}
+end
+
+"""
+    _ReplayedStream(rec::_StreamRecording) <: IO
+
+A recorded stream, read by a stream driver with the calls it makes on a live
+`HTTP.Stream`. `HTTP.startread` returns `response`, an HTTP 200 carrying the recording's
+headers (where `_get_request_id` finds its request id, as on a live stream);
+`readavailable` returns one recorded line per call, with the newline that ended it; `eof`
+is true once no byte is left or the stream is closed; writing the request sends nothing,
+since the recording answers it; `close` and `HTTP.closeread` end the reading, and
+`HTTP.closewrite` does nothing. No read waits, so a replay arms neither the first-byte
+deadline nor the idle guard (`_first_byte_bound`, `_idle_bound`).
+"""
+mutable struct _ReplayedStream <: IO
+    const response::HTTP.Response{Vector{UInt8}}
+    const lines::Vector{String}
+    next::Int                 # the line the next read returns
+    @atomic open::Bool        # a body-end wait closes it from its timer's task (`_await_body_end`)
+end
+_ReplayedStream(rec::_StreamRecording) = _ReplayedStream(HTTP.Response(200, rec.headers), rec.lines, 1, true)
+
+HTTP.startread(io::_ReplayedStream)::HTTP.Response{Vector{UInt8}} = io.response
+# The bytes left are the lines from `next` on and the newlines between them: none once only
+# the empty line after a final newline is left.
+Base.eof(io::_ReplayedStream)::Bool = !(@atomic io.open) || io.next > length(io.lines) ||
+                                      (io.next == length(io.lines) && isempty(io.lines[io.next]))
+function Base.readavailable(io::_ReplayedStream)::Vector{UInt8}
+    eof(io) && return UInt8[]
+    line = io.lines[io.next]
+    io.next += 1
+    ended = io.next <= length(io.lines)        # a newline followed the line
+    bytes = Vector{UInt8}(undef, ncodeunits(line) + ended)
+    copyto!(bytes, codeunits(line))
+    ended && (bytes[end] = UInt8('\n'))
+    bytes
+end
+Base.isopen(io::_ReplayedStream)::Bool = @atomic io.open
+Base.close(io::_ReplayedStream)::Nothing = (@atomic io.open = false; nothing)
+# `write(io, body)` arrives here, as Base's `write` of any string or byte vector does: a
+# `write` method of its own for strings would invalidate every call site inferred to Base's
+# (HTTP.jl writes its `Stream`'s strings the same way, for that reason).
+Base.unsafe_write(::_ReplayedStream, ::Ptr{UInt8}, ::UInt)::UInt = UInt(0)
+HTTP.closewrite(::_ReplayedStream)::Nothing = nothing
+HTTP.closeread(io::_ReplayedStream)::Nothing = close(io)
+
+"""
+    _StreamSource(replay, record_to, method, path, body, key_extra)
+
+Where a streamed request is answered from, as the active `with_recorded_answers` scopes
+decide ([`_stream_source`](@ref)): `replay` is the recording that answers it, or `nothing`
+when the request is sent; `record_to` lists the recording files its reply is written to
+once it is whole ([`_commit_stream!`](@ref)), the outermost scope's first; `method`,
+`path`, `body` and `key_extra` are the request as it is keyed and written.
+"""
+struct _StreamSource
+    replay::Union{Nothing,_StreamRecording}
+    record_to::Vector{String}
+    method::String
+    path::String
+    body::String
+    key_extra::String
+end
+
+# The bounds a stream driver reads an exchange under. A live stream's first byte is due
+# within the request bound, and its bytes may not pause longer than the idle bound; a
+# replay is read from memory, so it arms neither (an `Inf` bound arms nothing).
+_first_byte_bound(::HTTP.Stream, cfg::RequestConfig, t0::UInt64)::Float64 = min(_remaining_s(cfg, t0), cfg.request_timeout)
+_first_byte_bound(::_ReplayedStream, ::RequestConfig, ::UInt64)::Float64 = Inf
+_idle_bound(::HTTP.Stream, cfg::RequestConfig)::Float64 = cfg.stream_idle_timeout
+_idle_bound(::_ReplayedStream, ::RequestConfig)::Float64 = Inf
+
 """
     _abort_request_phase(io, ctx) -> Nothing
 
@@ -632,9 +721,10 @@ until the read-idle timer fired, however much smaller the deadline. Cancelling t
 attempt's request context aborts the connection wherever the exchange is (see
 [`_http_open`](@ref)); `close(io)` then closes the stream itself. The driver's catch
 restores the deadline's recorded `UniLMTimeout(:request, …)` over the
-`HTTP.CanceledError` HTTP.jl raises for the aborted exchange.
+`HTTP.CanceledError` HTTP.jl raises for the aborted exchange. A replayed stream arms no
+first-byte deadline, so this never runs for one.
 """
-function _abort_request_phase(io::HTTP.Stream, ctx::HTTP.RequestContext)::Nothing
+function _abort_request_phase(io::Union{HTTP.Stream,_ReplayedStream}, ctx::HTTP.RequestContext)::Nothing
     HTTP.cancel!(ctx; message="request-phase deadline exceeded")
     close(io)
     nothing
@@ -1198,8 +1288,10 @@ end
 # the time since, whichever request of the call it surfaces in); whether user code
 # has run (a retry after that would replay output); the first exception user code
 # raised, recorded before HTTP.jl can replace it with its rendering of the aborted exchange;
-# and the state of the latest attempt, whose usage, as far as its provider reported it, a
-# call that ends uncommitted bills (`_settled`).
+# the state of the latest attempt, whose usage, as far as its provider reported it, a
+# call that ends uncommitted bills (`_settled`); and the source of the call's first
+# request when it was looked up before the call's task was spawned
+# (`_first_stream_source`), until the first attempt takes it (`_attempt_source!`).
 mutable struct _StreamCtl
     const token::Union{Nothing,CancelToken}
     const stop::CancelToken
@@ -1208,10 +1300,41 @@ mutable struct _StreamCtl
     fired::Bool
     failure::Union{Nothing,_UserCallbackError}
     live::Union{Nothing,StreamState}
+    first::Union{Nothing,_StreamSource}
 end
-function _StreamCtl(token::Union{Nothing,CancelToken}, started::UInt64)
+function _StreamCtl(token::Union{Nothing,CancelToken}, started::UInt64, first::Union{Nothing,_StreamSource}=nothing)
     stop = CancelToken()
-    _StreamCtl(token, stop, _CloseRef(stop), started, false, nothing, nothing)
+    _StreamCtl(token, stop, _CloseRef(stop), started, false, nothing, nothing, first)
+end
+
+# The source of an attempt's request: the one looked up before the call's task was
+# spawned, for the call's first attempt; else the one the scopes give now. A stopped call
+# reads no recording, as it sends nothing.
+function _attempt_source!(ctl::_StreamCtl, url::String, body::String)::_StreamSource
+    first = ctl.first
+    isnothing(first) || (ctl.first = nothing; return first)
+    iscancelled(ctl.stop) && throw(_stop_cause(ctl))
+    _stream_source("POST", url, body)
+end
+
+"""
+    _first_stream_source(url, body, tok) -> Union{Nothing,_StreamSource}
+
+The source of a streamed call's first request, looked up before the call's task is
+spawned so that a miss is thrown by the verb itself, as an unstreamed call's is: inside a
+`with_recorded_answers` scope, for a call whose token `tok` is not cancelled (a cancelled
+call reads no recording). `url()` builds the request URL. `nothing` elsewhere, and when
+the lookup fails otherwise (the URL cannot be built): the call's first attempt looks the
+source up again inside the task, which reports that failure as it reports every other.
+"""
+function _first_stream_source(url::Function, body::String, tok::Union{Nothing,CancelToken})::Union{Nothing,_StreamSource}
+    (isnothing(_ANSWER_SCOPE[]) || iscancelled(tok)) && return nothing
+    try
+        _stream_source("POST", url(), body)
+    catch e
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
+        nothing
+    end
 end
 
 # The typed stop a stopped call reports; the caller's token wins over the close flag.
@@ -1342,8 +1465,9 @@ const _BODY_END_WAIT = 0.5
 # end is what returns the connection to the pool for the next call. A body still open
 # then is abandoned — `close(io)` ends the read and the connection is closed rather than
 # reused — which costs the caller nothing: the turn is already final. Bytes after the
-# terminal are discarded. Any other failure of the read propagates as teardown noise.
-function _await_body_end(io::HTTP.Stream)::Nothing
+# terminal are discarded. Any other failure of the read propagates as teardown noise. A
+# replayed stream's rest is read from memory, at once.
+function _await_body_end(io::Union{HTTP.Stream,_ReplayedStream})::Nothing
     try
         _with_deadline(() -> while !eof(io); readavailable(io); end, () -> close(io),
                        _BODY_END_WAIT, :stream_idle)
@@ -1440,13 +1564,21 @@ undercut the request-phase bound; see `_classify_stream_timeout`). At the sentin
 awaited only briefly (`_await_body_end`). `StreamState`, the SSE line carry,
 and the raw byte log are all locals: a retried attempt cannot inherit partial SSE
 state.
+
+Inside a `with_recorded_answers` scope the attempt's request is answered as its scopes
+decide (`_attempt_source!`): a recording is read through the same body as a live stream
+(`_ReplayedStream`), with no first-byte deadline or idle guard and with the same stop
+checks, and the API key is read only for a request that is sent. A whole reply, read with
+no stop — the turn's final message or a reply that continues it — is recorded before the
+turn is committed (`_commit_stream!`). A miss (`ReplayMissError`) and a recording that
+cannot be written (`RecordingWriteError`) are thrown unclassified.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl, turn::_StreamTurn)
     state = ctl.live = _resumed_state(turn.state)   # what it reports is billed if the call ends uncommitted
     m = Ref{Union{Message,Nothing}}(nothing)
     next = Ref{Union{String,Nothing}}(nothing)   # the next request's body, when this reply continues the turn
-    raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (a streamed resp.body is empty)
+    raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting and the recording (a streamed resp.body is empty)
     idle = Ref{Union{Nothing,_IdleGuard}}(nothing)   # armed at the first byte; stays nothing when disabled
     # Request-phase bound, recorded before it unwinds through HTTP.jl (see
     # `_with_recorded_deadline`): the catch restores it as the surfaced cause
@@ -1454,89 +1586,98 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
     cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
     otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
-    # SSE must reach the parser uncompressed: some providers (e.g. Anthropic) gzip even
-    # streamed responses, and raw gzip bytes fail every line's decode, so no message is
-    # built (→ LLMFailure). Request identity encoding and disable decompression so
-    # `data:` lines arrive verbatim.
-    stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
     ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
-    try
-        # Seam-routed: _http_open applies the native stream timeout kwargs plus
-        # status_exception=false and retry=false (HTTP.jl's internal retries would
-        # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
-        # decompress=false passes through.
-        resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, cancel=ctl.stop,
-                          context=ctx, decompress=false) do io
-            io_ref[] = io
-            carry = IOBuffer()                 # layer-1 partial-line carry
-            current_event = Ref("")            # layer-2 sticky event name
-            status = :continue
-            # First byte = response headers received. The request-phase deadline guards
-            # the whole send/first-byte exchange; the total deadline governs a stream
-            # only up to this point — after it, only the idle guard runs (a long
-            # healthy stream is not a failure).
-            head = _with_recorded_deadline(() -> begin
-                    write(io, body)
-                    HTTP.closewrite(io)
-                    HTTP.startread(io)
-                end, () -> _abort_request_phase(io, ctx),
-                min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
-            _stream_head!(chat.service, state, head)
-            idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-            # The terminal first: at `[DONE]` the turn is finalized at once, however long
-            # the server keeps the body open (its end is awaited below, briefly). A stop
-            # aborts the connection, so `eof` never blocks on one.
-            while status === :continue && !iscancelled(ctl.stop) && !eof(io)
-                raw = String(readavailable(io))
-                _touch!(idle[])
-                write(raw_buffer, raw)
-                status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+    # The exchange, live or replayed: the request written, the head read, the stream parsed.
+    function consume(io)
+        io_ref[] = io
+        carry = IOBuffer()                 # layer-1 partial-line carry
+        current_event = Ref("")            # layer-2 sticky event name
+        status = :continue
+        # First byte = response headers received. The request-phase deadline guards
+        # the whole send/first-byte exchange; the total deadline governs a stream
+        # only up to this point — after it, only the idle guard runs (a long
+        # healthy stream is not a failure).
+        head = _with_recorded_deadline(() -> begin
+                write(io, body)
+                HTTP.closewrite(io)
+                HTTP.startread(io)
+            end, () -> _abort_request_phase(io, ctx), _first_byte_bound(io, cfg, t0), :request, bound)
+        _stream_head!(chat.service, state, head)
+        idle[] = _idle_guard(() -> close(io), _idle_bound(io, cfg))
+        # The terminal first: at `[DONE]` the turn is finalized at once, however long
+        # the server keeps the body open (its end is awaited below, briefly). A stop
+        # aborts the connection, so `eof` never blocks on one.
+        while status === :continue && !iscancelled(ctl.stop) && !eof(io)
+            raw = String(readavailable(io))
+            _touch!(idle[])
+            write(raw_buffer, raw)
+            status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+            _fire_tool_calls!(otc, state, false)
+            _flush_delta!(cb, state, ctl.close)
+        end
+        if status === :continue && !iscancelled(ctl.stop)
+            # EOF flush: a final line the server never '\n'-terminated
+            # (e.g. `data: [DONE]` as the very last bytes) is still one
+            # complete line — dispatch it before finalizing.
+            tail = takestring!(carry)
+            if !isempty(tail)
+                status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
                 _fire_tool_calls!(otc, state, false)
                 _flush_delta!(cb, state, ctl.close)
             end
-            if status === :continue && !iscancelled(ctl.stop)
-                # EOF flush: a final line the server never '\n'-terminated
-                # (e.g. `data: [DONE]` as the very last bytes) is still one
-                # complete line — dispatch it before finalizing.
-                tail = takestring!(carry)
-                if !isempty(tail)
-                    status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
-                    _fire_tool_calls!(otc, state, false)
-                    _flush_delta!(cb, state, ctl.close)
-                end
+        end
+        # A stop ends the attempt here, before finalization and without draining
+        # the body; the catch decides whether a completed turn still stands.
+        iscancelled(ctl.stop) && throw(_stop_cause(ctl))
+        # Terminal contract: `:done` is the sentinel EOS
+        # ([DONE] / message_stop). Gemini has NO sentinel — its handler
+        # never returns :done; its stream ends at EOF with finishReason
+        # recorded. EOF with NEITHER signal = truncated/garbage stream
+        # (or a non-200 error body) → no message → LLMFailure below.
+        finished = status === :done ||
+                   (status === :continue && !isnothing(state.finish_reason))
+        if isnothing(state.error)
+            if finished
+                # A reply that continues the turn hands it on to the next request; the
+                # turn's last reply is finalized.
+                next[] = _next_hop(chat, turn, state)
+                isnothing(next[]) && _finalize_stream_message!(state, cb, otc, ctl.close, m)
+            else
+                # No terminal, no exception: a guard's close landing as the driver
+                # entered a user callback truncates the read into a clean EOF, so
+                # the loop just ends. Raise what the throwing path would have
+                # raised, or the kill reads as a 200 with partial bytes (or, worse,
+                # as a truncated success).
+                breach = _exit_breach(idle[], bound, cfg)
+                breach === nothing || throw(breach)
             end
-            # A stop ends the attempt here, before finalization and without draining
-            # the body; the catch decides whether a completed turn still stands.
-            iscancelled(ctl.stop) && throw(_stop_cause(ctl))
-            # Terminal contract: `:done` is the sentinel EOS
-            # ([DONE] / message_stop). Gemini has NO sentinel — its handler
-            # never returns :done; its stream ends at EOF with finishReason
-            # recorded. EOF with NEITHER signal = truncated/garbage stream
-            # (or a non-200 error body) → no message → LLMFailure below.
-            finished = status === :done ||
-                       (status === :continue && !isnothing(state.finish_reason))
-            if isnothing(state.error)
-                if finished
-                    # A reply that continues the turn hands it on to the next request; the
-                    # turn's last reply is finalized.
-                    next[] = _next_hop(chat, turn, state)
-                    isnothing(next[]) && _finalize_stream_message!(state, cb, otc, ctl.close, m)
-                else
-                    # No terminal, no exception: a guard's close landing as the driver
-                    # entered a user callback truncates the read into a clean EOF, so
-                    # the loop just ends. Raise what the throwing path would have
-                    # raised, or the kill reads as a 200 with partial bytes (or, worse,
-                    # as a truncated success).
-                    breach = _exit_breach(idle[], bound, cfg)
-                    breach === nothing || throw(breach)
-                end
-            end
-            # A stop from the terminal callback leaves the recorded turn standing; the
-            # aborted body is not drained.
-            if !iscancelled(ctl.stop)
-                status === :done && _await_body_end(io)
-                HTTP.closeread(io)
-            end
+        end
+        # A stop from the terminal callback leaves the recorded turn standing; the
+        # aborted body is not drained.
+        if !iscancelled(ctl.stop)
+            status === :done && _await_body_end(io)
+            HTTP.closeread(io)
+        end
+    end
+    try
+        url = get_url(chat)
+        src = _attempt_source!(ctl, url, body)
+        replay = src.replay
+        resp = if isnothing(replay)
+            # SSE must reach the parser uncompressed: some providers (e.g. Anthropic) gzip even
+            # streamed responses, and raw gzip bytes fail every line's decode, so no message is
+            # built (→ LLMFailure). Request identity encoding and disable decompression so
+            # `data:` lines arrive verbatim.
+            stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+            # Seam-routed: _http_open applies the native stream timeout kwargs plus
+            # status_exception=false and retry=false (HTTP.jl's internal retries would
+            # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
+            # decompress=false passes through.
+            _http_open(consume, "POST", url, stream_headers; cfg, t0, cancel=ctl.stop, context=ctx, decompress=false)
+        else
+            rs = _ReplayedStream(replay)
+            consume(rs)
+            rs.response
         end
         serr = state.error
         if !isnothing(serr) && resp.status == 200
@@ -1544,9 +1685,13 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             # other status the body is the failure: its status and bytes are kept below.)
             return (; result=_stream_error_result(chat, serr, _get_request_id(resp),
                                                   turn.sse_dropped + state.sse_dropped), resp)
-        elseif resp.status == 200 && !isnothing(next[])
-            return (; result=_StreamHop(state, next[]::String), resp)
-        elseif resp.status == 200 && !isnothing(m[])
+        elseif resp.status == 200 && !(isnothing(next[]) && isnothing(m[]))
+            # A whole reply — the turn's final message, or a reply that continues it — is
+            # recorded unless a stop ended its reading, and before the turn is committed: a
+            # recording that cannot be written leaves the chat as an unstreamed call leaves it.
+            iscancelled(ctl.stop) || _commit_stream!(src, resp, take!(raw_buffer))
+            hop = next[]
+            isnothing(hop) || return (; result=_StreamHop(state, hop), resp)
             return (; result=_stream_success(chat, m[]::Message, _add_usage(turn.usage, state.usage),
                                              turn.sse_dropped + state.sse_dropped, state.model), resp)
         else
@@ -1557,6 +1702,11 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     catch e
         # Chain-walk: an interrupt nested inside a wrapper must still surface first.
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+        # A missing recording, or a paid reply whose recording was lost, before anything
+        # classifies it: a lost write carries its I/O error as `cause`, which the chain
+        # walks below would take for teardown noise (swallowed) or a transport failure
+        # (sent again, and billed twice).
+        e isa Union{ReplayMissError,RecordingWriteError} && rethrow()
         # The reply is answered when EITHER the terminal message is recorded (`m[]`) or the
         # provider's own completion marker is (`state.finish_reason` — the only signal an
         # EOF-less provider gives, and all that survives when the connection dies on the read
@@ -1619,7 +1769,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
 end
 
 """
-    _stream_drive(chat, body, callback, on_tool_call, cfg, t0, token) -> LLMRequestResponse
+    _stream_drive(chat, body, callback, on_tool_call, cfg, t0, token, first=nothing) -> LLMRequestResponse
 
 Streaming request loop over the requests of one turn: one request, or one per hop of a long
 generation the provider continues (`_continuation_body`), each a request of its own with the
@@ -1628,12 +1778,14 @@ close flag) ends the call with `UniLMCancelled` in `cause`, never retried; an ex
 user code ends it with that exception in `cause`. A turn that ends uncommitted adds what its
 requests were billed to the chat's total, as far as their providers reported it (`_settled`):
 the earlier replies of the turn and the latest attempt's reported usage; nothing is committed.
-`InterruptException` always rethrows; every other failure becomes a typed result value.
+`first` is the source of the first request when it was looked up before the call's task was
+spawned (`_first_stream_source`). `InterruptException`, `ReplayMissError` and
+`RecordingWriteError` always rethrow; every other failure becomes a typed result value.
 """
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
-                       token::Union{Nothing,CancelToken})
-    io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
-    ctl = _StreamCtl(token, t0)
+                       token::Union{Nothing,CancelToken}, first::Union{Nothing,_StreamSource}=nothing)
+    io_ref = Ref{Union{HTTP.Stream,_ReplayedStream,Nothing}}(nothing)
+    ctl = _StreamCtl(token, t0, first)
     link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
     turn = _StreamTurn(body)
     request, start = body, t0
@@ -1652,6 +1804,9 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         end
     catch e
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+        # Neither is a failure of the call: a miss, or a paid reply's lost recording,
+        # reaches the caller as an unstreamed call's does (here, at `fetch`).
+        e isa Union{ReplayMissError,RecordingWriteError} && rethrow()
         u = _unwrap_exception(e)
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
         failure = if u isa _UserCallbackError
@@ -1693,6 +1848,9 @@ function _stream_hop(chat::Chat, body, callback, on_tool_call, cfg::RequestConfi
             _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref, ctl, turn)
         catch e
             _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+            # Never retried: a miss stays a miss, and a lost write's I/O cause is no
+            # transport failure — a resend would bill the reply twice.
+            e isa Union{ReplayMissError,RecordingWriteError} && rethrow()
             u = _unwrap_exception(e)
             (_retryable_exception(u) && !ctl.fired && attempt < cfg.max_attempts) || rethrow()
             action, delay = _retry_pause(cfg, t0, attempt, nothing)
@@ -1733,11 +1891,14 @@ end
 
 """
     _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
-                       cfg=_resolve_config(nothing), t0=time_ns(), cancel=_current_cancel()) -> Task
+                       cfg=_resolve_config(nothing), t0=time_ns(), cancel=_current_cancel(),
+                       first=nothing) -> Task
 
 Spawn the streaming request task. `cfg`, `t0` and the cancellation token are
 resolved/stamped at call entry — BEFORE the spawn — and the task closes over them, so
 a running stream is immune to later changes of the process-default configuration.
+`first` is the source of the first request when it was looked up at call entry too
+(`_first_stream_source`).
 
 The returned task throws only for a user `InterruptException` (every other failure is a
 typed result value), so `fetch` then raises a `TaskFailedException` whose
@@ -1747,8 +1908,9 @@ typed result value), so `fetch` then raises a `TaskFailedException` whose
 function _chatrequeststream(chat::Chat, body, callback=nothing; on_tool_call=nothing,
                             cfg::RequestConfig=_resolve_config(nothing),
                             t0::UInt64=time_ns(),
-                            cancel::Union{Nothing,CancelToken}=_current_cancel())
-    Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0, cancel)
+                            cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                            first::Union{Nothing,_StreamSource}=nothing)
+    Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0, cancel, first)
 end
 
 
@@ -1855,7 +2017,8 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     cfg = _resolve_config(config, _model_default_config(chat.service, chat.model))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
-    chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
+    chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok,
+                                                      first=_first_stream_source(() -> get_url(chat), body, tok))
     billed = nothing   # the turn so far, while the provider continues it in another request
     latest = nothing   # the reply to the request sent last, whose id a failure names
     try

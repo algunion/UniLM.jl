@@ -1349,11 +1349,14 @@ end
 # before that — `token`, or the callback's close flag — ends the call with
 # `UniLMCancelled` in `cause`, never retried; an exception from the callback ends it
 # with that exception in `cause`. InterruptException always rethrows first (surfaces
-# as a TaskFailedException at fetch).
+# as a TaskFailedException at fetch). Inside a `with_recorded_answers` scope each attempt
+# is answered as the scopes decide — `first`, the first attempt's source, was looked up
+# before the spawn (`_first_stream_source`) — and a whole response read with no stop is
+# recorded; a miss or a lost recording rethrows unclassified, as an interrupt does.
 function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
-                         token::Union{Nothing,CancelToken})
+                         token::Union{Nothing,CancelToken}, first::Union{Nothing,_StreamSource}=nothing)
     Threads.@spawn begin
-        ctl = _StreamCtl(token, t0)
+        ctl = _StreamCtl(token, t0, first)
         link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
         try
             _respond_drive(r, body, callback, cfg, t0, ctl)
@@ -1369,7 +1372,7 @@ _cancelled_response(ctl::_StreamCtl, t0::UInt64)::ResponseCallError =
 
 function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
                         ctl::_StreamCtl)
-    io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
+    io_ref = Ref{Union{HTTP.Stream,_ReplayedStream,Nothing}}(nothing)
     attempt = 1
     while true
         io_ref[] = nothing
@@ -1378,115 +1381,127 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
         # Fresh per attempt (a retried attempt must not inherit partial SSE state)
         # and owned OUT here so the `finally` can report what this connection dropped.
         state = AgenticStreamState()
-        raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (a streamed resp.body is empty)
+        raw_buffer = IOBuffer()  # wire bytes for non-200 reporting and the recording (a streamed resp.body is empty)
         guard = Ref{Union{Nothing,_IdleGuard}}(nothing)   # armed at the first byte; stays nothing when disabled
         # Request-phase bound, recorded before it unwinds through HTTP.jl (see
         # `_with_recorded_deadline`): the catch restores it as the surfaced cause
         # when the library's teardown of the bound-closed socket replaces it.
         bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
         cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, guard[], x, c)
+        ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
+        # The exchange, live or replayed: the request written, the head read, the stream parsed.
+        function consume(io)
+            io_ref[] = io
+            done = Ref(false)
+            # First byte = response headers received. The request-phase deadline guards
+            # the whole send/first-byte exchange; the total deadline governs a stream
+            # only up to this point — after it, only the idle guard runs (a long
+            # healthy stream is not a failure).
+            _with_recorded_deadline(() -> begin
+                    write(io, body)
+                    HTTP.closewrite(io)
+                    HTTP.startread(io)
+                end, () -> _abort_request_phase(io, ctx),
+                _first_byte_bound(io, cfg, t0), :request, bound)
+            # Byte-gap guard: reset on every raw read (SSE comments and provider
+            # keep-alives reset the clock by construction).
+            guard[] = _idle_guard(() -> close(io), _idle_bound(io, cfg))
+            at_eof = false
+            while !done[] && !iscancelled(ctl.stop)
+                if eof(io)
+                    # EOF flush (mirrors the chat driver): a peer can end
+                    # its last line WITHOUT the trailing newline — a
+                    # terminal event as the very last bytes is still ONE
+                    # COMPLETE line. Feed the newline that terminates it,
+                    # then stop. With an empty carry this decodes nothing.
+                    chunk = "\n"
+                    at_eof = true
+                else
+                    chunk = String(readavailable(io))
+                    _touch!(guard[])
+                    write(raw_buffer, chunk)
+                end
+                status = decode_agentic_stream(r.service, chunk, state)
+                if status.terminal in (:completed, :incomplete) &&
+                   status.data isa AbstractDict && haskey(status.data, "response")
+                    # BOTH terminals carry a real response object, so both finalize
+                    # the same way: `incomplete` reports its truncation in `status` /
+                    # `incomplete_details` and still holds usable partial output.
+                    # Discarding it would make the result type depend on `stream` —
+                    # the non-streamed decode of this same object is a success, and
+                    # only `status == "failed"` is a failure on either path.
+                    _flush_agentic_delta!(cb, state, ctl.close)
+                    rdata = status.data["response"]
+                    result[] = _billed_response(r.service, r.model, ResponseObject(
+                        id=rdata["id"],
+                        status=rdata["status"],
+                        model=rdata["model"],
+                        output=get(rdata, "output", Any[]),
+                        usage=get(rdata, "usage", nothing),
+                        error=get(rdata, "error", nothing),
+                        metadata=get(rdata, "metadata", nothing),
+                        raw=rdata
+                    ))
+                    done[] = true
+                    isnothing(cb) || cb(result[], ctl.close)
+                elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
+                    # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
+                    # response's own error details instead of dropping them. `:incomplete`
+                    # reaches here only when the terminal carries NO response object — a
+                    # malformed terminal, which has no result to hand back.
+                    terminal_error[] = status.data
+                    done[] = true
+                else
+                    # Forward this read's deltas. The decoder ALSO accumulates them in
+                    # `state.textbuff`, which a provider whose TERMINAL event omits the
+                    # output — Gemini's `interaction.completed` carries no steps — rebuilds
+                    # from. OpenAI ignores it (its completed event has output).
+                    _flush_agentic_delta!(cb, state, ctl.close)
+                end
+                at_eof && break
+            end
+            if iscancelled(ctl.stop)
+                # A stop before the terminal ends the attempt; after it, the recorded
+                # outcome stands (see the catch). The aborted body is not drained.
+                done[] || throw(_stop_cause(ctl, t0))
+            else
+                if !done[]
+                    # No terminal, no exception: a guard's close landing as the driver
+                    # entered a user callback truncates the read into a clean EOF, so
+                    # the loop just ends. Raise what the throwing path would have
+                    # raised, or the kill reads as a 200 carrying partial bytes
+                    # (mirror: _stream_attempt).
+                    breach = _exit_breach(guard[], bound, cfg)
+                    breach === nothing || throw(breach)
+                end
+                HTTP.closeread(io)
+            end
+        end
         try
             url = get_url(r.service, r)
             remaining = _remaining_s(cfg, t0)
             remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
-            # SSE must reach the parser uncompressed: some providers (Gemini Interactions)
-            # gzip even streamed responses, and raw gzip bytes fail every line's decode,
-            # so no text/output is built. Request identity encoding and disable
-            # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
-            stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
-            ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
-            # Seam-routed: _http_open applies the native stream kwargs plus
-            # status_exception=false and retry=false and aborts the exchange on
-            # `ctl.stop`; decompress=false passes through.
-            resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, cancel=ctl.stop,
-                              context=ctx, decompress=false) do io
-                io_ref[] = io
-                done = Ref(false)
-                # First byte = response headers received. The request-phase deadline guards
-                # the whole send/first-byte exchange; the total deadline governs a stream
-                # only up to this point — after it, only the idle guard runs (a long
-                # healthy stream is not a failure).
-                _with_recorded_deadline(() -> begin
-                        write(io, body)
-                        HTTP.closewrite(io)
-                        HTTP.startread(io)
-                    end, () -> _abort_request_phase(io, ctx),
-                    min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
-                # Byte-gap guard: reset on every raw read (SSE comments and provider
-                # keep-alives reset the clock by construction).
-                guard[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-                at_eof = false
-                while !done[] && !iscancelled(ctl.stop)
-                    if eof(io)
-                        # EOF flush (mirrors the chat driver): a peer can end
-                        # its last line WITHOUT the trailing newline — a
-                        # terminal event as the very last bytes is still ONE
-                        # COMPLETE line. Feed the newline that terminates it,
-                        # then stop. With an empty carry this decodes nothing.
-                        chunk = "\n"
-                        at_eof = true
-                    else
-                        chunk = String(readavailable(io))
-                        _touch!(guard[])
-                        write(raw_buffer, chunk)
-                    end
-                    status = decode_agentic_stream(r.service, chunk, state)
-                    if status.terminal in (:completed, :incomplete) &&
-                       status.data isa AbstractDict && haskey(status.data, "response")
-                        # BOTH terminals carry a real response object, so both finalize
-                        # the same way: `incomplete` reports its truncation in `status` /
-                        # `incomplete_details` and still holds usable partial output.
-                        # Discarding it would make the result type depend on `stream` —
-                        # the non-streamed decode of this same object is a success, and
-                        # only `status == "failed"` is a failure on either path.
-                        _flush_agentic_delta!(cb, state, ctl.close)
-                        rdata = status.data["response"]
-                        result[] = _billed_response(r.service, r.model, ResponseObject(
-                            id=rdata["id"],
-                            status=rdata["status"],
-                            model=rdata["model"],
-                            output=get(rdata, "output", Any[]),
-                            usage=get(rdata, "usage", nothing),
-                            error=get(rdata, "error", nothing),
-                            metadata=get(rdata, "metadata", nothing),
-                            raw=rdata
-                        ))
-                        done[] = true
-                        isnothing(cb) || cb(result[], ctl.close)
-                    elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
-                        # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
-                        # response's own error details instead of dropping them. `:incomplete`
-                        # reaches here only when the terminal carries NO response object — a
-                        # malformed terminal, which has no result to hand back.
-                        terminal_error[] = status.data
-                        done[] = true
-                    else
-                        # Forward this read's deltas. The decoder ALSO accumulates them in
-                        # `state.textbuff`, which a provider whose TERMINAL event omits the
-                        # output — Gemini's `interaction.completed` carries no steps — rebuilds
-                        # from. OpenAI ignores it (its completed event has output).
-                        _flush_agentic_delta!(cb, state, ctl.close)
-                    end
-                    at_eof && break
-                end
-                if iscancelled(ctl.stop)
-                    # A stop before the terminal ends the attempt; after it, the recorded
-                    # outcome stands (see the catch). The aborted body is not drained.
-                    done[] || throw(_stop_cause(ctl, t0))
-                else
-                    if !done[]
-                        # No terminal, no exception: a guard's close landing as the driver
-                        # entered a user callback truncates the read into a clean EOF, so
-                        # the loop just ends. Raise what the throwing path would have
-                        # raised, or the kill reads as a 200 carrying partial bytes
-                        # (mirror: _stream_attempt).
-                        breach = _exit_breach(guard[], bound, cfg)
-                        breach === nothing || throw(breach)
-                    end
-                    HTTP.closeread(io)
-                end
+            src = _attempt_source!(ctl, url, body)
+            replay = src.replay
+            resp = if isnothing(replay)
+                # SSE must reach the parser uncompressed: some providers (Gemini Interactions)
+                # gzip even streamed responses, and raw gzip bytes fail every line's decode,
+                # so no text/output is built. Request identity encoding and disable
+                # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
+                stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
+                # Seam-routed: _http_open applies the native stream kwargs plus
+                # status_exception=false and retry=false and aborts the exchange on
+                # `ctl.stop`; decompress=false passes through.
+                _http_open(consume, "POST", url, stream_headers; cfg=cfg, t0=t0, cancel=ctl.stop,
+                           context=ctx, decompress=false)
+            else
+                rs = _ReplayedStream(replay)
+                consume(rs)
+                rs.response
             end
             if resp.status == 200 && !isnothing(result[])
+                # A whole response, read with no stop, is recorded before it is returned.
+                iscancelled(ctl.stop) || _commit_stream!(src, resp, take!(raw_buffer))
                 return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
                                        service=r.service)
             elseif (te = terminal_error[]) !== nothing
@@ -1510,6 +1525,11 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # Interrupt-first, chain-walked: a user interrupt nested inside a task or
             # transport wrapper must still surface before any timeout/transport mapping.
             _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+            # A missing recording, or a paid response whose recording was lost, before
+            # anything classifies it: a lost write carries its I/O error as `cause`, which
+            # the teardown rule would take for noise (swallowed) and the transport rule
+            # for a failure worth another attempt (sent again, and billed twice).
+            e isa Union{ReplayMissError,RecordingWriteError} && rethrow()
             # The callback failed: its exception is the outcome — never teardown noise and
             # never retried, whatever HTTP.jl surfaced while the exchange unwound.
             failure = ctl.failure
@@ -1750,7 +1770,8 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
     # Streaming path. cfg/t0 are resolved above so both paths share one budget
     # origin: the stream driver bounds the first byte, guards the byte gap, and
     # retries pre-first-callback on the same budget.
-    r.stream === true && return _respond_stream(r, body, callback, cfg, t0, tok)
+    r.stream === true && return _respond_stream(r, body, callback, cfg, t0, tok,
+                                                _first_stream_source(() -> get_url(r.service, r), body, tok))
     local resp
     try
         url = get_url(r.service, r)

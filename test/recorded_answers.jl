@@ -530,25 +530,136 @@ _rl_fim_reply(b, n) = Dict("id" => "cmpl-$n", "object" => "text_completion", "mo
     "choices" => [Dict("index" => 0, "text" => "fill $n", "finish_reason" => "stop")],
     "usage" => Dict("prompt_tokens" => 100 + n, "completion_tokens" => 10 + n, "total_tokens" => 110 + 2n))
 
+# ─── Streams, as each wire frames them ───────────────────────────────────────
+# OpenAI Chat Completions SSE (DeepSeek's too), Responses SSE, Anthropic Messages SSE,
+# native Gemini SSE (streaming is the URL's method there, not a body flag), Gemini
+# Interactions SSE, and Ollama's newline-delimited JSON. A prompt can ask for a variant
+# of a stream with `variant:<name>`.
+
+_rl_sse(event, data) = (isnothing(event) ? "" : "event: $event\n") * "data: " * JSON.json(data) * "\n\n"
+_rl_variant(raw) = (m = match(r"variant:([a-z_]+)", raw); isnothing(m) ? nothing : Symbol(m[1]))
+
+# Streams a test compares byte for byte with their recording, so they carry no request
+# number: CRLF line ends, and a last line the server never ends with a newline.
+const _RL_STREAM_BYTES = Dict(
+    :crlf => "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"carried\"}}]}\r\n\r\n" *
+             "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\n",
+    :no_final_newline => "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"unterminated\"}}]}\n\n" *
+                         "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+                         "data: [DONE]")
+_rl_mock_bytes(variant::Symbol) = _RL_STREAM_BYTES[variant]
+
+# A truncated stream has no finish and no `[DONE]`; an in-band error arrives on the 200 stream.
+function _rl_chat_stream(b, n, variant)
+    haskey(_RL_STREAM_BYTES, variant) && return _RL_STREAM_BYTES[variant]
+    chunk(delta, finish) = _rl_sse(nothing, Dict("id" => "c$n", "object" => "chat.completion.chunk",
+        "model" => b["model"], "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)]))
+    text = chunk(Dict("role" => "assistant", "content" => "streamed $n"), nothing)
+    variant === :truncated && return text
+    variant === :inband_error && return text * _rl_sse(nothing, Dict("error" => Dict(
+        "message" => "the mock failed mid-stream", "type" => "server_error"))) * "data: [DONE]\n\n"
+    text * chunk(Dict(), "stop") * "data: [DONE]\n\n"
+end
+
+function _rl_responses_stream(b, n)
+    reply = Dict("id" => "resp_$n", "object" => "response", "status" => "completed", "model" => b["model"],
+        "output" => [Dict("type" => "message", "id" => "msg_$n", "role" => "assistant", "status" => "completed",
+                          "content" => [Dict("type" => "output_text", "text" => "streamed $n", "annotations" => [])])],
+        "usage" => Dict("input_tokens" => 100 + n, "output_tokens" => 10 + n, "total_tokens" => 110 + 2n))
+    _rl_sse("response.created", Dict("type" => "response.created",
+                                     "response" => merge(reply, Dict("status" => "in_progress", "output" => [])))) *
+    _rl_sse("response.output_text.delta", Dict("type" => "response.output_text.delta", "delta" => "streamed $n")) *
+    _rl_sse("response.completed", Dict("type" => "response.completed", "response" => reply))
+end
+
+_rl_anthropic_stream(b, n) =
+    _rl_sse("message_start", Dict("type" => "message_start", "message" => Dict("id" => "msg_$n", "type" => "message",
+        "role" => "assistant", "model" => b["model"], "content" => [],
+        "usage" => Dict("input_tokens" => 100 + n, "output_tokens" => 1)))) *
+    _rl_sse("content_block_start", Dict("type" => "content_block_start", "index" => 0,
+                                        "content_block" => Dict("type" => "text", "text" => ""))) *
+    _rl_sse("content_block_delta", Dict("type" => "content_block_delta", "index" => 0,
+                                        "delta" => Dict("type" => "text_delta", "text" => "streamed $n"))) *
+    _rl_sse("content_block_stop", Dict("type" => "content_block_stop", "index" => 0)) *
+    _rl_sse("message_delta", Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "end_turn"),
+                                  "usage" => Dict("output_tokens" => 10 + n))) *
+    _rl_sse("message_stop", Dict("type" => "message_stop"))
+
+# `variant:hops` asks for a long generation continued over three requests, each reply naming its hop.
+function _rl_gemini_stream(b, n, model, variant)
+    usage = Dict("promptTokenCount" => 100 + n, "candidatesTokenCount" => 10 + n, "totalTokenCount" => 110 + 2n)
+    part(text) = Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => text)]), "index" => 0)
+    if variant === :hops
+        token = get(b, "continuationToken", nothing)
+        hop = token isa String ? parse(Int, chopprefix(token, "tok-")) + 1 : 1
+        ends = hop < 3 ? Dict("finishReason" => "CONTINUATION", "continuationToken" => "tok-$hop") :
+                         Dict("finishReason" => "STOP")
+        return _rl_sse(nothing, Dict("candidates" => [merge(part("hop $hop. "), ends)], "usageMetadata" => usage,
+                                     "modelVersion" => model))
+    end
+    _rl_sse(nothing, Dict("candidates" => [part("streamed $n")], "modelVersion" => model)) *
+    _rl_sse(nothing, Dict("candidates" => [Dict("finishReason" => "STOP", "index" => 0)], "usageMetadata" => usage,
+                          "modelVersion" => model))
+end
+
+function _rl_interactions_stream(b, n)
+    done = Dict("id" => "int_$n", "status" => "completed", "model" => b["model"],
+                "usage" => Dict("total_input_tokens" => 100 + n, "total_output_tokens" => 10 + n, "total_tokens" => 110 + 2n))
+    _rl_sse("interaction.created", Dict("interaction" => merge(done, Dict("status" => "in_progress")))) *
+    _rl_sse("step.start", Dict("index" => 0, "step" => Dict("type" => "model_output"))) *
+    _rl_sse("step.delta", Dict("index" => 0, "delta" => Dict("type" => "text", "text" => "streamed $n"))) *
+    _rl_sse("step.stop", Dict("index" => 0)) *
+    _rl_sse("interaction.completed", Dict("interaction" => done)) * "event: done\ndata: [DONE]\n\n"
+end
+
+_rl_ollama_stream(b, n) =
+    JSON.json(Dict("model" => b["model"], "message" => Dict("role" => "assistant", "content" => "streamed $n"),
+                   "done" => false)) * "\n" *
+    JSON.json(Dict("model" => b["model"], "message" => Dict("role" => "assistant", "content" => ""), "done" => true,
+                   "done_reason" => "stop", "prompt_eval_count" => 100 + n, "eval_count" => 10 + n)) * "\n"
+
+function _rl_stream(http::HTTP.Stream, path, b, n, raw)
+    variant = _rl_variant(raw)
+    gemini = match(r"/models/([^/:]+):streamGenerateContent$", path)
+    id, type, bytes =
+        endswith(path, "/messages") ? ("request-id" => "req_$n", "text/event-stream", _rl_anthropic_stream(b, n)) :
+        !isnothing(gemini) ? (nothing, "text/event-stream", _rl_gemini_stream(b, n, gemini[1], variant)) :
+        endswith(path, "/interactions") ? (nothing, "text/event-stream", _rl_interactions_stream(b, n)) :
+        endswith(path, "/responses") ? ("x-request-id" => "req_$n", "text/event-stream", _rl_responses_stream(b, n)) :
+        path == "/api/chat" ? (nothing, "application/x-ndjson", _rl_ollama_stream(b, n)) :
+        ("x-request-id" => "req_$n", "text/event-stream", _rl_chat_stream(b, n, variant))
+    isnothing(id) || HTTP.setheader(http, id)
+    HTTP.setheader(http, "Content-Type" => type)
+    HTTP.startwrite(http)
+    write(http, bytes)
+end
+
+# A recordings directory that passes the scope's check, then is a file by the time the reply
+# arrives: the mock replaces it as it serves the next request, so the paid reply's recording fails.
+const _RL_DOOMED = Ref("")
+_rl_unwritable_dir() = (dir = mktempdir(_RA_ROOT); @lock(_RL_LOCK, _RL_DOOMED[] = dir); dir)
+function _rl_doom!()
+    dir = @lock _RL_LOCK (d = _RL_DOOMED[]; _RL_DOOMED[] = ""; d)
+    isempty(dir) || (rm(dir; recursive=true); write(dir, ""))
+    nothing
+end
+
 function _rl_serve(http::HTTP.Stream)
     req = http.message
     raw = String(read(http))
     n = Threads.atomic_add!(_RL_HITS, 1) + 1
     @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]; raw], "\n"))
+    _rl_doom!()
     b = isempty(raw) ? Dict{String,Any}() : JSON.parse(raw; dicttype=Dict{String,Any})   # a GET, DELETE or cancel sends none
     path = String(HTTP.URI(String(req.target)).path)
     HTTP.setstatus(http, 200)
     HTTP.setheader(http, "set-cookie" => "session=cookie-sentinel")      # never recorded
     HTTP.setheader(http, "openai-organization" => "org-sentinel")        # never recorded
-    if get(b, "stream", false) === true
-        HTTP.setheader(http, "Content-Type" => "text/event-stream")
-        HTTP.startwrite(http)
-        chunk(delta, finish) = "data: " * JSON.json(Dict("id" => "c$n", "object" => "chat.completion.chunk",
-            "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)])) * "\n\n"
-        write(http, chunk(Dict("role" => "assistant", "content" => "streamed $n"), nothing) *
-                    chunk(Dict(), "stop") * "data: [DONE]\n\n")
-        return
-    end
+    # Native Gemini names the tier that billed a reply in its response head alone.
+    tier = get(b, "serviceTier", nothing)
+    tier isa String && HTTP.setheader(http, "x-gemini-service-tier" => tier)
+    (get(b, "stream", false) === true || endswith(path, ":streamGenerateContent")) &&
+        return _rl_stream(http, path, b, n, raw)
     id, reply = endswith(path, "/messages") ? ("request-id" => "req_$n", _rl_anthropic_reply(b, n, raw)) :
                 occursin(":generateContent", path) ? (nothing, _rl_gemini_reply(b, n, raw)) :
                 endswith(path, "/responses") ? ("x-request-id" => "req_$n", _rl_responses_reply(b, n, raw)) :
@@ -584,6 +695,20 @@ UniLM._resolve_base_url(s::_RLHere) = _rl_here(UniLM._resolve_base_url(s.real))
 UniLM.provider_capabilities(s::_RLHere) = UniLM.provider_capabilities(s.real)
 UniLM.get_url(s::_RLHere, fim::FIMCompletion) = _rl_here(UniLM.get_url(s.real, fim))
 UniLM._prefix_complete_url(s::_RLHere) = _rl_here(UniLM._prefix_complete_url(s.real))
+# The stream seams: without them a wrapped provider's every streamed line would be dropped,
+# its response head unread and its usage priced at the standard rates.
+UniLM.decode_agentic_stream(s::_RLHere, chunk::String, state::UniLM.AgenticStreamState) =
+    UniLM.decode_agentic_stream(s.real, chunk, state)
+UniLM._stream_head!(s::_RLHere, state::UniLM.StreamState, head::HTTP.Response) = UniLM._stream_head!(s.real, state, head)
+UniLM._billed_cost(s::_RLHere, model::String, u::TokenUsage, rates::UniLM.PriceRow) =
+    UniLM._billed_cost(s.real, model, u, rates)
+UniLM._continuation_body(s::_RLHere, body, finish, token) = UniLM._continuation_body(s.real, body, finish, token)
+# How long the provider's event handler takes per event: zero, except in the test that slows it.
+const _RL_PARSE_DELAY = Ref(0.0)
+function UniLM.handle_sse_event!(s::_RLHere, event::AbstractString, payload::AbstractString, state::UniLM.StreamState)
+    _RL_PARSE_DELAY[] > 0 && sleep(_RL_PARSE_DELAY[])
+    UniLM.handle_sse_event!(s.real, event, payload, state)
+end
 
 # A backend that authenticates in the query string, as Google's `?key=` form does.
 struct _RLQueryKey <: UniLM.OpenAIWireEndpoint end
@@ -859,21 +984,182 @@ end
     end
 end
 
-@testset "recorded LLM answers — a streamed call is never recorded: it reaches the service as outside a scope" begin
-    streamed() = fetch(chatrequest!(_rl_chat(GenericOpenAIEndpoint(_RL_MOCK.url, ""); model="gpt-5.4-mini",
-                                             stream=true); config=_RL_CFG))
-    empty = mkpath(_ra_dir("llm-stream-replay"))
-    recording = _ra_dir("llm-stream-record")
-    before = _RL_HITS[]
-    outside = streamed()
-    inside = [with_recorded_answers(streamed, empty),
-              with_recorded_answers(streamed, recording; mode=:record),
-              with_recorded_answers(streamed, recording; mode=:record_missing)]
-    @test _RL_HITS[] == before + 4
-    @test isempty(readdir(empty)) && isempty(readdir(recording))
-    for (k, r) in enumerate([outside; inside])
-        @test r isa LLMSuccess && r.message.content == "streamed $(before + k)" && r.message.finish_reason == "stop"
+# ─── Streamed calls ──────────────────────────────────────────────────────────
+
+# A streamed call run to its result, with the text deltas its callback received.
+function _rl_streamed(start::Function)
+    deltas = String[]
+    r = fetch(start((d, close) -> d isa String && push!(deltas, d)))
+    (r, deltas)
+end
+_rl_stream_chat(service, model; kws...) =
+    _rl_streamed(cb -> chatrequest!(_rl_chat(service; model, stream=true, kws...); config=_RL_CFG, callback=cb))
+_rl_openai_stream() = _rl_stream_chat(_RL_OPENAI, "gpt-5.4-mini")
+function _rl_respond_stream()
+    deltas = String[]
+    task = respond("Say hello."; service=_RL_OPENAI, model="gpt-5.4-mini", config=_RL_CFG) do chunk, close
+        chunk isa String && push!(deltas, chunk)
     end
+    (fetch(task), deltas)
+end
+
+const _RL_STREAM_CASES = [
+    ("openai-chat", _rl_openai_stream),
+    ("responses", _rl_respond_stream),
+    ("anthropic", () -> _rl_stream_chat(_RLHere(ANTHROPICServiceEndpoint), "claude-haiku-4-5")),
+    ("gemini", () -> _rl_stream_chat(_RLHere(GEMINIServiceEndpoint), "gemini-3.8-flash")),
+    ("interactions", () -> _rl_streamed(cb -> respond(Respond(service=_RLHere(GEMINIServiceEndpoint),
+        model="gemini-3.8-flash", input="Say hello.", stream=true); config=_RL_CFG, callback=cb))),
+    ("ollama", () -> _rl_stream_chat(OllamaEndpoint(base_url=_RL_MOCK.url), "gemma4:e4b")),
+    ("deepseek", () -> _rl_stream_chat(_RL_DEEPSEEK, "deepseek-flash")),
+]
+
+_rl_text(r::LLMSuccess) = r.message.content
+_rl_text(r::ResponseSuccess) = output_text(r)
+
+# A streamed chat that asks the mock for a variant of its stream. A `:stopped` call sets its close
+# flag from the final message's callback, and a `:callback_throws` call throws there.
+_rl_stream_case(case::Symbol) = _rl_streamed() do cb
+    callback = case === :stopped ? (d, close) -> (cb(d, close); d isa Message && (close[] = true)) :
+               case === :callback_throws ? (d, close) -> (cb(d, close); d isa Message && error("the callback failed")) :
+               cb
+    chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", prompt="variant:$case", stream=true);
+                 config=_RL_CFG, callback)
+end
+
+# Gemini Flex, which the mock names in the response head alone, and a reply's cost at the standard rates.
+_rl_gemini_flex_stream() = _rl_stream_chat(_RLHere(GEMINIServiceEndpoint), "gemini-3.8-flash"; service_tier="flex")
+_rl_gemini_flex_generate() =
+    (chatrequest!(_rl_chat(_RLHere(GEMINIServiceEndpoint); model="gemini-3.8-flash", service_tier="flex");
+                  config=_RL_CFG), String[])
+_rl_standard_cost(r::LLMSuccess) = estimated_cost(LLMSuccess(; r.message, r.self, r.model,
+    usage=TokenUsage(; UniLM._usage_fields(token_usage(r))..., service_tier=nothing)))
+
+_rl_gemini_continuation_stream() = _rl_stream_chat(_RLHere(GEMINIServiceEndpoint), "gemini-4-argon"; prompt="variant:hops")
+_rl_hops(r::LLMSuccess) = count("hop ", r.message.content)
+
+# With no callback no user code runs, so only the rethrow keeps a lost write from being sent again.
+const _RL_RETRYING = UniLM.RequestConfig(max_attempts=3, total_deadline=30.0)
+_rl_openai_stream_nocb() =
+    fetch(chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_RETRYING))
+_rl_respond_stream_nocb() =
+    fetch(respond(Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input="Say hello.", stream=true); config=_RL_RETRYING))
+_rl_unwrap(e) = e isa TaskFailedException ? _rl_unwrap(e.task.exception) : e
+
+# A replayed stream whose callback cancels the call at its first delta.
+function _rl_cancelled_replay()
+    tok = CancelToken()
+    fetch(chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_CFG, cancel=tok,
+                       callback=(d, close) -> d isa String && cancel!(tok)))
+end
+
+const _RA_COMMITTED = joinpath(pkgdir(UniLM), "docs", "recorded_answers")
+
+@testset "recorded LLM answers — a streamed call records once and replays offline with the same deltas" begin
+    @testset "$name" for (name, call) in _RL_STREAM_CASES   # OpenAI chat, Responses (do-block), Anthropic,
+        dir = _ra_dir("llm-stream-$name")                   # Gemini native, Interactions, Ollama NDJSON, DeepSeek
+        live, live_deltas = _rl_online(() -> with_recorded_answers(call, dir; mode=:record))
+        @test only(JSON.parsefile.(joinpath.(dir, readdir(dir))))["response"]["stream"] isa Vector
+        hits = _RL_HITS[]
+        replayed, replayed_deltas = _rl_offline(() -> with_recorded_answers(call, dir))
+        @test _RL_HITS[] == hits
+        @test _rl_text(replayed) == _rl_text(live) && join(replayed_deltas) == join(live_deltas)
+    end
+end
+@testset "recorded LLM answers — a streamed miss is thrown by the verb itself, before any task runs" begin
+    empty = mkpath(_ra_dir("llm-stream-miss"))
+    @test_throws ReplayMissError _rl_offline(() -> with_recorded_answers(empty) do
+        chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_CFG)
+    end)
+end
+@testset "recorded LLM answers — an in-band error, a truncated, a stopped or a callback-failed stream is never recorded" begin
+    for case in (:inband_error, :truncated, :stopped, :callback_throws)
+        dir = _ra_dir("llm-stream-unrecorded-$case")
+        _rl_online(() -> with_recorded_answers(() -> _rl_stream_case(case), dir; mode=:record))
+        @test isempty(readdir(dir))
+    end
+end
+@testset "recorded LLM answers — a replayed Gemini reply keeps its tier, so it costs what the live one cost" begin
+    for (name, call) in (("stream", _rl_gemini_flex_stream), ("generate", _rl_gemini_flex_generate))
+        dir = _ra_dir("llm-tier-$name")                     # the mock names the tier only in the response head
+        live, _ = _rl_online(() -> with_recorded_answers(call, dir; mode=:record))
+        replayed, _ = _rl_offline(() -> with_recorded_answers(call, dir))
+        @test token_usage(live).service_tier == "flex"
+        @test estimated_cost(live) < _rl_standard_cost(live)     # flex is really priced as flex
+        @test estimated_cost(replayed) == estimated_cost(live)
+    end
+end
+@testset "recorded LLM answers — streams through nested scopes; the inner scope records what the outer replayed" begin
+    outer, inner = _ra_dir("llm-stream-outer"), _ra_dir("llm-stream-inner")
+    _rl_online(() -> with_recorded_answers(_rl_openai_stream, outer; mode=:record))
+    _rl_offline(() -> with_recorded_answers(outer) do
+        with_recorded_answers(_rl_openai_stream, inner; mode=:record_missing)
+    end)
+    @test readdir(inner) == readdir(outer)
+end
+@testset "recorded answers — an old recording without kept headers still replays as today" begin
+    for f in readdir(_RA_COMMITTED)
+        j = JSON.parsefile(joinpath(_RA_COMMITTED, f))["response"]
+        haskey(j, "headers") && continue                       # written with its kept headers: a newer recording
+        r = UniLM._replayed(joinpath(_RA_COMMITTED, f))
+        @test r.status == j["status"] && JSON.parse(String(r.body)) == j["body"]
+        # A recording that names no header is System One's (the first header `_replayed` knows).
+        j["request_id"] === nothing ||
+            @test HTTP.header(r, get(j, "request_id_header", "x-typesafe-request-id")) == j["request_id"]
+    end
+end
+@testset "recorded LLM answers — CRLF lines and a missing final newline replay byte for byte" begin
+    for variant in (:crlf, :no_final_newline)
+        dir = _ra_dir("llm-stream-$variant")
+        live, _ = _rl_online(() -> with_recorded_answers(() -> _rl_stream_case(variant), dir; mode=:record))
+        @test join(only(JSON.parsefile.(joinpath.(dir, readdir(dir))))["response"]["stream"], "\n") == _rl_mock_bytes(variant)
+        replayed, _ = _rl_offline(() -> with_recorded_answers(() -> _rl_stream_case(variant), dir))
+        @test _rl_text(replayed) == _rl_text(live)
+    end
+end
+@testset "recorded LLM answers — a Gemini continuation records and replays every hop" begin
+    dir = _ra_dir("llm-stream-hops")
+    live, _ = _rl_online(() -> with_recorded_answers(_rl_gemini_continuation_stream, dir; mode=:record))
+    @test length(readdir(dir)) == _rl_hops(live)
+    replayed, _ = _rl_offline(() -> with_recorded_answers(_rl_gemini_continuation_stream, dir))
+    @test _rl_text(replayed) == _rl_text(live)
+end
+@testset "recorded LLM answers — a paid streamed reply that cannot be written fails loudly and is sent once" begin
+    for call in (_rl_openai_stream_nocb, _rl_respond_stream_nocb)       # chatrequest! and respond, no callback
+        hits = _RL_HITS[]
+        err = _rl_online(() -> _ra_caught(() -> with_recorded_answers(call, _rl_unwritable_dir(); mode=:record)))
+        @test _rl_unwrap(err) isa RecordingWriteError                    # through fetch's TaskFailedException
+        @test _RL_HITS[] == hits + 1                                     # RequestConfig(max_attempts=3): no resend
+    end
+end
+@testset "recorded LLM answers — cancelling a replayed stream ends it with UniLMCancelled" begin
+    src = _ra_dir("llm-stream-cancel-src")
+    _rl_online(() -> with_recorded_answers(_rl_openai_stream, src; mode=:record))
+    r = _rl_offline(() -> with_recorded_answers(() -> _rl_cancelled_replay(), src))
+    @test r isa LLMCallError && r.cause isa UniLMCancelled
+end
+@testset "recorded LLM answers — a later hop's miss reaches the caller at fetch, as its task's failure" begin
+    dir = _ra_dir("llm-stream-hops-gap")
+    _rl_online(() -> with_recorded_answers(_rl_gemini_continuation_stream, dir; mode=:record))
+    second = only(f for f in readdir(dir; join=true)
+                  if get(JSON.parsefile(f)["request"]["body"], "continuationToken", nothing) == "tok-1")
+    rm(second)
+    err = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(_rl_gemini_continuation_stream), dir))
+    @test err isa TaskFailedException && _rl_unwrap(err) isa ReplayMissError
+end
+@testset "recorded LLM answers — a replayed stream arms no idle guard, so a slow parse never times it out" begin
+    dir = _ra_dir("llm-stream-slow")
+    live, _ = _rl_online(() -> with_recorded_answers(_rl_openai_stream, dir; mode=:record))
+    tight = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0, stream_idle_timeout=0.05)
+    replayed = try
+        _RL_PARSE_DELAY[] = 0.25                             # five idle bounds without a read, per event
+        _rl_offline(() -> with_recorded_answers(dir) do
+            fetch(chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=tight))
+        end)
+    finally
+        _RL_PARSE_DELAY[] = 0.0
+    end
+    @test replayed isa LLMSuccess && _rl_text(replayed) == _rl_text(live)
 end
 
 @testset "recorded LLM answers — a paid reply that cannot be written is thrown, never returned" begin
@@ -981,9 +1267,10 @@ end
     source = JSON.parse(read(_ra_file(_ra_dir("replay"), _ra_request()), String))
     @test source["response"]["request_id_header"] == "x-typesafe-request-id"
     id = source["response"]["request_id"]
-    # As written before the header's name was kept.
+    # As written before the header's name was kept (and before the kept headers).
     old = JSON.parse(JSON.json(source))
     delete!(old["response"], "request_id_header")
+    delete!(old["response"], "headers")
     dir = mkpath(_ra_dir("old-format"))
     write(_ra_file(dir, _ra_request()), JSON.json(old))
     r = _ra_offline(() -> with_recorded_answers(() -> ask(_ra_request(); config=_RA_CFG), dir))

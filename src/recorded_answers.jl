@@ -393,42 +393,72 @@ end
 
 _exchange(::Nothing, ::String, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
 
-# A file that is not a readable recording is as loud as a missing one: returned as
-# a call error, it would read as a service failure. `:record` never reads it, so
-# recording over it is how it gets replaced.
 function _exchange(s::_AnswerScope, method::String, path::String, body::String, key_extra::String,
                    live::Function)::HTTP.Response
-    keyed = _keyed_body(body, key_extra)
-    key = _answer_key(method, path, keyed)
-    file = joinpath(s.dir, key * ".json")
-    miss(reason::String) = ReplayMissError(s.dir, key, method, path, keyed, reason)
-    if s.mode !== :record && isfile(file)
-        return try
-            _replayed(file)
-        catch err
-            err isa InterruptException && rethrow()
-            # The first line only: a JSON parse error goes on to quote the text around it.
-            why = String(first(split(err isa ArgumentError ? err.msg : sprint(showerror, err), '\n')))
-            throw(miss("unreadable recording: " * why))
-        end
-    end
+    file, miss = _recording_file(s, method, path, body, key_extra)
+    s.mode !== :record && isfile(file) && return _read_recording(_replayed, file, miss)
     s.mode === :replay && throw(miss(_NO_RECORDING))
     resp = _exchange(s.parent, method, path, body, key_extra, live)
     resp.status == 200 && _record(file, method, path, body, key_extra, resp)
     resp
 end
 
+# The file of a request's recording in scope `s`, and the `ReplayMissError` that reports it.
+function _recording_file(s::_AnswerScope, method::String, path::String, body::String, key_extra::String)
+    keyed = _keyed_body(body, key_extra)
+    key = _answer_key(method, path, keyed)
+    joinpath(s.dir, key * ".json"), (reason::String) -> ReplayMissError(s.dir, key, method, path, keyed, reason)
+end
+
+# A recording, read by `reader`. A file that is not a readable recording is as loud as a
+# missing one: returned as a call error, it would read as a service failure. `:record`
+# never reads it, so recording over it is how it gets replaced.
+function _read_recording(reader::Function, file::String, miss::Function)
+    try
+        reader(file)
+    catch err
+        err isa InterruptException && rethrow()
+        # The first line only: a JSON parse error goes on to quote the text around it.
+        why = String(first(split(err isa ArgumentError ? err.msg : sprint(showerror, err), '\n')))
+        throw(miss("unreadable recording: " * why))
+    end
+end
+
 # A recording rebuilt as the 200 it captured, for the caller to decode as a live
 # one. Only the recording's own shape is checked here: whether the body is a
 # usable answer is the decoder's call, exactly as for a live 200.
 function _replayed(file::String)::HTTP.Response
+    res = _recorded_response(file)
+    answer = get(res, "body", nothing)
+    answer isa AbstractDict || throw(ArgumentError("its \"body\" is not a JSON object"))
+    HTTP.Response(200, _replayed_headers(res), Vector{UInt8}(JSON.json(answer)))
+end
+
+# A recorded stream rebuilt for its replay (`_ReplayedStream`). As for `_replayed`, only the
+# recording's shape is checked: whether its lines make a reply is the stream parser's call.
+function _recorded_stream(file::String)::_StreamRecording
+    res = _recorded_response(file)
+    lines = get(res, "stream", nothing)
+    lines isa AbstractVector && all(l -> l isa AbstractString, lines) ||
+        throw(ArgumentError("its \"stream\" is not an array of strings"))
+    _StreamRecording(_replayed_headers(res), String[String(l) for l in lines])
+end
+
+# A recording's `response` object, which must be an HTTP 200's.
+function _recorded_response(file::String)::AbstractDict
     rec = JSON.parse(read(file, String))
     res = rec isa AbstractDict ? get(rec, "response", nothing) : nothing
     res isa AbstractDict || throw(ArgumentError("it has no \"response\" object"))
     status = get(res, "status", nothing)
     status == 200 || throw(ArgumentError("its status is $(repr(status)), and only HTTP 200s are recorded"))
-    answer = get(res, "body", nothing)
-    answer isa AbstractDict || throw(ArgumentError("its \"body\" is not a JSON object"))
+    res
+end
+
+# The headers a recorded response is replayed with: its kept `headers`, or, in a recording
+# made before they were kept, its request id under the header that carried it. The request
+# id and that header's name are checked either way: a reader that predates the kept headers
+# replays a recording from them.
+function _replayed_headers(res::AbstractDict)::Vector{Pair{String,String}}
     id = get(res, "request_id", nothing)
     id isa Union{Nothing,AbstractString} || throw(ArgumentError(
         "its \"request_id\" is neither a string nor null"))
@@ -436,9 +466,22 @@ function _replayed(file::String)::HTTP.Response
     i = findfirst(==(get(res, "request_id_header", first(_REQUEST_ID_HEADERS))), _REQUEST_ID_HEADERS)
     isnothing(i) && throw(ArgumentError("its \"request_id_header\" is none of " *
                                         join(map(repr, _REQUEST_ID_HEADERS), ", ")))
-    HTTP.Response(200, isnothing(id) ? Pair{String,String}[] : [_REQUEST_ID_HEADERS[i] => String(id)],
-                  Vector{UInt8}(JSON.json(answer)))
+    kept = get(res, "headers", nothing)
+    isnothing(kept) && return isnothing(id) ? Pair{String,String}[] : [_REQUEST_ID_HEADERS[i] => String(id)]
+    kept isa AbstractDict && all(((name, value),) -> name in _KEPT_HEADERS && value isa AbstractString, kept) ||
+        throw(ArgumentError("its \"headers\" is not an object of string values named among " *
+                            join(map(repr, _KEPT_HEADERS), ", ")))
+    Pair{String,String}[name => String(kept[name]) for name in _KEPT_HEADERS if haskey(kept, name)]
 end
+
+# The headers a recording keeps from a response, in this order: the request ids
+# (`_REQUEST_ID_HEADERS`), and the tier Gemini billed a reply at, which its response head
+# names (`x-gemini-service-tier`, the only place Gemini 4 Argon names it) and which prices it.
+const _KEPT_HEADERS = ("x-typesafe-request-id", "x-request-id", "request-id", "x-gemini-service-tier")
+
+_kept_headers(resp::HTTP.Response)::Vector{Pair{String,String}} =
+    Pair{String,String}[name => String(HTTP.header(resp, name)) for name in _KEPT_HEADERS
+                        if !isempty(HTTP.header(resp, name, ""))]
 
 # The headers a recording keeps a request id from, in the order they are looked for:
 # System One's, the only one `ask` reads, then the two the LLM verbs read, in their
@@ -454,13 +497,84 @@ function _request_id_header(resp::HTTP.Response)::Union{Nothing,Pair{String,Stri
     nothing
 end
 
-function _record(file::String, method::String, path::String, body::String, key_extra::String,
-                 resp::HTTP.Response)::Nothing
+# What a recording keeps of a response's head: its status; its request id and the name of
+# the header that carried it, as a reader that predates the kept headers reads them; and
+# its kept headers.
+function _recorded_head(resp::HTTP.Response)::JSON.Object{String,Any}
     id = _request_id_header(resp)
     response = JSON.Object{String,Any}("status" => 200, "request_id" => isnothing(id) ? nothing : last(id))
     isnothing(id) || (response["request_id_header"] = first(id))
+    response["headers"] = JSON.Object{String,Any}(_kept_headers(resp)...)
+    response
+end
+
+function _record(file::String, method::String, path::String, body::String, key_extra::String,
+                 resp::HTTP.Response)::Nothing
+    response = _recorded_head(resp)
     # Parsed from the bytes, which stay unconsumed for the caller's own decoding.
     response["body"] = JSON.parse(resp.body)
+    _write_answer(file, method, path, body, key_extra, response)
+end
+
+"""
+    _stream_source(method, url, body; key_extra="") -> _StreamSource
+
+Where a streamed request is answered from, as the active [`with_recorded_answers`](@ref)
+scopes decide by the rule an unstreamed request's exchange follows, innermost scope first:
+a scope that is not `:record` and holds the request's recording replays it; a `:replay`
+scope without one throws [`ReplayMissError`](@ref), as any scope does for a recording file
+that cannot be read; any other scope asks its parent — past the outermost, the network —
+and records the reply it gets. Outside every scope the request is sent and recorded
+nowhere, with nothing computed. `body` is the request as it is sent; it is keyed and
+written as `_redacted` makes it, with `key_extra` after it.
+"""
+function _stream_source(method::String, url::String, body::String; key_extra::String="")::_StreamSource
+    scope = _ANSWER_SCOPE[]
+    isnothing(scope) && return _LIVE_STREAM
+    path, keyed = _request_path(url), _redacted(body)
+    record_to = String[]
+    replay = _stream_answer!(record_to, scope, method, path, keyed, key_extra)
+    _StreamSource(replay, record_to, method, path, keyed, key_extra)
+end
+
+# A request sent outside every scope: answered live, recorded nowhere.
+const _LIVE_STREAM = _StreamSource(nothing, String[], "", "", "", "")
+
+# The scopes' rule, one scope at a time: the recording that answers the request, or `nothing`
+# for a request that is sent. Each scope that records the reply adds its file to `record_to`
+# after its parent's, as an unstreamed exchange records the outer scope's copy first.
+_stream_answer!(::Vector{String}, ::Nothing, ::String, ::String, ::String, ::String)::Nothing = nothing
+function _stream_answer!(record_to::Vector{String}, s::_AnswerScope, method::String, path::String,
+                         body::String, key_extra::String)::Union{Nothing,_StreamRecording}
+    file, miss = _recording_file(s, method, path, body, key_extra)
+    s.mode !== :record && isfile(file) && return _read_recording(_recorded_stream, file, miss)
+    s.mode === :replay && throw(miss(_NO_RECORDING))
+    replay = _stream_answer!(record_to, s.parent, method, path, body, key_extra)
+    push!(record_to, file)
+    replay
+end
+
+"""
+    _commit_stream!(src::_StreamSource, resp::HTTP.Response, raw::AbstractVector{UInt8}) -> Nothing
+
+Record a whole streamed reply in each file of `src.record_to`: `raw`, the bytes its
+attempt read, as the recording's `stream` lines (`_StreamRecording`), and `resp`'s head
+as an unstreamed reply's recording keeps it — the status, the request id with the name of
+the header that carried it, and the kept headers. Throws [`RecordingWriteError`](@ref)
+for a file that cannot be written: the reply was paid for. Does nothing when no scope
+records the request.
+"""
+function _commit_stream!(src::_StreamSource, resp::HTTP.Response, raw::AbstractVector{UInt8})::Nothing
+    isempty(src.record_to) && return nothing
+    response = _recorded_head(resp)
+    response["stream"] = split(String(raw), '\n')
+    foreach(file -> _write_answer(file, src.method, src.path, src.body, src.key_extra, response), src.record_to)
+end
+
+# The recording of `response`, the answer to the request `method path` with `body` (and
+# `key_extra`), written to `file`.
+function _write_answer(file::String, method::String, path::String, body::String, key_extra::String,
+                       response::JSON.Object{String,Any})::Nothing
     request = JSON.Object{String,Any}(
         "method" => method, "path" => path, "body" => isempty(body) ? nothing : JSON.parse(body))
     # What the request is keyed on beyond its body, so the file shows what it answers.

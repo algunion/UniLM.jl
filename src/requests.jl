@@ -1308,11 +1308,13 @@ function _StreamCtl(token::Union{Nothing,CancelToken}, started::UInt64, first::U
 end
 
 # The source of an attempt's request: the one looked up before the call's task was
-# spawned, for the call's first attempt; else the one the scopes give now. A stopped call
-# reads no recording, as it sends nothing.
+# spawned, for the call's first attempt; else the one the scopes give now. Outside every
+# scope the request is sent, its stop checked where it always was (`_http_open`); inside
+# one a stopped call reads no recording, as it sends nothing.
 function _attempt_source!(ctl::_StreamCtl, url::String, body::String)::_StreamSource
     first = ctl.first
     isnothing(first) || (ctl.first = nothing; return first)
+    isnothing(_ANSWER_SCOPE[]) && return _LIVE_STREAM
     iscancelled(ctl.stop) && throw(_stop_cause(ctl))
     _stream_source("POST", url, body)
 end
@@ -1533,17 +1535,25 @@ _next_hop(chat::Chat, turn::_StreamTurn, state::StreamState) =
 # provider ended with an error event adds nothing either: the provider answered it with its own
 # failure. Nothing is committed.
 _settled(::Chat, ::_StreamTurn, ::Union{Nothing,StreamState}, r::LLMSuccess) = r
-function _settled(chat::Chat, turn::_StreamTurn, live::Union{Nothing,StreamState}, r::LLMRequestResponse)
-    billed = _billed_turn(turn, live)
-    s, u = billed.state, billed.usage
+_settled(chat::Chat, turn::_StreamTurn, live::Union{Nothing,StreamState}, r::LLMRequestResponse) =
+    (_accrue_turn!(chat, _billed_turn(turn, live)); r)
+# Add what a turn's replies were billed to the chat's total, as far as their usage reports it.
+function _accrue_turn!(chat::Chat, turn::_StreamTurn)::Nothing
+    s, u = turn.state, turn.usage
     isnothing(s) || isnothing(u) || _accrue_hops!(chat, u, s.model)
-    r
+    nothing
 end
 # The turn with the latest attempt's reply added, unless the turn holds it already (a reply that
 # continued the turn) or the provider ended that reply with an error.
 _billed_turn(turn::_StreamTurn, ::Nothing) = turn
 _billed_turn(turn::_StreamTurn, live::StreamState) =
     live === turn.state || !isnothing(live.error) ? turn : _next_turn(turn, live)
+
+# The headers a chat stream is requested with. SSE must reach the parser uncompressed: some
+# providers (e.g. Anthropic) gzip even streamed responses, and raw gzip bytes fail every line's
+# decode, so no message is built (→ LLMFailure). Request identity encoding and disable
+# decompression so `data:` lines arrive verbatim.
+_stream_headers(service) = push!(copy(auth_header(service)), "Accept-Encoding" => "identity")
 
 """
     _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref, ctl, turn) -> (; result, resp)
@@ -1586,6 +1596,9 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
     cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
     otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
+    # Outside every recording scope the request is sent, and its headers are built first, as
+    # they always were; inside one the scopes answer first, so a replay reads no API key.
+    sent_headers = isnothing(_ANSWER_SCOPE[]) ? _stream_headers(chat.service) : nothing
     ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
     # The exchange, live or replayed: the request written, the head read, the stream parsed.
     function consume(io)
@@ -1664,11 +1677,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         src = _attempt_source!(ctl, url, body)
         replay = src.replay
         resp = if isnothing(replay)
-            # SSE must reach the parser uncompressed: some providers (e.g. Anthropic) gzip even
-            # streamed responses, and raw gzip bytes fail every line's decode, so no message is
-            # built (→ LLMFailure). Request identity encoding and disable decompression so
-            # `data:` lines arrive verbatim.
-            stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+            stream_headers = isnothing(sent_headers) ? _stream_headers(chat.service) : sent_headers
             # Seam-routed: _http_open applies the native stream timeout kwargs plus
             # status_exception=false and retry=false (HTTP.jl's internal retries would
             # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
@@ -1780,7 +1789,9 @@ requests were billed to the chat's total, as far as their providers reported it 
 the earlier replies of the turn and the latest attempt's reported usage; nothing is committed.
 `first` is the source of the first request when it was looked up before the call's task was
 spawned (`_first_stream_source`). `InterruptException`, `ReplayMissError` and
-`RecordingWriteError` always rethrow; every other failure becomes a typed result value.
+`RecordingWriteError` always rethrow — the latter two once the replies the turn received
+before the failing request are added to the chat's total, as an unstreamed call adds them;
+every other failure becomes a typed result value.
 """
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
                        token::Union{Nothing,CancelToken}, first::Union{Nothing,_StreamSource}=nothing)
@@ -1805,8 +1816,14 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
     catch e
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
         # Neither is a failure of the call: a miss, or a paid reply's lost recording,
-        # reaches the caller as an unstreamed call's does (here, at `fetch`).
-        e isa Union{ReplayMissError,RecordingWriteError} && rethrow()
+        # reaches the caller as an unstreamed call's does (here, at `fetch`), and as there
+        # the replies the turn received before that request are first added to the chat's
+        # total. Not classified, so `_settled` does not run: an unstreamed call does not
+        # add the reply whose recording was lost either.
+        if e isa Union{ReplayMissError,RecordingWriteError}
+            _accrue_turn!(chat, turn)
+            rethrow()
+        end
         u = _unwrap_exception(e)
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
         failure = if u isa _UserCallbackError

@@ -494,12 +494,16 @@ _rl_anthropic_reply(b, n, raw) = _rl_undecodable(raw) ? Dict("type" => "message"
          "content" => [Dict("type" => "text", "text" => "reply $n")], "stop_reason" => "end_turn",
          "usage" => Dict("input_tokens" => 100 + n, "output_tokens" => 10 + n))
 
-_rl_gemini_reply(b, n, raw) = Dict(
-    "candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "reply $n")]),
-                          "finishReason" => "STOP", "index" => 0)],
-    "usageMetadata" => Dict("promptTokenCount" => 100 + n, "candidatesTokenCount" => 10 + n,
-                            "totalTokenCount" => 110 + 2n),
-    "modelVersion" => "gemini-3.8-flash", "responseId" => "gem_$n")
+# A request that asks for a long generation gets one hop of it (`_rl_gemini_hop`).
+function _rl_gemini_reply(b, n, raw, path)
+    hops = get(_RL_HOPS, _rl_variant(raw), nothing)
+    isnothing(hops) || return _rl_gemini_hop(b, match(r"/models/([^/:]+):", path)[1], hops)
+    Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "reply $n")]),
+                               "finishReason" => "STOP", "index" => 0)],
+         "usageMetadata" => Dict("promptTokenCount" => 100 + n, "candidatesTokenCount" => 10 + n,
+                                 "totalTokenCount" => 110 + 2n),
+         "modelVersion" => "gemini-3.8-flash", "responseId" => "gem_$n")
+end
 
 function _rl_embeddings_reply(b, n, raw)
     inputs = b["input"] isa AbstractString ? [b["input"]] : b["input"]
@@ -585,18 +589,24 @@ _rl_anthropic_stream(b, n) =
                                   "usage" => Dict("output_tokens" => 10 + n))) *
     _rl_sse("message_stop", Dict("type" => "message_stop"))
 
-# `variant:hops` asks for a long generation continued over three requests, each reply naming its hop.
+# `variant:hops` and `variant:two_hops` ask for a long generation continued over three requests and
+# over two, streamed or not: each reply names its hop, and every one reports the same usage.
+const _RL_HOPS = Dict(:hops => 3, :two_hops => 2)
+function _rl_gemini_hop(b, model, hops::Int)
+    token = get(b, "continuationToken", nothing)
+    hop = token isa String ? parse(Int, chopprefix(token, "tok-")) + 1 : 1
+    ends = hop < hops ? Dict("finishReason" => "CONTINUATION", "continuationToken" => "tok-$hop") :
+                        Dict("finishReason" => "STOP")
+    Dict("candidates" => [merge(Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "hop $hop. ")]),
+                                     "index" => 0), ends)],
+         "usageMetadata" => Dict("promptTokenCount" => 100, "candidatesTokenCount" => 10, "totalTokenCount" => 110),
+         "modelVersion" => model)
+end
+
 function _rl_gemini_stream(b, n, model, variant)
+    haskey(_RL_HOPS, variant) && return _rl_sse(nothing, _rl_gemini_hop(b, model, _RL_HOPS[variant]))
     usage = Dict("promptTokenCount" => 100 + n, "candidatesTokenCount" => 10 + n, "totalTokenCount" => 110 + 2n)
     part(text) = Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => text)]), "index" => 0)
-    if variant === :hops
-        token = get(b, "continuationToken", nothing)
-        hop = token isa String ? parse(Int, chopprefix(token, "tok-")) + 1 : 1
-        ends = hop < 3 ? Dict("finishReason" => "CONTINUATION", "continuationToken" => "tok-$hop") :
-                         Dict("finishReason" => "STOP")
-        return _rl_sse(nothing, Dict("candidates" => [merge(part("hop $hop. "), ends)], "usageMetadata" => usage,
-                                     "modelVersion" => model))
-    end
     _rl_sse(nothing, Dict("candidates" => [part("streamed $n")], "modelVersion" => model)) *
     _rl_sse(nothing, Dict("candidates" => [Dict("finishReason" => "STOP", "index" => 0)], "usageMetadata" => usage,
                           "modelVersion" => model))
@@ -634,12 +644,17 @@ function _rl_stream(http::HTTP.Stream, path, b, n, raw)
     write(http, bytes)
 end
 
-# A recordings directory that passes the scope's check, then is a file by the time the reply
-# arrives: the mock replaces it as it serves the next request, so the paid reply's recording fails.
-const _RL_DOOMED = Ref("")
-_rl_unwritable_dir() = (dir = mktempdir(_RA_ROOT); @lock(_RL_LOCK, _RL_DOOMED[] = dir); dir)
+# A recordings directory that passes the scope's check, then is a file by the time a reply
+# arrives: the mock serves `after` requests as usual, then replaces it as it serves the next,
+# so the recording of that request's paid reply fails.
+const _RL_DOOMED = Ref(("", 0))
+_rl_unwritable_dir(; after::Int=0) = (dir = mktempdir(_RA_ROOT); @lock(_RL_LOCK, _RL_DOOMED[] = (dir, after)); dir)
 function _rl_doom!()
-    dir = @lock _RL_LOCK (d = _RL_DOOMED[]; _RL_DOOMED[] = ""; d)
+    dir = @lock _RL_LOCK begin
+        d, k = _RL_DOOMED[]
+        _RL_DOOMED[] = k > 0 ? (d, k - 1) : ("", 0)
+        k > 0 ? "" : d
+    end
     isempty(dir) || (rm(dir; recursive=true); write(dir, ""))
     nothing
 end
@@ -661,7 +676,7 @@ function _rl_serve(http::HTTP.Stream)
     (get(b, "stream", false) === true || endswith(path, ":streamGenerateContent")) &&
         return _rl_stream(http, path, b, n, raw)
     id, reply = endswith(path, "/messages") ? ("request-id" => "req_$n", _rl_anthropic_reply(b, n, raw)) :
-                occursin(":generateContent", path) ? (nothing, _rl_gemini_reply(b, n, raw)) :
+                occursin(":generateContent", path) ? (nothing, _rl_gemini_reply(b, n, raw, path)) :
                 endswith(path, "/responses") ? ("x-request-id" => "req_$n", _rl_responses_reply(b, n, raw)) :
                 startswith(path, "/v1/responses/") ? ("x-request-id" => "req_$n", _rl_lifecycle_reply(req.method, path, n)) :
                 endswith(path, "/embeddings") ? ("x-request-id" => "req_$n", _rl_embeddings_reply(b, n, raw)) :
@@ -703,6 +718,7 @@ UniLM._stream_head!(s::_RLHere, state::UniLM.StreamState, head::HTTP.Response) =
 UniLM._billed_cost(s::_RLHere, model::String, u::TokenUsage, rates::UniLM.PriceRow) =
     UniLM._billed_cost(s.real, model, u, rates)
 UniLM._continuation_body(s::_RLHere, body, finish, token) = UniLM._continuation_body(s.real, body, finish, token)
+UniLM._join_hops(s::_RLHere, earlier::HTTP.Response, later::HTTP.Response) = UniLM._join_hops(s.real, earlier, later)
 # How long the provider's event handler takes per event: zero, except in the test that slows it.
 const _RL_PARSE_DELAY = Ref(0.0)
 function UniLM.handle_sse_event!(s::_RLHere, event::AbstractString, payload::AbstractString, state::UniLM.StreamState)
@@ -1146,6 +1162,40 @@ end
     rm(second)
     err = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(_rl_gemini_continuation_stream), dir))
     @test err isa TaskFailedException && _rl_unwrap(err) isa ReplayMissError
+end
+@testset "recorded LLM answers — a turn that ends on its second hop's miss or lost write bills its first, streamed or not" begin
+    # One turn of two requests, unstreamed and streamed. Its second request misses on replay, or
+    # its second reply's recording cannot be written: either way the first reply was billed, and
+    # the chat's total adds it the same on both paths.
+    turn(stream) = _rl_chat(_RLHere(GEMINIServiceEndpoint); model="gemini-4-argon", prompt="variant:two_hops", stream)
+    send(chat) = (r = chatrequest!(chat; config=_RL_CFG); r isa Task ? fetch(r) : r)
+    function missed(stream)
+        dir = _ra_dir("llm-hops-billed-miss-$stream")
+        _rl_online(() -> with_recorded_answers(() -> send(turn(stream)), dir; mode=:record))
+        rm(only(f for f in readdir(dir; join=true) if haskey(JSON.parsefile(f)["request"]["body"], "continuationToken")))
+        chat = turn(stream)
+        @test _rl_unwrap(_rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> send(chat)), dir))) isa ReplayMissError
+        cumulative_cost(chat)
+    end
+    function lost(stream)
+        chat = turn(stream)
+        e = _rl_online(() -> _ra_caught(() -> with_recorded_answers(() -> send(chat), _rl_unwritable_dir(after=1); mode=:record)))
+        @test _rl_unwrap(e) isa RecordingWriteError
+        cumulative_cost(chat)
+    end
+    for case in (missed, lost)
+        unstreamed, streamed = case(false), case(true)
+        @test unstreamed > 0
+        @test streamed == unstreamed
+    end
+end
+@testset "recorded LLM answers — outside a scope a stream reads its API key first, as it always did" begin
+    tok = CancelToken()
+    cancel!(tok)
+    r = _rl_offline(() -> fetch(chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true);
+                                             config=_RL_CFG, cancel=tok)))
+    @test r isa LLMCallError
+    @test r.cause isa KeyError                               # the missing key, not the stop
 end
 @testset "recorded LLM answers — a replayed stream arms no idle guard, so a slow parse never times it out" begin
     dir = _ra_dir("llm-stream-slow")

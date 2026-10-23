@@ -1,0 +1,44 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses/input_tokens",
+    "body": {
+      "input": "Search for Julia language news",
+      "instructions": "You are a helpful assistant.",
+      "model": "gpt-6-sol",
+      "tools": [
+        {
+          "description": "Search for information",
+          "name": "search",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_1e916a790621493a88cc1a789e1c58aa",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_1e916a790621493a88cc1a789e1c58aa"
+    },
+    "body": {
+      "object": "response.input_tokens",
+      "input_tokens": 54
+    }
+  },
+  "recorded_at": "2026-10-23T22:21:15Z"
+}

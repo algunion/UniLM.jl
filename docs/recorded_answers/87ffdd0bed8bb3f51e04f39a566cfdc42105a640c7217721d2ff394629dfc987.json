@@ -10,19 +10,22 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_b97faf140c5642a9b9428f22865cce98",
+    "request_id": "req_f9b2cf24ae184912ab50cd43e1a6065c",
     "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_f9b2cf24ae184912ab50cd43e1a6065c"
+    },
     "body": {
-      "id": "resp_085c3a2eb7c70220006aba8c5b91a887d2be7a19a54cb72c95",
+      "id": "resp_0dbd0fa03148e1e6006adbddd7ce0087d2a092e26f75529786",
       "object": "response",
-      "created_at": 1790610523,
+      "created_at": 1792794071,
       "status": "completed",
       "access_programs": null,
       "background": false,
       "billing": {
         "payer": "developer"
       },
-      "completed_at": 1790610524,
+      "completed_at": 1792794072,
       "error": null,
       "frequency_penalty": 0.0,
       "incomplete_details": null,
@@ -33,7 +36,7 @@
       "moderation": null,
       "output": [
         {
-          "id": "msg_085c3a2eb7c70220006aba8c5c1a6887d2ad8588a3c70bac91",
+          "id": "msg_0dbd0fa03148e1e6006adbddd867b887d2a42b86eedd6ba7ba",
           "type": "message",
           "status": "completed",
           "content": [
@@ -108,5 +111,5 @@
       "metadata": {}
     }
   },
-  "recorded_at": "2026-09-28T15:48:44Z"
+  "recorded_at": "2026-10-23T22:21:12Z"
 }

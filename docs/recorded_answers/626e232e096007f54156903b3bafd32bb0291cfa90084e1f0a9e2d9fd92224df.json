@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/responses/resp_0dbd0fa03148e1e6006adbddd7ce0087d2a092e26f75529786",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_6ac0a71e104c44ba87739623c17dad5d",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_6ac0a71e104c44ba87739623c17dad5d"
+    },
+    "body": {
+      "id": "resp_0dbd0fa03148e1e6006adbddd7ce0087d2a092e26f75529786",
+      "object": "response.deleted",
+      "deleted": true
+    }
+  },
+  "recorded_at": "2026-10-23T22:21:13Z"
+}

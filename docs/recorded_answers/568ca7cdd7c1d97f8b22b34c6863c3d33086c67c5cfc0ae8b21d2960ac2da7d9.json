@@ -1,0 +1,86 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses/compact",
+    "body": {
+      "input": [
+        {
+          "content": "Hello, I want to learn about Julia.",
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Julia is a high-performance programming language for technical computing.",
+              "type": "output_text"
+            }
+          ],
+          "role": "assistant",
+          "status": "completed",
+          "type": "message"
+        }
+      ],
+      "model": "gpt-5.4-mini"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_079d3c219b3645b3afeaeecbef180653",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_079d3c219b3645b3afeaeecbef180653"
+    },
+    "body": {
+      "id": "resp_0001ee08cae80e83016adbdddb879887d2b505e44f3c057e76",
+      "object": "response.compaction",
+      "created_at": 1792794076,
+      "output": [
+        {
+          "id": "msg_0001ee08cae80e83016adbdddb8b4887d299da3bbea1a8fa2b",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Hello, I want to learn about Julia."
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "id": "msg_0001ee08cae80e83016adbdddb8b7487d2ac437679efac5bed",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Julia is a high-performance programming language for technical computing."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        },
+        {
+          "id": "cmp_0001ee08cae80e83016adbdddc042087d288705a57908c2ffe",
+          "type": "compaction",
+          "encrypted_content": "gAAAAABq293cIrTPLlLEjzcYTqWj98_a5JjNKtF23hVYfeot1X5TxtPuEU-x_9-P1t7V7AbOKPqbHq-Fu7SGS02K0fUHiDJrg5gk5MGo1gnvTXb-Vka1yKt-yJaBSxM2ONOl-asKqJRSWFkLWeObtB2bzdQM4AApXI-kUbdID4RRkJbLgNhkIu16d4TEP5a12PHGVSt-m4uXdalxLPokfwF76wjTSMGCDrO92XUFCLiFwRjsVOQQuuKx0HIDEpJSdCluz7gf7oH_YUsAhGMT4ySIBETic1Ld8Act0DiVumcCFdEuU7xT8c3sD1feVciN3abPwrNeAbpdhC5qc75HigWou5znqwktPDUGZZL2c-jY1i_dLrMWJKnK-M8qDsYaGQtvpgjexwUiw4Zqgbw29ZviwNCAh3TkghmQGTdOJLEjFJxc6PvCVHzH9vZQGhWba9cop-vwqgE_dY3sdTRLcJHu7pMpWd_-lyWBeAQEY__YYE-yP4vKFthVemtRD9kzt5Dz6rUC2XUYZ0007_Pe7CDIssmZgW7W4u-9gJJRM5SPUC5JH1d_2mweP2G_1-aZNeL4RfDzfbb9tZqCywFMzhsJIxzUoRHnoW5iF-87EUCyhsQ5QSGEZxdwL6knB_Fvlt6Sj6zIuP8vFJTriJVIvpe7cCpun7KIMN1FhU-u-IC1_XwowB4X4wfPGwoyyeODY1DVnEVsE99Xuh4n6Z4dd1VVvSynqnsz8DWT-3zQlors15HJJ0BVnYw5SxO9BiQdShiuTVML9cph5wrc0w_r48FEGl7zoA11ngLE3QhaxIV2puCvwGL8LAFlr_BfXemTCMsr6E0NRjWRF2BEdkCpPtZzIKrjvgpeq8t3Zy_uqrrwI6qiw9A_J4zzQ1hAL_Bi1217xs2gjcAXkXSiSj8J7BbL7iRdOBlvUPj8S9t232MT_paz4WAA4u5DLvgKt1-BE1B43G9c3ppH4vCDTDazUuPWDXluFWz_Ph7RmCool7Zh4Y9mzwB-fFN9DCQu1gYgjUtaz7lFW1xZQTfNcywUOJmQ9P_eEfcICXcFmc78kzbSryBn-VqloxWphebYgtxNoCFYUSiWXXcEfBK9nEQAn-tWWJOBYorb5FzCKWoTmo-xoaL_bqmnxDFdO86ZbXJZqj_ViS4fiQ-I7WVi_4TYBaQlvuMQ_PP9QMqLoE0xPLUd1JKy4qVRZB6pqMnLyrU8c977k_2BspqtPjcYQX3CQzg9upb3pHYi_JvSg3QRdi4OD7Fa7wZx8Rwi-U_EZHtbU6r6d_Zpnz-t7IU8jzUowb1asYLDerydV7mVZTTjQNLdKqzIneicGRvMijP8WZxRja8Pdz7N_UmZaSnZtCPVXqG4_iI717fL_-Xdrrkhzgg7x9xlHRK4s9vAVvHIpxPDjEv_jKCohiPO4pbDCH6s2nkeknrP9V_bd1To7w5Emq0RledqILD9TBKAl5aKZyQgPFfPpy_mGVsWrZqg5Ls1gKQhhGEHcJLsdkYdjMuvnOq9jf0R343j-haGku_Rzs4jK8unrtzaP5EgbVvLLQwC_PdBIRaQzj2i3lt27colTHETC4A3FOnGKIz2FenvyOx3E9-s196u98n144jaReP1p0KcuKpppuz5maPvEHCsDdRBCQAKJZpjnu9mhq5tk-KqBS1vdftJ6g5p8GlpTdcFcWT_oqVTOoU2YhAzyUKI9h4kPWeJP5_tbW52xMqrirMwcs-72vZazSanFHuKIYIdjYp5mISsYoZAwGethdmoDiMl5PcJfKKTBEdfmxztaUTL2-jvUzg56nkZtiSY6PHtXRDAzJomPGelX5bj45785lgr6HYHpY1v9_5rpllOAXPK5w6AbALeKfnpmIMsCCmuhWz0ZRBywe5q8yduYC0gQvEtlKGRQGf_P7g="
+        }
+      ],
+      "usage": {
+        "input_tokens": 50,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 39,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 89
+      }
+    }
+  },
+  "recorded_at": "2026-10-23T22:21:16Z"
+}

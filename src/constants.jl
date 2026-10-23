@@ -33,6 +33,17 @@ const AZURE_OPENAI_BASE_URL::String = "AZURE_OPENAI_BASE_URL"
 const AZURE_OPENAI_API_KEY::String = "AZURE_OPENAI_API_KEY"
 const AZURE_OPENAI_API_VERSION::String = "AZURE_OPENAI_API_VERSION"
 const GEMINI_API_KEY::String = "GEMINI_API_KEY"
+const DEEPSEEK_API_KEY::String = "DEEPSEEK_API_KEY"
+const MISTRAL_API_KEY::String = "MISTRAL_API_KEY"
+const OLLAMA_HOST::String = "OLLAMA_HOST"
+
+# The model-id prefixes of each hosted provider: an id that starts with one of them is that
+# provider's; an id with none of them (a local Ollama model such as `gemma4:e4b`, a Jev model)
+# is none of theirs.
+const _MODEL_ID_PREFIXES::NamedTuple = (
+    openai=("gpt-", "chatgpt-", "text-embedding-", "omni-moderation-", "o1", "o3", "o4"),
+    anthropic=("claude-",),
+    gemini=("gemini-", "gemma-"))
 
 # ─── OpenAI API Endpoint Paths ────────────────────────────────────────────────
 # Endpoints are determined by request type, not model name.

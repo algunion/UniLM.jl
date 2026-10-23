@@ -697,16 +697,17 @@ _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
 The headers sent with every request to `service`: its credentials and the
 `Content-Type`. A backend adds `auth_header(::MyEndpoint)` (or
-`auth_header(::Type{MyEndpoint})` for a singleton endpoint). The built-in endpoints
-read their key from the environment when a request is built, so a missing key
-surfaces in the verb's call-error result; a `GenericOpenAIEndpoint` with an empty key
-sends no `Authorization` header.
+`auth_header(::Type{MyEndpoint})` for a singleton endpoint). A built-in endpoint
+sends the key it was given, or else reads its key variable from the environment when
+a request is built, so a missing variable surfaces in the verb's call-error result,
+naming it; a `GenericOpenAIEndpoint` whose key is empty sends no `Authorization` header.
 
 Public extension API (not exported); see the Custom Backends guide.
 """
 function auth_header(s::GenericOpenAIEndpoint)::Vector{Pair{String,String}}
+    key = isempty(s.api_key) && !isempty(s.key_env) ? ENV[s.key_env] : s.api_key
     hdrs = ["Content-Type" => "application/json"]
-    !isempty(s.api_key) && pushfirst!(hdrs, "Authorization" => "Bearer $(s.api_key)")
+    !isempty(key) && pushfirst!(hdrs, "Authorization" => "Bearer $key")
     hdrs
 end
 
@@ -717,7 +718,8 @@ get_url(s::DeepSeekEndpoint, ::Embeddings)::String = DEEPSEEK_BASE_URL * EMBEDDI
 _resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 
 function auth_header(s::DeepSeekEndpoint)::Vector{Pair{String,String}}
-    ["Authorization" => "Bearer $(s.api_key)", "Content-Type" => "application/json"]
+    key = s.api_key
+    ["Authorization" => "Bearer $(isnothing(key) ? ENV[DEEPSEEK_API_KEY] : key)", "Content-Type" => "application/json"]
 end
 
 # ─── Built-in endpoint auth ─────────────────────────────────────────────────

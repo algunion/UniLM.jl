@@ -67,7 +67,8 @@ end
 struct TYPESAFEServiceEndpoint <: ServiceEndpoint end     # TypeSafe System One (Jev) — TYPESAFE_API_KEY
 struct GenericOpenAIEndpoint <: OpenAIWireEndpoint    # any OpenAI-compatible provider
     base_url::String
-    api_key::String
+    api_key::String                                   # Bearer key, sent when not empty
+    key_env::String                                   # when api_key is "": the variable read per request ("" → no Authorization header)
 end
 # DeepSeekEndpoint <: OpenAIWireEndpoint  (constructor below)
 struct OllamaEndpoint <: OpenAIWireEndpoint   # local Ollama: native /api/chat, /api/embed, /v1/systemone;
@@ -84,8 +85,8 @@ end
 # Convenience constructors
 OllamaEndpoint(; base_url=<OLLAMA_HOST or "http://127.0.0.1:11434">, keep_alive=nothing,
                truncate=false, shift=nothing, runner=nothing, options...)   # options: OllamaOptions keywords, e.g. num_ctx=32_768
-MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"])     # Mistral AI
-DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"])   # DeepSeek
+MistralEndpoint(; api_key=nothing)    # Mistral AI; nothing → MISTRAL_API_KEY, read per request
+DeepSeekEndpoint(; api_key=nothing)   # DeepSeek; nothing → DEEPSEEK_API_KEY, read per request (api_key::Union{String,Nothing})
 ANTHROPICServiceEndpoint(; betas=String[], user_profile_id=nothing, workspace_id=nothing, inference_geo=nothing)
     # the bare type (service=ANTHROPICServiceEndpoint) is the endpoint with no options; a blank value, a
     # control character, a comma in a beta name or another inference_geo → ArgumentError; == and hash by

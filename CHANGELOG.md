@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+- **`DeepSeekEndpoint()` and `MistralEndpoint()` read their key when a request is sent.**
+  Building one without `DEEPSEEK_API_KEY` or `MISTRAL_API_KEY` set no longer throws a
+  `KeyError`: the variable is read each time a request is built, so a key exported after
+  the endpoint was built is used, and a missing key fails the request with a call error
+  naming the variable, as a missing `OPENAI_API_KEY` does. `DeepSeekEndpoint().api_key` is
+  `nothing` (the field is now `Union{String,Nothing}`), and `MistralEndpoint()` is
+  `GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")`. A key passed
+  as `api_key` is sent as is, as before. `GenericOpenAIEndpoint` gains a third field,
+  `key_env`: the variable read per request when `api_key` is empty (`""` reads none); the
+  two-argument constructor is unchanged. Upgrading: code that takes the key from
+  `DeepSeekEndpoint().api_key` or `MistralEndpoint().api_key` (now `""`), or relies on
+  building the endpoint to check that the key is set, reads the variable itself.
+
 ## 0.26.0
 
 ### Breaking

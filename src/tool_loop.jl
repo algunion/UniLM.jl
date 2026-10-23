@@ -120,9 +120,9 @@ end
 Call `dispatcher(name, args)`, wrap result in [`FunctionCallResult`](@ref),
 return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes, except an
 `InterruptException`, a [`ReplayMissError`](@ref) and a
-[`RecordingWriteError`](@ref), which propagate — the latter two also from inside the
-exception that carries them, such as the `TaskFailedException` a dispatcher that
-`fetch`es a streamed call gets, which propagates whole.
+[`RecordingWriteError`](@ref), which propagate — the latter two also inside a
+`TaskFailedException` or `CompositeException` (a dispatcher that `fetch`es a streamed
+call gets the first), which propagates whole.
 The model reads the result as text: a `String` is passed through, any other value
 is JSON-encoded (`JSON.json`), never sent as its Julia `repr`.
 """
@@ -174,8 +174,9 @@ _tool_output(o::ToolCallOutcome)::String = o.success ? string(o.result.result) :
 # in this task. `n > 1` runs up to `n` at once on spawned tasks and emits after all have
 # finished, so the next request does not depend on completion order. An exception
 # escaping a dispatch (`_dispatch_tool` lets only an InterruptException, a
-# ReplayMissError or a RecordingWriteError through, the latter two also inside the
-# exception that carries them) propagates once the in-flight dispatches are done.
+# ReplayMissError or a RecordingWriteError through, the latter two also inside a
+# TaskFailedException or CompositeException) propagates once the in-flight dispatches
+# are done.
 function _run_calls(emit::Function, dispatch::Function, calls::AbstractVector,
                     tok::Union{Nothing,CancelToken}, n::Int)::Bool
     if n == 1

@@ -42,6 +42,14 @@
   named no tier replayed at the standard rates — a Flex reply at twice its live cost. A
   recording made before keeps replaying without the header: record it again to keep its
   tier.
+- **A replay miss or lost write that reaches a tool dispatcher or an MCP tool handler
+  wrapped fails loudly.** A dispatcher or handler that fetches a streamed call — or waits on
+  any task, or runs an `@sync` block, that hit one — gets the `ReplayMissError` or
+  `RecordingWriteError` inside a `TaskFailedException` or `CompositeException`. The tool
+  loops took that for a tool error and went on, and an MCP server answered the client with
+  it as `isError` tool content, so the text, a local recording path with it, reached the
+  model or the client. Now a loop throws it as it was thrown, and an MCP server logs it and
+  answers the generic JSON-RPC `-32603`, as for a bare one.
 
 ## 0.26.0
 

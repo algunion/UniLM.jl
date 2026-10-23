@@ -1060,7 +1060,8 @@ _rl_openai_stream_nocb() =
     fetch(chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_RETRYING))
 _rl_respond_stream_nocb() =
     fetch(respond(Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input="Say hello.", stream=true); config=_RL_RETRYING))
-_rl_unwrap(e) = e isa TaskFailedException ? _rl_unwrap(e.task.exception) : e
+_rl_unwrap(e) = e isa TaskFailedException ? _rl_unwrap(e.task.exception) :
+                e isa CompositeException ? _rl_unwrap(first(e.exceptions)) : e
 
 # A replayed stream whose callback cancels the call at its first delta.
 function _rl_cancelled_replay()
@@ -1313,10 +1314,12 @@ end
     @test e isa ReplayMissError && e.path == "/v1/systemone"
 end
 
-@testset "recorded LLM answers — a dispatcher's fetched stream that loses its recording or misses stops the loop" begin
-    # A dispatcher that fetches a streamed call gets its lost write, or a later hop's miss, inside
-    # the TaskFailedException `fetch` raises. As a tool error the model would read it and the loop
-    # would go on; the loop throws that exception whole instead.
+@testset "recorded LLM answers — a fetched stream's lost write or miss stops a tool loop and answers an MCP client -32603" begin
+    # A dispatcher or an MCP tool handler that fetches a streamed call gets its lost write, or a
+    # later hop's miss, inside the TaskFailedException `fetch` raises (out of an @sync block,
+    # inside a CompositeException). As a tool error the model would read it, a local path with
+    # it, and go on; a loop throws that exception whole instead, and an MCP server logs it and
+    # answers the generic -32603.
     gap = _ra_dir("llm-dispatch-stream-gap")             # a continued stream without its second hop
     _rl_online(() -> with_recorded_answers(_rl_gemini_continuation_stream, gap; mode=:record))
     rm(only(f for f in readdir(gap; join=true)
@@ -1329,18 +1332,37 @@ end
         "5"
     end
     missed = (name, args) -> (with_recorded_answers(_rl_gemini_continuation_stream, gap); "5")
+    synced = function (name, args)                       # the same miss out of an @sync block
+        @sync @async missed(name, args)
+        "5"
+    end
     _rl_online() do
-        for (dispatcher, cause, sent) in ((lost, RecordingWriteError, 2), (missed, ReplayMissError, 1)), n in (1, 2)
+        for (dispatcher, wrapper, cause, sent) in ((lost, TaskFailedException, RecordingWriteError, 2),
+                                                   (missed, TaskFailedException, ReplayMissError, 1),
+                                                   (synced, CompositeException, ReplayMissError, 1)), n in (1, 2)
             chat = _rl_loop_chat()
             for loop in (() -> tool_loop!(chat, dispatcher; config=_RL_CFG, tool_concurrency=n),
                          () -> tool_loop(_rl_loop_respond(), dispatcher; config=_RL_CFG, tool_concurrency=n))
                 before = _RL_HITS[]
                 e = _ra_caught(loop)
-                @test e isa TaskFailedException && _rl_unwrap(e) isa cause   # the fetched task's failure, whole
+                @test e isa wrapper && _rl_unwrap(e) isa cause   # what the dispatcher threw, whole
                 @test _RL_HITS[] == before + sent       # the first turn (and the lost stream); no second turn
                 ispath(lost_dir) && rm(lost_dir; recursive=true)
             end
             @test length(chat) == 2                     # the chat loop's turn is rolled back
+        end
+        for (handler, dir) in ((lost, lost_dir), (missed, gap), (synced, gap))
+            server = MCPServer("fetched-stream", "1.0.0")
+            register_tool!(server, "add", "Adds two numbers", Dict{String,Any}("type" => "object"),
+                           args -> handler("add", args))
+            req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 23, "method" => "tools/call",
+                                   "params" => Dict{String,Any}("name" => "add", "arguments" => Dict{String,Any}()))
+            resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
+            err = get(resp, "error", Dict{String,Any}())
+            @test !haskey(resp, "result") && get(err, "code", nothing) == -32603 &&
+                  get(err, "message", nothing) == "Internal error"
+            @test !contains(JSON.json(resp), dir) && !contains(JSON.json(resp), "recording")   # no local path
+            ispath(lost_dir) && rm(lost_dir; recursive=true)
         end
     end
 end

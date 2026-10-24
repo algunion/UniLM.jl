@@ -22,7 +22,7 @@ remake(e; changes...) = ProviderEntry(; (f => get(changes, f, getfield(e, f)) fo
 caught(f) = try f(); nothing catch err; err end
 
 @testset "metrics — prose lines skip fences, indented ones too, and tables" begin
-    text = "# T\n\nOpenAI here.\n\n```julia\nAnthropic\n```\n\n| Anthropic |\n|---|\n\n!!! tip\n    Gemini is fine.\n    ```julia\n    x\n    ```\nplain\n"
+    text = "# T\n\nOpenAI here.\n\n```julia\nAnthropic\n```\n\n| Anthropic |\n|---|\n| yes |\n\n!!! tip\n    Gemini is fine.\n    ```julia\n    x\n    ```\nplain\n"
     @test [l for (_, l) in prose_lines(text)] == ["# T", "OpenAI here.", "!!! tip", "    Gemini is fine.", "plain"]
 end
 @testset "metrics — a provider's own entries and model ids are never other-provider" begin
@@ -86,6 +86,9 @@ end
 end
 @testset "metrics — an entry's key variables are tokens of its provider" begin
     @test all(e -> all(v -> provider_tokens("Set $v.") == [(Set([e.provider]), v)], e.key_vars), REGISTRY)
+    # every other variable its code reads too; a name with `<MODEL>` in it, by the part before
+    @test all(e -> all(v -> provider_tokens("Set $v.") == [(Set([e.provider]), first(split(v, '<')))], e.env_vars), REGISTRY)
+    @test provider_tokens("Set AZURE_OPENAI_DEPLOY_NAME_GPT_5_2.") == [(Set([:azure]), "AZURE_OPENAI_DEPLOY_NAME_")]
     @test provider_tokens("Set AZURE_OPENAI_API_KEY, not OPENAI_API_KEY.") ==
           [(Set([:azure]), "AZURE_OPENAI_API_KEY"), (Set([:openai]), "OPENAI_API_KEY")]
     @test share([fixture_page("Set `OPENAI_API_KEY` before running.")], nothing) == 1          # a key variable alone names its provider
@@ -106,7 +109,7 @@ end
     end
 end
 @testset "metrics — fenced code, nested fences and table rows are never prose; an unclosed fence is refused" begin
-    page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n\n" *
+    page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n| Gemini | no |\n\n" *
                         "!!! note\n    ```julia\n    Chat(service=ANTHROPICServiceEndpoint)\n    ```\n")
     @test share([page], :openai) == 0
     err = caught(() -> prose_lines("a\n\n```julia\nx\n"; file="p.md"))
@@ -144,7 +147,7 @@ end
 @testset "metrics — a reader's path: the entry's pages, then the concept pages they link" begin
     docsrc = fixture_docsrc(
         "p/a.md" => "# [A](@id a_start)\n\nSee [streaming](@ref streaming_guide), [chat](@ref chat_api), [`Chat`](@ref),\n" *
-                    "[a protocol](@ref UniLM.TypeSafeProtocol) and [B](@ref b_start).\n\n| [Tools](@ref tools_guide) |\n|---|\n\n" *
+                    "[a protocol](@ref UniLM.TypeSafeProtocol) and [B](@ref b_start).\n\n| [Tools](@ref tools_guide) |\n|---|\n| yes |\n\n" *
                     "```julia\n# [MCP](@ref mcp_guide)\n```\n",
         "p/b.md" => "# [B](@id b_start)\n\n[Streaming again](@ref streaming_guide), [time\nouts](@ref\n    timeouts_guide).\n",
         "guide/streaming.md" => "# [Streaming](@id streaming_guide)\n", "guide/tool_calling.md" => "# [Tools](@id tools_guide)\n",
@@ -226,4 +229,107 @@ end
     usage(args::String...) = redirect_stderr(() -> DocMetrics.main(collect(args)), devnull)
     @test usage("--ledgers", dir) == usage("--atoms", dir) == usage("--atoms") == usage("--baseline", "--baseline") ==
           usage("--ledgers", joinpath(dir, "absent"), "--atoms", dir) == usage("--check") == 2
+end
+@testset "metrics — a fence is read as Julia's Markdown reads it: padding, run, info string, closing fence" begin
+    # A closing fence may carry text after its run: Julia closes the block there, and the rest starts the next block.
+    doc = "A.\n\n```julia\nx = 1\n```julia\nOpenAI prose line.\n\n```julia\ny = 2\n```\n"
+    @test [l for (_, l) in prose_lines(doc)] == ["A.", "julia", "OpenAI prose line."]
+    # Only spaces, tabs and carriage returns pad an opening fence; after a no-break space the line is text.
+    @test share([fixture_page("Neutral.\n\n ```julia\nClaude answers.\n ```\n")], nothing) ≈ 1 / 4
+    # An info string that holds the fence character opens no block.
+    @test share([fixture_page("Neutral.\n\n```julia `x`\nClaude answers.\n")], nothing) ≈ 1 / 3
+    # A fence in a list item, as in an admonition, closes at its own indentation.
+    @test share([fixture_page("1. Step\n\n   ```julia\n   Claude\n   ```\n")], :openai) == 0
+    @test fenced_blocks(split("```julia\nx\n```julia\ny\n\n```\nz\n```\n", '\n')) == [1:3, 6:8]
+end
+@testset "metrics — a fence or a table row Julia's Markdown reads otherwise is refused, naming the line" begin
+    refused(text) = (err = caught(() -> prose_lines(text; file="p.md")); err isa PageError ? err.line : nothing)
+    @test refused("Neutral.\n\n  ```julia\n  Claude\n  ```\n") == 3        # at the top level Julia closes at column 0
+    @test refused("Text ends here\\\n```julia\nClaude\n```\n") == 2       # a hard line break keeps it in the paragraph
+    @test refused("Neutral.\n\n> ```julia\n> Claude\n> ```\n") == 3       # in a block quote
+    @test refused("Neutral.\n\n| Claude | yes |\n") == 3                  # no alignment row: no table
+    @test refused("Neutral.\n\n| A | B |\n|---|---|\n") == 3               # no body row: no table
+    @test refused("Text.\n| A |\n|---|\n| Claude |\n") == 2                # a table starts a block: this is the paragraph
+    @test refused("Neutral.\n\n| A |\n|---|\n| Claude |\n") === nothing
+    # A row Julia reads without a leading `|` is prose to the metric: a provider there counts.
+    @test share([fixture_page("Neutral.\n\nA | B\n--- | ---\nClaude | yes\n")], nothing) ≈ 1 / 4
+end
+@testset "metrics — an Evidence box opens as Julia's admonition does, and its body ends at a line that is not blank" begin
+    box = "!!! details \"Evidence\"\n    Measured on Jev, jev-1.13.0.\n\n    Jev again, in a second paragraph.\n"
+    # Julia strips the opener with `strip`, which keeps U+2028: no admonition, so its lines are prose.
+    @test share([fixture_page("!!!  details \"Evidence\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 2
+    @test share([fixture_page("!!! details \"Evidence\" \n    Measured on Jev.\n")], nothing) ≈ 1 / 2
+    # After a line ending in a backslash, the opener is the paragraph's: no box.
+    @test share([fixture_page("Text ends here\\\n!!! details \"Evidence\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 3
+    # Blank is " \t\r" alone: a no-break space ends the body, so what follows is prose.
+    @test share([fixture_page(box * " \n    Claude answers here.\n")], nothing) ≈ 1 / 2
+    # Only a `details` box titled "Evidence…" is provenance: another category, or another title, is prose.
+    @test share([fixture_page("!!! details \"Measured\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 2
+    @test share([fixture_page("!!! note \"Evidence\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 2
+end
+@testset "metrics — a binding line binds and does nothing else; a quoted value interpolates nothing" begin
+    code(text) = (dir = fixture_docsrc("guide/system_one.md" => text); p = joinpath(dir, "guide/system_one.md");
+                  (p, concept_code_violations(p)))
+    bind(lines...) = "```julia\n" * join(lines, '\n') * "\n```\n"
+    jev = "service, model = TYPESAFEServiceEndpoint, \"jev-latest\""
+    page, found = code(bind(jev, "pinned = \"jev-1.13.0\"; respond(\"hi\")"))          # trailing code: no binding line
+    @test found == ["$page:3: \"jev-1.13.0\""]
+    page, found = code(bind(jev, "label = \"\$(respond(GEMINIServiceEndpoint))\""))
+    @test found == ["$page:3: GEMINIServiceEndpoint"]
+    page, found = code(bind(jev, "local_llm = OllamaEndpoint(base_url=\"\$(respond(GEMINIServiceEndpoint))\")"))
+    @test found == ["$page:3: OllamaEndpoint", "$page:3: GEMINIServiceEndpoint"]
+end
+@testset "metrics — the OpenAI-compatible wire names no provider in any spelling; an Ollama tag is Ollama's" begin
+    page(line) = fixture_page(line * "\nNeutral line.\n")
+    for v in ["OpenAI-compatible", "OpenAI compatible", "OpenAI-Compatible", "OpenAI Compatible", "OpenAI-compatibility",
+              "OpenAI compatibility", "OpenAI-Compatibility", "OpenAI Compatibility", "OpenAI-compat", "OpenAI compat",
+              "OpenAI-Compat", "OpenAI Compat", "OpenAI-wire", "OpenAI wire", "OpenAI-Wire", "OpenAI Wire"]
+        @test share([page("Any $v server works.")], :anthropic) == 0
+        @test v in NEUTRAL_TOKENS
+    end
+    @test share([page("Pull gpt-oss:120b-cloud or deepseek-r1:8b.")], :ollama) == 0
+    @test share([page("Pull gpt-oss:120b-cloud.")], :openai) ≈ 1 / 2
+    @test provider_tokens("gpt-oss:20b, library/gpt-oss:20b, gpt-oss-20b and gpt-5.4-mini: the default") ==
+          [(Set([:ollama]), "gpt-"), (Set([:ollama]), "gpt-"), (Set([:openai, :azure]), "gpt-"), (Set([:openai, :azure]), "gpt-")]
+end
+@testset "metrics — OpenAI's audio and image model ids, Codestral and TypeSafe's variables name their provider" begin
+    page(line) = fixture_page(line * "\nNeutral line.\n")
+    @test provider_tokens("whisper-1, tts-1-hd and dall-e-3") ==
+          [(Set([:openai, :azure]), "whisper-"), (Set([:openai, :azure]), "tts-"), (Set([:openai, :azure]), "dall-e-")]
+    @test share([page("Use codestral-latest.")], :anthropic) ≈ 1 / 2
+    @test share([page("Use codestral-latest.")], :openai_compatible) == 0
+    @test share([page("Set TYPESAFE_DEFAULT_MODEL or TYPESAFE_BASE_URL.")], :openai) ≈ 1 / 2
+    @test provider_tokens("TYPESAFE_TIMEOUT") == [(Set([:typesafe]), "TYPESAFE_")]
+end
+@testset "metrics — the report says what a prose line is and counts, per page, the Evidence lines it leaves out" begin
+    pages = unique!([[p for e in REGISTRY for p in e.pages]; [p for c in instances(ProviderFacts.Chapter) for p in CONCEPT_PAGES[c]]])
+    clean = [p => "# Title\n\nNeutral prose.\n" for p in pages]
+    boxed = "guide/system_one.md" => "# Title\n\nNeutral prose.\n\n!!! details \"Evidence\"\n    Jev, jev-1.13.0.\n\n    Twice.\n"
+    out = IOBuffer()
+    @test report(out; docsrc=fixture_docsrc(clean..., boxed))
+    text = String(take!(out))
+    @test occursin("Evidence", first(split(text, '\n')))
+    @test occursin("\n  guide/system_one.md: 2\n", text) && !occursin("guide/streaming.md: ", text)
+end
+@testset "metrics — --entry measures one entry, --unit checks one audit unit's ledger" begin
+    pages = unique!([[p for e in REGISTRY for p in e.pages]; [p for c in instances(ProviderFacts.Chapter) for p in CONCEPT_PAGES[c]]])
+    clean = [p => "# Title\n\nNeutral prose.\n" for p in pages]
+    docsrc = fixture_docsrc(clean..., "guide/streaming.md" => "# Title\n\nClaude streams.\n")   # a concept page fails
+    out = IOBuffer()
+    @test !report(IOBuffer(); docsrc) && report(out; docsrc, entry_key=:anthropic)
+    rows = filter(l -> occursin(r"^(entry|path|concept) ", l), split(String(take!(out)), '\n'))
+    @test length(rows) == 2 && all(r -> occursin(r"^(entry|path) +anthropic ", r), rows)
+    @test caught(() -> report(IOBuffer(); docsrc, entry_key=:nope)) isa ArgumentError
+    x = "x.md" => "# [X](@id x_s)\n\nthe witness text of this placement\n"
+    atoms = fixture_dir("anthropic.json" => """{"atoms": [{"location": "index.md:16"}]}""",
+                        "gemini.json" => """{"atoms": [{"location": "index.md:20"}]}""")
+    ledgers = fixture_dir("anthropic.tsv" => join([LEDGER_HEADER, "anthropic:1\tindex.md:16\tx.md#x_s\tthe witness text of this placement"], '\n') * "\n")
+    docsrc = fixture_docsrc(clean..., x)
+    @test !report(IOBuffer(); docsrc, ledgers, atoms)                                  # gemini's ledger is missing
+    @test report(IOBuffer(); docsrc, ledgers, atoms, unit="anthropic")
+    @test caught(() -> report(IOBuffer(); docsrc, ledgers, atoms, unit="ia")) isa ArgumentError
+    usage(args::String...) = redirect_stderr(() -> DocMetrics.main(collect(args)), devnull)
+    @test usage("--entry", "nope") == usage("--entry") == usage("--unit", "anthropic") ==
+          usage("--ledgers", ledgers, "--atoms", atoms, "--unit", "ia") == 2
+    @test redirect_stdout(() -> usage("--entry", "anthropic", "--baseline"), devnull) == 0
 end

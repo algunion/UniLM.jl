@@ -18,10 +18,10 @@ Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; 
 - [Google Gemini](https://algunion.github.io/UniLM.jl/dev/providers/gemini/): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-3.8-flash`
 - [Ollama](https://algunion.github.io/UniLM.jl/dev/providers/ollama/): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
 - [vLLM, LM Studio & llama.cpp](https://algunion.github.io/UniLM.jl/dev/providers/local_servers/): `service = GenericOpenAIEndpoint("http://localhost:8000", "")`; reads no environment variable; no default model (a call names one)
-- [Azure OpenAI](https://algunion.github.io/UniLM.jl/dev/providers/azure/): `service = AZUREServiceEndpoint`; reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`; default model `gpt-5.2`
+- [Azure OpenAI](https://algunion.github.io/UniLM.jl/dev/providers/azure/): `service = AZUREServiceEndpoint`; reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`; default model `gpt-5.2`
 - [DeepSeek](https://algunion.github.io/UniLM.jl/dev/providers/deepseek/): `service = DeepSeekEndpoint()`; reads `DEEPSEEK_API_KEY`; default model `deepseek-flash`
 - [Mistral & OpenAI-compatible services](https://algunion.github.io/UniLM.jl/dev/providers/openai_compatible/): `service = MistralEndpoint()`; reads `MISTRAL_API_KEY`; no default model (a call names one)
-- [Jev (TypeSafe)](https://algunion.github.io/UniLM.jl/dev/decisions/jev/): `service = TYPESAFEServiceEndpoint`; reads `TYPESAFE_API_KEY`; default model `jev-latest`
+- [Jev (TypeSafe)](https://algunion.github.io/UniLM.jl/dev/decisions/jev/): `service = TYPESAFEServiceEndpoint`; reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`; default model `jev-latest`
 - [OpenAI Decisions API](https://algunion.github.io/UniLM.jl/dev/decisions/openai/): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-luna`
 - [Local decision models](https://algunion.github.io/UniLM.jl/dev/decisions/ollama/): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
 

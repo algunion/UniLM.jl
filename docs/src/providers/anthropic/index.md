@@ -7,10 +7,10 @@ using UniLM
 Anthropic makes the Claude models; `ANTHROPICServiceEndpoint` speaks its native Messages API, and
 every Messages API request is a `Chat`, sent by `chatrequest!` or `tool_loop!`. The agentic verbs —
 `respond` and the `tool_loop` that takes an input or a `Respond` — refuse this endpoint before
-sending anything, as do the verbs of every capability the table below lists as not available. Of
-Anthropic's own API, UniLM wraps Messages and the model listing: Message Batches, Files, token
-counting, server tools (the tools Anthropic runs, such as web search), citations and the request
-fields of beta features are not available.
+sending anything, and no verb of a capability the table below lists as not available sends a request
+through it. Of Anthropic's own API, UniLM wraps Messages and the model listing: Message Batches,
+Files, token counting, server tools (the tools Anthropic runs, such as web search), citations and the
+request fields of beta features are not available.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:anthropic)
@@ -209,8 +209,9 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   without committing its turn — stopped, cancelled, timed out, cut off or ended by a callback's
   exception — adds the usage Anthropic had reported by then, the input arriving with the first
   event, as a lower bound of what was billed.
-- **Thinking.** It never reaches the callback: thinking deltas go only into the final message's
-  `provider_content`, where [`reasoning_text`](@ref) reads the thinking once the stream has ended.
+- **Thinking.** No thinking delta reaches the callback, only text: the thinking arrives in the
+  `provider_content` of the `Message` the callback receives last, the result's message, where
+  [`reasoning_text`](@ref) reads it.
 - **Content blocks.** Thinking blocks with their signatures, text and tool calls are re-assembled
   from the deltas into the message's `provider_content`, so a streamed turn goes back on the next
   request as an unstreamed one does.

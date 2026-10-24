@@ -202,3 +202,26 @@ end
                     length(on(id)) == 1 && only(on(id)) ∉ e.pages
     @test [(e.key, id) for e in REGISTRY for id in [e.start_id; sort!(collect(values(e.features)))] if !placed(e, id)] == []
 end
+@testset "ProviderFacts — the sidebar lists each entry's pages and each chapter's concept pages, as the registry does" begin
+    tree = include(joinpath(@__DIR__, "pages.jl"))          # the `pages` docs/make.jl builds
+    groups(chapter) = [g => String[last(p) for p in pages] for (g, pages) in only(last(i) for i in tree if first(i) == chapter)]
+    title_id(page) = (h = heading_ids(joinpath(SRC, page)); isempty(h) || first(first(h)) != 1 ? nothing : last(first(h)))
+    all_pages = [relpath(joinpath(r, f), SRC) for (r, _, fs) in walkdir(SRC) for f in fs if endswith(f, ".md")]
+    titles = Dict(title_id(p) => p for p in all_pages if !isnothing(title_id(p)))
+    # A page being dissolved: the page that replaces it carries its title's id as `<id>__next`.
+    heir(page) = (id = title_id(page); isnothing(id) ? nothing : get(titles, id * "__next", nothing))
+    for (chapter, c) in ("Language models" => ProviderFacts.llm, "Decisions" => ProviderFacts.decisions)
+        for (group, pages) in groups(chapter)
+            kept = filter(p -> isnothing(heir(p)), pages)
+            entries = [e for e in REGISTRY if e.chapter == c && first(e.pages) in kept]
+            # a dissolving page sits right after the page that replaces it
+            @test [p for (i, p) in pairs(pages) if !isnothing(heir(p)) && get(pages, i - 1, nothing) != heir(p)] == []
+            startswith(group, "Concepts") && @test kept == CONCEPT_PAGES[c]
+            isempty(entries) || @test kept == reduce(vcat, (e.pages for e in entries))
+        end
+        @test count(((g, _),) -> startswith(g, "Concepts"), groups(chapter)) == 1
+        @test all(e -> e.chapter != c || any(((_, ps),) -> first(e.pages) in ps, groups(chapter)), REGISTRY)
+    end
+    # an entry's start id is the title of its first page, or that page's heir's while the old page stays
+    @test [e.key => title_id(first(e.pages)) for e in REGISTRY if title_id(first(e.pages)) ∉ (e.start_id, e.start_id * "__next")] == []
+end

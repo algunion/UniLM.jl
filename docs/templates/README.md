@@ -42,8 +42,9 @@ keeps its links when its title changes or it moves.
 - Page titles (H1): an entry's start page, the entry's start id; any other page of an entry,
   `<entry>_<stem>_page` (`anthropic_caching_page`); the chapter start pages, `llm_start` and `decisions_start`;
   `decisions/custom.md`, `decisions_custom`; a new concept page, or one whose title has no id, `<stem>_guide`.
-- Sections: a feature, `<entry>_<feature>`, the id `REGISTRY` stores and the generated tables link to; a section
-  that is no feature, `<entry>_<section>` (`ollama_options`).
+- Sections: a feature, the id `REGISTRY` stores for it, which the generated tables link to — `<entry>_<feature>`,
+  or the id it inherits (`jev_errors` for Jev's failures; Inherited ids below); a section that is no feature,
+  `<entry>_<section>` (`ollama_options`).
 - Inherited ids: a page or section that takes over the content of one moving into the entry inherits its id,
   feature or not, written `<id>__next` while the old one exists and renamed to `<id>`, with the links to it, in
   the commit that deletes the old one; `REGISTRY` stores the final ids (`ollama_first`, `jev_errors`). The
@@ -88,8 +89,8 @@ as `Main.ProviderFacts.llm` or `Main.ProviderFacts.decisions`, and returns a `Ma
 
 ## Executed or quoted
 
-An executed block (`@example`, `@setup`, `@eval`) reaches a service only through a verb the recordings replay:
-`chatrequest!`, `respond`, `embeddingrequest!`, the tool loops, streamed calls, the six Responses lifecycle
+An executed block (`@example`, `@repl`, `@setup`, `@eval`) reaches a service only through a verb the recordings
+replay: `chatrequest!`, `respond`, `embeddingrequest!`, the tool loops, streamed calls, the six Responses lifecycle
 verbs (`count_input_tokens`, `compact_response`, `get_response`, `list_input_items`, `delete_response`,
 `cancel_response`), `fim_complete`, `prefix_complete`, `ask`, `ask_each` and the verbs built on them
 (`nl_classify`, `nl_dispatch`, …), and TypeSafe's `list_models`. `docs/test_executed_verbs.jl` holds this list
@@ -128,7 +129,8 @@ provider and model the examples run on (on a Decisions page, the decision provid
 - An example of another provider moves to that provider's entry (the Gemini calls of `guide/agentic.md` go to the
   Gemini entry). No code outside the binding block names an endpoint or a model id (`docs/metrics.jl` counts each
   one). Prose may refer to the bound names; a fact about one provider goes to that provider's entry (Placement);
-  the model a measurement ran on appears only as a bound name or in an Evidence note, which counts toward the
-  page's 2% share of provider lines.
+  the model a measurement ran on appears only as a bound name or in an Evidence note (a `!!! details "Evidence…"`
+  box), whose body the page's 2% share of provider lines leaves out: `docs/metrics.jl` reads it as provenance, not
+  prose.
 - An example whose request bytes change is recorded again in the same commit, and a change in a stored-id chain
   deletes the chain's first recording.

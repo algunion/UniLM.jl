@@ -15,6 +15,16 @@
   two-argument constructor is unchanged. Upgrading: code that takes the key from
   `DeepSeekEndpoint().api_key` or `MistralEndpoint().api_key` (now `""`), or relies on
   building the endpoint to check that the key is set, reads the variable itself.
+- **Inside a `:replay` scope, streamed calls, the Responses lifecycle calls and FIM no
+  longer reach the network.** At 0.26.0 a streamed `chatrequest!` or `respond` (and so a
+  streamed `tool_loop!`), `get_response`, `delete_response`, `list_input_items`,
+  `cancel_response`, `compact_response`, `count_input_tokens`, `fim_complete` and
+  `prefix_complete` went to their service inside any `with_recorded_answers` scope. Now a
+  scope answers them as it answers every other recorded call (see Added): in a `:replay`
+  scope one without a recording throws `ReplayMissError`, and a polling loop recorded with
+  `:record_missing` gets its first status back on every later poll. Upgrading: record what a
+  `:replay` scope now needs (`mode = :record_missing`), and record a polling loop with
+  `:record`, which keeps the last status.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -28,11 +38,8 @@
   `x-gemini-service-tier`). A miss on a stream's first request is thrown by the verb; its
   lost recording, or a miss on a later request of a turn the provider continues, is
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
-  `TaskFailedException` around it. Every earlier recording replays unchanged. Upgrading:
-  inside a `:replay` scope these calls no longer reach the network — one without a
-  recording throws `ReplayMissError`, so record it (`mode = :record_missing`); and a
-  polling loop recorded with `:record_missing` gets its first status back on every later
-  poll (record it with `:record`, which keeps the last).
+  `TaskFailedException` around it. Every earlier recording replays unchanged; what this
+  changes for code that ran these calls inside a scope is under Breaking.
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's

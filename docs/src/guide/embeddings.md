@@ -1,4 +1,4 @@
-# Embeddings
+# [Embeddings](@id embeddings_guide)
 
 UniLM.jl embeds text with OpenAI, Gemini, local EmbeddingGemma through Ollama, or any
 OpenAI-compatible server, chosen by the `service` parameter — and, through Ollama,

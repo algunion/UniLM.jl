@@ -38,6 +38,11 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    # The pages @markdoc/next.js compiles import js-yaml's default export from the
+    # site's own js-yaml, and js-yaml 5 has named exports only.
+    ignore:
+      - dependency-name: "js-yaml"
+        update-types: ["version-update:semver-major"]
     groups:
       site:
         patterns: ["*"]

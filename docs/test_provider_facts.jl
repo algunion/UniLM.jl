@@ -39,6 +39,13 @@ end
           sort(collect(keys(UniLM.DEFAULT_PRICING)))                               # every row in exactly one table
     @test "claude-haiku-5-5" in price_rows(:anthropic)
 end
+@testset "ProviderFacts — a header cell that names a request field is inline code" begin
+    # a header cell holding only `field` as inline code; Markdown.Code compares by identity, so by type and text
+    in_header(md, field) = any(c -> length(c) == 1 && only(c) isa Markdown.Code && only(c).code == field,
+                               only(md.content).rows[1])
+    @test in_header(claude_family_table(), "inference_geo")
+    @test in_header(openai_model_rules(), "prompt_cache_retention")
+end
 @testset "ProviderFacts — a chapter's tables name only that chapter's entries" begin
     linked(md) = [chopprefix(only(only(r)).url, "@ref ") for r in only(md.content).rows[2:end]]
     chapter_of(id) = only(e for e in REGISTRY if id in values(e.features)).chapter
@@ -47,6 +54,15 @@ end
     supports(key) = [Symbol(c.code) for c in only(at_a_glance(key).content).rows[2][4] if c isa Markdown.Code]
     @test all(e -> e.chapter == ProviderFacts.llm || (s = supports(e.key); !isempty(s) && s ⊆ ProviderFacts.DECISION_CAPABILITIES),
               REGISTRY)
+end
+@testset "ProviderFacts — a language-model entry's tables list language-model capabilities only" begin
+    plain(md) = Markdown.plain(md)
+    for k in (:openai, :anthropic, :ollama)         # system_one: supported by two of them, not available on one
+        @test !occursin("system_one", plain(at_a_glance(k)))
+    end
+    @test occursin("system_one", plain(at_a_glance(:jev)))                       # a decision entry's row lists it
+    @test !occursin("system_one", plain(capability_matrix()))
+    @test ProviderFacts.DECISION_CAPABILITIES == [:models, :system_one]
 end
 @testset "ProviderFacts — the registry and price checks refuse a broken table, naming what is wrong" begin
     remake(e; changes...) = ProviderEntry(; (f => get(changes, f, getfield(e, f)) for f in fieldnames(ProviderEntry))...)
@@ -84,7 +100,9 @@ end
     twofive = filter(r -> startswith(model(r), "gemini-2.5-"), rows)
     @test !isempty(twofive) && all(r -> isempty(levels(r[3])), twofive)        # thinkingBudget, not levels
     @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
-    @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", ["minimal"])  # other refusals propagate
+    taken = UniLM._GEMINI_THINKING_LEVELS                                        # model => the levels the check accepts
+    refused = first(setdiff(union(values(taken)...), taken["gemini-3.8-flash"]))   # another model's level, not this one's
+    @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", [refused])  # other refusals propagate
 end
 @testset "ProviderFacts — regions regenerate and staleness is detected, in both marker forms" begin
     html = "a\n\n<!-- generated:providers -->\n\nold\n\n<!-- /generated:providers -->\n\nb\n"
@@ -224,4 +242,13 @@ end
     end
     # an entry's start id is the title of its first page, or that page's heir's while the old page stays
     @test [e.key => title_id(first(e.pages)) for e in REGISTRY if title_id(first(e.pages)) ∉ (e.start_id, e.start_id * "__next")] == []
+end
+@testset "ProviderFacts — every other page of an entry is titled <entry>_<stem>_page, or keeps an id of v0.26.0" begin
+    old = Set(readlines(joinpath(@__DIR__, "anchors-v0.26.0.txt")))        # every explicit id of v0.26.0's pages
+    title_id(page) = (h = heading_ids(joinpath(SRC, page)); isempty(h) || first(first(h)) != 1 ? nothing : last(first(h)))
+    own(e, page) = string(e.key, '_', first(splitext(basename(page))), "_page")
+    # a page that takes over a page of v0.26.0 keeps that page's id: `<id>__next` while the old page stays, then `<id>`
+    kept(id) = chopsuffix(id, "__next") in old
+    @test [(e.key, p) => id for e in REGISTRY for p in e.pages[2:end]
+           for id in (title_id(p),) if isnothing(id) || id != own(e, p) && !kept(id)] == []
 end

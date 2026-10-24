@@ -213,8 +213,9 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   `provider_content` of the `Message` the callback receives last, the result's message, where
   [`reasoning_text`](@ref) reads it.
 - **Content blocks.** Thinking blocks with their signatures, text and tool calls are re-assembled
-  from the deltas into the message's `provider_content`, so a streamed turn goes back on the next
-  request as an unstreamed one does.
+  from the deltas into the message's `provider_content` once every block has arrived whole, so such a
+  streamed turn goes back on the next request as an unstreamed one does
+  ([what goes back otherwise](@ref anthropic_reasoning)).
 - **Tool calls.** `on_tool_call(tc)` runs once per call as soon as its block closes
   (`content_block_stop`), before the turn ends; the final `Message` holds the calls too.
 - **Refusals.** A refusal ends the turn with no content, as an unstreamed refusal does; the text and

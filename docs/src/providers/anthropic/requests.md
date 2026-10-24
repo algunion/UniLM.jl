@@ -4,8 +4,9 @@
 using UniLM
 ```
 
-`ANTHROPICServiceEndpoint` turns each field of a `Chat` into its Messages API counterpart, and refuses
-a field that has none before the request is sent:
+`ANTHROPICServiceEndpoint` turns each request field of a `Chat` into its Messages API counterpart. A
+field with none is refused before the request is sent, except `n`, which a `Chat` takes only as 1: the
+one reply every request gets.
 
 | `Chat` field | Messages API | Rules |
 | :--- | :--- | :--- |
@@ -33,8 +34,8 @@ Each `Tool` in `tools` goes out with its `name`, its `description` when it has o
 `strict` flag when its `FunctionSignature` sets one: `strict=true` makes the API validate each call's
 name and input against the tool's schema. The Messages API takes tool names of 1 to 128 letters, digits,
 `_` and `-`. UniLM sends a name as given, and [`mcp_tools`](@ref) advertises each tool of an MCP server
-under such a name: its own, or that name with every other character replaced by `_`, cut to 128
-characters ([MCP](@ref mcp_guide)).
+under such a name: its own, or that name with each character outside that set replaced by `_`, cut to
+128 characters ([MCP](@ref mcp_guide)).
 
 `tool_choice` becomes the API's own: `"auto"` sends `{"type": "auto"}`, `"none"` sends
 `{"type": "none"}`, `"required"` sends `{"type": "any"}`, and `UniLM.GPTToolChoice(func=:get_weather)`
@@ -136,16 +137,16 @@ Main.ProviderFacts.claude_family_table()
 
 A model id takes the row of the same id, or of that id without a `-YYYYMMDD` snapshot suffix, never
 the row of an id it merely starts with; an id no row names, such as a model newer than this release,
-is held only to the rules of every model. The columns:
+is refused only by the rules that hold for every model. The columns:
 
 - **Thinking**: the model's thinking mode, which decides what `reasoning_effort` sends (the table above).
-- **Effort levels**: the `reasoning_effort` levels the model takes besides `"none"`; "—": none.
+- **Effort levels**: the `reasoning_effort` levels from `"low"` to `"max"` the model takes; "—": it takes
+  no `reasoning_effort` at all. What `"none"` does follows the Thinking cell (the table above).
 - **Forced tool choice**: whether `tool_choice` may force a call ([Tools](@ref anthropic_tools)).
 - **Prefill**: whether a request may end with an assistant turn
   ([Request options](@ref anthropic_request_options)).
 - **Mid-conversation system messages** and **Thinking prefix check**: where a system message pushed
-  after the conversation starts goes ([Conversations](@ref anthropic_conversations)); a model with the
-  check accepts an earlier turn's thinking blocks only while everything before them is unchanged.
+  after the conversation starts goes ([Conversations](@ref anthropic_conversations)).
 - **Fast mode**: whether `service_tier="fast"` is served, and the beta header it needs where it is in
   research preview ([Request options](@ref anthropic_request_options)).
 - **`inference_geo`**: whether the model takes the endpoint's `inference_geo` ([Options](@ref anthropic_options)).
@@ -173,18 +174,20 @@ u = result.usage
 `reasoning_text` joins the text of a turn's `thinking` blocks with a blank line, and gives `nothing`
 for a turn with none; a `redacted_thinking` block carries no text and adds none. Thinking is billed in
 full as output, whatever summary comes back
-([thinking cost](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost#pricing)):
-`completion_tokens` counts it, `reasoning_tokens` is its share
-([First call](@ref anthropic_first_call)), and [`estimated_cost`](@ref) prices it at the output rate
-([Cost and usage](@ref anthropic_cost)). `max_tokens` caps the thinking and the answer together
-([Setup](@ref anthropic_setup)).
+([thinking cost](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost#pricing)),
+and [`estimated_cost`](@ref) prices it at the output rate ([Cost and usage](@ref anthropic_cost)); how
+the usage counts it is on [First call](@ref anthropic_first_call), and how `max_tokens` bounds it on
+[Setup](@ref anthropic_setup).
 
 The blocks of a reply that is not a refusal — `thinking` blocks with their signatures,
-`redacted_thinking` blocks, text and tool calls — are kept in its message's `provider_content`, streamed
-or not, and go back on the next request ([Conversations](@ref anthropic_conversations)). They go back
-whatever Claude model the next request names, and a turn cut at `max_tokens` that holds only thinking
-blocks goes back too, as Anthropic's guide to continuing such a turn asks. Another provider's encoder
-ignores them and sends the turn's text and tool calls alone.
+`redacted_thinking` blocks, text and tool calls — are kept in its message's `provider_content` and go
+back on the next request ([Conversations](@ref anthropic_conversations)). A streamed reply keeps them
+only when every block arrived whole: with one cut short — its stop event lost, or a tool call's input
+that is no JSON object, as when `max_tokens` cuts it — the message holds no `provider_content`, and the
+turn goes back as the text and tool calls it holds, or is left out when it holds neither. Kept blocks go
+back whatever Claude model the next request names, and a turn cut at `max_tokens` that holds only
+thinking blocks goes back too, as Anthropic's guide to continuing such a turn asks. Another provider's
+encoder ignores them and sends the turn's text and tool calls alone.
 
 ## [Attachments](@id anthropic_media)
 
@@ -269,11 +272,12 @@ UniLM checks a request against neither, and leaves the size of media to the API
 [When something fails](@ref anthropic_failures).
 
 A field the Messages API has no counterpart for is refused, not dropped, since dropping it would send a
-request other than the one asked for; so is a request the API would answer with an error, or would run
-other than asked. `chatrequest!` and `tool_loop!` throw these `ArgumentError`s before anything is sent.
-A rule that names a column of the [family table](@ref anthropic_reasoning) holds for the ids of its
-rows, and an id no row names meets only the other rules. Building an endpoint refuses an option value
-that breaks its rule ([Options](@ref anthropic_options)).
+request other than the one asked for; so is each request in the table below that the API would answer
+with an error, or would run other than asked. `chatrequest!` and `tool_loop!` throw these
+`ArgumentError`s before anything is sent. A rule that names a column of the
+[family table](@ref anthropic_reasoning) holds for the ids of its rows, and an id no row names meets
+only the other rules. Building an endpoint refuses an option value that breaks its rule
+([Options](@ref anthropic_options)).
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |

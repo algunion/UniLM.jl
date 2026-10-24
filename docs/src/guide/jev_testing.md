@@ -129,14 +129,17 @@ through a directory of recordings:
 
 - **Recorded:** System One on every backend — [`ask`](@ref) and
   [`ask_each`](@ref), and so [`nl_dispatch`](@ref), [`nl_classify`](@ref) and
-  [`@branch`](@ref), and TypeSafe's [`list_models`](@ref) — and the
-  non-streaming LLM verbs [`chatrequest!`](@ref), [`respond`](@ref) and
+  [`@branch`](@ref), and TypeSafe's [`list_models`](@ref) — and the LLM verbs
+  [`chatrequest!`](@ref) and [`respond`](@ref), streamed or not, and
   [`embeddingrequest!`](@ref), and so the tool loops [`tool_loop!`](@ref) and
-  [`tool_loop`](@ref).
-- **Not recorded:** a streamed call, image generation, files, audio, MCP, the
-  Responses lifecycle calls ([`get_response`](@ref), [`cancel_response`](@ref),
-  …), Ollama's model listing and every other verb. Inside a scope they behave
-  exactly as outside it: they reach the network, with their key.
+  [`tool_loop`](@ref); the Responses lifecycle calls ([`get_response`](@ref),
+  [`delete_response`](@ref), [`list_input_items`](@ref), [`cancel_response`](@ref),
+  [`compact_response`](@ref), [`count_input_tokens`](@ref)); and
+  [`fim_complete`](@ref) and [`prefix_complete`](@ref).
+- **Not recorded:** image generation, audio, files, batch, moderation, the model
+  listings other than TypeSafe's, Ollama's model pulls, realtime, MCP and every
+  other verb. Inside a scope they behave exactly as outside it: they reach the
+  network, with their key.
 
 | `mode` | Behaviour |
 | :--- | :--- |
@@ -145,9 +148,12 @@ through a directory of recordings:
 | `:record_missing` | What `dir` holds is replayed; the rest goes to the service, and its 200s are recorded. |
 
 - **One file per request.** A recording is `<dir>/<key>.json`. The file holds
-  the request, the response body with its request id and the name of the header
-  that carried it, and the time of recording, pretty-printed so a diff is
-  readable. The API key and every other header are never written.
+  the request, the response body — a streamed call's as the lines of its stream
+  (`stream`) — with its request id, the name of the header that carried it and
+  the headers a replay gives back (`headers`: the request-id header and Gemini's
+  `x-gemini-service-tier`, which prices the reply), and the time of recording,
+  pretty-printed so a diff is readable. The API key and every other header are
+  never written.
 - **The key is the exact request:** the SHA-256 of the method, the path of the
   URL and the exact request body — except a credential the body carries, such as
   an MCP tool's `authorization`, which reads `"<redacted>"` in the key and the
@@ -155,7 +161,8 @@ through a directory of recordings:
   (an image, a PDF, audio, any media), which reads as its digest (below). The
   host is not part of it — a base URL that differs only in its host files its
   requests under the same keys — and neither is the query, which can carry a
-  credential. The key is never a canonical form,
+  credential ([`list_input_items`](@ref) adds its `limit`, `order` and `after` to
+  the key instead). The key is never a canonical form,
   because the order of a Choice's options and of the state's keys moves the
   answer: a reordered request is a different request, with a recording of its
   own. So is a request with another model — for an unpinned System One request,
@@ -184,7 +191,9 @@ through a directory of recordings:
   `input_audio` clip, is written as sent.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
-  tool loops — never a silent call to the service, and never a call error
+  tool loops (a later request of a streamed turn misses inside the call's task,
+  so `fetch` throws a `TaskFailedException` around it) — never a silent call to
+  the service, and never a call error
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names
   the directory, the start of the key, and what the request asked for: a System
@@ -647,8 +656,9 @@ trust the assertion again.
 - **Record with both keys, replay with none.** A recording scope sends each
   request to its own service: Jev with `TYPESAFE_API_KEY`, the LLM with
   `OPENAI_API_KEY`.
-- **Keep the tested path non-streaming.** A streamed call is not recorded: it
-  reaches the network even inside a replay scope.
+- **A streamed call replays too.** It is recorded and replayed through the same
+  callbacks; `stream=true` makes it another request, so a call switched to
+  streaming misses until it is recorded again.
 - **Assert on the path, not on the wording.** The team and the verdict are what
   the program acts on; the draft's words are one sample.
 
@@ -696,8 +706,9 @@ result. `nl_dispatch(f, args...; on_response)` takes it the same way, and
 over `docs/recorded_answers`, and picks its mode by flag, never by which API
 keys are set. The examples that call a service replay from it: System One on
 each backend ([`ask`](@ref), [`ask_each`](@ref), TypeSafe's
-[`list_models`](@ref)) and the non-streaming LLM verbs ([`chatrequest!`](@ref),
-[`respond`](@ref), [`embeddingrequest!`](@ref), the tool loops).
+[`list_models`](@ref)) and the LLM verbs, streamed or not ([`chatrequest!`](@ref),
+[`respond`](@ref), [`embeddingrequest!`](@ref), the tool loops, the Responses
+lifecycle calls, [`fim_complete`](@ref), [`prefix_complete`](@ref)).
 
 | Flag | Scope | What the examples do |
 | :--- | :--- | :--- |
@@ -706,8 +717,8 @@ each backend ([`ask`](@ref), [`ask_each`](@ref), TypeSafe's
 | `UNILM_DOCS_LIVE=1` | none | No replay: every example calls its service live. |
 
 Each flag is `1`, `0` or unset, and at most one is `1`; anything else stops the
-build before anything runs. What the scope does not record — a streamed call,
-image generation, files, MCP — goes to its service in a recording or a live
+build before anything runs. What the scope does not record — image generation,
+audio, files, MCP, … — goes to its service in a recording or a live
 build. Replay and record ignore `TYPESAFE_DEFAULT_MODEL`: an unpinned request
 names the default model, so an exported default would change every recording's
 key. After a recording run, commit the new files in `docs/recorded_answers`.

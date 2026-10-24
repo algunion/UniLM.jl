@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses/input_tokens",
+    "body": {
+      "input": "Tell me a joke about programming",
+      "model": "gpt-6-sol"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_9db33880f1f343ce85564d63e9d37ad5",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_9db33880f1f343ce85564d63e9d37ad5"
+    },
+    "body": {
+      "object": "response.input_tokens",
+      "input_tokens": 12
+    }
+  },
+  "recorded_at": "2026-10-23T22:21:14Z"
+}

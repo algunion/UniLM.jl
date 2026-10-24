@@ -1,0 +1,37 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/v1/responses/resp_0dbd0fa03148e1e6006adbddd7ce0087d2a092e26f75529786/input_items",
+    "body": null,
+    "key_extra": "after=null\nlimit=20\norder=\"desc\""
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_8bb02774f070499697339f5388ad7d75",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_8bb02774f070499697339f5388ad7d75"
+    },
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "id": "msg_0dbd0fa03148e1e6006adbddd7d66c87d2ba4495eb2e2a986e",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Say 'stored response test' and nothing else."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "first_id": "msg_0dbd0fa03148e1e6006adbddd7d66c87d2ba4495eb2e2a986e",
+      "has_more": false,
+      "last_id": "msg_0dbd0fa03148e1e6006adbddd7d66c87d2ba4495eb2e2a986e"
+    }
+  },
+  "recorded_at": "2026-10-23T22:21:13Z"
+}

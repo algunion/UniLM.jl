@@ -391,8 +391,12 @@ function _handle_tools_call(server::MCPServer, id, params::Dict{String,Any})
     catch e
         # A request with no recording is a gap in a test's recordings, and a paid answer
         # whose recording was lost is a local I/O failure; neither is one the model could
-        # correct from: they go to the dispatcher, which logs them.
-        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
+        # correct from: they go to the dispatcher, which logs them. Either can arrive
+        # wrapped — a streamed call's task throws it, and `fetch` raises the task's
+        # `TaskFailedException` — so the whole chain is searched, and what the handler
+        # threw goes to the dispatcher as it is.
+        e isa InterruptException && rethrow()
+        isnothing(_find_exception(x -> x isa Union{ReplayMissError,RecordingWriteError}, e)) || rethrow()
         # A tool execution error — the handler's own, or an argument the by-name binding
         # rejected (MCP 2025-11-25 server/tools classes input validation errors as tool
         # execution errors) — is a result the model can read and correct its call from.

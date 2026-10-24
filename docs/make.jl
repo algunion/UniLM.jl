@@ -7,8 +7,9 @@ include(joinpath(@__DIR__, "site_writer", "SiteWriter.jl"))
 isdefined(Main, :ProviderFacts) || include(joinpath(@__DIR__, "ProviderFacts.jl"))
 
 # The examples that call a service replay the answers committed in
-# docs/recorded_answers: System One (`ask`, `list_models`) and the non-streaming LLM
-# verbs (`chatrequest!`, `respond`, `embeddingrequest!`, the tool loops). A service
+# docs/recorded_answers: System One (`ask`, `list_models`) and the LLM verbs, streamed
+# or not (`chatrequest!`, `respond`, `embeddingrequest!`, the tool loops, the Responses
+# lifecycle calls, `fim_complete`, `prefix_complete`). A service
 # does not answer a repeated request identically, and a build without keys would
 # otherwise render only the error. The mode is chosen by flag, never by which keys
 # are set:
@@ -19,7 +20,7 @@ isdefined(Main, :ProviderFacts) || include(joinpath(@__DIR__, "ProviderFacts.jl"
 #                         deploys the result — the prose quotes the recorded outputs,
 #                         which a live build does not reproduce
 # Each flag is 1, 0 or unset, and at most one is 1. What the scope does not record —
-# a streamed call, images, files, MCP, … — goes to its service when recording or
+# images, audio, files, MCP, … — goes to its service when recording or
 # live. Replay hides every provider key, so a build without a flag never spends and
 # renders what the keyless CI build renders, whatever the shell exports.
 # After a recording run, commit the new files in docs/recorded_answers.

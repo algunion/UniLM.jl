@@ -211,7 +211,10 @@ peer fails with a typed timeout inside the [`FIMCallError`](@ref) result
 (`cause::UniLMTimeout`). Local validation (capability, model resolution, routing)
 throws an `ArgumentError` before any request; every later failure — transport, a
 200 body that is not a completions response — is a `FIMCallError` whose `cause`
-holds the exception.
+holds the exception. Inside a [`with_recorded_answers`](@ref) scope the request passes
+through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref),
+and an answer whose recording cannot be written throws [`RecordingWriteError`](@ref),
+instead of returning a `FIMCallError`.
 
 `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token)
 makes the call cancellable: once the token is cancelled it returns a `FIMCallError`
@@ -226,7 +229,9 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
+        end
         if resp.status == 200
             return FIMSuccess(response=_billed_response(fim.service, fim.model, _parse_fim_response(resp)),
                               service=fim.service)
@@ -237,7 +242,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
             return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
@@ -280,6 +285,10 @@ Per-call `config::RequestConfig` overrides timeouts and the retry budget; a sile
 peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
 (`cause::UniLMTimeout`). Local validation throws an `ArgumentError` before any
 request; every later failure is an `LLMCallError` whose `cause` holds the exception.
+Inside a [`with_recorded_answers`](@ref) scope the request passes through the
+recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer
+whose recording cannot be written throws [`RecordingWriteError`](@ref), instead of
+returning an `LLMCallError`.
 `cancel::Union{Nothing,CancelToken}` makes the call cancellable as for
 [`fim_complete`](@ref): a cancelled call returns an `LLMCallError` whose `cause` is a
 [`UniLMCancelled`](@ref), and `chat` is left untouched.
@@ -309,7 +318,9 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
+        end
 
         if resp.status == 200
             extracted = extract_message(resp)
@@ -324,7 +335,7 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)

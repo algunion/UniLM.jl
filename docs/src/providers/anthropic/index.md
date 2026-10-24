@@ -5,13 +5,12 @@ using UniLM
 ```
 
 Anthropic makes the Claude models; `ANTHROPICServiceEndpoint` speaks its native Messages API, and
-every Messages API request is a `Chat`, sent by `chatrequest!` or `tool_loop!` — streamed or not,
-with tools, structured output, thinking, images and PDFs, and prompt caching. The agentic verbs —
+every Messages API request is a `Chat`, sent by `chatrequest!` or `tool_loop!`. The agentic verbs —
 `respond` and the `tool_loop` that takes an input or a `Respond` — refuse this endpoint before
-sending anything, as do embeddings, image generation, audio and the platform APIs. Of Anthropic's
-own API, UniLM wraps Messages and the model listing: Message Batches, Files, token counting, server
-tools (the tools Anthropic runs, such as web search), citations and the request fields of beta
-features are not available.
+sending anything, as do the verbs of every capability the table below lists as not available. Of
+Anthropic's own API, UniLM wraps Messages and the model listing: Message Batches, Files, token
+counting, server tools (the tools Anthropic runs, such as web search), citations and the request
+fields of beta features are not available.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:anthropic)
@@ -25,7 +24,7 @@ Main.ProviderFacts.at_a_glance(:anthropic)
 | [stream a reply](@ref anthropic_streaming) | `stream=true` and a `callback` | the text as it arrives, then the whole message |
 | [let Claude call my functions](@ref anthropic_tools) | `tools` and `tool_loop!` | the tool calls run and answered until the model replies |
 | [get JSON that fits a schema](@ref anthropic_structured_output) | a JSON Schema `response_format` | a reply constrained to the schema |
-| [control thinking](@ref anthropic_reasoning) | `reasoning_effort` | thinking at that effort, its summary in `reasoning_text` |
+| [control thinking](@ref anthropic_reasoning) | `reasoning_effort` at a level your model's row in the family table lists; a row without levels refuses one | that effort, and where the row's thinking is adaptive, a summary of the thinking in `reasoning_text` |
 | [send images and PDFs](@ref anthropic_media) | `ImageAttachment`, `DocumentAttachment` | the files placed before the message's text |
 | [cache a long prompt](@ref anthropic_caching) | `prompt_cache_options` | cache reads and writes, counted in `usage` |
 | [know what a call cost](@ref anthropic_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
@@ -71,10 +70,12 @@ claude = ANTHROPICServiceEndpoint(workspace_id="wrkspc_01ExampleWorkspace", infe
 chat = Chat(service=claude)
 ```
 
-A value that breaks a rule throws `ArgumentError` when the endpoint is built. UniLM sends a beta's
-name only: it models no beta's request fields or response blocks, and reads one name itself,
-`fast-mode-2026-02-01`, which `service_tier="fast"` needs on the models whose Fast mode cell in the
-family table names it. [`list_models`](@ref) sends only the workspace of these options: Anthropic's
+Building the endpoint throws `ArgumentError` for a value that breaks one of these rules; two checks
+come later, when a request is made: the model's `inference_geo` rule, which makes `chatrequest!`
+throw `ArgumentError` before anything is sent, and the re-check of `betas` below. UniLM sends a
+beta's name only: it models no beta's request fields or response blocks, and reads one name itself,
+the beta `service_tier="fast"` needs on the models whose Fast mode cell in the family table names a
+beta header. [`list_models`](@ref) sends only the workspace of these options: Anthropic's
 Models API reference names no user-profile header for `GET /v1/models` and marks `anthropic-beta`
 deprecated there. Instances with the same options are equal (`==`, `hash`). The fields are read-only:
 to change an option, build a new endpoint. A name changed in place in the `betas` vector is checked
@@ -103,7 +104,10 @@ result.model, result.message.finish_reason
 [`estimated_cost`](@ref) prices the call at. The reply's `stop_reason` becomes `finish_reason`:
 `end_turn` and `stop_sequence` give `"stop"`, `tool_use` gives `"tool_calls"`, `max_tokens` and
 `model_context_window_exceeded` give `"length"`, and `refusal` gives `"content_filter"`, a turn with
-no content and the explanation in `refusal_message` ([When something fails](@ref anthropic_failures)).
+no content and the explanation in `refusal_message`. An unstreamed reply with status 200 that is not
+a message — no `content` array or no `stop_reason` — is an `LLMCallError`, never an empty success.
+A failure result, `LLMFailure` or `LLMCallError`, keeps the `request-id` header of Anthropic's
+reply, when one came, as `request_id` ([When something fails](@ref anthropic_failures)).
 
 ```@example anthropic
 u = result.usage
@@ -152,8 +156,9 @@ blank line. Where a system message pushed later goes depends on two columns of t
   last or right before an assistant turn. Anywhere else it joins the top-level `system` prompt,
   unless the model is append-only.
 - On a model whose cell is "—", it joins the top-level `system` prompt.
-- Append-only are the models whose Thinking prefix check cell is "yes", and any id the table has no
-  row for, since Anthropic asks every integration to be append-only
+- Append-only are the models whose Thinking prefix check cell is "yes", and any id that matches no
+  row (an id with a `-YYYYMMDD` snapshot suffix takes the row of the id without it), since Anthropic
+  asks every integration to be append-only
   ([preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)).
   The models with the check accept an earlier turn's thinking blocks only while everything before
   them is unchanged — the top-level `system` prompt, the tools and the earlier messages. So once an
@@ -204,6 +209,8 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   without committing its turn — stopped, cancelled, timed out, cut off or ended by a callback's
   exception — adds the usage Anthropic had reported by then, the input arriving with the first
   event, as a lower bound of what was billed.
+- **Thinking.** It never reaches the callback: thinking deltas go only into the final message's
+  `provider_content`, where [`reasoning_text`](@ref) reads the thinking once the stream has ended.
 - **Content blocks.** Thinking blocks with their signatures, text and tool calls are re-assembled
   from the deltas into the message's `provider_content`, so a streamed turn goes back on the next
   request as an unstreamed one does.

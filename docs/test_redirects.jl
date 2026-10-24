@@ -14,6 +14,13 @@ function fixture_out(; pages::Vector{String}, anchors::Dict{String,Vector{String
     out
 end
 
+"The routes an earlier version served, one per line, in a new temp file."
+function fixture_routes(routes::String...)::String
+    path = tempname()
+    write(path, join(routes, '\n') * "\n")
+    path
+end
+
 "A `redirects.toml` in a new temp file holding `routes` and `anchors`."
 function fixture_toml(; routes::Dict{String,String} = Dict{String,String}(),
                         anchors::Dict{String,String} = Dict{String,String}())::String
@@ -46,7 +53,8 @@ end
 @testset "redirects — a stub forwards to its target and keeps a known hash" begin
     out = fixture_out(pages = ["providers/openai/responses/"], anchors = Dict("responses_guide" => ["/providers/openai/responses/"]))
     toml = fixture_toml(routes = Dict("guide/responses_api" => "providers/openai/responses"))
-    @test write_stubs(out, "/UniLM.jl/dev", toml) == [joinpath(out, "guide", "responses_api", "index.html")]
+    @test write_stubs(out, "/UniLM.jl/dev", toml, fixture_routes("/guide/responses_api/")) ==
+          [joinpath(out, "guide", "responses_api", "index.html")]
     html = read(joinpath(out, "guide", "responses_api", "index.html"), String)
     @test occursin("url=../../providers/openai/responses/", html) && occursin("location.hash", html)
     m = stub_map(out, "providers/openai/responses/", toml)
@@ -54,16 +62,17 @@ end
 end
 @testset "redirects — refused: a stub over a page, a missing target, index.html" begin
     out = fixture_out(pages = ["guide/responses_api/", "x/"], anchors = Dict{String,Vector{String}}())
-    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("guide/responses_api" => "x")))
-    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("old" => "missing")))
-    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("" => "x")))
+    served = fixture_routes("/", "/guide/responses_api/", "/old/")
+    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("guide/responses_api" => "x")), served)
+    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("old" => "missing")), served)
+    @test_throws ErrorException write_stubs(out, "", fixture_toml(routes = Dict("" => "x")), served)
 end
 @testset "redirects — every @id of v0.26.0 resolves through anchors.json or an alias" begin
     out = fixture_out(pages = ["a/"], anchors = Dict("kept" => ["/a/"], "new" => ["/a/"]))
     list = tempname(); write(list, "kept\nretired\n")
     @test check_old_anchors(out, fixture_toml(anchors = Dict("retired" => "new")), list) == String[]
     @test check_old_anchors(out, fixture_toml(), list) == ["retired"]
-    write_stubs(out, "", fixture_toml(anchors = Dict("retired" => "new")))
+    write_stubs(out, "", fixture_toml(anchors = Dict("retired" => "new")), fixture_routes("/a/"))
     @test JSON.parsefile(joinpath(out, "anchor-aliases.json")) == Dict("retired" => "new")
 end
 
@@ -77,7 +86,7 @@ end
     out = fixture_out(pages = ["a/", "b/"], anchors = Dict(
         "x" => ["/a/"], "café" => ["/a/"], "</script>" => ["/a/"], "new" => ["/b/"]))
     toml = fixture_toml(routes = Dict("/old/deep/" => "/a"), anchors = Dict("retired" => "new"))
-    @test write_stubs(out, "/UniLM.jl/dev", toml) == [joinpath(out, "old", "deep", "index.html")]
+    @test write_stubs(out, "/UniLM.jl/dev", toml, fixture_routes("/old/deep/")) == [joinpath(out, "old", "deep", "index.html")]
     html = read(joinpath(out, "old", "deep", "index.html"), String)
     @test occursin("""<link rel="canonical" href="/UniLM.jl/dev/a/">""", html)
     @test occursin("""<meta http-equiv="refresh" content="2; url=../../a/">""", html)
@@ -87,7 +96,7 @@ end
 end
 @testset "redirects — refused before writing: an unknown successor id, a route listed twice, a malformed toml" begin
     out = fixture_out(pages = ["a/"], anchors = Dict("kept" => ["/a/"]))
-    stubs(; tables...) = write_stubs(out, "", fixture_toml(; tables...))
+    stubs(; tables...) = write_stubs(out, "", fixture_toml(; tables...), fixture_routes("/old/", "/other/"))
     @test_throws ErrorException "\"nope\"" stubs(routes = Dict("old" => "a"), anchors = Dict("retired" => "nope"))
     @test_throws ErrorException "\"other/\"" stubs(routes = Dict("old" => "a", "other" => "missing"))
     @test_throws ErrorException "\"old/\"" stubs(routes = Dict("old" => "a", "/old/" => "a"))
@@ -105,7 +114,7 @@ end
                  """{"a": "/a/"}""", """{"a": {"b": "/a/"}}""", """{"a": []}""", """{"a": [1]}""")
         body === nothing ? rm(path; force = true) : write(path, body)
         @test_throws ErrorException path stub_map(out, "a/", toml)
-        @test_throws ErrorException path write_stubs(out, "", toml)
+        @test_throws ErrorException path write_stubs(out, "", toml, fixture_routes("/a/"))
         @test_throws ErrorException path check_old_anchors(out, toml, list)
     end
 end
@@ -115,28 +124,49 @@ end
         out = mv(fixture_out(pages = ["a/", "b/", "g/r/"], anchors = Dict("kept" => ["/a/"])),
                  joinpath(mktempdir(), "out"))
         toml = fixture_toml(routes = Dict(old => "a"))
-        @test_throws ErrorException [toml, old] write_stubs(out, "", toml)
+        @test_throws ErrorException [toml, old] write_stubs(out, "", toml, fixture_routes("/a/"))
         toml = fixture_toml(routes = Dict("old" => new))
-        @test_throws ErrorException [toml, new] write_stubs(out, "", toml)
+        @test_throws ErrorException [toml, new] write_stubs(out, "", toml, fixture_routes("/old/"))
         @test_throws ErrorException new stub_map(out, new, fixture_toml())
         write(joinpath(out, "anchors.json"), JSON.json(Dict("kept" => ["/$new/"])))
         @test_throws ErrorException [joinpath(out, "anchors.json"), new] stub_map(out, "a/", fixture_toml())
     end
 end
-@testset "redirects — the CLI writes the stubs and exits 1 while an id of v0.26.0 resolves nowhere" begin
+@testset "redirects — a stub goes only where an earlier version served a page" begin
+    out = fixture_out(pages = ["", "a/"], anchors = Dict("kept" => ["/a/"]))
+    served = fixture_routes("/", "/a/", "/guide/old/")
+    @test_throws ErrorException ["never_served/", served] write_stubs(out, "", fixture_toml(routes = Dict("never_served" => "a")), served)
+    @test !ispath(joinpath(out, "never_served")) && !isfile(joinpath(out, "anchor-aliases.json"))   # refused before writing
+    @test check_old_routes(out, served) == ["/guide/old/"]                   # neither a page nor a stub
+    write_stubs(out, "", fixture_toml(routes = Dict("guide/old" => "a")), served)
+    @test check_old_routes(out, served) == String[]
+end
+@testset "redirects — the CLI exits 1 while a route of v0.26.0 has neither a page nor a stub, or an id resolves nowhere" begin
     ids = readlines(joinpath(@__DIR__, "anchors-v0.26.0.txt"))
+    routes = readlines(joinpath(@__DIR__, "routes-v0.26.0.txt"))
     @test length(ids) == 139 && issorted(ids) && allunique(ids)
-    out = fixture_out(pages = ["a/"], anchors = Dict(id => ["/a/"] for id in ids[2:end]))
+    @test length(routes) == 54 && issorted(routes) && allunique(routes) && first(routes) == "/" &&
+          all(r -> startswith(r, '/') && endswith(r, '/'), routes)
+    moved = "/guide/responses_api/"                                          # a page v0.26.0 served
+    @test moved in routes
+    pages = String[[chopprefix(r, "/") for r in routes if r != moved]; "providers/openai/responses/"]
+    out = fixture_out(; pages, anchors = Dict(id => ["/llm/"] for id in ids[2:end]))
     function cli(toml::String)::Tuple{Int,String}
         err = IOBuffer()
         script = joinpath(@__DIR__, "redirects.jl")
         cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(@__DIR__) $script $out /UniLM.jl/dev $toml`
         (run(pipeline(ignorestatus(cmd); stdout = devnull, stderr = err)).exitcode, String(take!(err)))
     end
-    code, err = cli(fixture_toml())
-    @test code == 1 && occursin(ids[1], err)
-    code, err = cli(fixture_toml(routes = Dict("old" => "a"), anchors = Dict(ids[1] => ids[2])))
-    @test code == 0 && isfile(joinpath(out, "old", "index.html"))
+    alias = Dict(ids[1] => ids[2])
+    code, err = cli(fixture_toml(anchors = alias))                           # the moved page has no stub
+    @test code == 1 && occursin(moved, err) && !occursin(ids[1], err)
+    code, err = cli(fixture_toml(routes = Dict("guide/responses" => "providers/openai/responses"), anchors = alias))
+    @test code == 1 && occursin("guide/responses/", err)                     # a route v0.26.0 never served
+    code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => "providers/openai/responses")))
+    @test code == 1 && occursin(ids[1], err) && !occursin(moved, err)        # an id resolves nowhere
+    rm(joinpath(out, "guide", "responses_api"); recursive = true)            # the stub that run wrote
+    code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => "providers/openai/responses"), anchors = alias))
+    @test code == 0 && isfile(joinpath(out, "guide", "responses_api", "index.html"))
 end
 
 end

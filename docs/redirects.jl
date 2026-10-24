@@ -1,17 +1,18 @@
 # Keeps links into earlier versions of the documentation site working after pages and anchors move: redirect stubs
-# at the old routes, the anchor aliases the site's pages read, and a check that every anchor id of v0.26.0 resolves.
+# at the old routes, the anchor aliases the site's pages read, and a check that every route and every anchor id of
+# v0.26.0 resolves.
 #
 #   julia --startup-file=no --project=docs docs/redirects.jl <out> <base> [<toml>]
 #
 # <out> is the site's static export (site/out, holding anchors.json), <base> the path it is served under
 # (/UniLM.jl/dev, /UniLM.jl/vX.Y.Z, or "" at the root), <toml> the redirect table (default docs/redirects.toml).
-# Writes the stubs and <out>/anchor-aliases.json, then checks the ids of docs/anchors-v0.26.0.txt; exits 1 on any
-# problem.
+# Writes the stubs and <out>/anchor-aliases.json, then checks that each route of docs/routes-v0.26.0.txt is a page
+# or a stub of <out> and that each id of docs/anchors-v0.26.0.txt resolves; exits 1 on any problem.
 module Redirects
 
 using JSON, TOML
 
-export stub_map, write_stubs, check_old_anchors
+export stub_map, write_stubs, check_old_routes, check_old_anchors
 
 """
     route(r, from) -> String
@@ -144,7 +145,7 @@ function stub(old::String, new::String, base::String, dests::Dict{String,String}
 end
 
 """
-    write_stubs(out, base, toml) -> Vector{String}
+    write_stubs(out, base, toml, list) -> Vector{String}
 
 Writes `<out>/anchor-aliases.json` from `toml`'s `[anchors]` and, for each old route of its `[routes]`, a stub
 `<out>/<old>/index.html` that moves its reader to the route that replaced it; returns the stubs' paths, sorted. The
@@ -153,17 +154,21 @@ page; without scripts, a `<meta http-equiv="refresh">` sends them to the top aft
 URLs, so a reader stays in the folder they came from (dev/, stable/ or a version's); the canonical link is
 `<base>/<new>/`.
 
-Refuses, before writing anything, an old route that is the home page or where a page exists, a new route that is
-not a page, and a successor id that `<out>/anchors.json` lacks.
+Refuses, before writing anything, an old route that is the home page, that is no route of the file `list` — the
+routes an earlier version served, one per line (`/guide/x/`), so a stub anywhere else forwards nobody — or where a
+page exists, a new route that is not a page, and a successor id that `<out>/anchors.json` lacks.
 """
-function write_stubs(out::String, base::String, toml::String)::Vector{String}
+function write_stubs(out::String, base::String, toml::String, list::String)::Vector{String}
     c, anchors = Config(toml), read_anchors(out)
+    served = Set(route(r, list) for r in readlines(list))
     for (old, new) in c.aliases
         haskey(anchors, new) ||
             error("$toml: [anchors] $(repr(old)) names the successor $(repr(new)), which $out/anchors.json lacks")
     end
     for (old, new) in c.routes
         isempty(old) && error("$toml: [routes] moves the home page, which a stub would replace")
+        old in served || error("$toml: [routes] $(repr(old)) is no route of $list, which lists the routes an " *
+                               "earlier version served: a stub there forwards nobody")
         isfile(joinpath(out, old, "index.html")) &&
             error("$toml: [routes] $(repr(old)) is a page of $out, which a stub would replace")
         isfile(joinpath(out, new, "index.html")) ||
@@ -177,6 +182,15 @@ function write_stubs(out::String, base::String, toml::String)::Vector{String}
         path
     end
 end
+
+"""
+    check_old_routes(out, list) -> Vector{String}
+
+The routes of the file `list` (one per line, `/guide/x/`), in its order, where the built site `out` has neither a
+page nor a stub (`<out>/<route>/index.html`): a link to one of them finds nothing.
+"""
+check_old_routes(out::String, list::String)::Vector{String} =
+    filter(r -> !isfile(joinpath(out, route(r, list), "index.html")), readlines(list))
 
 """
     check_old_anchors(out, toml, list) -> Vector{String}
@@ -195,12 +209,14 @@ if abspath(PROGRAM_FILE) == @__FILE__
     length(ARGS) in 2:3 ||
         error("usage: julia --startup-file=no --project=docs docs/redirects.jl <out> <base> [<toml>]")
     out, base, toml = ARGS[1], ARGS[2], get(ARGS, 3, joinpath(@__DIR__, "redirects.toml"))
-    stubs = Redirects.write_stubs(out, base, toml)
+    routes = joinpath(@__DIR__, "routes-v0.26.0.txt")
+    stubs = Redirects.write_stubs(out, base, toml, routes)
+    gone = Redirects.check_old_routes(out, routes)
     lost = Redirects.check_old_anchors(out, toml, joinpath(@__DIR__, "anchors-v0.26.0.txt"))
-    if !isempty(lost)
-        println(stderr, "anchor ids of v0.26.0 that neither $out/anchors.json defines nor an alias of $toml resolves:",
-                join("\n  " .* lost))
-        exit(1)
-    end
+    isempty(gone) || println(stderr, "routes of v0.26.0 with neither a page nor a stub in $out (add one to [routes] ",
+                             "of $toml):", join("\n  " .* gone))
+    isempty(lost) || println(stderr, "anchor ids of v0.26.0 that neither $out/anchors.json defines nor an alias of ",
+                             "$toml resolves:", join("\n  " .* lost))
+    isempty(gone) && isempty(lost) || exit(1)
     println("wrote ", join([joinpath(out, "anchor-aliases.json"); stubs], ", "))
 end

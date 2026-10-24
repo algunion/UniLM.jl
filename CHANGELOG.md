@@ -15,6 +15,16 @@
   two-argument constructor is unchanged. Upgrading: code that takes the key from
   `DeepSeekEndpoint().api_key` or `MistralEndpoint().api_key` (now `""`), or relies on
   building the endpoint to check that the key is set, reads the variable itself.
+- **Inside a `:replay` scope, streamed calls, the Responses lifecycle calls and FIM no
+  longer reach the network.** At 0.26.0 a streamed `chatrequest!` or `respond` (and so a
+  streamed `tool_loop!`), `get_response`, `delete_response`, `list_input_items`,
+  `cancel_response`, `compact_response`, `count_input_tokens`, `fim_complete` and
+  `prefix_complete` went to their service inside any `with_recorded_answers` scope. Now a
+  scope answers them as it answers every other recorded call (see Added): in a `:replay`
+  scope one without a recording throws `ReplayMissError`, and a polling loop recorded with
+  `:record_missing` gets its first status back on every later poll. Upgrading: record what a
+  `:replay` scope now needs (`mode = :record_missing`), and record a polling loop with
+  `:record`, which keeps the last status.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -28,11 +38,8 @@
   `x-gemini-service-tier`). A miss on a stream's first request is thrown by the verb; its
   lost recording, or a miss on a later request of a turn the provider continues, is
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
-  `TaskFailedException` around it. Every earlier recording replays unchanged. Upgrading:
-  inside a `:replay` scope these calls no longer reach the network — one without a
-  recording throws `ReplayMissError`, so record it (`mode = :record_missing`); and a
-  polling loop recorded with `:record_missing` gets its first status back on every later
-  poll (record it with `:record`, which keeps the last).
+  `TaskFailedException` around it. Every earlier recording replays unchanged; what this
+  changes for code that ran these calls inside a scope is under Breaking.
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's
@@ -51,6 +58,17 @@
   the text, a local recording path with it, reached the model or the client. Now a loop
   throws it as it was thrown, and an MCP server logs it and answers the generic JSON-RPC
   `-32603`, as for a bare one.
+- **A user's interrupt that reaches a tool dispatcher or an MCP handler wrapped propagates.**
+  A dispatcher or handler that waits on a task gets an `InterruptException` inside a
+  `TaskFailedException` (or a `CompositeException`, a `CapturedException`). The tool loops
+  took it for a tool error and went on, an MCP server answered a tool handler's as tool
+  content, and a resource or prompt handler's it logged and answered `-32603`. Now each
+  throws it as it was thrown, as for a bare `InterruptException`; any other error inside
+  such a wrapper is still a tool error.
+- **A streamed turn interrupted during a later reply keeps the earlier replies' cost.** When
+  an `InterruptException` ended a streamed turn the provider continued over several requests
+  (a long Gemini generation), `cumulative_cost` left out the replies already received; they
+  are now added before the interrupt propagates, as an unstreamed turn adds them.
 
 ## 0.26.0
 

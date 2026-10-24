@@ -195,13 +195,16 @@ The lines of the example outputs on the site's pages, `app/**/page.md`, that rea
 `Request failed`, or hold `ReplayMissError`, `KeyError: key` or `CallError(` — each as `"page.md:line: text"`, with
 the page's path. An example output is a fenced code block whose info string starts with the word `output`, as the
 site's writer writes it; in a list item or a block quote, a line's text starts at its fence's column. An `app` that
-holds no page.md is an error.
+holds no page.md is an error, and so is one whose pages hold no line of example output: a scan of nothing would
+report them clean.
 """
 function scan_outputs(app::String)::Vector{String}
     pages = [joinpath(dir, f) for (dir, _, files) in walkdir(app) for f in files if f == "page.md"]
     isempty(pages) && error("$app: no page.md")
-    String[string(page, ':', n, ": ", text) for page in pages for (n, text) in outputs(readlines(page))
-           if occursin(FAILURE, text)]
+    found = [(page, outputs(readlines(page))) for page in pages]
+    all(isempty ∘ last, found) &&
+        error("$app: no example output (a line in an `output` block) in any page.md: nothing to scan")
+    String[string(page, ':', n, ": ", text) for (page, lines) in found for (n, text) in lines if occursin(FAILURE, text)]
 end
 
 end # module

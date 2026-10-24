@@ -395,6 +395,27 @@ end
     @test !contains(JSON.json(resp), "private-recordings") && !contains(JSON.json(resp), "billed")
 end
 
+@testset "a handler's wrapped InterruptException propagates; a wrapped ordinary error stays a tool error" begin
+    # A handler that waits on a task gets what the task threw inside a TaskFailedException. A
+    # user's interrupt is never answered, whatever wraps it — neither as tool content nor as a
+    # logged -32603 —; any other failure of a tool handler stays a tool result the model reads.
+    server = MCPServer("wrapped", "1.0.0")
+    schema = Dict{String,Any}("type" => "object")
+    register_tool!(server, "interrupted", nothing, schema, _ -> fetch(Threads.@spawn throw(InterruptException())))
+    register_tool!(server, "failing", nothing, schema, _ -> fetch(Threads.@spawn error("the tool failed")))
+    register_resource!(server, "wrapped://interrupt", "x", () -> fetch(Threads.@spawn throw(InterruptException())))
+    call(name) = Dict{String,Any}("jsonrpc" => "2.0", "id" => 24, "method" => "tools/call",
+                                  "params" => Dict{String,Any}("name" => name, "arguments" => Dict{String,Any}()))
+    thrown(f) = try f(); nothing catch e; e end
+    wrapped_interrupt(e) = e isa TaskFailedException && e.task.exception isa InterruptException
+    @test wrapped_interrupt(thrown(() -> UniLM._dispatch_guarded(server, call("interrupted"))))
+    read = Dict{String,Any}("jsonrpc" => "2.0", "id" => 25, "method" => "resources/read",
+                            "params" => Dict{String,Any}("uri" => "wrapped://interrupt"))
+    @test wrapped_interrupt(thrown(() -> UniLM._dispatch_guarded(server, read)))
+    resp = UniLM._dispatch_guarded(server, call("failing"))
+    @test resp["result"]["isError"] === true && occursin("the tool failed", only(resp["result"]["content"])["text"])
+end
+
 @testset "resources/read — template handler throws → generic -32603, detail logged" begin
     server = MCPServer("tmpl-err", "1.0.0")
     register_resource_template!(server, "boom://{id}", "BoomTmpl",

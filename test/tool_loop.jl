@@ -705,6 +705,37 @@ end
     end
 end
 
+@testset "a wrapped InterruptException from a dispatch propagates whole; a wrapped ordinary error stays a tool error" begin
+    # A dispatcher that waits on a task gets what the task threw inside a TaskFailedException.
+    # A user's interrupt must stop the loop, whatever wraps it; any other failure is a tool error
+    # the model reads, as when the dispatcher throws it itself.
+    interrupted = (name, args) -> fetch(Threads.@spawn throw(InterruptException()))
+    failing = (name, args) -> fetch(Threads.@spawn error("the tool failed"))
+    thrown(f) = try f(); nothing catch e; e end
+    wrapped_interrupt(e) = e isa TaskFailedException && e.task.exception isa InterruptException
+    tool_errors(res) = res.completed && length(res.tool_calls) == 2 &&
+                       all(o -> !o.success && occursin("the tool failed", o.error), res.tool_calls)
+    calls() = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "t1", "c2" => "t2"), _tl_reply("done")]))
+    for n in (1, 3)
+        chat = calls()
+        _tl_scripted() do
+            @test wrapped_interrupt(thrown(() -> tool_loop!(chat, interrupted; tool_concurrency=n)))
+        end
+        @test [m.role for m in chat.messages] == [UniLM.RoleSystem, UniLM.RoleUser]   # rolled back
+        res, _ = _tl_scripted(() -> tool_loop!(calls(), failing; tool_concurrency=n))
+        @test tool_errors(res)
+    end
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("c1", "t1"), _tl_fcall("c2", "t2")]) :
+                       _tl_resp("resp_2", [_tl_text("done")])
+    for n in (1, 2)
+        _with_scripted((i, _) -> _json(200, turn(i))) do
+            @test wrapped_interrupt(thrown(() -> tool_loop(_tl_respond(), interrupted; tool_concurrency=n)))
+        end
+        res, _ = _with_scripted(() -> tool_loop(_tl_respond(), failing; tool_concurrency=n), (i, _) -> _json(200, turn(i)))
+        @test tool_errors(res)
+    end
+end
+
 @testset "tool_concurrency below 1 is rejected before any request" begin
     dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
     @test_throws ArgumentError "tool_concurrency" tool_loop!(_tl_chat(dead), (a, b) -> "x"; tool_concurrency=0)

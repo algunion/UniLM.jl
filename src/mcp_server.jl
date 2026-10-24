@@ -176,7 +176,8 @@ failure and correct itself. Write handlers with that in mind — raise with a me
 you are willing to show both the model and the client, and never one carrying secrets
 or internals. Errors below the handler (in dispatch itself) answer a generic JSON-RPC
 `-32603` instead, with the detail going to the server's logs. An `InterruptException`
-is never converted: it propagates. Neither is a [`ReplayMissError`](@ref) — a request
+is never converted, even inside the `TaskFailedException` of a task the handler waited
+on: it propagates. Neither is a [`ReplayMissError`](@ref) — a request
 the handler made inside [`with_recorded_answers`](@ref) that has no recording — nor a
 [`RecordingWriteError`](@ref) — a paid answer the handler's scope could not record:
 the client gets the generic `-32603` and the server logs the error, since neither is
@@ -389,14 +390,13 @@ function _handle_tools_call(server::MCPServer, id, params::Dict{String,Any})
         _jsonrpc_result(id, Dict{String,Any}(
             "content" => _format_tool_result(result), "isError" => false))
     catch e
-        # A request with no recording is a gap in a test's recordings, and a paid answer
-        # whose recording was lost is a local I/O failure; neither is one the model could
-        # correct from: they go to the dispatcher, which logs them. Either can arrive
-        # wrapped — a streamed call's task throws it, and `fetch` raises the task's
-        # `TaskFailedException` — so the whole chain is searched, and what the handler
-        # threw goes to the dispatcher as it is.
-        e isa InterruptException && rethrow()
-        isnothing(_find_exception(x -> x isa Union{ReplayMissError,RecordingWriteError}, e)) || rethrow()
+        # A user's interrupt propagates. A request with no recording is a gap in a test's
+        # recordings, and a paid answer whose recording was lost is a local I/O failure;
+        # neither is one the model could correct from: they go to the dispatcher, which
+        # logs them. Any of the three can arrive wrapped — a task the handler waits on
+        # throws it, and `fetch` raises the task's `TaskFailedException` — so the whole
+        # chain is searched, and what the handler threw goes on as it is.
+        _escapes_tool(e) && rethrow()
         # A tool execution error — the handler's own, or an argument the by-name binding
         # rejected (MCP 2025-11-25 server/tools classes input validation errors as tool
         # execution errors) — is a result the model can read and correct its call from.
@@ -526,7 +526,8 @@ function _dispatch_guarded(server::MCPServer, parsed::Dict{String,Any})
     try
         _dispatch_mcp(server, parsed)
     catch e
-        e isa InterruptException && rethrow()
+        # A user's interrupt is never answered, wrapped or not (a handler that waited on a task).
+        isnothing(_find_exception(x -> x isa InterruptException, e)) || rethrow()
         @error "MCP request dispatch failed" method=get(parsed, "method", "") exception=(e, catch_backtrace())
         id = get(parsed, "id", nothing)
         isnothing(id) ? nothing : _jsonrpc_error(id, -32603, "Internal error")
@@ -773,9 +774,9 @@ the transport down and no exception text (file paths, argument values) reaches t
 peer. Tool-handler exceptions are excluded: they reach the client as tool results —
 see [`register_tool!`](@ref) — except a [`ReplayMissError`](@ref) or a
 [`RecordingWriteError`](@ref), which is answered and logged like any other dispatch
-error. An `InterruptException` is never
-converted into an answer: it propagates. A JSON-RPC response sent to the server is accepted without
-an answer (HTTP: 202).
+error. An `InterruptException` is never converted into an answer, even inside the
+`TaskFailedException` of a task a handler waited on: it propagates. A JSON-RPC response
+sent to the server is accepted without an answer (HTTP: 202).
 
 # Examples
 ```julia

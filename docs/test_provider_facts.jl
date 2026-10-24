@@ -1,7 +1,15 @@
 using Test, Markdown, UniLM
 using Documenter: MarkdownAST
 isdefined(Main, :ProviderFacts) || include(joinpath(@__DIR__, "ProviderFacts.jl")); using .ProviderFacts
+isdefined(Main, :DocMetrics) || include(joinpath(@__DIR__, "metrics.jl")); using .DocMetrics: outside_fences, PageError
 hasvalue(n) = n.element isa MarkdownAST.JuliaValue || any(hasvalue, n.children)
+const SRC = joinpath(@__DIR__, "src")
+
+# The explicit ids the headings of the page at `path` define, in order, each with its heading's level. Its fenced
+# blocks are read by the metric's rule (docs/metrics.jl), so a page the metric cannot read fails here too.
+heading_ids(path::String)::Vector{Tuple{Int,String}} =
+    [(length(h[1]), String(h[2])) for l in outside_fences(readlines(path); file=path)
+     for h in (match(r"^(#{1,6})\s.*\(@id\s+([^)\s]+)\s*\)", l),) if !isnothing(h)]
 @testset "ProviderFacts — every entry's facts come from the code" begin
     @test entry(:anthropic).default_model == UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-5-5"
     @test entry(:openai).default_model == "gpt-6-sol" && entry(:jev).default_model == "jev-latest"
@@ -141,8 +149,9 @@ end
         md = Markdown.parse(region_text(name))
         @test length(md.content) == 2 && md.content[1] isa Markdown.Header && !hasvalue(convert(MarkdownAST.Node, md))
         @test [only(p[1].text) for p in items(name)] == [e.name for e in entries]
-        @test all(zip(items(name), entries)) do (p, e)                                  # usage, key variables, default model
-            [c.code for c in p if c isa Markdown.Code] == ["service = $(e.usage)"; e.key_vars; something(e.default_model, String[])]
+        @test all(zip(items(name), entries)) do (p, e)                         # usage, every variable it reads, default model
+            [c.code for c in p if c isa Markdown.Code] ==
+                ["service = $(e.usage)"; e.key_vars; e.env_vars; something(e.default_model, String[])]
         end
     end
     @test [p[1].url for p in items("provider-contracts")] == ["@ref " * e.start_id for e in in_order(ProviderFacts.llm)]
@@ -159,22 +168,30 @@ end
     @test regions(joinpath(@__DIR__, "src", "llm.md")) == ["decision-provider-contracts", "provider-contracts"]
     @test regions(joinpath(dirname(@__DIR__), "llms.txt")) == ["providers"]
 end
+@testset "ProviderFacts — key_vars are what a reader sets to make a call; env_vars every other variable read" begin
+    @test entry(:jev).key_vars == [UniLM.TYPESAFE_API_KEY]
+    @test entry(:jev).env_vars == [UniLM.TYPESAFE_BASE_URL_ENV, UniLM.TYPESAFE_DEFAULT_MODEL_ENV]
+    @test entry(:azure).key_vars == [UniLM.AZURE_OPENAI_API_KEY, UniLM.AZURE_OPENAI_BASE_URL, UniLM.AZURE_OPENAI_API_VERSION]
+    @test entry(:azure).env_vars == ["AZURE_OPENAI_DEPLOY_NAME_<MODEL>"]
+    @test all(e -> isempty(e.env_vars), filter(e -> e.key ∉ (:jev, :azure), REGISTRY))
+    @test occursin("reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`;",
+                   region_text("decision-provider-contracts"))
+    keys_column(chapter) = [[c.code for c in r[2] if c isa Markdown.Code] for r in only(provider_table(chapter).content).rows[2:end]]
+    @test keys_column(ProviderFacts.decisions) == [e.key_vars for e in REGISTRY if e.chapter == ProviderFacts.decisions]
+    @test keys_column(ProviderFacts.llm) == [e.key_vars for e in REGISTRY if e.chapter == ProviderFacts.llm]
+end
+@testset "ProviderFacts — the id reader reads fences as the metric does" begin
+    page(text) = (p = tempname(); write(p, text); p)
+    @test heading_ids(page("```julia\nx\n```julia\n# [T](@id t)\n\n## [U](@id u)\n")) == [(1, "t"), (2, "u")]
+    @test heading_ids(page("```julia\n# [T](@id t)\n```\n")) == []
+    @test_throws PageError heading_ids(page("# [T](@id t)\n\n```julia\nx\n"))   # never closed: refused, not skipped
+end
 @testset "ProviderFacts — every start and feature id is defined once, on one of its entry's pages" begin
-    src = joinpath(@__DIR__, "src")
     ids = Dict{String,Vector{String}}()             # an explicit id => the pages whose headings define it
-    for (root, _, files) in walkdir(src), f in files
+    for (root, _, files) in walkdir(SRC), f in files
         endswith(f, ".md") || continue
-        fence = nothing                             # the run that opened the fenced block being read
-        for line in eachline(joinpath(root, f))
-            if isnothing(fence)
-                m = match(r"^\s*(`{3,}|~{3,})", line)
-                isnothing(m) || (fence = m[1]; continue)
-                h = match(r"^#{1,6}\s.*\(@id\s+([^)\s]+)\s*\)", line)
-                isnothing(h) || push!(get!(ids, h[1], String[]), relpath(joinpath(root, f), src))
-            elseif strip(line) == fence
-                fence = nothing
-            end
-        end
+        page = relpath(joinpath(root, f), SRC)
+        foreach(((_, id),) -> push!(get!(ids, id, String[]), page), heading_ids(joinpath(SRC, page)))
     end
     @test [id => p for (id, p) in ids if length(p) > 1] == []                      # every explicit id once
     on(id) = get(ids, id, String[])
@@ -184,4 +201,27 @@ end
                     length(on(id * "__next")) == 1 && only(on(id * "__next")) in e.pages &&
                     length(on(id)) == 1 && only(on(id)) ∉ e.pages
     @test [(e.key, id) for e in REGISTRY for id in [e.start_id; sort!(collect(values(e.features)))] if !placed(e, id)] == []
+end
+@testset "ProviderFacts — the sidebar lists each entry's pages and each chapter's concept pages, as the registry does" begin
+    tree = include(joinpath(@__DIR__, "pages.jl"))          # the `pages` docs/make.jl builds
+    groups(chapter) = [g => String[last(p) for p in pages] for (g, pages) in only(last(i) for i in tree if first(i) == chapter)]
+    title_id(page) = (h = heading_ids(joinpath(SRC, page)); isempty(h) || first(first(h)) != 1 ? nothing : last(first(h)))
+    all_pages = [relpath(joinpath(r, f), SRC) for (r, _, fs) in walkdir(SRC) for f in fs if endswith(f, ".md")]
+    titles = Dict(title_id(p) => p for p in all_pages if !isnothing(title_id(p)))
+    # A page being dissolved: the page that replaces it carries its title's id as `<id>__next`.
+    heir(page) = (id = title_id(page); isnothing(id) ? nothing : get(titles, id * "__next", nothing))
+    for (chapter, c) in ("Language models" => ProviderFacts.llm, "Decisions" => ProviderFacts.decisions)
+        for (group, pages) in groups(chapter)
+            kept = filter(p -> isnothing(heir(p)), pages)
+            entries = [e for e in REGISTRY if e.chapter == c && first(e.pages) in kept]
+            # a dissolving page sits right after the page that replaces it
+            @test [p for (i, p) in pairs(pages) if !isnothing(heir(p)) && get(pages, i - 1, nothing) != heir(p)] == []
+            startswith(group, "Concepts") && @test kept == CONCEPT_PAGES[c]
+            isempty(entries) || @test kept == reduce(vcat, (e.pages for e in entries))
+        end
+        @test count(((g, _),) -> startswith(g, "Concepts"), groups(chapter)) == 1
+        @test all(e -> e.chapter != c || any(((_, ps),) -> first(e.pages) in ps, groups(chapter)), REGISTRY)
+    end
+    # an entry's start id is the title of its first page, or that page's heir's while the old page stays
+    @test [e.key => title_id(first(e.pages)) for e in REGISTRY if title_id(first(e.pages)) ∉ (e.start_id, e.start_id * "__next")] == []
 end

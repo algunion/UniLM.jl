@@ -126,6 +126,12 @@ end
     empty = mktempdir()
     @test_throws ErrorException empty scan_outputs(empty)
 end
+@testset "site checks — pages that hold no example output are an error, never a clean scan" begin
+    app = fixture_app("```julia\nCallError(\"code, not output\")\n```\n\nRequest failed in prose.\n")
+    mkpath(joinpath(app, "guide", "empty"))
+    write(joinpath(app, "guide", "empty", "page.md"), "```output\n```\n")       # an output block with no line
+    @test_throws ErrorException "no example output" scan_outputs(app)
+end
 @testset "site checks — the CLI checks README.md, llms.txt, Hero.tsx and the outputs, and exits 1 on a problem" begin
     out = fixture_out(pages = String[])
     write(joinpath(out, "anchors.json"), "{}")

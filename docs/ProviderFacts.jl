@@ -90,7 +90,11 @@ One provider entry of the manual.
   theirs together.
 - `usage`: what code writes to select the provider — a type's name, or the constructor call
   of an instance.
-- `key_vars`: the environment variables the entry reads, from UniLM's constants.
+- `key_vars`: the environment variables a reader sets to make a call — the credentials, or the
+  host of a local server —, from UniLM's constants; the tables' key column.
+- `env_vars`: every other environment variable the entry's code reads, from UniLM's constants;
+  `<MODEL>` stands for the part of a name a model's id gives. A generated region line says the
+  entry reads both lists, and the metric (docs/metrics.jl) counts both as its provider's words.
 - `default_model`: the model a call that names none gets; `nothing` where it must name one.
 - `pages`: the entry's pages under `docs/src`, start page first.
 - `start_id`: the `@id` of the start page's title.
@@ -105,6 +109,7 @@ One provider entry of the manual.
     endpoints::Vector{ServiceEndpointSpec}
     usage::String
     key_vars::Vector{String}
+    env_vars::Vector{String}
     default_model::Union{String,Nothing}
     pages::Vector{String}
     start_id::String
@@ -182,6 +187,11 @@ end
 const _MODEL_PREFIXES = (openai=UniLM._MODEL_ID_PREFIXES.openai, anthropic=UniLM._MODEL_ID_PREFIXES.anthropic,
                          gemini=UniLM._MODEL_ID_PREFIXES.gemini, deepseek=("deepseek-",), jev=("jev-",))
 
+# The words that name an OpenAI model in prose, for both entries that serve OpenAI's models: `GPT-`
+# as names are written, the shared table's prefixes, and those of the audio and image models, which
+# that table (prefixes a price row or a request rule needs) leaves out.
+const _OPENAI_MODELS = ["GPT-", _MODEL_PREFIXES.openai..., "whisper-", "tts-", "dall-e-"]
+
 # The server `OllamaEndpoint()` reaches when OLLAMA_HOST is unset, for both Ollama entries, named
 # explicitly: `OllamaEndpoint()` itself would read OLLAMA_HOST from the environment that loads
 # this file.
@@ -197,17 +207,17 @@ the field.
 const REGISTRY = _validated([
     ProviderEntry(key=:openai, chapter=llm, provider=:openai, name="OpenAI",
         endpoints=[OPENAIServiceEndpoint], usage="OPENAIServiceEndpoint", key_vars=[UniLM.OPENAI_API_KEY],
-        default_model=UniLM.default_model(OPENAIServiceEndpoint),
+        env_vars=String[], default_model=UniLM.default_model(OPENAIServiceEndpoint),
         pages=["providers/openai/index.md", "providers/openai/models.md", "providers/openai/chat_completions.md",
                "providers/openai/responses.md", "providers/openai/retrieval.md", "providers/openai/media.md",
                "providers/openai/platform.md"],
         start_id="openai_start",
         features=_features(:openai, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
             :reasoning, :media, :embeddings, :images, :audio, :caching, :cost, :limits, :failures, :models)),
-        tokens=["OpenAI", "ChatGPT", "OPENAIServiceEndpoint", "GPT-", _MODEL_PREFIXES.openai...]),
+        tokens=["OpenAI", "ChatGPT", "OPENAIServiceEndpoint", _OPENAI_MODELS...]),
     ProviderEntry(key=:anthropic, chapter=llm, provider=:anthropic, name="Anthropic",
         endpoints=[ANTHROPICServiceEndpoint], usage="ANTHROPICServiceEndpoint", key_vars=[UniLM.ANTHROPIC_API_KEY],
-        default_model=UniLM.default_model(ANTHROPICServiceEndpoint),
+        env_vars=String[], default_model=UniLM.default_model(ANTHROPICServiceEndpoint),
         pages=["providers/anthropic/index.md", "providers/anthropic/requests.md", "providers/anthropic/caching.md"],
         start_id="anthropic_start",
         features=_features(:anthropic, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
@@ -215,7 +225,7 @@ const REGISTRY = _validated([
         tokens=["Anthropic", "Claude", "ANTHROPICServiceEndpoint", _MODEL_PREFIXES.anthropic...]),
     ProviderEntry(key=:gemini, chapter=llm, provider=:gemini, name="Google Gemini",
         endpoints=[GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint], usage="GEMINIServiceEndpoint",
-        key_vars=[UniLM.GEMINI_API_KEY], default_model=UniLM.default_model(GEMINIServiceEndpoint),
+        key_vars=[UniLM.GEMINI_API_KEY], env_vars=String[], default_model=UniLM.default_model(GEMINIServiceEndpoint),
         pages=["providers/gemini/index.md", "providers/gemini/generate_content.md", "providers/gemini/interactions.md",
                "providers/gemini/media.md"],
         start_id="gemini_start",
@@ -223,8 +233,8 @@ const REGISTRY = _validated([
             :reasoning, :media, :embeddings, :images, :audio, :caching, :cost, :limits, :failures, :models)),
         tokens=["Gemini", "Google", "GEMINIServiceEndpoint", "GEMINIOpenAIServiceEndpoint", _MODEL_PREFIXES.gemini...]),
     ProviderEntry(key=:ollama, chapter=llm, provider=:ollama, name="Ollama",
-        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], default_model=nothing,
-        pages=["providers/ollama/index.md", "providers/ollama/embeddings.md", "providers/ollama/runtime.md"],
+        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], env_vars=String[],
+        default_model=nothing, pages=["providers/ollama/index.md", "providers/ollama/embeddings.md", "providers/ollama/runtime.md"],
         start_id="ollama_guide",
         features=_features(:ollama, (:setup, :conversations, :streaming, :limits),
             :first_call => "ollama_first", :reasoning => "ollama_thinking", :tools => "ollama_tools",
@@ -233,7 +243,8 @@ const REGISTRY = _validated([
         tokens=["Ollama", "OllamaEndpoint"]),
     ProviderEntry(key=:local_servers, chapter=llm, provider=:local_servers, name="vLLM, LM Studio & llama.cpp",
         endpoints=[GenericOpenAIEndpoint("http://localhost:8000", "")],
-        usage="GenericOpenAIEndpoint(\"http://localhost:8000\", \"\")", key_vars=String[], default_model=nothing,
+        usage="GenericOpenAIEndpoint(\"http://localhost:8000\", \"\")", key_vars=String[], env_vars=String[],
+        default_model=nothing,
         pages=["providers/local_servers.md"], start_id="local_servers_start",
         features=_features(:local_servers, (:setup, :first_call, :streaming, :tools, :structured_output, :limits,
             :failures)),
@@ -241,43 +252,44 @@ const REGISTRY = _validated([
     ProviderEntry(key=:azure, chapter=llm, provider=:azure, name="Azure OpenAI",
         endpoints=[AZUREServiceEndpoint], usage="AZUREServiceEndpoint",
         key_vars=[UniLM.AZURE_OPENAI_API_KEY, UniLM.AZURE_OPENAI_BASE_URL, UniLM.AZURE_OPENAI_API_VERSION],
+        env_vars=[UniLM._azure_deploy_env_var("") * "<MODEL>"],     # read unless add_azure_deploy_name! registered one
         default_model=UniLM.default_model(AZUREServiceEndpoint),
         pages=["providers/azure.md"], start_id="azure_start",
         features=_features(:azure, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
             :cost, :limits, :failures, :models)),
-        tokens=["Azure OpenAI", "Azure", "AZUREServiceEndpoint", "AZURE_OPENAI_", "GPT-", _MODEL_PREFIXES.openai...]),
+        tokens=["Azure OpenAI", "Azure", "AZUREServiceEndpoint", "AZURE_OPENAI_", _OPENAI_MODELS...]),
     ProviderEntry(key=:deepseek, chapter=llm, provider=:deepseek, name="DeepSeek",
         endpoints=[DeepSeekEndpoint()], usage="DeepSeekEndpoint()", key_vars=[UniLM.DEEPSEEK_API_KEY],
-        default_model=UniLM.default_model(DeepSeekEndpoint()),
+        env_vars=String[], default_model=UniLM.default_model(DeepSeekEndpoint()),
         pages=["providers/deepseek.md"], start_id="deepseek_start",
         features=_features(:deepseek, (:setup, :first_call, :conversations, :streaming, :reasoning, :completions,
             :caching, :cost, :limits, :failures, :models)),
         tokens=["DeepSeek", "DeepSeekEndpoint", _MODEL_PREFIXES.deepseek...]),
     ProviderEntry(key=:openai_compatible, chapter=llm, provider=:mistral, name="Mistral & OpenAI-compatible services",
         endpoints=[MistralEndpoint()], usage="MistralEndpoint()", key_vars=[UniLM.MISTRAL_API_KEY],
-        default_model=nothing,
+        env_vars=String[], default_model=nothing,
         pages=["providers/openai_compatible.md"], start_id="openai_compatible_start",
         features=_features(:openai_compatible, (:setup, :first_call, :streaming, :tools, :limits, :failures)),
-        tokens=["Mistral", "MistralEndpoint", "mistral-"]),
+        tokens=["Mistral", "MistralEndpoint", "mistral-", "codestral-"]),
     ProviderEntry(key=:jev, chapter=decisions, provider=:typesafe, name="Jev (TypeSafe)",
         endpoints=[TYPESAFEServiceEndpoint], usage="TYPESAFEServiceEndpoint", key_vars=[UniLM.TYPESAFE_API_KEY],
-        default_model=UniLM.TYPESAFE_DEFAULT_MODEL,
+        env_vars=[UniLM.TYPESAFE_BASE_URL_ENV, UniLM.TYPESAFE_DEFAULT_MODEL_ENV], default_model=UniLM.TYPESAFE_DEFAULT_MODEL,
         pages=["decisions/jev/index.md", "decisions/jev/abilities.md", "decisions/jev/operations.md"],
         start_id="jev_start",
         features=_features(:jev, (:first_decision, :questions, :confidence, :testing, :throughput),
             :setup => "jev_setup", :models => "jev_models", :limits => "jev_limits", :failures => "jev_errors",
             :cost => "jev_cost", :images => "jev_images"),
-        tokens=["Jev", "TypeSafe", "TYPESAFEServiceEndpoint", _MODEL_PREFIXES.jev...]),
+        tokens=["Jev", "TypeSafe", "TYPESAFEServiceEndpoint", "TYPESAFE_", _MODEL_PREFIXES.jev...]),
     ProviderEntry(key=:openai_decisions, chapter=decisions, provider=:openai, name="OpenAI Decisions API",
         endpoints=[OPENAIServiceEndpoint], usage="OPENAIServiceEndpoint", key_vars=[UniLM.OPENAI_API_KEY],
-        default_model=UniLM._DECISIONS_MODEL,
+        env_vars=String[], default_model=UniLM._DECISIONS_MODEL,
         pages=["decisions/openai.md"], start_id="openai_decisions_start",
         features=_features(:openai_decisions, (:setup, :first_decision, :models, :questions, :limits, :confidence,
             :cost, :testing, :failures)),
         tokens=["Decisions API"]),
     ProviderEntry(key=:ollama_decisions, chapter=decisions, provider=:ollama, name="Local decision models",
-        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], default_model=nothing,
-        pages=["decisions/ollama.md"], start_id="ollama_decisions_start",
+        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], env_vars=String[],
+        default_model=nothing, pages=["decisions/ollama.md"], start_id="ollama_decisions_start",
         features=_features(:ollama_decisions, (:setup, :first_decision, :models, :questions, :limits, :confidence,
             :images, :testing, :throughput, :failures)),
         tokens=String[]),
@@ -286,10 +298,15 @@ const REGISTRY = _validated([
 """
     NEUTRAL_TOKENS
 
-Words that look like a provider's and name none: the OpenAI-compatible wire and the endpoint
-types every provider shares.
+Words that look like a provider's and name none: the endpoint types every provider shares, and
+the OpenAI-compatible wire, which many providers speak — as "compatible", "compatibility",
+"compat" or "wire", after a hyphen or a space, lower case or capitalised as in a title.
 """
-const NEUTRAL_TOKENS = ["GenericOpenAIEndpoint", "OpenAI-compatible", "OpenAIWireEndpoint", "ServiceEndpoint"]
+const NEUTRAL_TOKENS = ["GenericOpenAIEndpoint", "OpenAIWireEndpoint", "ServiceEndpoint",
+                        "OpenAI-compatible", "OpenAI compatible", "OpenAI-Compatible", "OpenAI Compatible",
+                        "OpenAI-compatibility", "OpenAI compatibility", "OpenAI-Compatibility", "OpenAI Compatibility",
+                        "OpenAI-compat", "OpenAI compat", "OpenAI-Compat", "OpenAI Compat",
+                        "OpenAI-wire", "OpenAI wire", "OpenAI-Wire", "OpenAI Wire"]
 
 """
     CONCEPT_PAGES
@@ -340,8 +357,9 @@ _endpoints(e::ProviderEntry)::Vector{Any} =
     provider_table(chapter::Chapter) -> Markdown.MD
 
 One row per entry of `chapter`, in registry order — Provider | Key or host | Default model |
-Start here: the entry's name, the environment variables it reads ("—": none), the model a call
-that names none gets ("—": a call names one), and the name again, linking the start page.
+Start here: the entry's name, the variables a reader sets to make a call (`key_vars`; "—":
+none), the model a call that names none gets ("—": a call names one), and the name again,
+linking the start page.
 """
 function provider_table(chapter::Chapter)::Markdown.MD
     rows = Vector{Any}[Any[_cell(e.name), _codes(e.key_vars), _model(e.default_model), _cell(_ref(e.name, e.start_id))]
@@ -354,7 +372,7 @@ end
 
 The entry's facts in one row — Endpoint | Key variables | Default model | Supports, and for a
 language-model entry Not available: how code names each endpoint (primary first), the
-environment variables the entry reads, its default model ("—": a call names one), the
+variables a reader sets to make a call (`key_vars`), its default model ("—": a call names one), the
 capabilities some endpoint of it has (for a decision entry, those of `DECISION_CAPABILITIES`),
 and the capabilities other registry endpoints declare that none of its endpoints has.
 """
@@ -608,10 +626,11 @@ _region_names()::String = join(sort!(collect(keys(_REGIONS))), ", ")
 const _SITE = "https://algunion.github.io/UniLM.jl/dev"
 
 # An entry's line: its name linking its start page, the `service` that selects it, the
-# environment variables it reads and its default model.
+# environment variables it reads — `key_vars` and `env_vars` — and its default model.
 function _contract(e::ProviderEntry, refs::Bool)::String
     link = refs ? "@ref " * e.start_id : _SITE * route(first(e.pages))
-    vars = isempty(e.key_vars) ? "no environment variable" : join(("`$v`" for v in e.key_vars), ", ")
+    read = [e.key_vars; e.env_vars]
+    vars = isempty(read) ? "no environment variable" : join(("`$v`" for v in read), ", ")
     model = isnothing(e.default_model) ? "no default model (a call names one)" : "default model `$(e.default_model)`"
     "- [$(e.name)]($link): `service = $(e.usage)`; reads $vars; $model"
 end

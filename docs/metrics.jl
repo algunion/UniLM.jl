@@ -6,33 +6,60 @@ The acceptance numbers of the manual's provider entries, measured on the pages u
 
 - Other-provider share (`share`): of an entry's pages, of a reader's path (`reader_path`: the
   entry's pages and the concept pages they link to) and of each concept page, the fraction of
-  prose lines (`prose_lines`) that hold a token of another provider (`provider_tokens`). The body
-  of an Evidence box — a `!!! details` admonition whose title starts with "Evidence", read where
-  and as Julia's Markdown reads it — is no prose: it names the model and version a claim was
-  measured on, provenance rather than guidance. Every other admonition is prose.
+  prose lines (`prose_lines`) that hold a token of another provider (`provider_tokens`). A page is
+  read as Julia's Markdown reads it — the stdlib parser Documenter runs on every page —: its
+  fenced blocks (`fenced_blocks`) and its table rows are no prose, and a page the parser reads
+  otherwise is refused with a `PageError`. The body of an Evidence box — a `!!! details`
+  admonition whose title starts with "Evidence" — is no prose either: it names the model and
+  version a claim was measured on, provenance rather than guidance; the report counts, per page,
+  the lines it leaves out. Every other admonition is prose.
 - Concept-page code (`concept_code_violations`): the endpoints and model ids named in code outside
   the binding lines of the page's binding block, and that block's breaches of its bounds.
 - Placement ledgers (`check_ledger`): every passage of an audit placed exactly once, from its
   source — in a section whose body holds its witness, or deleted with a reason.
 
+What the numbers cannot see:
+
+- Tables: a table row names no provider in prose, whatever it holds (a line starting with `|`
+  must be a row of a table Julia's Markdown reads; a row it reads without a leading `|` counts as
+  prose).
+- Generated text: an `@eval` block is code, and the table it returns is not in the page.
+- Evidence boxes: what one holds is not measured (the factual reviews check that it holds
+  measurements only). A box in a list item or an admonition, or indented below a block quote, is
+  prose.
+- Words that are no token: a model id without a registry prefix (`qwen3:4b`,
+  `embeddinggemma-2:740m-q8_0`), a provider's API names ("Interactions API", "generateContent",
+  "Responses API", "Messages API"), Claude's model families without "Claude" ("Opus", "Sonnet",
+  "Haiku"), a name inside an identifier or after `_` (`_Claude_`), and a name in lower case
+  ("openai").
+- Indented code: four spaces of indentation outside a list item or an admonition make code to
+  Julia and prose here.
+- Placement: a witness proves that its text is in the section, not that it is the atom's passage.
+
+The rules are fixed before the pages they measure are written: a page changes to meet them, never
+the rules to meet a page.
+
 From the repository root:
 
-    julia --startup-file=no --project=docs docs/metrics.jl [--baseline] [--ledgers DIR --atoms DIR]
+    julia --startup-file=no --project=docs docs/metrics.jl [--baseline] [--entry KEY] [--ledgers DIR --atoms DIR [--unit NAME]]
 
 exits 1 when a threshold is not met (`--baseline` prints the same numbers and exits 0) and 2 on
-a usage error. `--atoms DIR` holds an audit's `<unit>.json` files; `--ledgers DIR` holds a
-`<unit>.tsv` ledger for each of them with an `atoms` array. Without the two, the ledgers are not
-checked.
+a usage error. `--entry KEY` measures the entry `KEY` alone: its row and its reader's path. `--atoms
+DIR` holds an audit's `<unit>.json` files; `--ledgers DIR` holds a `<unit>.tsv` ledger for each of
+them with an `atoms` array, and `--unit NAME` checks the ledger of the unit `NAME` alone. Without
+the two, the ledgers are not checked.
 """
 module DocMetrics
 
 import JSON, UniLM
+using Markdown
 using Printf: @sprintf
 
 isdefined(Main, :ProviderFacts) || Base.include(Main, joinpath(@__DIR__, "ProviderFacts.jl"))
 using Main.ProviderFacts
 
-export PageError, prose_lines, provider_tokens, share, reader_path, concept_code_violations, check_ledger, report
+export PageError, fenced_blocks, outside_fences, prose_lines, provider_tokens, share, reader_path,
+       concept_code_violations, check_ledger, report
 
 # The pages the command line measures.
 const DOCSRC = joinpath(@__DIR__, "src")
@@ -40,8 +67,9 @@ const DOCSRC = joinpath(@__DIR__, "src")
 """
     PageError(file, line, message)
 
-Thrown when a page cannot be measured as written — a fence never closed, an `@ref` that resolves
-to nothing, an `@id` defined twice; `line` is the line at fault.
+Thrown when a page cannot be measured as written — a fence never closed, a fenced block or a
+table row Julia's Markdown reads otherwise, an `@ref` that resolves to nothing, an `@id` defined
+twice; `line` is the line at fault.
 """
 struct PageError <: Exception
     file::String
@@ -50,82 +78,255 @@ struct PageError <: Exception
 end
 Base.showerror(io::IO, e::PageError) = print(io, "PageError: ", e.file, ":", e.line, ": ", e.message)
 
-# ── Prose ────────────────────────────────────────────────────────────────────
+# ── Fenced blocks ────────────────────────────────────────────────────────────
 
-const _FENCE = r"^\s*(`{3,}|~{3,})"
+# Spaces, tabs and carriage returns: what pads an opening fence (`startswith(stream, "```"; padding
+# = true)`) and all a blank line holds (`blankline`), in Julia 1.13's stdlib Markdown/src/parse/
+# util.jl:11-21, :59-63 and :70-80.
+const _WHITESPACE = " \t\r"
 
-# The fenced blocks of `lines`, each the range from its opening to its closing fence line. A
-# block opens on a run of three or more backticks or tildes at any indentation — so a fence in an
-# admonition opens one too — and closes on a line that is that run and whitespace, as Julia's
-# Markdown parser reads it; a block never closed is a `PageError`.
-function _blocks(lines::AbstractVector{<:AbstractString}, file::String)::Vector{UnitRange{Int}}
-    blocks = UnitRange{Int}[]
-    open::Union{Tuple{String,Int},Nothing} = nothing        # the opening run and its line
+# An opening fence: what pads it, its fence character, the length of its run and its info string.
+const _Opener = @NamedTuple{padding::String, char::Char, run::Int, info::String}
+
+# The opening fence `line` is, or `nothing`, as the julia flavor's `fencedcode` reads one (stdlib
+# Markdown/src/GitHub/GitHub.jl:5-16): after padding, three backticks or three tildes; the run is
+# those three and each fence character that starts the rest of the line once stripped, and the
+# info string is that stripped rest without them. An info string that holds the fence character
+# opens no block (`ch in flavor && return false`: inline code, to Julia).
+function _opener(line::AbstractString)::Union{_Opener,Nothing}
+    i = something(findfirst(!in(_WHITESPACE), line), ncodeunits(line) + 1)
+    rest = SubString(line, i)
+    startswith(rest, "```") || startswith(rest, "~~~") || return nothing
+    char, trailing = first(rest), strip(SubString(rest, 4))
+    info = lstrip(trailing, char)
+    char in info && return nothing
+    (padding=String(SubString(line, 1, prevind(line, i))), char=char, run=3 + length(trailing) - length(info),
+     info=String(info))
+end
+
+# How many code units of `line` the closing fence of the block `o` opens takes, or `nothing` when
+# `line` does not close it: the opening fence's padding, then exactly its run, no fence character
+# after it (GitHub.jl:19-22). Julia closes on a run at the start of a line of the block's context —
+# an admonition's body or a list item's, read without its indentation —, which the opening fence's
+# padding stands for here. Text may follow the run: Julia reads it as the start of the next block.
+function _closer(o::_Opener, line::AbstractString)::Union{Int,Nothing}
+    fence = o.padding * string(o.char)^o.run
+    startswith(line, fence) || return nothing
+    n = ncodeunits(fence)
+    n < ncodeunits(line) && codeunit(line, n + 1) == UInt8(o.char) ? nothing : n
+end
+
+"A fenced block: its lines, from the opening fence to the closing one; the code units of the last line the closing fence takes; its info string."
+struct _Fenced
+    lines::UnitRange{Int}
+    closing::Int
+    info::String
+end
+
+# The fenced blocks of `lines` by the rules of `_opener` and `_closer`; a fence never closed is a
+# `PageError` (to Julia it opens no block, GitHub.jl:35, and the lines below it are text).
+function _scan(lines::AbstractVector{<:AbstractString}, file::String)::Vector{_Fenced}
+    blocks = _Fenced[]
+    open::Union{Tuple{_Opener,Int},Nothing} = nothing        # the opening fence and its line
     for (n, line) in pairs(lines)
         if isnothing(open)
-            m = match(_FENCE, line)
-            isnothing(m) || (open = (String(m[1]), n))
-        elseif strip(line) == first(open)
-            push!(blocks, last(open):n)
-            open = nothing
+            o = _opener(line)
+            isnothing(o) || (open = (o, n))
+        else
+            c = _closer(first(open), line)
+            isnothing(c) || (push!(blocks, _Fenced(last(open):n, c, first(open).info)); open = nothing)
         end
     end
     isnothing(open) || throw(PageError(file, last(open), "the fence opened here is never closed"))
     blocks
 end
 
-# `lines` with those of fenced blocks emptied, so every line keeps its number.
-function _outside_code(lines::Vector{SubString{String}}, file::String)::Vector{SubString{String}}
-    outside = copy(lines)
-    foreach(block -> outside[block] .= SubString(""), _blocks(lines, file))
-    outside
-end
-_outside_code(text::String, file::String)::Vector{SubString{String}} = _outside_code(split(text, '\n'), file)
+const _PARSING = ReentrantLock()
 
-# The opening line of an Evidence box, as Julia's Markdown reads an admonition (Julia 1.13,
-# stdlib Markdown/src/Common/block.jl:207-225): `!!! ` where the line starts (no indentation: the
-# block parser tries it at the line's start, parse/parse.jl:86-93), then, stripped, the category,
-# one space and the title in double quotes, nothing after them. Any other line — indented, spaced
-# otherwise, with more text after the title — is no admonition to Julia, so what follows is prose.
-const _EVIDENCE = r"^!!! \s*details \"Evidence.*\"\s*$"
+# What Julia's Markdown reads in `text` — `Markdown.parse`, as Documenter reads a page
+# (Documenter/src/documents.jl:54) —, in document order: the info string and code of each fenced
+# block (a `math` block's formula), and the text of each table. The parser reports them itself:
+# for the parse, the julia flavor's `fencedcode` and `github_table` (stdlib Markdown/src/Julia/
+# Julia.jl:10-11) are wrapped to keep what they read, and every nested parse — an admonition's, a
+# list item's, a block quote's, a footnote's — reads with that flavor.
+function _julia_reads(text::String)::@NamedTuple{fences::Vector{Tuple{String,String}}, tables::Vector{String}}
+    fences, tables = Tuple{String,String}[], String[]
+    function fenced(stream::IO, md::Markdown.MD)::Bool
+        Markdown.fencedcode(stream, md) || return false
+        x = last(md.content)
+        push!(fences, x isa Markdown.LaTeX ? ("math", x.formula) : (x.language, x.code))
+        true
+    end
+    function table(stream::IO, md::Markdown.MD)::Bool
+        start = position(stream)
+        Markdown.github_table(stream, md) || return false
+        stop = position(stream)
+        push!(tables, String(read(seek(stream, start), stop - start)))     # which leaves it at `stop`
+        true
+    end
+    flavor = Markdown.julia
+    f = only(findall(==(Markdown.fencedcode), flavor.breaking))
+    t = only(findall(==(Markdown.github_table), flavor.regular))
+    @lock _PARSING try
+        flavor.breaking[f], flavor.regular[t] = fenced, table
+        Markdown.parse(text)
+    finally
+        flavor.breaking[f], flavor.regular[t] = Markdown.fencedcode, Markdown.github_table
+    end
+    (fences=fences, tables=tables)
+end
+
+_stripped(lines)::String = join(strip.(lines), '\n')
+
+# How a fenced block of Julia's reads in a message: its info string and first line.
+_described(block::Union{Tuple{String,String},Nothing})::String =
+    isnothing(block) ? "none" : "```$(first(block)) beginning $(repr(first(split(last(block), '\n'))))"
+
+# `blocks`, the fenced blocks of the page `text` (its `lines`; `outside`, the lines outside them),
+# once Julia's Markdown reads the page alike: the same fenced blocks in order — info string and
+# code, each line without its indentation —, and every line outside them that starts with `|` a row
+# of a table it reads, in order. Else a `PageError` at the first line read otherwise.
+function _checked(blocks::Vector{_Fenced}, lines::AbstractVector{<:AbstractString},
+                  outside::AbstractVector{<:AbstractString}, text::String, file::String)::Vector{_Fenced}
+    julia = _julia_reads(text)
+    ours = [(b.info, _stripped(view(lines, (first(b.lines) + 1):(last(b.lines) - 1)))) for b in blocks]
+    theirs = [(info, _stripped(split(code, '\n'))) for (info, code) in julia.fences]
+    k = findfirst(i -> get(ours, i, nothing) != get(theirs, i, nothing), 1:max(length(ours), length(theirs)))
+    if !isnothing(k)
+        next = _described(get(theirs, k, nothing))
+        k <= length(blocks) && throw(PageError(file, first(blocks[k].lines),
+            "Julia's Markdown does not read the fenced block that opens here (its next fenced block: $next): " *
+            "close a fence at its opening fence's indentation, outside a paragraph's hard line break"))
+        from = k == 1 ? 1 : last(blocks[k - 1].lines) + 1
+        throw(PageError(file, something(findnext(l -> occursin(r"```|~~~", l), lines, from), from),
+            "Julia's Markdown reads a fenced block here that the metric does not ($next): in a block quote, " *
+            "or closed at another indentation"))
+    end
+    rows = [strip(l) for t in julia.tables for l in split(t, '\n') if !isempty(strip(l))]
+    i = 1
+    for (n, l) in pairs(outside)
+        startswith(lstrip(l), '|') || continue
+        k = findnext(==(strip(l)), rows, i)
+        isnothing(k) && throw(PageError(file, n, "a line starting with | that Julia's Markdown reads as no " *
+            "table row: a table starts a block and holds a header, an alignment row and a body row"))
+        i = k + 1
+    end
+    blocks
+end
+
+# A page's fenced blocks, checked against Julia's Markdown, and its lines outside them: those of
+# each block emptied, but for the text after a closing fence, so every line keeps its number.
+function _read(lines::AbstractVector{<:AbstractString}, file::String)::@NamedTuple{blocks::Vector{_Fenced},
+                                                                                     outside::Vector{SubString{String}}}
+    blocks = _scan(lines, file)
+    outside = SubString{String}[SubString(String(l)) for l in lines]
+    for b in blocks
+        outside[b.lines] .= SubString("")
+        outside[last(b.lines)] = SubString(String(lines[last(b.lines)]), b.closing + 1)
+    end
+    (blocks=_checked(blocks, lines, outside, join(lines, '\n'), file), outside=outside)
+end
+
+"""
+    fenced_blocks(lines; file::String = "string") -> Vector{UnitRange{Int}}
+
+The fenced code blocks of the Markdown page whose lines are `lines`, each the range from its
+opening to its closing fence, as Julia's Markdown reads them — the stdlib parser Documenter runs
+on every page (Julia 1.13, stdlib Markdown/src/GitHub/GitHub.jl:5-37):
+
+- an opening fence is three or more backticks or tildes after padding of spaces, tabs and
+  carriage returns; its run is its fence characters, and its info string, the rest of the line,
+  holds no fence character;
+- the block closes at the first later line that starts with the opening fence's padding and then
+  exactly its run, no fence character after it; text may follow, and starts the next block.
+
+The page is read by the stdlib parser too: a fenced block it reads otherwise — a closing fence at
+another indentation, a fence in a block quote or in a paragraph's hard line break —, a fence
+never closed, or a line starting with `|` that it reads as no table row, is a `PageError` naming
+`file` and the line.
+"""
+fenced_blocks(lines::AbstractVector{<:AbstractString}; file::String="string")::Vector{UnitRange{Int}} =
+    [b.lines for b in _read(lines, file).blocks]
+
+"""
+    outside_fences(lines; file::String = "string") -> Vector{SubString{String}}
+
+`lines` with those of the page's fenced blocks (`fenced_blocks`) emptied, but for the text after
+a closing fence, so every line keeps its number; the refusals are `fenced_blocks`'s.
+"""
+outside_fences(lines::AbstractVector{<:AbstractString}; file::String="string")::Vector{SubString{String}} =
+    _read(lines, file).outside
+
+_outside_code(text::String, file::String)::Vector{SubString{String}} = outside_fences(split(text, '\n'); file)
+
+# ── Prose ────────────────────────────────────────────────────────────────────
+
+# The title of an admonition (stdlib Markdown/src/Common/block.jl:211).
+const _TITLED = r"^([a-z]+) \"(.*)\"$"
+
+# Whether `line` opens an Evidence box: an admonition as Julia's Markdown reads one (Markdown/src/
+# Common/block.jl:207-225) — `!!! ` where the line starts, then the rest, stripped, a category, one
+# space and the title in double quotes —, of the category `details`, its title starting "Evidence".
+# Indented, it opens none here: the block parser tries one where the line starts (parse/
+# parse.jl:86-93; `skipblank` keeps a line's indentation, util.jl:26-36), except right after a block
+# quote, whose parser takes up to three spaces of the next line (Common/block.jl:174): read as prose.
+function _evidence_opener(line::AbstractString)::Bool
+    startswith(line, "!!! ") || return false
+    m = match(_TITLED, strip(SubString(line, 5)))
+    !isnothing(m) && m[1] == "details" && startswith(m[2], "Evidence")
+end
+
+# Whether line `n` of `outside` follows a line ending in a backslash. After a paragraph's, a hard
+# line break, Julia's paragraph takes line `n` without trying a block parser on it (Markdown/src/
+# Common/block.jl:19-27), so no admonition opens there; after any other line too, here: its box is
+# read as prose, never left out.
+_after_break(outside::AbstractVector{<:AbstractString}, n::Int)::Bool =
+    n > 1 && endswith(chopsuffix(outside[n - 1], "\r"), '\\')
 
 # Whether each of `lines` is in the body of an Evidence box (its opening line found in `outside`,
-# the lines with code emptied): the lines after it that start with four spaces or a tab, or are
-# blank — only " \t\r" in them —, up to the first other line, as Julia's admonition parser takes
-# its body (Markdown/src/Common/block.jl:229-236; blank lines per Markdown/src/parse/util.jl:11
-# and :59-63).
+# the lines outside fenced blocks): the lines after it that start with four spaces or a tab, or
+# are blank — only spaces, tabs and carriage returns in them —, up to the first other line, as
+# Julia's admonition parser takes its body (Markdown/src/Common/block.jl:227-237).
 function _in_evidence(lines::AbstractVector{<:AbstractString}, outside::AbstractVector{<:AbstractString})::BitVector
     body = falses(length(lines))
     open = false
     for (n, line) in pairs(lines)
-        if open && (startswith(line, "    ") || startswith(line, '\t') || all(in(" \t\r"), line))
+        if open && (startswith(line, "    ") || startswith(line, '\t') || all(in(_WHITESPACE), line))
             body[n] = true
         else
-            open = occursin(_EVIDENCE, outside[n])
+            open = _evidence_opener(outside[n]) && !_after_break(outside, n)
         end
     end
     body
 end
 
+# The prose lines of a page, each with its number, and how many lines the bodies of its Evidence
+# boxes hold that would be prose lines otherwise.
+function _prose(text::String, file::String)::Tuple{Vector{Tuple{Int,String}},Int}
+    lines = split(text, '\n')
+    outside = outside_fences(lines; file)
+    evidence = _in_evidence(lines, outside)
+    candidates = [(n, String(l)) for (n, l) in pairs(outside) if !isempty(strip(l)) && !startswith(lstrip(l), '|')]
+    [(n, l) for (n, l) in candidates if !evidence[n]], count(((n, _),) -> evidence[n], candidates)
+end
+
 """
     prose_lines(text::String; file::String = "string") -> Vector{Tuple{Int,String}}
 
-The prose of a page, each line with its number: the non-blank lines outside fenced blocks, table
-rows (lines starting with `|`) and the bodies of Evidence boxes — provenance, not guidance. An
-Evidence box is the admonition Julia's Markdown reads from a line `!!! details "Evidence…"` that
-starts the line, with nothing after the title; its body is the lines after it indented four
-spaces or a tab, and blank lines. A box nested in a list or another admonition is not recognised:
-its body counts as prose. Headings and every other admonition's body are prose. A fence opens on
-a run of three or more backticks or tildes at any indentation, so a fence inside an admonition
-is code, and closes on the same run; one never closed is a `PageError` naming `file` and the
-line.
+The prose of a page, each line with its number: the non-blank lines outside fenced blocks
+(`fenced_blocks`; the text after a closing fence is prose), outside table rows (lines starting
+with `|`) and outside the bodies of Evidence boxes — provenance, not guidance. An Evidence box is
+the admonition Julia's Markdown reads from a line `!!! details "Evidence…"`: it starts the line,
+the title's quotes end it once the line is stripped, and the line above does not end in a
+backslash; its body is the lines after it indented four spaces or a tab, and blank lines (only
+spaces, tabs and carriage returns). A box nested in a list or another admonition is not
+recognised: its body counts as prose. Headings and every other admonition's body are prose. The
+refusals are `fenced_blocks`'s, naming `file` and the line.
 """
-function prose_lines(text::String; file::String="string")::Vector{Tuple{Int,String}}
-    lines = split(text, '\n')
-    outside = _outside_code(lines, file)
-    evidence = _in_evidence(lines, outside)
-    [(n, String(l)) for (n, l) in pairs(outside) if !evidence[n] && !isempty(strip(l)) && !startswith(lstrip(l), '|')]
-end
+prose_lines(text::String; file::String="string")::Vector{Tuple{Int,String}} = first(_prose(text, file))
+
+# How many lines the Evidence boxes of the page at the path `file` leave out of its prose.
+_evidence_lines(file::String)::Int = last(_prose(read(file, String), file))
 
 # ── Provider tokens ──────────────────────────────────────────────────────────
 
@@ -149,43 +350,56 @@ function _alternation(tokens::Vector{String})::Tuple{Vector{String},String}
     sorted, "(?:" * join(_alternative.(sorted), '|') * ")"
 end
 
-# A registry's tokens — each entry's `tokens` and `key_vars` — and the pattern finding them,
-# built once per registry.
+# The words that name an entry's provider: its `tokens`, its `key_vars` and its `env_vars` — of a
+# variable written with `<…>` in it (`AZURE_OPENAI_DEPLOY_NAME_<MODEL>`), the prefix before.
+_words(e::ProviderEntry)::Vector{String} = [e.tokens; e.key_vars; [String(first(split(v, '<'))) for v in e.env_vars]]
+
+# A registry's words and the pattern finding them, built once per registry.
 struct _Matcher
     tokens::Vector{String}               # longest first
     pattern::Regex                       # group k matches tokens[k]
     providers::Vector{Set{Symbol}}       # the providers of the entries listing tokens[k]
 end
 function _Matcher(registry::Vector{ProviderEntry})
-    words(e::ProviderEntry) = [e.tokens; e.key_vars]
-    tokens, alternation = _alternation([t for e in registry for t in words(e)])
-    _Matcher(tokens, Regex(_BEFORE * alternation), [Set{Symbol}(e.provider for e in registry if t in words(e)) for t in tokens])
+    tokens, alternation = _alternation([t for e in registry for t in _words(e)])
+    _Matcher(tokens, Regex(_BEFORE * alternation), [Set{Symbol}(e.provider for e in registry if t in _words(e)) for t in tokens])
 end
 
 const _REGISTRY = _Matcher(REGISTRY)
 const _NEUTRAL = Regex(_BEFORE * last(_alternation(NEUTRAL_TOKENS)))
 const _DESTINATION = r"\]\([^)]*\)"
 
+# What follows a model id that carries an Ollama tag: the rest of the id, `:` and the tag. Ollama
+# names a model it serves `model:tag` (https://github.com/ollama/ollama/blob/main/docs/api.md#model-names).
+const _OLLAMA_TAG = r"^[A-Za-z0-9._-]*:[A-Za-z0-9]"
+
 """
     provider_tokens(line::String; registry = REGISTRY) -> Vector{Tuple{Set{Symbol},String}}
 
-The provider tokens of `line` — the `tokens` and `key_vars` of the `registry` entries —, in order,
-each with the providers of the entries that list it (more than one where entries of several
-providers list it: `gpt-` is OpenAI's and Azure's). Link destinations — `](…)` — are dropped
-first, then the `NEUTRAL_TOKENS`, matched like any token. A token matches case-sensitively where
-no letter, digit or `_` precedes it (so `AZURE_OPENAI_API_KEY` holds no `OPENAI_API_KEY`). A token
-ending in `-` or `_` is a prefix and takes in the rest of the identifier it starts (`gpt-` in
-`gpt-5.4-mini`, `GPT-` in `GPT-6`); one ending in a letter takes in a CamelCase identifier it
-starts (`Ollama` in `OllamaOptions`, `TypeSafe` in `TypeSafeProtocol`) and matches nowhere a
-lowercase letter, digit or `_` follows it (`Jevons`); any other token matches only where none of
-those follows it. Where several tokens start, the longest wins, and no span of the line is
-counted twice: `Azure OpenAI` is one Azure token, and `OPENAIServiceEndpoint` keeps its
-`ServiceEndpoint`.
+The provider tokens of `line` — the `tokens`, `key_vars` and `env_vars` of the `registry` entries
+(of a variable written with `<MODEL>`, the prefix before it) —, in order, each with the providers
+of the entries that list it (more than one where entries of several providers list it: `gpt-` is
+OpenAI's and Azure's). Link destinations — `](…)` — are dropped first, then the `NEUTRAL_TOKENS`,
+matched like any token. A token matches case-sensitively where no letter, digit or `_` precedes it
+(so `AZURE_OPENAI_API_KEY` holds no `OPENAI_API_KEY`). A token ending in `-` or `_` is a prefix and
+takes in the rest of the identifier it starts (`gpt-` in `gpt-5.4-mini`, `GPT-` in `GPT-6`); one
+ending in a letter takes in a CamelCase identifier it starts (`Ollama` in `OllamaOptions`,
+`TypeSafe` in `TypeSafeProtocol`) and matches nowhere a lowercase letter, digit or `_` follows it
+(`Jevons`); any other token matches only where none of those follows it. Where several tokens
+start, the longest wins, and no span of the line is counted twice: `Azure OpenAI` is one Azure
+token, and `OPENAIServiceEndpoint` keeps its `ServiceEndpoint`. A model id with an Ollama tag
+(`gpt-oss:120b-cloud`, `deepseek-r1:8b`) names a model Ollama serves: its prefix is Ollama's.
 """
 function provider_tokens(line::String; registry::Vector{ProviderEntry}=REGISTRY)::Vector{Tuple{Set{Symbol},String}}
     m = registry === REGISTRY ? _REGISTRY : _Matcher(registry)
     text = replace(replace(line, _DESTINATION => "]"), _NEUTRAL => " ")
-    [(copy(m.providers[k]), m.tokens[k]) for k in (findfirst(!isnothing, x.captures)::Int for x in eachmatch(m.pattern, text))]
+    found = Tuple{Set{Symbol},String}[]
+    for x in eachmatch(m.pattern, text)
+        k = findfirst(!isnothing, x.captures)::Int
+        tagged = endswith(m.tokens[k], '-') && occursin(_OLLAMA_TAG, SubString(text, x.offset + ncodeunits(x.match)))
+        push!(found, (tagged ? Set([:ollama]) : copy(m.providers[k]), m.tokens[k]))
+    end
+    found
 end
 
 # ── Shares ───────────────────────────────────────────────────────────────────
@@ -306,8 +520,9 @@ const _MODEL_PREFIXES = [t for e in REGISTRY for t in e.tokens if endswith(t, '-
 const _MODEL_ID = Regex("\"" * last(_alternation(_MODEL_PREFIXES)) * "[^\"\\s]*\"")
 const _PROVIDER_CODE = Regex(_ENDPOINT.pattern * "|" * _MODEL_ID.pattern)
 const _BINDING = r"^\s*service, model ="
-# A binding line: names assigned endpoints — called or not — and quoted ids, and nothing else.
-const _VALUE = "(?:(?:" * _ENDPOINT.pattern * ")(?:\\((?:[^()\"]|\"[^\"]*\")*\\))?|\"[^\"\\s]+\")"
+# A binding line: names assigned endpoints — called or not — and quoted ids, and nothing else. A
+# quoted string interpolates nothing (no `$`), so no call can hide in one.
+const _VALUE = "(?:(?:" * _ENDPOINT.pattern * ")(?:\\((?:[^()\"]|\"[^\"\$]*\")*\\))?|\"[^\"\\s\$]+\")"
 const _BINDING_LINE = Regex("^\\s*(?:const\\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*\\s*=\\s*" *
                             _VALUE * "(?:\\s*,\\s*" * _VALUE * ")*\\s*;?\\s*(?:#.*)?\$")
 
@@ -343,8 +558,9 @@ end
     concept_code_violations(page::String) -> Vector{String}
 
 The provider code of the concept page at the path `page`, as `page:line: match` in line order.
-The page's binding block is the first fenced block with a line starting `service, model =`; its
-binding lines — assignments of endpoints, called or not, and quoted ids, such as
+The page's binding block is the first fenced block (`fenced_blocks`) with a line starting
+`service, model =`; its binding lines — assignments of endpoints, called or not, and quoted ids,
+with nothing after them but a comment and no `\$` in a string, such as
 `llm, llm_model = OPENAIServiceEndpoint, "gpt-5.4-mini"` or `pinned = "jev-1.13.0"` — are exempt.
 Every other line of code, before the binding block or after it or in it, `@setup` blocks
 included, is checked for each endpoint it names (`OPENAIServiceEndpoint`, `MistralEndpoint`, …,
@@ -357,7 +573,7 @@ its provider tokens count in the page's share.
 """
 function concept_code_violations(page::String)::Vector{String}
     lines = split(read(page, String), '\n')
-    blocks = _blocks(lines, page)
+    blocks = fenced_blocks(lines; file=page)
     binding = findfirst(b -> any(n -> occursin(_BINDING, lines[n]), b), blocks)
     bound = isnothing(binding) ? Int[] : filter(n -> occursin(_BINDING_LINE, lines[n]), collect(blocks[binding]))
     found = Tuple{Int,String}[(n, "$page:$n: $(x.match)") for b in blocks for n in b if n ∉ bound
@@ -452,11 +668,16 @@ function _location(atom, file::String, i::Int)::String
     location
 end
 
-# The problems of the ledgers in the directory `ledgers` against the audit units in `atoms`: each
-# `<unit>.json` with an `atoms` array expects `<unit>.tsv` to place `<unit>:1` … `<unit>:<n>`,
-# each from its atom's `location`.
-function _ledger_problems(ledgers::String, atoms::String, docsrc::String)::Vector{String}
-    units = [(chopsuffix(f, ".json"), JSON.parsefile(joinpath(atoms, f))) for f in readdir(atoms) if endswith(f, ".json")]
+# The problems of the ledgers in the directory `ledgers` against the audit units in `atoms` — all
+# of them, or the unit `unit` alone: each `<unit>.json` with an `atoms` array expects `<unit>.tsv`
+# to place `<unit>:1` … `<unit>:<n>`, each from its atom's `location`. An `ArgumentError` when
+# `atoms` holds no `<unit>.json` for the unit `unit`.
+function _ledger_problems(ledgers::String, atoms::String, docsrc::String,
+                          unit::Union{String,Nothing}=nothing)::Vector{String}
+    isnothing(unit) || isfile(joinpath(atoms, unit * ".json")) ||
+        throw(ArgumentError("$atoms holds no $unit.json: no audit unit $(repr(unit))"))
+    files = isnothing(unit) ? filter(f -> endswith(f, ".json"), readdir(atoms)) : [unit * ".json"]
+    units = [(chopsuffix(f, ".json"), JSON.parsefile(joinpath(atoms, f))) for f in files]
     lists = [(unit, json["atoms"]::AbstractVector) for (unit, json) in units if haskey(json, "atoms")]
     isempty(lists) && return ["$atoms: no <unit>.json holds an atoms array"]
     problems = String[]
@@ -523,31 +744,45 @@ function _row(m::Measurement)::String
 end
 
 """
-    report(io::IO; docsrc::String, ledgers = nothing, atoms = nothing, baseline::Bool = false) -> Bool
+    report(io::IO; docsrc::String, ledgers = nothing, atoms = nothing, baseline::Bool = false,
+           entry_key::Union{Symbol,Nothing} = nothing, unit::Union{String,Nothing} = nothing) -> Bool
 
 Prints to `io` the acceptance numbers of the pages under `docsrc`: a line per entry (`ENTRY`: at
 most 1% of its prose lines name another provider), per reader's path (`PATH`: 5%) and per concept
 page (`CONCEPT`: 2%, every provider counting), each with its share and threshold — an entry or a
-page that does not exist yet shows "no pages" and fails —; then each endpoint and model id a
-concept page names in code outside the binding lines of its binding block, and each breach of
+page that does not exist yet shows "no pages" and fails —; then, for each page measured whose
+Evidence boxes hold lines, how many of them the shares leave out; then each endpoint and model id
+a concept page names in code outside the binding lines of its binding block, and each breach of
 that block's bounds (`concept_code_violations`); then the problems of the ledgers in the
 directory `ledgers` against the audit units in the directory `atoms` (both or neither; without
-them, "ledgers: not checked"). Returns whether every share holds, no concept page names provider
-code and no ledger has a problem; with `baseline = true` it prints the same and returns `true`.
+them, "ledgers: not checked"). With `entry_key`, only that entry's line and its reader's path are
+measured, and no concept page; with `unit`, only that audit unit's ledger is checked (an
+`ArgumentError` when `atoms` holds no `<unit>.json`, or for an entry that does not exist).
+Returns whether every share holds, no concept page names provider code and no ledger has a
+problem; with `baseline = true` it prints the same and returns `true`.
 """
 function report(io::IO; docsrc::String, ledgers::Union{String,Nothing}=nothing, atoms::Union{String,Nothing}=nothing,
-                baseline::Bool=false)::Bool
+                baseline::Bool=false, entry_key::Union{Symbol,Nothing}=nothing,
+                unit::Union{String,Nothing}=nothing)::Bool
     isnothing(ledgers) == isnothing(atoms) ||
         throw(ArgumentError("the ledgers are checked against the atoms: pass both directories or neither"))
+    isnothing(unit) || !isnothing(atoms) ||
+        throw(ArgumentError("the unit $(repr(unit)) is one of the atoms: pass the ledgers and the atoms with it"))
+    entries = isnothing(entry_key) ? REGISTRY : [entry(entry_key)]
     anchors = _anchors(docsrc)
-    concepts = [p for c in instances(Chapter) for p in CONCEPT_PAGES[c]]
-    measurements = [[_measure(ENTRY, string(e.key), e.pages, e.key, docsrc) for e in REGISTRY];
-                    [_measure(PATH, string(e.key), _reader_path(e, docsrc, anchors), e.key, docsrc) for e in REGISTRY];
+    concepts = isnothing(entry_key) ? [p for c in instances(Chapter) for p in CONCEPT_PAGES[c]] : String[]
+    measurements = [[_measure(ENTRY, string(e.key), e.pages, e.key, docsrc) for e in entries];
+                    [_measure(PATH, string(e.key), _reader_path(e, docsrc, anchors), e.key, docsrc) for e in entries];
                     [_measure(CONCEPT, p, [p], nothing, docsrc) for p in concepts]]
+    measured = unique!([p for m in measurements for p in m.pages if p ∉ m.absent])
+    evidence = filter(((_, n),) -> n > 0, [p => _evidence_lines(joinpath(docsrc, p)) for p in measured])
     code = [v for p in concepts if isfile(joinpath(docsrc, p)) for v in concept_code_violations(joinpath(docsrc, p))]
-    problems = isnothing(ledgers) ? nothing : _ledger_problems(ledgers, atoms, docsrc)
-    println(io, "Other-provider share of prose lines (non-blank lines outside fenced blocks and table rows)")
+    problems = isnothing(ledgers) ? nothing : _ledger_problems(ledgers, atoms, docsrc, unit)
+    println(io, "Other-provider share of prose lines (non-blank lines outside fenced blocks, table rows and ",
+            "Evidence-box bodies)")
     foreach(m -> println(io, _row(m)), measurements)
+    println(io, "Evidence-box lines left out of the shares, per page: ", sum(last, evidence; init=0))
+    foreach(((p, n),) -> println(io, "  ", p, ": ", n), evidence)
     println(io, "Concept-page code outside the binding lines, and binding-block breaches: ", length(code))
     foreach(v -> println(io, "  ", v), code)
     println(io, "ledgers: ", isnothing(problems) ? "not checked" : "$(length(problems)) problems")
@@ -559,18 +794,37 @@ end
 
 # ── Command line ─────────────────────────────────────────────────────────────
 
-const USAGE = "usage: julia --startup-file=no --project=docs docs/metrics.jl [--baseline] [--ledgers DIR --atoms DIR]"
+const USAGE = "usage: julia --startup-file=no --project=docs docs/metrics.jl [--baseline] [--entry KEY] " *
+              "[--ledgers DIR --atoms DIR [--unit NAME]]"
 
-# The options `args` give — each flag at most once, `--ledgers` and `--atoms` with a directory
-# and together — or why they are not a usage of this script.
+# Why the options `given` are no usage of this script once every argument is read, or `nothing`:
+# `--ledgers` and `--atoms` come together, `--unit` names a `<unit>.json` of `--atoms`, and
+# `--entry` an entry of the registry.
+function _misuse(given::Dict{String,String})::Union{String,Nothing}
+    haskey(given, "--ledgers") == haskey(given, "--atoms") || return "--ledgers and --atoms come together"
+    unit, atoms = get(given, "--unit", nothing), get(given, "--atoms", nothing)
+    isnothing(unit) || !isnothing(atoms) || return "--unit names an audit unit of --atoms"
+    isnothing(unit) || isfile(joinpath(atoms, unit * ".json")) || return "--unit: $atoms holds no $unit.json"
+    key = get(given, "--entry", nothing)
+    isnothing(key) || any(e -> string(e.key) == key, REGISTRY) ||
+        return "--entry: no provider entry $key; the entries are $(join((string(e.key) for e in REGISTRY), ", "))"
+    nothing
+end
+
+# The options `args` give — each flag at most once, `--ledgers` and `--atoms` with a directory,
+# `--entry` and `--unit` with a name — or why they are not a usage of this script.
 function _options(args::AbstractVector{String}, given::Dict{String,String}=Dict{String,String}())::Union{Dict{String,String},String}
-    isempty(args) &&
-        return haskey(given, "--ledgers") == haskey(given, "--atoms") ? given : "--ledgers and --atoms come together"
+    isempty(args) && return something(_misuse(given), given)
     flag = first(args)
     haskey(given, flag) && return "$flag is given twice"
     flag == "--baseline" && return _options(args[2:end], push!(given, flag => ""))
-    flag in ("--ledgers", "--atoms") || return "unknown argument $(repr(flag))"
-    length(args) >= 2 && isdir(args[2]) || return "$flag takes a directory"
+    if flag in ("--ledgers", "--atoms")
+        length(args) >= 2 && isdir(args[2]) || return "$flag takes a directory"
+    elseif flag in ("--entry", "--unit")
+        length(args) >= 2 && !startswith(args[2], "--") || return "$flag takes a name"
+    else
+        return "unknown argument $(repr(flag))"
+    end
     _options(args[3:end], push!(given, flag => args[2]))
 end
 
@@ -583,8 +837,10 @@ threshold holds or with `--baseline`, 1 when one does not, 2 on a usage error.
 function main(args::Vector{String})::Int
     options = _options(args)
     options isa String && (println(stderr, options, '\n', USAGE); return 2)
+    key = get(options, "--entry", nothing)
     report(stdout; docsrc=relpath(DOCSRC), ledgers=get(options, "--ledgers", nothing),
-           atoms=get(options, "--atoms", nothing), baseline=haskey(options, "--baseline")) ? 0 : 1
+           atoms=get(options, "--atoms", nothing), baseline=haskey(options, "--baseline"),
+           entry_key=isnothing(key) ? nothing : Symbol(key), unit=get(options, "--unit", nothing)) ? 0 : 1
 end
 
 end # module

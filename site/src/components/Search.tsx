@@ -49,7 +49,7 @@ function SearchIcon(props: React.ComponentPropsWithoutRef<'svg'>) {
 function useAutocomplete({
   close,
 }: {
-  close: (autocomplete: Autocomplete) => void
+  close: () => void
 }) {
   let id = useId()
   let router = useRouter()
@@ -65,7 +65,7 @@ function useAutocomplete({
     // The router adds the base path. A result on the current page changes only
     // the hash, which the pathname listener below never sees: close here.
     router.push(itemUrl)
-    close(autocomplete)
+    close()
   }
 
   // A new tab or window opens the URL as given, without the router: add the base path.

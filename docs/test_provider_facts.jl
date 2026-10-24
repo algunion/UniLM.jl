@@ -159,3 +159,29 @@ end
     @test regions(joinpath(@__DIR__, "src", "llm.md")) == ["decision-provider-contracts", "provider-contracts"]
     @test regions(joinpath(dirname(@__DIR__), "llms.txt")) == ["providers"]
 end
+@testset "ProviderFacts — every start and feature id is defined once, on one of its entry's pages" begin
+    src = joinpath(@__DIR__, "src")
+    ids = Dict{String,Vector{String}}()             # an explicit id => the pages whose headings define it
+    for (root, _, files) in walkdir(src), f in files
+        endswith(f, ".md") || continue
+        fence = nothing                             # the run that opened the fenced block being read
+        for line in eachline(joinpath(root, f))
+            if isnothing(fence)
+                m = match(r"^\s*(`{3,}|~{3,})", line)
+                isnothing(m) || (fence = m[1]; continue)
+                h = match(r"^#{1,6}\s.*\(@id\s+([^)\s]+)\s*\)", line)
+                isnothing(h) || push!(get!(ids, h[1], String[]), relpath(joinpath(root, f), src))
+            elseif strip(line) == fence
+                fence = nothing
+            end
+        end
+    end
+    @test [id => p for (id, p) in ids if length(p) > 1] == []                      # every explicit id once
+    on(id) = get(ids, id, String[])
+    # On one of the entry's pages; or, while its section has not moved, as `<id>__next` on one of
+    # them, with `<id>` still on its old page.
+    placed(e, id) = length(on(id)) == 1 && only(on(id)) in e.pages && isempty(on(id * "__next")) ||
+                    length(on(id * "__next")) == 1 && only(on(id * "__next")) in e.pages &&
+                    length(on(id)) == 1 && only(on(id)) ∉ e.pages
+    @test [(e.key, id) for e in REGISTRY for id in [e.start_id; sort!(collect(values(e.features)))] if !placed(e, id)] == []
+end

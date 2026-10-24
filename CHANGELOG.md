@@ -51,6 +51,17 @@
   the text, a local recording path with it, reached the model or the client. Now a loop
   throws it as it was thrown, and an MCP server logs it and answers the generic JSON-RPC
   `-32603`, as for a bare one.
+- **A user's interrupt that reaches a tool dispatcher or an MCP handler wrapped propagates.**
+  A dispatcher or handler that waits on a task gets an `InterruptException` inside a
+  `TaskFailedException` (or a `CompositeException`, a `CapturedException`). The tool loops
+  took it for a tool error and went on, an MCP server answered a tool handler's as tool
+  content, and a resource or prompt handler's it logged and answered `-32603`. Now each
+  throws it as it was thrown, as for a bare `InterruptException`; any other error inside
+  such a wrapper is still a tool error.
+- **A streamed turn interrupted during a later reply keeps the earlier replies' cost.** When
+  an `InterruptException` ended a streamed turn the provider continued over several requests
+  (a long Gemini generation), `cumulative_cost` left out the replies already received; they
+  are now added before the interrupt propagates, as an unstreamed turn adds them.
 
 ## 0.26.0
 

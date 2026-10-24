@@ -785,12 +785,15 @@ _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 """
     auth_header(service) -> Vector{Pair{String,String}}
 
-The headers sent with every request to `service`: its credentials and the
-`Content-Type`. A backend adds `auth_header(::MyEndpoint)` (or
-`auth_header(::Type{MyEndpoint})` for a singleton endpoint). A built-in endpoint
-sends the key it was given, or else reads its key variable from the environment when
-a request is built, so a missing variable surfaces in the verb's call-error result,
-naming it; a `GenericOpenAIEndpoint` whose key is empty sends no `Authorization` header.
+The headers sent with every request to `service`: its credentials, where it takes any,
+and the `Content-Type`. A backend adds `auth_header(::MyEndpoint)` (or
+`auth_header(::Type{MyEndpoint})` for a singleton endpoint). A built-in endpoint that
+takes a key sends the key it was given, or else reads its key variable from the
+environment when a request is built, so a missing variable surfaces in the verb's
+call-error result, naming it: as a `KeyError`, or for `TYPESAFEServiceEndpoint` as an
+`ArgumentError` naming the variable, which a blank value gets too. An `OllamaEndpoint`
+sends no credentials and reads no variable here (a local server takes none), and a
+`GenericOpenAIEndpoint` whose key is empty sends no `Authorization` header.
 
 Public extension API (not exported); see the Custom Backends guide.
 """
@@ -1789,9 +1792,9 @@ requests were billed to the chat's total, as far as their providers reported it 
 the earlier replies of the turn and the latest attempt's reported usage; nothing is committed.
 `first` is the source of the first request when it was looked up before the call's task was
 spawned (`_first_stream_source`). `InterruptException`, `ReplayMissError` and
-`RecordingWriteError` always rethrow — the latter two once the replies the turn received
-before the failing request are added to the chat's total, as an unstreamed call adds them;
-every other failure becomes a typed result value.
+`RecordingWriteError` always rethrow, once the replies the turn received before the failing
+request are added to the chat's total, as an unstreamed call adds them; every other failure
+becomes a typed result value.
 """
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
                        token::Union{Nothing,CancelToken}, first::Union{Nothing,_StreamSource}=nothing)
@@ -1814,13 +1817,13 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             iscancelled(ctl.stop) || (io_ref[] = nothing)
         end
     catch e
-        _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
-        # Neither is a failure of the call: a miss, or a paid reply's lost recording,
-        # reaches the caller as an unstreamed call's does (here, at `fetch`), and as there
-        # the replies the turn received before that request are first added to the chat's
-        # total. Not classified, so `_settled` does not run: an unstreamed call does not
-        # add the reply whose recording was lost either.
-        if e isa Union{ReplayMissError,RecordingWriteError}
+        # None is a failure of the call: a user's interrupt, a miss, or a paid reply's lost
+        # recording reaches the caller as an unstreamed call's does (here, at `fetch`), and as
+        # there the replies the turn received before that request are first added to the
+        # chat's total — they were billed. Not classified, so `_settled` does not run: an
+        # unstreamed call does not add the reply whose recording was lost either.
+        interrupted = !isnothing(_find_exception(x -> x isa InterruptException, e))
+        if interrupted || e isa Union{ReplayMissError,RecordingWriteError}
             _accrue_turn!(chat, turn)
             rethrow()
         end

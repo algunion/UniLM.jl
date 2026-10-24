@@ -940,6 +940,10 @@ end
 const _RL_DEEPSEEK = _RLHere(DeepSeekEndpoint(_RL_DEEPSEEK_KEY))
 _rl_prefix_chat() = push!(_rl_chat(_RL_DEEPSEEK; model="deepseek-flash", prompt="Write f."),
                           Message(role=UniLM.RoleAssistant, content="def f("))
+# What a caller reads off a lifecycle, FIM or prefix result: a parsed JSON answer as it is.
+_rl_answer(d::AbstractDict) = d
+_rl_answer(r::FIMSuccess) = (fim_text(r), r.response.usage, r.response.model, r.response.raw, estimated_cost(r))
+_rl_answer(r) = _rl_seen(r)
 # Every result these verbs return for a failed call.
 const _RL_FAILURES = Union{ResponseCallError,ResponseFailure,LLMCallError,LLMFailure,FIMCallError,FIMFailure}
 # The Responses lifecycle verbs on OpenAI, FIM and prefix completion on DeepSeek: one request each.
@@ -963,9 +967,13 @@ const _RL_LIFECYCLE = (
     @test length(readdir(dir)) == 8
     @test map(typeof, replayed) == map(typeof, live)
     @test !any(r -> r isa _RL_FAILURES, replayed)
-    miss = _rl_offline(() -> with_recorded_answers(
-        () -> _ra_caught(() -> list_input_items("resp_rl"; limit=3, service=_RL_OPENAI)), dir))
-    @test miss isa ReplayMissError                             # the query is part of the key
+    @test map(_rl_answer, replayed) == map(_rl_answer, live)  # what a caller reads, not only its type
+    # The page a listing asks for is part of the key: another limit, order or cursor is another request.
+    for page in ((; limit=3), (; limit=2, order="asc"), (; limit=2, after="msg_x"))
+        miss = _rl_offline(() -> with_recorded_answers(
+            () -> _ra_caught(() -> list_input_items("resp_rl"; page..., service=_RL_OPENAI)), dir))
+        @test miss isa ReplayMissError && miss.path == "/v1/responses/resp_rl/input_items"
+    end
 end
 
 @testset "recorded answers — a lifecycle or FIM verb throws its miss and its lost write, never returns them" begin
@@ -1081,13 +1089,21 @@ const _RA_COMMITTED = joinpath(pkgdir(UniLM), "docs", "recorded_answers")
         hits = _RL_HITS[]
         replayed, replayed_deltas = _rl_offline(() -> with_recorded_answers(call, dir))
         @test _RL_HITS[] == hits
-        @test _rl_text(replayed) == _rl_text(live) && join(replayed_deltas) == join(live_deltas)
+        @test !isempty(live_deltas) && join(replayed_deltas) == join(live_deltas)    # the deltas, not none of them
+        @test _rl_text(replayed) == _rl_text(live)
     end
 end
 @testset "recorded LLM answers — a streamed miss is thrown by the verb itself, before any task runs" begin
     empty = mkpath(_ra_dir("llm-stream-miss"))
     @test_throws ReplayMissError _rl_offline(() -> with_recorded_answers(empty) do
         chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_CFG)
+    end)
+    # respond too, a Respond with stream=true and a do-block callback alike
+    @test_throws ReplayMissError _rl_offline(() -> with_recorded_answers(empty) do
+        respond(Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input="Say hello.", stream=true); config=_RL_CFG)
+    end)
+    @test_throws ReplayMissError _rl_offline(() -> with_recorded_answers(empty) do
+        respond((chunk, close) -> nothing, "Say hello."; service=_RL_OPENAI, model="gpt-5.4-mini", config=_RL_CFG)
     end)
 end
 @testset "recorded LLM answers — an in-band error, a truncated, a stopped or a callback-failed stream is never recorded" begin
@@ -1096,6 +1112,14 @@ end
         _rl_online(() -> with_recorded_answers(() -> _rl_stream_case(case), dir; mode=:record))
         @test isempty(readdir(dir))
     end
+    # A respond stream its callback stops — here as the whole response arrives — is not recorded either.
+    dir = _ra_dir("llm-respond-stream-stopped")
+    stopped = _rl_online(() -> with_recorded_answers(dir; mode=:record) do
+        fetch(respond("Say hello."; service=_RL_OPENAI, model="gpt-5.4-mini", config=_RL_CFG) do chunk, close
+            chunk isa UniLM.ResponseObject && (close[] = true)
+        end)
+    end)
+    @test stopped isa ResponseSuccess && isempty(readdir(dir))
 end
 @testset "recorded LLM answers — a replayed Gemini reply keeps its tier, so it costs what the live one cost" begin
     for (name, call) in (("stream", _rl_gemini_flex_stream), ("generate", _rl_gemini_flex_generate))
@@ -1190,6 +1214,12 @@ end
         @test unstreamed > 0
         @test streamed == unstreamed
     end
+    # A user's interrupt from the callback during the second reply: the first was billed, as above.
+    chat = turn(true)
+    interrupt = (d, close) -> d isa String && occursin("hop 2", d) && throw(InterruptException())
+    e = _rl_online(() -> _ra_caught(() -> fetch(chatrequest!(chat; config=_RL_CFG, callback=interrupt))))
+    @test e isa TaskFailedException && _rl_unwrap(e) isa InterruptException
+    @test cumulative_cost(chat) == missed(false)
 end
 @testset "recorded LLM answers — outside a scope a stream reads its API key first, as it always did" begin
     tok = CancelToken()

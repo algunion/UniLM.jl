@@ -194,10 +194,16 @@ end
 end
 
 @testset "CodeInterpreterTool" begin
-    @testset "defaults" begin
+    # OpenAI: "The Code Interpreter tool requires a container object" — auto mode
+    # `"container": {"type": "auto", "memory_limit": "4g", "file_ids": [...]}`, explicit mode
+    # `"container": "cntr_abc123"` (https://developers.openai.com/api/docs/guides/tools-code-interpreter).
+    @testset "defaults: the auto container the tool requires" begin
         t = CodeInterpreterTool()
-        @test isnothing(t.container)
+        @test t.container == Dict("type" => "auto")
         @test isnothing(t.file_ids)
+        @test JSON.lower(code_interpreter())[:container] == Dict("type" => "auto")
+        @test JSON.parse(JSON.json(code_interpreter())) ==
+              Dict("type" => "code_interpreter", "container" => Dict("type" => "auto"))
     end
 
     @testset "with options" begin
@@ -209,12 +215,23 @@ end
         @test length(t.file_ids) == 2
     end
 
-    @testset "JSON serialization" begin
-        t = CodeInterpreterTool(file_ids=["file-1"])
-        lowered = JSON.lower(t)
+    @testset "file_ids are sent inside the auto container" begin
+        lowered = JSON.lower(CodeInterpreterTool(file_ids=["file-1"]))
         @test lowered[:type] == "code_interpreter"
-        @test lowered[:file_ids] == ["file-1"]
-        @test !haskey(lowered, :container)
+        @test lowered[:container] == Dict("type" => "auto", "file_ids" => ["file-1"])
+        @test !haskey(lowered, :file_ids)
+        # A given auto container keeps its own settings beside them, whatever its key type.
+        sent = JSON.parse(JSON.json(code_interpreter(container=Dict(:type => "auto", :memory_limit => "4g"),
+                                                     file_ids=["f"])))
+        @test sent["container"] == Dict("type" => "auto", "memory_limit" => "4g", "file_ids" => ["f"])
+        @test_throws ArgumentError code_interpreter(container=Dict("type" => "auto", "file_ids" => ["a"]),
+                                                    file_ids=["b"])
+    end
+
+    @testset "a container id is sent as the container; files cannot ride on it" begin
+        @test occursin("\"container\":\"cntr_abc\"", JSON.json(code_interpreter(container="cntr_abc")))
+        @test JSON.lower(CodeInterpreterTool(container="cntr_abc"))[:container] == "cntr_abc"
+        @test_throws ArgumentError code_interpreter(container="cntr_abc", file_ids=["f"])
     end
 
     @testset "code_interpreter convenience" begin

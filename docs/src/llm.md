@@ -712,8 +712,11 @@ end
     input_image_mask::Union{AbstractDict, Nothing} = nothing  # "file_id" or "image_url"
 end
 
+# The container OpenAI's tool requires: the auto container by default, a Dict sent as given,
+# or a container id String; file_ids are sent inside the auto container (with a container id,
+# or beside a container Dict that names file_ids, an ArgumentError).
 @kwdef struct CodeInterpreterTool <: ResponseTool
-    container::Union{AbstractDict, Nothing} = nothing
+    container::Union{String, AbstractDict} = Dict("type" => "auto")
     file_ids::Union{Vector{String}, Nothing} = nothing
 end
 ```
@@ -730,7 +733,7 @@ file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
 mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
          connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
 image_generation_tool(; kwargs...)
-code_interpreter(; container=nothing, file_ids=nothing)
+code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing)
 ```
 
 ### Text Format / Structured Output

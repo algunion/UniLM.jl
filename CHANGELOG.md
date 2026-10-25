@@ -69,6 +69,14 @@
   an `InterruptException` ended a streamed turn the provider continued over several requests
   (a long Gemini generation), `cumulative_cost` left out the replies already received; they
   are now added before the interrupt propagates, as an unstreamed turn adds them.
+- **`code_interpreter()` sends the container OpenAI requires.** OpenAI's code interpreter
+  tool "requires a container object"; `CodeInterpreterTool` sent none unless one was
+  given, and sent `file_ids` beside the tool. It now sends `{"type": "auto"}` unless
+  given another container, sends `file_ids` inside that auto container, and takes a
+  container id (`code_interpreter(container="cntr_…")`), which it refused before.
+  `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
+  (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
+  or beside a container `Dict` that names `file_ids`, is an `ArgumentError`.
 
 ## 0.26.0
 

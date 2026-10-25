@@ -39,9 +39,9 @@ q = embedding_vectors(embeddingrequest!(
 
 An EmbeddingGemma request without a `task` is an `ArgumentError` before anything is sent;
 `task = :none` sends the text as it is. A `title` goes only with `:document`, and an empty or
-whitespace-only title is none. The text the model reads, for each task — the prompts of the
-[model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card), written in front of the
-text:
+whitespace-only title is none. The text the model reads, for each task — the prompts of
+EmbeddingGemma 2's [model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2), written
+in front of the text:
 
 | `task` | Use it for | The model reads |
 | :--- | :--- | :--- |
@@ -55,14 +55,16 @@ text:
 | `:sentence_similarity` | a text to compare | `task: sentence similarity \| query: …` |
 | `:none` | your own prompt, or none | `…` |
 
-The same prompts hold for EmbeddingGemma v1 (`embeddinggemma`) and on any other service that serves
-EmbeddingGemma; a server that writes the prompts itself takes `task = :none`. A model whose prompts
+The same prompts hold for EmbeddingGemma v1 (`embeddinggemma`, its
+[model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card)) and on any other service that
+serves EmbeddingGemma; a server that writes the prompts itself takes `task = :none`. A model whose prompts
 UniLM does not know takes `task = :none` or no task, and a title is refused for it
 ([Limits and refusals](@ref ollama_limits)).
 
-**Smaller vectors.** EmbeddingGemma returns 768 numbers, and its card lists "smaller options available
-(512, 256, or 128) via Matryoshka Representation Learning (MRL)": `dimensions` asks for one of these,
-and any other is refused before the request. The shorter vector still has unit length:
+**Smaller vectors.** EmbeddingGemma returns 768 numbers, and EmbeddingGemma 2's
+[card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2) says "The supported dimensions are
+768, 512, 256, and 128", as v1's lists "smaller options available (512, 256, or 128)": `dimensions`
+asks for one of these, and any other is refused before the request. The shorter vector still has unit length:
 
 ```@example ollama
 v = embedding_vectors(embeddingrequest!(Embeddings("Orders over 50 EUR ship free.";

@@ -11,9 +11,9 @@ take the context window, how long a model stays loaded, thinking and truncation.
 which carry none of the endpoint's options. No key is sent, and a local model costs nothing. No verb
 of a capability the table below lists as not available sends a request through this endpoint:
 `speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own API, UniLM
-does not wrap `/api/generate`, creating, copying or pushing a model, or web search, and it sends no
-API key, which a direct request to Ollama's cloud at `ollama.com` needs. The decision models `ask`
-reaches through the same endpoint have an entry of their own:
+does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web search and
+web fetch, and it sends no API key, which a direct request to Ollama's cloud at `ollama.com` needs. The
+decision models `ask` reaches through the same endpoint have an entry of their own:
 [Local decision models](@ref ollama_decisions_start).
 
 ```@eval
@@ -44,7 +44,7 @@ Install Ollama and start it, the desktop app or `ollama serve`, then pull the mo
 run on:
 
 ```bash
-ollama pull gemma4:e4b                  # chat: text, images, audio, tools, thinking (9.5 GB)
+ollama pull gemma4:e4b                  # chat: text, images, audio, tools, thinking (6.6–9.5 GB by runner; 9.5 GB on Apple Silicon)
 ollama pull embeddinggemma-2:740m-q8_0  # embeddings of text, images and audio (1.3 GB)
 ollama pull qwen2.5-coder:1.5b-base     # fill in the middle (986 MB)
 ```
@@ -66,10 +66,10 @@ print(refusal.msg)
 `OllamaEndpoint()` reads `OLLAMA_HOST` (optional; default `http://127.0.0.1:11434`) each time it is
 built. A host without a scheme is reached over `http` on port 11434 (`gpu-box` becomes
 `http://gpu-box:11434`), an `http://` or `https://` address without a port on port 80 or 443, the
-bind-all addresses `0.0.0.0` and `::` on the loopback address, and `ollama.com` over `https` on port
-443; an IPv6 address may be bare or bracketed, and a path is kept. A value UniLM cannot read this way,
-another scheme or a port outside 1–65535, throws `ArgumentError` when the endpoint is built. The
-endpoint's other arguments are on [Options](@ref ollama_options__next).
+bind-all addresses `0.0.0.0` and `::` on the loopback address, and `ollama.com`, given without a scheme,
+over `https` on port 443; an IPv6 address may be bare or bracketed, and a path is kept. A value UniLM
+cannot read this way, another scheme or a port outside 1–65535, throws `ArgumentError` when the
+endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_options__next).
 
 UniLM sends no key: Ollama's local API "does not require authentication", while direct cloud
 inference at `https://ollama.com/api` "requires an API key"
@@ -235,13 +235,13 @@ Ollama has no `tool_choice`: the model decides whether to call a tool, so a `too
 `"auto"` is refused, and it may call several tools in one turn — Ollama's
 [tool calling](https://docs.ollama.com/capabilities/tool-calling) page shows parallel calls —
 whatever `parallel_tool_calls` says: UniLM does not send it. Ollama's tool definition has `name`,
-`description` and `parameters` and no `strict` flag ([API reference](https://docs.ollama.com/api)), so a
+`description` and `parameters` and no `strict` flag ([API reference](https://docs.ollama.com/api/chat)), so a
 tool marked `strict=true` is refused too ([Limits and refusals](@ref ollama_limits)).
 
-Ollama's replies carry an id for each call, `call_mb4i6gbs` above, though its API reference lists
-none; UniLM sends the id back with the call and with its result, beside `tool_name`. A call that
-arrives without an id gets `unilm_call_<k>`, which is never sent: its result is matched by the
-function's name alone. The turn that called the tool also thought first, and that thinking went back
+Ollama's replies carry an id for each call, `call_mb4i6gbs` above, though its
+[API reference](https://docs.ollama.com/api/chat) lists none; UniLM sends the id back with the call and
+with its result, beside `tool_name`. A call that arrives without an id gets `unilm_call_<k>`, which is
+never sent: its result is matched by the function's name alone. The turn that called the tool also thought first, and that thinking went back
 with it ([Reasoning](@ref ollama_thinking__next)). A streamed turn's tool calls are on
 [Streaming](@ref ollama_streaming), and the loop every provider shares is on
 [Tool Calling](@ref tools_guide).
@@ -299,10 +299,14 @@ cloud model's format all the same. The formats every provider shares are on
 `reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and `"low"`, `"medium"` and
 `"high"` go as they are; a request without one sends none, so the model's default applies, and Gemma 4
 thinks by default. Ollama's thinking levels are the model's own: `/api/show` lists the values a model
-takes and its default, "Unsupported names use the model default", and a model whose values are `true`
-and `false` thinks or does not ([thinking](https://docs.ollama.com/capabilities/thinking)).
+takes and its default, and a model whose values are `true` and `false` thinks or does not; "If the model
+resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported
+names use the model default." ([thinking](https://docs.ollama.com/capabilities/thinking)).
 [`model_info`](@ref) reads them as `thinking_levels` and `thinking_default`: `[false, true]` and `true`
-for Gemma 4 E4B, so `"low"`, `"medium"` and `"high"` behave alike there. UniLM takes no other effort:
+for Gemma 4 E4B, which names no levels. No page says what such a model does with a named level; on
+Ollama 0.40.11, `think` `"low"`, `"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the
+same answer to the bat-and-ball prompt below at temperature 0 (observed on 25 October 2026). UniLM takes
+no other effort:
 `"minimal"`, `"xhigh"` and `"max"` are refused before the request
 ([Limits and refusals](@ref ollama_limits)), though Ollama's API reference lists `"max"` among the
 levels of `think`, and Ollama 0.40.11 answered a `think: "max"` request to `gemma4:e4b` with HTTP 200, an
@@ -388,7 +392,7 @@ provided, but model does not support multimodal requests."
 
 ## [Audio](@id ollama_transcription__next)
 
-Of UniLM's audio verbs, Ollama serves `transcribe` alone: a model that hears audio transcribes it,
+Of UniLM's audio verbs, only `transcribe` reaches Ollama: a model that hears audio transcribes it,
 while `speak` and `translate` refuse the endpoint before sending anything. A transcription is not
 recorded by [`with_recorded_answers`](@ref), so its output here is quoted from a live run:
 
@@ -436,7 +440,7 @@ Of a [`Respond`](@ref), UniLM sends `model`, `input`, `instructions`, function `
 `"auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, a `text` format and the `effort` of
 `reasoning`, and refuses every other field before the request rather than have Ollama drop it: the
 fields that need a stored response (`store`, `previous_response_id`, `background`, `conversation`),
-the other fields its compatibility page does not list, and `seed`, which a `Chat` sends to Ollama
+the other fields its compatibility page does not list as supported, and `seed`, which a `Chat` sends to Ollama
 instead ([Limits and refusals](@ref ollama_limits)). Ollama's page lists no `text` field either; UniLM sends a
 `json_schema` text format with its schema, which Ollama 0.40.11 followed in the one such request sent
 on 25 October 2026, and, as for a `Chat`, such a format turns thinking off (`reasoning.effort`
@@ -446,8 +450,9 @@ Ollama reports a reply cut at that limit as `"completed"`, with no `incomplete_d
 `Respond` tool loop, [`get_response`](@ref), [`cancel_response`](@ref), [`delete_response`](@ref) and
 [`list_input_items`](@ref) are refused before any request, since Ollama stores no response: run a tool
 loop on a `Chat` with `tool_loop!`. [`compact_response`](@ref) reaches `/v1/responses/compact`, a route
-the compatibility page does not list, and, like a `Chat`, needs a `model`: a call that names none
-throws before any request.
+the compatibility page does not list, which Ollama 0.40.11 answered with a `compaction` item (observed
+on 25 October 2026), and, like a `Chat`, needs a `model`: a call that names none throws before any
+request.
 
 [`fim_complete`](@ref) reaches `/v1/completions` with a prompt and the `suffix` the reply fills up to,
 on a model that fills in the middle, one whose capabilities include `:insert`, such as
@@ -468,21 +473,22 @@ do ([First call](@ref ollama_first__next)); the verbs every provider shares are 
 
 ## [Limits and refusals](@id ollama_limits)
 
-A request meets the model's context window, which the endpoint's `num_ctx` sets: by default an input
-that does not fit is an HTTP 400, not a silently shortened prompt
-([Options](@ref ollama_options__next)). UniLM checks no size itself: not the window, not the length of
+A request meets the model's context window, which the endpoint's `num_ctx` sets when the model loads: by
+default a chat prompt that does not fit is an HTTP 400 on the `:llamacpp` runner, not a silently
+shortened prompt, while a model on the `:mlx` runner answers it (Ollama 0.40.6;
+[Runners](@ref ollama_runners__next)). UniLM checks no size itself: not the window, not the length of
 a sound clip, not an image's size. An embeddings input longer than the model's window is the server's
 HTTP 400 too ([Long inputs](@ref ollama_embedding_window)).
 
-A field `/api/chat` has no counterpart for is refused, not dropped, since dropping it would send a
-request other than the one asked for, and so is each request below that Ollama would answer with an
+A `Chat` field UniLM maps to no part of the `/api/chat` request is refused, not dropped, since dropping it
+would send a request other than the one asked for, and so is each request below that Ollama would answer with an
 error or run other than asked. The verbs throw these `ArgumentError`s before anything is sent.
 Building the endpoint refuses an argument that breaks its rule ([Options](@ref ollama_options__next)).
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings`, `compact_response` or FIM request without a `model` | `model must be specified`: Ollama has no default model | an installed model's name, such as `"gemma4:e4b"` |
-| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` or `moderation` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request | remove it |
+| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` or `moderation` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request (`/api/chat` takes `logprobs` and `top_logprobs`, but a result has no field for them) | remove it |
 | a `tool_choice` other than `"auto"`, on a `Chat` or a `Respond` | `Ollama has no tool_choice`: the model decides whether to call a tool | leave it unset, or send no tools to rule calls out |
 | a tool with `strict=true`, on a `Chat` or a `Respond` | `Ollama does not enforce strict tool schemas`: its tool definition has no `strict` flag | leave `strict` unset |
 | a `reasoning_effort` other than `"none"`, `"low"`, `"medium"` and `"high"`, or such a `Reasoning` effort | `Ollama takes reasoning_effort`: UniLM sends those four only | one of them |
@@ -493,11 +499,11 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | a message with a `name` | `Ollama messages have no name field` | the message without `name` |
 | a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | `answers no earlier tool call`: Ollama identifies a result by the called function's name | the `id` of the tool call it answers |
 | on a `Respond`: `store`, `previous_response_id`, `background` or `conversation` | `Ollama's Responses API ignores`: it keeps no state between calls | the whole conversation in `input`, or a `Chat` |
-| on a `Respond`: another field its compatibility page does not list, such as `include`, `truncation` or `service_tier` | `Ollama's Responses API reads no`, `reads none of`: Ollama would drop it | remove it |
+| on a `Respond`: another field its compatibility page does not list as supported, such as `include`, `truncation` or `service_tier` | `Ollama's Responses API reads no`, `reads none of`: Ollama would drop it | remove it |
 | a `Respond` with a `seed` | `Ollama's Responses API reads no seed` | a `Chat`, whose `seed` Ollama reads |
 | a `Reasoning` with a summary, a context or a mode | `Ollama reads only reasoning.effort` | the `effort` alone |
-| a `text` format with a `verbosity`, or of a type other than `text` and `json_schema` | `Ollama ignores text.verbosity`, `constrains output only to a json_schema text.format` | a `json_schema` text format without `verbosity` |
-| a `json_schema` text format without its schema | `needs its schema`: without one Ollama constrains nothing | the schema in the format |
+| a `text` format with a `verbosity`, or of a type other than `text` and `json_schema` | `Ollama ignores text.verbosity`, `constrains output only to a json_schema text.format`: Ollama's compatibility page lists no `text` field (by Ollama 0.40.6's source; untested) | a `json_schema` text format without `verbosity` |
+| a `json_schema` text format without its schema | `needs its schema`: without one Ollama constrains nothing (by Ollama 0.40.6's source; untested) | the schema in the format |
 | an `input_image` given by file id | `Ollama reads input images from data URLs only` | the image's data URL |
 | an `input_file` part, in any form | `documents no input_file parts`: the file might never reach the model | the document's text in an `input_text` part |
 | an `InputMessage` with a `phase` | `Ollama's Responses API has no message phase` | the message without `phase` |
@@ -508,6 +514,7 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | an `Embeddings` request with a `user` | `Ollama embeddings take no user field` | remove it |
 | an embeddings item holding both an image and a sound clip | `in a random order`: such an item embeds differently from one request to the next | the image and the clip as two items ([Images and sound](@ref ollama_embedding_media)) |
 | an EmbeddingGemma request without a `task`, a `dimensions` it was not trained for, or a `title` with a task other than `:document` | `expects a task prompt`, `returns 768, 512, 256, 128 dimensions`, `reads with task = :document only` | what the [task prompts](@ref ollama_embeddings__next) say |
+| an `Embeddings` request with a `title`, or a `task` other than `:none`, for a model whose prompts UniLM does not know | `has no task prompts, so a title has nowhere to go`, `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | no title, and `task = :none` with the model's own prefix in the text |
 | a transcription without a `model` | `Ollama has no default transcription model` | a model that hears audio, such as `"gemma4:e4b"` |
 | a transcription with `temperature`, `languages` or `keywords` | `runs at temperature 0 and takes no`, `takes one`, `takes no` | remove it; one `language` is taken |
 | a transcription `response_format` other than `"json"` | `reports a failure that arrives after its reply has begun only as JSON`, `transcribes to JSON only` | leave it unset, and read the text with `transcript_text` |

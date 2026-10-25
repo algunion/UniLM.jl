@@ -19,8 +19,9 @@ What would be a command-line flag or a Modelfile line in Ollama is an argument o
 | any field of [`OllamaOptions`](@ref): `num_ctx`, `num_batch`, `num_gpu`, `main_gpu`, `num_thread`, `use_mmap`, `num_keep`, `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty` | the request's `options`, with the `Chat`'s sampling fields, on chat and embeddings requests and on a chat or embedding model's load | each in its range: `OllamaOptions` lists them |
 
 Any other keyword is refused when the endpoint is built, its `ArgumentError` naming the keywords the
-endpoint takes, and so is a value that breaks a rule above; a request made through the endpoint meets
-no further check of these arguments. [`UniLM.encode_request`](@ref) returns the body `chatrequest!`
+endpoint takes, and so is a value that breaks a rule above; a value of the wrong type is Julia's own
+error instead, such as a `TypeError` for `truncate=1` or `runner="mlx"`; a request made through the
+endpoint meets no further check of these arguments. [`UniLM.encode_request`](@ref) returns the body `chatrequest!`
 sends, with no request:
 
 ```@example ollama
@@ -218,7 +219,7 @@ configuration, so a model that takes minutes to load may need a longer bound.
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
 | `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref ollama_limits)) | what its row says |
-| `ArgumentError` when the endpoint is built | an argument breaks its rule, or is no argument of the endpoint ([Options](@ref ollama_options__next)) | what the message names |
+| `ArgumentError` when the endpoint is built, or a `TypeError` for a value of the wrong type | an argument breaks its rule, or is no argument of the endpoint ([Options](@ref ollama_options__next)) | what the message names |
 | `InvalidConversationError` from `chatrequest!`, nothing sent | with `history=true`, the conversation ends with an assistant message, so the reply could not be appended | a user message after it, or `history=false` |
 | `LLMCallError` "no Ollama server answered at http://127.0.0.1:11434" | the server is not running, or runs elsewhere: the connection was refused | start it (`ollama serve` or the app), or point `OLLAMA_HOST` or `base_url` at it |
 | `LLMFailure` 404 "model 'gemma4:e2b' not found" | the model is not installed | [`pull_model`](@ref), or `ollama pull` |
@@ -227,6 +228,7 @@ configuration, so a model that takes minutes to load may need a longer bound.
 | `LLMFailure` 400 after a pause, for an image or a sound: "Multimodal data provided, but model does not support multimodal requests." | the model sees or hears nothing; it was loaded first | a model with `:vision` or `:audio` among its capabilities |
 | a 400 (404 from [`model_info`](@ref) and [`load_model`](@ref)) "no compatible manifest found for runners: …" | the endpoint pins a runner the model has no variant for | pin the runner [`list_models`](@ref) names for the model, or leave `runner` unset ([Runners](@ref ollama_runners__next)) |
 | `EmbeddingFailure` 400 "exceeds the context length" | the input is longer than the model's window | split it into chunks ([Long inputs](@ref ollama_embedding_window)) |
+| `EmbeddingFailure` 413 | an EmbeddingGemma 2 GGUF build, through an endpoint that sets `num_ctx` but not `num_batch` ([Long inputs](@ref ollama_embedding_window)) | an endpoint that sets neither |
 | `EmbeddingCallError` "an empty or all-zero vector" | a reply row that is no embedding ([Embeddings](@ref ollama_embeddings__next)) | the model, or another one |
 | `LLMCallError` with `status` `nothing` from a stream, the line in `error` | an `{"error": …}` line in the HTTP 200 stream ([Streaming](@ref ollama_streaming)); not sent again, and nothing is appended | the turn again |
 | `LLMFailure` with `status` 200 from a stream | the stream ended before its last line, the one whose `done` is `true`; `response` holds what arrived, and nothing is appended | the turn again |

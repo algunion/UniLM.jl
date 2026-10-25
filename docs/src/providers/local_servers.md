@@ -8,12 +8,13 @@ vLLM, LM Studio and llama.cpp's `llama-server` serve open models from your own m
 yours, through an OpenAI-compatible API, and `GenericOpenAIEndpoint` speaks it: under the server's
 base URL, a `Chat` goes to `/v1/chat/completions`, an `Embeddings` request to `/v1/embeddings`,
 `respond` to `/v1/responses` and `fim_complete` to `/v1/completions`. UniLM is an OpenAI-compatible
-client there and no more: it holds no rule of any server or model, sends every field a request sets as
-it is, and refuses only what its OpenAI-compatible requests have no field for. No verb of a capability
-the table below lists as not available sends a request through this endpoint, `transcribe` among
-them, though vLLM serves transcription at `/v1/audio/transcriptions`; UniLM does not use the servers'
-own APIs either, such as `llama-server`'s `/completion` and `/infill` or LM Studio's REST API. The
-examples on this page ran on `llama-server`.
+client there: it holds no rule of any server, sends every field a request sets as it is, and refuses
+what [Limits and refusals](@ref local_servers_limits) lists. No verb of a capability the table below
+lists as not available sends a request through this endpoint, `transcribe` among them, though vLLM
+serves transcription at `/v1/audio/transcriptions`; `ask` refuses it too, and local decision models
+have an entry of their own: [Local decision models](@ref ollama_decisions_start). UniLM does not use
+the servers' own APIs either, such as `llama-server`'s `/completion` and `/infill` or LM Studio's REST
+API. The examples on this page ran on `llama-server`.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:local_servers)
@@ -208,8 +209,11 @@ fim = fim_complete("def area(r):\n    "; suffix="\n    return a\n",       # /v1/
 - **Embeddings** need an embedding model: vLLM's embeddings route is "Only applicable to embedding
   models" ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)),
   and `llama-server`'s "requires that the model uses a pooling different than type `none`". An item
-  holding an image or a sound clip is refused before the request: these routes take text. EmbeddingGemma's
-  task prompts hold on any server ([task prompts](@ref ollama_embeddings__next)).
+  holding an image or a sound clip is refused before the request: UniLM sends these routes text only,
+  though vLLM takes images too, "by defining a custom chat template for the server and passing a list
+  of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
+  a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
+  ([task prompts](@ref ollama_embeddings__next)).
 - **respond** sends a `Respond`'s fields as they are, except a `seed`, which UniLM refuses
   ([Limits and refusals](@ref local_servers_limits)). vLLM serves stored responses
   (`/v1/responses/{response_id}`), LM Studio takes a `previous_response_id`, and `llama-server`'s route
@@ -221,9 +225,9 @@ fim = fim_complete("def area(r):\n    "; suffix="\n    return a\n",       # /v1/
 
 UniLM checks no limit of a server: a request longer than the model's context window, or one the model
 cannot serve, is the server's error ([When something fails](@ref local_servers_failures)). It refuses
-before anything is sent only what the table below lists, and the checks every `Chat` gets, such as a
-`temperature` from 0 to 2 or an `n` of 1; the verbs of the capabilities the table at the top of this page
-lists as not available refuse the endpoint too.
+before anything is sent what the table below lists, and the checks every `Chat` and `Embeddings` request
+gets, such as a `temperature` from 0 to 2, an `n` of 1 or a positive `dimensions`; the verbs of the
+capabilities the table at the top of this page lists as not available refuse the endpoint too.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
@@ -231,6 +235,10 @@ lists as not available refuse the endpoint too.
 | a `Respond` with a `seed` | `takes no seed`: the Responses request UniLM writes has no `seed` field | a `Chat`, which sends its `seed` |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
 | an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings__next), or `task = :none` where the server writes the prompts |
+| an EmbeddingGemma request with a `dimensions` other than 768, 512, 256 and 128 | `returns 768, 512, 256, 128 dimensions`: the sizes the model was trained for | one of them |
+| an EmbeddingGemma request with a `title` and a task other than `:document` | `reads with task = :document only`: a title names a document | `task = :document`, or no title |
+| an `Embeddings` request with a `title`, for a model whose prompts UniLM does not know | `has no task prompts, so a title has nowhere to go` | no title |
+| an `Embeddings` request with a `task` other than `:none`, for a model whose prompts UniLM does not know | `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | `task = :none`, with the model's own prefix in the text |
 | a `FIMCompletion` with `stream=true` | `does not support stream=true`: `fim_complete` has no streaming path | leave `stream` unset |
 
 ## [When something fails](@id local_servers_failures)

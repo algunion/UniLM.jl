@@ -234,7 +234,8 @@ const REGISTRY = _validated([
             :reasoning, :media, :embeddings, :images, :audio, :caching, :cost, :limits, :failures, :models)),
         tokens=["Gemini", "Google", "GEMINIServiceEndpoint", "GEMINIOpenAIServiceEndpoint", _MODEL_PREFIXES.gemini...]),
     ProviderEntry(key=:ollama, chapter=llm, provider=:ollama, name="Ollama",
-        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], env_vars=String[],
+        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST],
+        env_vars=[UniLM.OLLAMA_API_KEY],   # read for a request to Ollama's cloud, https://ollama.com
         default_model=nothing, pages=["providers/ollama/index.md", "providers/ollama/embeddings.md", "providers/ollama/runtime.md"],
         start_id="ollama_guide",
         features=_features(:ollama, (:setup, :conversations, :streaming, :limits),
@@ -289,7 +290,8 @@ const REGISTRY = _validated([
             :cost, :testing, :failures)),
         tokens=["Decisions API"]),
     ProviderEntry(key=:ollama_decisions, chapter=decisions, provider=:ollama, name="Local decision models",
-        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST], env_vars=String[],
+        endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST],
+        env_vars=[UniLM.OLLAMA_API_KEY],   # read for a request to Ollama's cloud, https://ollama.com
         default_model=nothing, pages=["decisions/ollama.md"], start_id="ollama_decisions_start",
         features=_features(:ollama_decisions, (:setup, :first_decision, :models, :questions, :limits, :confidence,
             :images, :testing, :throughput, :failures)),

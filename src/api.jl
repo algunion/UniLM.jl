@@ -914,7 +914,7 @@ end
     GenericOpenAIEndpoint(base_url, api_key, key_env="")
 
 Configurable endpoint for any OpenAI-compatible API provider. Supports Chat Completions,
-Embeddings, and (where the provider implements it) the Responses API.
+Embeddings, FIM, transcription and (where the provider implements it) the Responses API.
 
 # Fields
 - `base_url::String`: Base URL without trailing slash (e.g., `"http://localhost:11434"`)
@@ -965,7 +965,8 @@ const OpenAIWireEndpointSpec = Union{Type{<:OpenAIWireEndpoint}, OpenAIWireEndpo
     OllamaOptions(; num_ctx=nothing, num_batch=nothing, num_gpu=nothing,
                   main_gpu=nothing, num_thread=nothing, use_mmap=nothing,
                   num_keep=nothing, top_k=nothing, min_p=nothing,
-                  repeat_last_n=nothing, repeat_penalty=nothing)
+                  repeat_last_n=nothing, repeat_penalty=nothing,
+                  draft_num_predict=nothing, typical_p=nothing)
 
 The Ollama runtime and sampling options that [`Chat`](@ref) has no field for, sent as
 the `options` object of an [`OllamaEndpoint`](@ref) request; unset options are
@@ -985,14 +986,24 @@ omitted, so the model's own defaults apply. Options `Chat` already names
   `use_mmap`: how the model runs on this machine.
 - `num_keep`: tokens of the prompt kept when the context is shifted.
 - `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`: sampling.
+- `draft_num_predict`: the most speculative draft tokens predicted per step when the model
+  has a draft model: "Separate draft models default to 4; embedded MTP tensors require
+  setting this parameter. Set to 0 to disable speculative drafting."
+  ([Modelfile](https://docs.ollama.com/modelfile)).
+- `typical_p`: locally typical sampling. Ollama deprecates it — "`typical_p` is deprecated and
+  may be removed in a future release" (its
+  [API reference](https://github.com/ollama/ollama/blob/v0.40.11/docs/api.md#generate-request-with-options))
+  — and still reads it per request, logging "deprecated option provided" (Ollama 0.40.11).
 
 Every option is passed through unchanged; the effect of those other than `num_ctx` on the
-MLX runner is not verified.
+MLX runner is not verified. Ollama's API reference also lists `penalize_newline` and `numa`,
+which Ollama 0.40.11 does not read (its log says "invalid option provided", and the request
+goes on without them), so `OllamaOptions` has neither.
 
 The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
 `num_batch` and `num_thread` must be positive, `top_k` non-negative (0 turns top-k off), `min_p` in
-[0, 1], `repeat_penalty` non-negative, `repeat_last_n` and `num_keep` at least -1,
-`num_gpu` at least -1 and `main_gpu` non-negative.
+[0, 1], `typical_p` in [0, 1], `repeat_penalty` and `draft_num_predict` non-negative, `repeat_last_n`
+and `num_keep` at least -1, `num_gpu` at least -1 and `main_gpu` non-negative.
 """
 @kwdef struct OllamaOptions
     num_ctx::Union{Int,Nothing} = nothing
@@ -1006,8 +1017,10 @@ The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
     min_p::Union{Float64,Nothing} = nothing
     repeat_last_n::Union{Int,Nothing} = nothing
     repeat_penalty::Union{Float64,Nothing} = nothing
+    draft_num_predict::Union{Int,Nothing} = nothing
+    typical_p::Union{Float64,Nothing} = nothing
     function OllamaOptions(num_ctx, num_batch, num_gpu, main_gpu, num_thread, use_mmap, num_keep,
-                           top_k, min_p, repeat_last_n, repeat_penalty)
+                           top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict=nothing, typical_p=nothing)
         _check(ok, what) = ok || throw(ArgumentError("Ollama option $what"))
         isnothing(num_ctx)        || _check(num_ctx > 0, "num_ctx must be positive (got $num_ctx)")
         isnothing(num_batch)      || _check(num_batch > 0, "num_batch must be positive (got $num_batch)")
@@ -1019,8 +1032,10 @@ The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
         isnothing(min_p)          || _check(0.0 <= min_p <= 1.0, "min_p must be in [0, 1] (got $min_p)")
         isnothing(repeat_last_n)  || _check(repeat_last_n >= -1, "repeat_last_n must be at least -1 (got $repeat_last_n)")
         isnothing(repeat_penalty) || _check(repeat_penalty >= 0.0, "repeat_penalty must be non-negative (got $repeat_penalty)")
+        isnothing(draft_num_predict) || _check(draft_num_predict >= 0, "draft_num_predict must be non-negative (got $draft_num_predict)")
+        isnothing(typical_p)      || _check(0.0 <= typical_p <= 1.0, "typical_p must be in [0, 1] (got $typical_p)")
         new(num_ctx, num_batch, num_gpu, main_gpu, num_thread, use_mmap, num_keep,
-            top_k, min_p, repeat_last_n, repeat_penalty)
+            top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict, typical_p)
     end
 end
 
@@ -1124,16 +1139,41 @@ which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `run
   either: at Ollama's default batch the llama.cpp builds measured refuse long inputs —
   `embeddinggemma-2:740m-q8_0` anything past about 2,037 tokens (Ollama 0.40.6).
 
-No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
+A `Chat`'s `reasoning_effort`, and a `Respond`'s [`Reasoning`](@ref) effort, go to Ollama by
+name: `"none"` turns thinking off (`think: false`), and every other effort is sent as it is,
+for Ollama to resolve against the model, whose thinking levels are its own
+([thinking](https://docs.ollama.com/capabilities/thinking)). On `/api/chat`, a model with
+thinking metadata applies a level it names and uses its default for any other name; a model
+without takes `"low"`, `"medium"`, `"high"` and `"max"`, and answers another name, such as
+`"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11). On
+`/v1/responses` ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), a
+model without metadata reads `"minimal"` as `"low"` and `"xhigh"` as `"max"`, a model whose
+levels are `true` and `false` takes any effort but `"none"` as `true`, and GPT-OSS reads
+`"minimal"` as `"low"` and `"xhigh"` as `"high"`. [`model_info`](@ref) reports a model's
+`thinking_levels` and `thinking_default`.
+
+A server of the caller's own gets no API key. Ollama's cloud does: a request to
+`https://ollama.com` (which `OLLAMA_HOST=ollama.com` names) carries the `OLLAMA_API_KEY`
+environment variable as `Authorization: Bearer` whenever it is set, read each time a request
+is built. Ollama asks for it for inference — "Direct cloud inference at
+`https://ollama.com/api` and `https://ollama.com/v1` requires an API key"
+([authentication](https://docs.ollama.com/api/authentication)) — and lists the cloud's models
+without one ([cloud](https://docs.ollama.com/cloud)). With the variable unset or blank, an
+inference request (chat, embeddings, `respond`, compaction, FIM, transcription, System One, a
+model's load or unload) is not sent — the call error's `cause` is an `ArgumentError` naming it —
+and [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
+[`pull_model`](@ref) and [`delete_model`](@ref) go without it. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
 `-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by the
 name requested, never as a free local call: a System One, `respond` or FIM result whose
 reply drops the tag (`gpt-oss:120b`) keeps the requested name, and the server's stays in
 its `raw`, while a chat or embeddings result is priced by the model its request names; a
-name missing from the price table logs the missing-price warning. A model is recognised as
-cloud by that tag alone, so a cloud model copied under a name without it (`ollama cp`)
-is priced as local, at `0.0`.
+name missing from the price table logs the missing-price warning. Every model a request to
+Ollama's cloud itself (`https://ollama.com`) names is priced the same way: the cloud bills it,
+and names its models without a tag, "such as `gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)).
+Through a local server a model is recognised as cloud by that tag alone, so a cloud model copied
+under a name without it (`ollama cp`) is priced as local, at `0.0`.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)
@@ -1377,10 +1417,21 @@ OpenAI options, omitted from the request when unset:
   2026-09-22). A `Chat` sets no cache breakpoints (the API's `prompt_cache_breakpoint` on
   a message content part), so `mode="explicit"` means the request does not use prompt
   caching.
+- `prompt_cache_retention::Union{String,Nothing}`: `"in_memory"` or `"24h"`, the prompt
+  cache's retention policy, which OpenAI's Chat Completions reference still lists and
+  deprecates ("Use `prompt_cache_options.ttl` instead"); "for `gpt-5.5`, `gpt-5.5-pro`, and
+  future models, only `24h` is supported". `OPENAIServiceEndpoint` sends it, and throws
+  `ArgumentError` for any value on the models whose cache lifetime `prompt_cache_options`
+  sets — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) — as a [`Respond`](@ref) does.
+  Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic endpoints (Mistral
+  among them) send it as given, the server's answer the check; native Gemini,
+  `ANTHROPICServiceEndpoint` and [`OllamaEndpoint`](@ref), whose requests have no such
+  field, throw `ArgumentError` for it before any request.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
 - `stream_options::Union{AbstractDict,Nothing}`: streaming options; when unset, an
-  `OPENAIServiceEndpoint` or `DeepSeekEndpoint` stream requests
+  `OPENAIServiceEndpoint`, `DeepSeekEndpoint` or `GEMINIOpenAIServiceEndpoint` stream requests
   `{"include_usage": true}`, so the streamed result carries token usage.
 
 The constructor validates ranges and throws `ArgumentError` on a violation; among
@@ -1427,6 +1478,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     _cumulative_cost::Ref{Float64} = Ref(0.0)
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
     moderation::Union{ModerationConfig,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # OpenAI, deprecated: "in_memory" or "24h"
     function Chat(
         service,
         model,
@@ -1464,7 +1516,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         safety_identifier,
         _cumulative_cost,
         prompt_cache_options=nothing,
-        moderation=nothing
+        moderation=nothing,
+        prompt_cache_retention=nothing
     )
         model = _resolve_model(service, model)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
@@ -1521,7 +1574,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
             safety_identifier,
             _cumulative_cost,
             prompt_cache_options,
-            moderation
+            moderation,
+            prompt_cache_retention
         )
     end
 end
@@ -1533,7 +1587,7 @@ function JSON.lower(chat::Chat)
         :frequency_penalty, :logit_bias, :user, :seed,
         :reasoning_effort, :stream_options, :verbosity, :store, :metadata, :service_tier,
         :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
-        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation)
+        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end

@@ -8,13 +8,12 @@ using UniLM
 native API: a `Chat` goes to `/api/chat` and an `Embeddings` request to `/api/embed`, the routes that
 take the context window, how long a model stays loaded, thinking and truncation. `respond`,
 `compact_response`, `fim_complete` and `transcribe` reach Ollama's OpenAI-compatible routes instead,
-which carry none of the endpoint's options. No key is sent, and a local model costs nothing. No verb
-of a capability the table below lists as not available sends a request through this endpoint:
-`speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own API, UniLM
-does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web search and
-web fetch, and it sends no API key, which a direct request to Ollama's cloud at `ollama.com` needs. The
-decision models `ask` reaches through the same endpoint have an entry of their own:
-[Local decision models](@ref ollama_decisions_start).
+which carry none of the endpoint's options. No key is sent to a server of your own, and a local model
+costs nothing. No verb of a capability the table below lists as not available sends a request through
+this endpoint: `speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own
+API, UniLM does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web
+search and web fetch. The decision models `ask` reaches through the same endpoint have an entry of their
+own: [Local decision models](@ref ollama_decisions_start).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:ollama)
@@ -71,10 +70,17 @@ over `https` on port 443; an IPv6 address may be bare or bracketed, and a path i
 cannot read this way, another scheme or a port outside 1–65535, throws `ArgumentError` when the
 endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_options__next).
 
-UniLM sends no key: Ollama's local API "does not require authentication", while direct cloud
-inference at `https://ollama.com/api` "requires an API key"
-([authentication](https://docs.ollama.com/api/authentication)), so an endpoint pointed at `ollama.com`
-reaches the cloud without one. A cloud model runs through the local server once you sign in with
+Ollama's local API "does not require authentication", and UniLM sends a server of your own no key. Direct
+cloud inference at `https://ollama.com/api` and `https://ollama.com/v1` "requires an API key", used "in
+the `Authorization: Bearer` header" ([authentication](https://docs.ollama.com/api/authentication)), and
+Ollama lists the cloud's models without one, `curl https://ollama.com/api/tags`
+([cloud](https://docs.ollama.com/cloud)). An endpoint whose server is `https://ollama.com`, as
+`OLLAMA_HOST=ollama.com` makes it, sends the `OLLAMA_API_KEY` environment variable that way whenever it
+is set, read each time a request is built, and to no other host. With the variable unset or blank, an
+inference request is not sent: the call returns a call error whose `cause` is an `ArgumentError` naming
+`OLLAMA_API_KEY`; [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
+[`pull_model`](@ref) and [`delete_model`](@ref) go without it. No request was sent to the cloud for this
+page (its requests bill). A cloud model runs through the local server once you sign in with
 `ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first__next) says how
 UniLM prices it.
 
@@ -117,12 +123,14 @@ it had run elsewhere. A cloud model reached through the same server — one whos
 ends in `-cloud`, such as `gemma4:cloud` or `gpt-oss:120b-cloud` — runs in
 [Ollama's cloud](https://docs.ollama.com/cloud), and UniLM prices each of its results by the requested
 name, like any other model, never as a free local call; a name missing from the price table gets the
-missing-price warning. A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
+missing-price warning. So does every model a request to Ollama's cloud itself names — an endpoint whose
+server is `https://ollama.com` ([Setup](@ref ollama_setup)) — whose names carry no cloud tag, "such as
+`gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)). A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
 0.40.6's source, which sends the cloud the name without it; untested, as no cloud call was made): a
 System One, `respond` or FIM result keeps the requested name, and the server's stays in its `raw`,
-while a chat or embeddings result is priced by the model its request names. UniLM recognises a cloud
-model by its tag alone, so one copied under a name without it (`ollama cp`) is priced as local, at
-`0.0`, with no warning.
+while a chat or embeddings result is priced by the model its request names. Through your own server,
+UniLM recognises a cloud model by its tag alone, so one copied under a name without it (`ollama cp`) is
+priced as local, at `0.0`, with no warning.
 
 The first request to a model also loads it into memory: about 1.7 s for Gemma 4 E4B on an Apple M4
 Max with 64 GB (Ollama 0.40.6), after which a short answer took about 0.1 s. [`load_model`](@ref) loads
@@ -273,7 +281,7 @@ JSON.parse(text(chatrequest!(chat)))
 ```
 
 With a `response_format`, the request turns thinking off (`think: false`), and a `response_format`
-together with a thinking effort (`"low"`, `"medium"`, `"high"`) is refused before the request is sent
+together with a thinking effort (any effort but `"none"`) is refused before the request is sent
 ([Limits and refusals](@ref ollama_limits)). UniLM's reason, which its message gives: Ollama applies a
 format only once the model's thinking ends, so a reply that skips thinking is not constrained at all —
 in the measurements below, every reply that was not valid JSON came from a run with thinking on in
@@ -296,22 +304,28 @@ cloud model's format all the same. The formats every provider shares are on
 
 ## [Reasoning](@id ollama_thinking__next)
 
-`reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and `"low"`, `"medium"` and
-`"high"` go as they are; a request without one sends none, so the model's default applies, and Gemma 4
-thinks by default. Ollama's thinking levels are the model's own: `/api/show` lists the values a model
-takes and its default, and a model whose values are `true` and `false` thinks or does not; "If the model
-resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported
-names use the model default." ([thinking](https://docs.ollama.com/capabilities/thinking)).
-[`model_info`](@ref) reads them as `thinking_levels` and `thinking_default`: `[false, true]` and `true`
-for Gemma 4 E4B, which names no levels. No page says what such a model does with a named level; on
-Ollama 0.40.11, `think` `"low"`, `"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the
-same answer to the bat-and-ball prompt below at temperature 0 (observed on 25 October 2026). UniLM takes
-no other effort:
-`"minimal"`, `"xhigh"` and `"max"` are refused before the request
-([Limits and refusals](@ref ollama_limits)), though Ollama's API reference lists `"max"` among the
-levels of `think`, and Ollama 0.40.11 answered a `think: "max"` request to `gemma4:e4b` with HTTP 200, an
-answer without thinking, in the one request sent on 25 October 2026. The thinking comes back beside the
-answer, and [`reasoning_text`](@ref) reads it:
+`reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and every other effort goes as it
+is, `"max"` among them, a level of `think` in Ollama's
+[API reference](https://github.com/ollama/ollama/blob/v0.40.11/docs/api.md#generate-a-chat-completion); a
+request without one sends none, so the model's default applies, and Gemma 4 thinks by default. Ollama's
+thinking levels are the model's own: `/api/show` lists the values a model takes and its default, and a
+model whose values are `true` and `false` thinks or does not; "If the model resolves named levels from
+`/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default."
+([thinking](https://docs.ollama.com/capabilities/thinking)). [`model_info`](@ref) reads them as
+`thinking_levels` and `thinking_default`: `[false, true]` and `true` for Gemma 4 E4B, which names no
+levels. No page says what such a model does with a named level on `/api/chat`; on Ollama 0.40.11,
+`think` `"low"`, `"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the same answer to the
+bat-and-ball prompt below at temperature 0 (observed on 25 October 2026), and a `think: "max"` request to
+`gemma4:e4b` was answered with HTTP 200, an answer without thinking, in the one request sent that day.
+To a model without thinking metadata, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
+and `"max"`, such as `"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11:
+`qwen2.5-coder:1.5b-base`, whose `/api/show` reports no thinking, on 25 October 2026). `respond`'s
+`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"` for such a model; there,
+"Boolean-only models that support enabling thinking map recognized compatibility efforts to `true`", so
+a model whose values are `true` and `false`, Gemma 4 E4B among them, takes any effort but `"none"` as
+`true`, and GPT-OSS reads `"minimal"` as `"low"` and `"xhigh"` as `"high"`
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)).
+The thinking comes back beside the answer, and [`reasoning_text`](@ref) reads it:
 
 ```@example ollama
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
@@ -488,10 +502,9 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings`, `compact_response` or FIM request without a `model` | `model must be specified`: Ollama has no default model | an installed model's name, such as `"gemma4:e4b"` |
-| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` or `moderation` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request (`/api/chat` takes `logprobs` and `top_logprobs`, but a result has no field for them) | remove it |
+| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation` or `prompt_cache_retention` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request (`/api/chat` takes `logprobs` and `top_logprobs`, but a result has no field for them) | remove it |
 | a `tool_choice` other than `"auto"`, on a `Chat` or a `Respond` | `Ollama has no tool_choice`: the model decides whether to call a tool | leave it unset, or send no tools to rule calls out |
 | a tool with `strict=true`, on a `Chat` or a `Respond` | `Ollama does not enforce strict tool schemas`: its tool definition has no `strict` flag | leave `strict` unset |
-| a `reasoning_effort` other than `"none"`, `"low"`, `"medium"` and `"high"`, or such a `Reasoning` effort | `Ollama takes reasoning_effort`: UniLM sends those four only | one of them |
 | a `response_format`, or a `json_schema` text format, with a thinking effort | `Ollama applies a response_format only after the model's thinking ends`: a reply that skips thinking would be unconstrained | `reasoning_effort="none"` or unset, or no format |
 | a `response_format` of another type, or a JSON Schema format without a schema object | `Ollama supports response_format text, json_object or json_schema`, `needs a schema object` | a JSON Schema format holding its schema, or `UniLM.json_object()` |
 | a [`DocumentAttachment`](@ref) | `takes images and sound clips, not documents`: the `images` entry holds images and clips | the document's text in the message |

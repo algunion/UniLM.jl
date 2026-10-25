@@ -325,6 +325,27 @@ end
 
 # ─── 4. @branch on a failed call ─────────────────────────────────────────────
 
+@testset "semantic — @branch's model: the scope's without a service, else the backend's default; Ollama has none" begin
+    doc = replace(join((join(string.(d.text)) for d in
+                        values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, Symbol("@branch"))].docs)), " "), r"\s+" => " ")
+    @test !occursin("omitted, the client default applies", doc)
+    @test occursin("when omitted, the [`with_system_one`](@ref) scope's model applies (only when `service` is not " *
+                   "given), else the backend's default", doc)
+    @test occursin("Ollama has none, so an omitted model is an `ArgumentError` before the request", doc)
+    # Ollama has no default System One model: an @branch that names none is refused before any request (the
+    # endpoint's port takes no connection, so a request would be a SystemOneError instead).
+    e = try
+        @branch "my money back" service=OllamaEndpoint(base_url="http://127.0.0.1:1") begin
+            "refund" => :refund
+            "other"  => :other
+        end
+        nothing
+    catch x
+        x
+    end
+    @test e isa ArgumentError && occursin("has no default System One model", e.msg)
+end
+
 @testset "semantic — @branch throws rather than pick a branch on a failed call" begin
     err = try
         _with_semantic_mock(; status=500, body="""{"detail":"boom"}""") do

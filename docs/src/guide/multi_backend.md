@@ -341,7 +341,7 @@ How a neutral `Chat` maps onto the Messages API:
 | `stop`, `stream` | `stop_sequences`, `stream` |
 | `n` | must be `1` |
 | `temperature`, `top_p` | none: API version `2026-10-21` removed them, and answers HTTP 400 for either on every model, even at its default value — setting one throws `ArgumentError` |
-| `moderation` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
+| `moderation` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `prompt_cache_retention`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
 
 `reasoning_effort` per model — the model id decides, or the id with a dated snapshot
 suffix (`claude-opus-4-5-20251101` takes the Opus 4.5 row); no model takes another's

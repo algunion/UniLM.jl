@@ -796,8 +796,11 @@ takes a key sends the key it was given, or else reads its key variable from the
 environment when a request is built, so a missing variable surfaces in the verb's
 call-error result, naming it: as a `KeyError`, or for `TYPESAFEServiceEndpoint` as an
 `ArgumentError` naming the variable, which a blank value gets too. An `OllamaEndpoint`
-sends no credentials and reads no variable here (a local server takes none), and a
-`GenericOpenAIEndpoint` whose key is empty sends no `Authorization` header.
+sends no credentials (a local server takes none), except to Ollama's cloud,
+`https://ollama.com`, which gets `OLLAMA_API_KEY` as a Bearer token, read here, a missing or
+blank one an `ArgumentError` naming the variable (these are the headers of its inference
+requests; its model verbs go without the key when it is unset); and a `GenericOpenAIEndpoint`
+whose key is empty sends no `Authorization` header.
 
 Public extension API (not exported); see the Custom Backends guide.
 """

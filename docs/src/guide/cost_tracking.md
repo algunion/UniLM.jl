@@ -293,7 +293,8 @@ far fewer input tokens than N calls. See [Ask many questions at once](@ref jev_m
 ## Prices drift
 
 [`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (OpenAI, Anthropic and Gemini rows verified
-2026-10-22; TypeSafe rows 2026-09-22; DeepSeek rows 2026-09-24). The DeepSeek rows are its peak
+2026-10-22, OpenAI's `gpt-5-search-api` 2026-10-25; TypeSafe rows 2026-10-25; DeepSeek rows
+2026-09-24). The DeepSeek rows are its peak
 rates — off-peak hours bill half — and DeepSeek context-cache hits
 (`prompt_cache_hit_tokens`) are billed at the cached rate. Provider list prices change;
 re-verify against the provider's current pricing before relying on any number, and pass your

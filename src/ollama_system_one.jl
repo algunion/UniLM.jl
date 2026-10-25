@@ -23,8 +23,8 @@ model's listing names answers as if unpinned, and any other is the server's 400,
 `no compatible manifest found for runners: <runner>`, never another answer, on Ollama
 0.40.6), `images` when the state holds any, and `keep_alive` when one is set —
 answered by a local decision model such as `tev1:4b` (`clef-flash:9b` for
-pictures) and decoded as a TypeSafe reply is. No key is sent, no request id comes
-back, and recordings are filed under the namespace `"ollama"`, keyed without
+pictures) and decoded as a TypeSafe reply is. No key is sent, except to Ollama's cloud
+(see [`OllamaEndpoint`](@ref)), no request id comes back, and recordings are filed under the namespace `"ollama"`, keyed without
 `keep_alive`, which changes how long the model stays loaded but never an answer.
 
 There is no default model: the call names one (`model = "tev1:4b"`), or a

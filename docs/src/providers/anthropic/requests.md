@@ -283,7 +283,7 @@ only the other rules. Building an endpoint refuses an option value that breaks i
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | `temperature` or `top_p`, at any value | `answers HTTP 400 for it on every model, even at its default value`: API version `2026-10-21` removed the sampling parameters | remove it |
-| `moderation`, or a field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `seed`, `stream_options`, `verbosity`, `store`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key` | `does not support`: the Messages API has no such field | remove it |
+| `moderation`, or a field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `seed`, `stream_options`, `verbosity`, `store`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `prompt_cache_retention` | `does not support`: the Messages API has no such field | remove it |
 | a `service_tier` other than `"auto"`, `"standard_only"` and `"fast"` | `service_tier must be` one of the three | one of them |
 | `service_tier="fast"` on a model whose Fast mode cell is "—", or through an endpoint whose `betas` lack the beta header the cell names | `has no fast mode`, `serves fast mode`: the model has no fast mode, or serves it in research preview only with the beta header | a model with fast mode, or an endpoint whose `betas` hold the header |
 | `metadata` with a key other than `user_id`, or a `user_id` that is neither a string nor `nothing` | `accepts only user_id`, `must be a string`: the Messages API's `metadata` holds the end user's id alone | the id as a string in `metadata["user_id"]`, or in `safety_identifier` |

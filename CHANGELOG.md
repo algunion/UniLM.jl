@@ -59,6 +59,26 @@
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
   `TaskFailedException` around it. Every earlier recording replays unchanged; what this
   changes for code that ran these calls inside a scope is under Breaking.
+- **`OllamaOptions` takes `draft_num_predict` and `typical_p`.** Ollama's runner option for
+  speculative decoding — the most draft tokens predicted per step when a model has a draft
+  model, `0` turning drafting off — and `typical_p`, the sampling option Ollama deprecates
+  and still reads per request (it logs "deprecated option provided"), are sent in the
+  request's `options` like the other options; a negative `draft_num_predict`, or a
+  `typical_p` outside [0, 1], is an `ArgumentError`. `penalize_newline` and `numa`, which
+  Ollama's API reference also lists, are still refused as unknown keywords: Ollama 0.40.11
+  does not read them (it logs "invalid option provided" and goes on without them).
+- **`transcribe` reaches a `GenericOpenAIEndpoint`.** The endpoint declares `:transcription`,
+  as it declares the other OpenAI-compatible routes, so `transcribe` sends the request to its
+  server's `/v1/audio/transcriptions`, where vLLM serves OpenAI's Transcriptions API; it
+  refused the endpoint before. As for its chat, the endpoint has no default model: a call that
+  names none is an `ArgumentError` before any request. `speak` and `translate` still refuse it.
+- **`Chat` takes `prompt_cache_retention`.** OpenAI's Chat Completions reference still lists
+  the field, deprecated ("Use `prompt_cache_options.ttl` instead"), and a `Chat` could not set
+  it, while a `Respond` could. `OPENAIServiceEndpoint` sends it, and refuses it with an
+  `ArgumentError` on the GPT-6 and GPT-5.6 models, whose cache lifetime `prompt_cache_options`
+  sets, as on a `Respond`; Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic
+  endpoints send it as given; native Gemini, Anthropic and Ollama refuse it, having no such
+  field. Built positionally, a `Chat` takes it as the 38th argument.
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's
@@ -121,6 +141,50 @@
   a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
   as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
   had reported, as for any other exception a callback throws.
+- **Ollama takes every reasoning effort, `"max"` among them.** A `reasoning_effort` on an
+  `OllamaEndpoint` `Chat`, or a `Reasoning` effort on its `respond`, other than `"none"`,
+  `"low"`, `"medium"` and `"high"` threw an `ArgumentError`, though Ollama's API reference
+  lists `"max"` among the levels of `think` and a model's thinking levels are its own. Every
+  effort is now sent by name (`"none"` still as `think: false`) for Ollama to resolve against
+  the model: one with thinking metadata applies a level it names and uses its default for any
+  other; to one without, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
+  and `"max"` with HTTP 400, and `/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"`
+  as `"max"`.
+- **Ollama's cloud gets its API key.** Direct cloud inference at `https://ollama.com`, where
+  `OLLAMA_HOST=ollama.com` points `OllamaEndpoint()`, "requires an API key" in the
+  `Authorization: Bearer` header, and UniLM sent none, so every inference request went out
+  without one. An endpoint whose server is `https://ollama.com` now sends the `OLLAMA_API_KEY`
+  environment variable that way whenever it is set, read each time a request is built. Unset
+  or blank, an inference request — chat, embeddings, `respond`, compaction, FIM, transcription,
+  System One, a model's load or unload — is not sent, and the call error's `cause` is an
+  `ArgumentError` naming the variable; `list_models` (which Ollama's cloud page runs without a
+  key), `model_info`, `running_models`, `pull_model` and `delete_model` go without it. No
+  other server gets the key. Such a call is priced by the name it requests, as a cloud model
+  reached through the local server is — the cloud names its models without a cloud tag — and
+  never as a free local call: a name with no price row logs the missing-price warning.
+- **A `GenericOpenAIEndpoint` `respond` sends its `seed`.** A `Respond` with a `seed` was
+  refused on every endpoint of the OpenAI Responses wire, a generic one included, though
+  vLLM's Responses API forwards a seed to its engine and a generic endpoint sends every other
+  field as given. A generic endpoint now sends it as `seed`; `OPENAIServiceEndpoint`, Azure
+  and `GEMINIOpenAIServiceEndpoint` still refuse it, since OpenAI's Responses API has none.
+- **`gpt-5-search-api` is priced.** The Chat Completions search model, which a `Chat` with
+  `web_search_options` runs on, had no row in `DEFAULT_PRICING`, so `estimated_cost` and
+  `cumulative_cost` read its calls as `0.0`, with the missing-price warning. Its row holds the
+  rates OpenAI's pricing page lists on 2026-10-25: \$1.25 input, \$0.125 cached input and \$10.00
+  output per 1M tokens. A fee for web search apart from the tokens is not included.
+- **`jev-1.14.0` has its price row.** TypeSafe's Models page lists Jev 1.14 (`jev-1.14.0`)
+  beside Jev 1.13 at \$42 per Btok of input, output free, and `DEFAULT_PRICING` had no row for
+  it: a result naming it was priced through the `jev-latest` fallback, at that same rate, and
+  the `estimated_cost` docstrings said TypeSafe lists a price for Jev 1.13 alone. The row is in
+  the table, and the docstrings name both versions.
+- **Five docstrings say what the code does.** `Chat`'s names `GEMINIOpenAIServiceEndpoint`
+  among the endpoints whose stream asks for usage; `MCPTool`'s gives `connector_id` OpenAI's
+  legacy label (deprecated for models released after September 1, 2026);
+  `ReplayMissError`'s and `with_recorded_answers`' give OpenAI's Decisions API its keyed path,
+  `/openai-decisions/v1/decisions` (they gave every System One backend `/<namespace>/v1/systemone`),
+  and `with_recorded_answers`' lists `prompt_cache_options` among the options never keyed and
+  names each backend's access for recording, not `TYPESAFE_API_KEY` for all; `@branch`'s says
+  which model an omitted `model` means, and that Ollama has none. No behaviour changes.
 
 ## 0.26.0
 

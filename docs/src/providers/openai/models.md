@@ -75,7 +75,7 @@ The columns:
   tools only on the Responses API ([Tools on Chat Completions](@ref openai_chat_tools)).
 - **Ultrafast tier**: whether a `Respond` may ask for `service_tier="ultrafast"`
   ([Request options](@ref openai_responses_options)).
-- **`prompt_cache_retention`**: whether a `Respond` may set it ([Prompt caching](@ref openai_caching)).
+- **`prompt_cache_retention`**: whether a `Chat` or a `Respond` may set it ([Prompt caching](@ref openai_caching)).
 - **Default effort**: the effort UniLM checks a request that sets none at ([Setup](@ref openai_setup)),
   meant as the one OpenAI runs it at. OpenAI's reasoning guide: "If you omit `reasoning.effort`, GPT-5.6
   defaults to `medium`", and "GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna also default to `medium` reasoning
@@ -153,9 +153,9 @@ two APIs take different options:
   `prompt_cache_options`).
 
 `prompt_cache_key`, on both APIs, is the key OpenAI uses "to cache responses for similar requests to
-optimize your cache hit rates". The deprecated `prompt_cache_retention` of a `Respond` is refused on the
-models whose `prompt_cache_retention` cell in the [rule table](@ref openai_reasoning) is "—", whose cache
-lifetime `prompt_cache_options` sets, and sent as given on the others. Here a generated parts list is the system prompt of a conversation, and each
+optimize your cache hit rates". The deprecated `prompt_cache_retention` of a `Chat` or a `Respond` is
+refused on the models whose `prompt_cache_retention` cell in the [rule table](@ref openai_reasoning) is
+"—", whose cache lifetime `prompt_cache_options` sets, and sent as given on the others. Here a generated parts list is the system prompt of a conversation, and each
 turn asks about one part:
 
 ```@example openai
@@ -273,7 +273,7 @@ no row names meets only the other rules.
 | `max_tokens` and `max_completion_tokens` both set on a `Chat` | `OpenAI sends max_tokens as max_completion_tokens`: `max_tokens` "is now deprecated in favor of `max_completion_tokens`", which UniLM sends it as | one of them |
 | `prompt_cache_options` with `prewarm` or `comparison_response_id` on a `Chat` | `Chat Completions prompt_cache_options accepts only mode and ttl`: the Chat Completions object has no other field | a `Respond` ([Prompt caching](@ref openai_caching)) |
 | a `prompt_cache_options` `ttl` of `"5m"` or `"1h"`, or `"12h"` on a `Chat` | `OpenAI Chat Completions accepts prompt_cache_options ttl`, `OpenAI Responses accepts prompt_cache_options ttl`: the API answers HTTP 400 for it | `"30m"`, or `"12h"` on a `Respond` |
-| `prompt_cache_retention` on a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` |
+| `prompt_cache_retention` on a `Chat` or a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` on a `Respond` |
 | `seed` on a `Respond` | `Responses API takes no seed`: the Responses API has no seed, while Chat Completions has one | a `Chat`, or no seed |
 | `conversation` and `previous_response_id` together on a `Respond` | `conversation and previous_response_id cannot be combined`: `previous_response_id` "Cannot be used in conjunction with `conversation`" | one of them |
 | `background=true` with `store=false` on a `Respond` | `background=true requires a stored response`: a rule of UniLM's, stricter than OpenAI's [background guide](https://developers.openai.com/api/docs/guides/background), which lets a background request use `store=false` | omit `store`, or `store=true` |

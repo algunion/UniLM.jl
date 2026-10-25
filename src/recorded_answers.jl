@@ -52,8 +52,8 @@ one.
 - `method::String`, `path::String`: the request line as keyed, e.g. `"POST"` and
   `"/v1/systemone"` or `"/v1/chat/completions"`: the path of the request URL alone,
   never its host or query — for a System One backend other than TypeSafe, after the
-  backend's namespace (`"/<namespace>/v1/systemone"`), so backends never share a
-  recording.
+  backend's namespace (`"/openai-decisions/v1/decisions"` for OpenAI's Decisions API,
+  `"/ollama/v1/systemone"` for Ollama), so backends never share a recording.
 - `body::String`: what the key was computed over after the request line — the body
   as its backend keys it, with the credentials [`with_recorded_answers`](@ref) never
   writes replaced by `"<redacted>"` and each base64 `data:` URL by its digest
@@ -220,16 +220,17 @@ A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the
 path of the request URL alone: never its host, nor its query, which can carry a
 credential. A System One backend other than TypeSafe files its requests under a
-namespace of its own, `"/<namespace>/v1/systemone"`, so the same question asked of
-two backends is two recordings; a System One request that carries an option its
+namespace of its own, followed by its wire's path — `"/openai-decisions/v1/decisions"`
+for OpenAI's Decisions API, `"/ollama/v1/systemone"` for Ollama — so the same question
+asked of two backends is two recordings; a System One request that carries an option its
 backend keys (TypeSafe's `long_context`) or image parts, and a
 [`list_input_items`](@ref) request, whose query names the page, append a newline and
 their canonical text — options and the page's `limit`, `order` and `after` as sorted
 `name=value` lines with JSON values, parts as their names and SHA-256 digests — to
 the body they are keyed on, so a request without them keeps its key; and a System
 One backend keys its body without the options that change how a request is served
-but never what it is answered — Ollama's `keep_alive`, OpenAI's `prompt_cache_key` and
-`safety_identifier` — which are sent, and neither keyed nor written, so the same
+but never what it is answered — Ollama's `keep_alive`, OpenAI's `prompt_cache_key`,
+`safety_identifier` and `prompt_cache_options` — which are sent, and neither keyed nor written, so the same
 question replays one recording whatever they are. The key is never a canonical
 form of the request: the order of Choice options and of the state's keys moves
 the answer, so a reordered request is a different request. Two changes are made
@@ -293,8 +294,8 @@ end
 ```
 
 A request that has no recording yet is recorded by running the same code once
-with the API key of its service set (`TYPESAFE_API_KEY` for System One) and
-`mode = :record_missing`.
+with access to its service (`TYPESAFE_API_KEY` for Jev, `OPENAI_API_KEY` for OpenAI's
+Decisions API, a running server for Ollama) and `mode = :record_missing`.
 """
 function with_recorded_answers(f::Function, dir::AbstractString; mode::Symbol=:replay)
     mode in _ANSWER_MODES || throw(ArgumentError(

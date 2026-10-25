@@ -119,6 +119,23 @@ _ra_caught(f::Function) = try f(); nothing catch e; e end
 
 # ─── With the service reachable ──────────────────────────────────────────────
 
+@testset "recorded answers — the docstrings name each System One backend's path, unkeyed options and access" begin
+    rawdoc(name) = replace(join((join(string.(d.text)) for d in
+                                 values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)), " "), r"\s+" => " ")
+    # The keyed path is "/" * namespace * the wire's own path: OpenAI's Decisions API is not at /v1/systemone.
+    for doc in (rawdoc(:ReplayMissError), rawdoc(:with_recorded_answers))
+        @test occursin("`\"/openai-decisions/v1/decisions\"`", doc) && occursin("`\"/ollama/v1/systemone\"`", doc)
+        @test !occursin("`\"/<namespace>/v1/systemone\"`", doc)
+    end
+    doc = rawdoc(:with_recorded_answers)
+    # OpenAI's three options that change how a request is served, never its answer, are none of them keyed.
+    @test occursin("OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`", doc)
+    # Recording needs each backend's own access, not TypeSafe's key for every System One backend.
+    @test occursin("(`TYPESAFE_API_KEY` for Jev, `OPENAI_API_KEY` for OpenAI's Decisions API, a running server " *
+                   "for Ollama)", doc)
+    @test !occursin("(`TYPESAFE_API_KEY` for System One)", doc)
+end
+
 @testset "recorded answers — :record writes one readable file per request and no credential" begin
     dir = _ra_dir("record")
     a, b = _ra_request(), _ra_request("Where is my parcel?")

@@ -237,12 +237,13 @@ result as well as on a success.
 - **Each stream uses its own HTTP/1.1 connection**, so a consumer that applies
   backpressure to one stream cannot stall its siblings; non-streaming requests may
   share an HTTP/2 connection.
-- **Streamed usage**: `OPENAIServiceEndpoint` and `DeepSeekEndpoint` streams request
+- **Streamed usage**: `OPENAIServiceEndpoint`, `DeepSeekEndpoint` and
+  `GEMINIOpenAIServiceEndpoint` streams request
   `stream_options = {"include_usage": true}` automatically when `stream_options` is
   unset, so a streamed turn carries token usage (on `.usage`) and accrues cost like a
   non-streamed one. Native Anthropic and Gemini streams report usage on their own.
-  Other OpenAI-compatible servers (Azure, the Gemini compat shim, generic endpoints)
-  are not sent the field, since some reject it: set
+  Other OpenAI-compatible servers (Azure, generic endpoints) are not sent the field,
+  since some reject it: set
   `stream_options=Dict("include_usage" => true)` where the server supports it, or the
   streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:`
   keep-alive comment lines, and provider preambles (e.g. Azure content-filter

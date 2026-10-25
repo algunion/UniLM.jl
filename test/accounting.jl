@@ -131,15 +131,15 @@ end
     end
 
     @testset "versioned Jev id without a row is priced at jev-latest" begin
-        # Assumption: TypeSafe lists one price, for Jev 1.13 ($42 per Btok of input; output
-        # free); a later version is assumed to keep it until the pricing page says otherwise.
+        # Assumption: TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price ($42 per Btok of
+        # input; output free); a later version is assumed to keep it until the page says otherwise.
         # Responses report the versioned id that answered, e.g. a release newer than the table.
         ju = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500, total_tokens=1_000_500)
         s1(model) = SystemOneSuccess(UniLM.SystemOneResponse(model, Dict{String,UniLM.SystemOneAnswer}(),
             ju, nothing, Dict{String,Any}()))
-        @test !haskey(DEFAULT_PRICING, "jev-1.14.0")
-        @test estimated_cost(s1("jev-1.14.0")) ≈ 0.042
-        @test estimated_cost(s1("jev-1.14.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
+        @test !haskey(DEFAULT_PRICING, "jev-1.15.0")
+        @test estimated_cost(s1("jev-1.15.0")) ≈ 0.042
+        @test estimated_cost(s1("jev-1.15.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
         @test estimated_cost(s1("jev-latest"); model="jev-2.0.10") ≈ 0.042
         @test estimated_cost(LLMSuccess(message=m, self=Chat(model="jev-2.0.10"), usage=ju)) ≈ 0.042
         unpriced = (:warn, "no price row for this model; its estimated cost is 0.0")
@@ -151,6 +151,21 @@ end
         # A dated snapshot suffix is stripped before the lookup: the base version's row applies.
         @test estimated_cost(s1("jev-1.13.0-2026-09-22")) == estimated_cost(s1("jev-1.13.0")) > 0
     end
+end
+
+@testset "TypeSafe price rows: Jev 1.14 and Jev 1.13 at the Models page's price" begin
+    # https://docs.typesafe.ai/models (2026-10-25): jev-1.14.0 and jev-1.13.0 at $42 per Btok of input, output
+    # free; jev-latest and jev-preview point at jev-1.14.0.
+    for model in ("jev-1.14.0", "jev-1.13.0", "jev-latest", "jev-preview")
+        @test DEFAULT_PRICING[model] == UniLM._price(0.042, 0.042, 0.0)
+    end
+    # Both estimated_cost docstrings (one per method) state the price for the versions TypeSafe lists, not
+    # for Jev 1.13 alone; read raw from the module's docs, which hold every method's docstring.
+    docs = values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :estimated_cost)].docs)
+    doc = replace(join((join(string.(d.text)) for d in docs), " "), r"\s+" => " ")
+    @test !occursin("TypeSafe lists one price, for Jev 1.13", doc) && !occursin("lists for Jev 1.13)", doc)
+    @test occursin("TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price", doc)
+    @test occursin("the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13", doc)
 end
 
 @testset "cumulative_cost" begin
@@ -572,6 +587,30 @@ end
     @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
 end
 
+@testset "a call made directly to Ollama's cloud is priced by name, as a cloud model is" begin
+    # https://docs.ollama.com/cloud: a direct API request to ollama.com names the model as the cloud lists it,
+    # "such as `gemma4:31b`", with no cloud tag. Ollama bills such a call, so it is priced by name — no row, then
+    # the missing-price warning — never as a free local call.
+    direct = OllamaEndpoint(base_url="https://ollama.com")
+    succ(model) = (c = Chat(service=direct, model=model); push!(c, Message(Val(:system), "s"));
+                   push!(c, Message(Val(:user), "hi"));
+                   LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c,
+                              usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)))
+    @test (@test_logs (:warn, r"no price row") estimated_cost(succ("zz-direct:31b"))) == 0.0
+    row = UniLM._price(1.0, 0.1, 2.0)
+    @test (@test_logs estimated_cost(succ("zz-direct-priced:31b"); pricing=Dict("zz-direct-priced:31b" => row))) ≈
+          10 * 1e-6 + 5 * 2e-6
+    s1 = SystemOneSuccess(SystemOneResponse("zz-direct-s1:31b", Dict{String,SystemOneAnswer}(),
+                          TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), direct))
+    @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+    # The same name through a server of the caller's own is a local model, and free.
+    c = Chat(service=OllamaEndpoint(base_url="http://box:11434"), model="zz-direct:31b")
+    push!(c, Message(Val(:system), "s")); push!(c, Message(Val(:user), "hi"))
+    loc = LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c,
+                     usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15))
+    @test (@test_logs estimated_cost(loc)) == 0.0
+end
+
 @testset "Responses usage reads cache-write details" begin
     # https://developers.openai.com/api/docs/guides/prompt-caching: input_tokens counts every
     # input token; cache_write_tokens_details splits the writes by lifetime (ttl_30m_tokens +
@@ -707,6 +746,15 @@ end
 
 # An OpenAI Chat result of `model` with usage `u`, billed by the OpenAI endpoint's own pricing.
 _oa_result(model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; model), usage=u)
+
+@testset "gpt-5-search-api, the Chat Completions search model, has its price row" begin
+    # OpenAI's pricing page (2026-10-25), "Search": gpt-5-search-api $1.25 input, $0.125 cached input and
+    # $10.00 output per 1M tokens. A Chat with web_search_options runs on it; without a row its cost read 0.0.
+    @test DEFAULT_PRICING["gpt-5-search-api"] == UniLM._price(1.25, 0.125, 10.0)
+    u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=200_000, completion_tokens=100_000, total_tokens=1_100_000)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-5-search-api", u))),
+                   800_000 * 1.25e-6 + 200_000 * 0.125e-6 + 100_000 * 10.0e-6; rtol=1e-12)
+end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 
 @testset "OpenAI cost: cache writes by lifetime" begin

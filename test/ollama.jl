@@ -108,11 +108,25 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test_throws ArgumentError OllamaEndpoint(keep_alive=1e9 + 1)
     @test_throws ArgumentError OllamaEndpoint(keep_alive=typemax(Int))
     @test OllamaOptions(top_k=0).top_k == 0                           # 0 turns top-k sampling off
+    # draft_num_predict, a runner option of Ollama's: the draft tokens per step; 0 turns drafting off.
+    @test OllamaOptions(draft_num_predict=0).draft_num_predict == 0
+    @test _wire(_ochat(OllamaEndpoint(draft_num_predict=4)))["options"] == Dict("draft_num_predict" => 4)
+    @test sprint(show, OllamaEndpoint(base_url="http://b:1", draft_num_predict=4)) ==
+          "OllamaEndpoint(\"http://b:1\"; draft_num_predict=4)"
+    # typical_p: Ollama deprecates it and still reads it per request (Ollama 0.40.11 logs "deprecated option
+    # provided" and applies it).
+    @test OllamaOptions(typical_p=0.9).typical_p == 0.9
+    @test _wire(_ochat(OllamaEndpoint(typical_p=0.9)))["options"] == Dict("typical_p" => 0.9)
+    # Ollama 0.40.11 reads no penalize_newline or numa ("invalid option provided"): refused, not sent.
+    for k in (:penalize_newline, :numa)
+        err = try OllamaEndpoint(; k => true); nothing catch x; x end
+        @test err isa ArgumentError && occursin(String(k), err.msg)
+    end
     err = try OllamaEndpoint(num_ctxx=10); nothing catch x; x end
     @test err isa ArgumentError && occursin("num_ctxx", err.msg) && occursin("num_ctx", err.msg)
     for (k, v) in (:num_ctx => 0, :num_batch => 0, :num_thread => 0, :num_gpu => -2, :main_gpu => -1,
                    :num_keep => -2, :top_k => -1, :min_p => 1.5, :repeat_last_n => -2,
-                   :repeat_penalty => -0.1)
+                   :repeat_penalty => -0.1, :draft_num_predict => -1, :typical_p => 1.5, :typical_p => -0.1)
         @test_throws ArgumentError OllamaOptions(; k => v)
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value
@@ -131,6 +145,81 @@ end
           "http://box:11434/v1/completions"
     @test UniLM._agentic_url(e) == "http://box:11434/v1/responses"
     @test UniLM.auth_header(e) == ["Content-Type" => "application/json"]
+end
+
+@testset "Ollama's cloud takes OLLAMA_API_KEY as a Bearer token; without it no inference request is sent" begin
+    # "Direct cloud inference at https://ollama.com/api and https://ollama.com/v1 requires an API key", sent in
+    # the Authorization: Bearer header (https://docs.ollama.com/api/authentication). No request reaches the
+    # cloud here: the header is what auth_header gives the transport, and every call below runs under a
+    # deadline that ends it at the transport, before any connection.
+    cloud = withenv(OllamaEndpoint, "OLLAMA_HOST" => "ollama.com")
+    @test cloud.base_url == "https://ollama.com:443"
+    json = "Content-Type" => "application/json"
+    withenv("OLLAMA_API_KEY" => "test-key") do
+        for ep in (cloud, OllamaEndpoint(base_url="https://ollama.com"), OllamaEndpoint(base_url="https://Ollama.COM/"))
+            @test UniLM.auth_header(ep) == ["Authorization" => "Bearer test-key", json]
+        end
+        @test UniLM.auth_header_multipart(cloud) == ["Authorization" => "Bearer test-key"]   # transcription
+        @test UniLM._stream_headers(cloud) == ["Authorization" => "Bearer test-key", json,  # a streamed chat
+                                               "Accept-Encoding" => "identity"]
+        # Any other server gets no key, the variable set or not: it is the cloud's credential.
+        for url in ("http://127.0.0.1:11434", "https://gpu-box:11434", "https://ollama.com.example.net",
+                    "https://api.ollama.com", "http://ollama.com")
+            @test UniLM.auth_header(OllamaEndpoint(base_url=url)) == [json]
+        end
+    end
+    # The key is read when a request is built: unset or blank, the request is refused, naming the variable.
+    for unset in (nothing, "", "  ")
+        withenv("OLLAMA_API_KEY" => unset) do
+            for headers in (UniLM.auth_header, UniLM.auth_header_multipart, UniLM._stream_headers)
+                e = try headers(cloud); nothing catch x; x end
+                @test e isa ArgumentError && occursin("OLLAMA_API_KEY", e.msg)
+            end
+        end
+    end
+    # Through the verbs: an inference request without the key ends in a call error whose cause is that
+    # ArgumentError, before the transport is reached; with it the request gets as far as the transport, where the
+    # deadline ends it unsent.
+    tiny = RequestConfig(total_deadline=1e-300)
+    sent(r) = !issuccess(r) && r.cause isa UniLMTimeout && r.cause.phase === :deadline   # reached the transport
+    inference = (() -> chatrequest!(Chat(service=cloud, model="gemma4:31b", messages=[Message(Val(:user), "hi")]); config=tiny),
+                 () -> respond(Respond(service=cloud, model="gemma4:31b", input="hi"); config=tiny),
+                 () -> embeddingrequest!(Embeddings("hi"; service=cloud, model="embeddinggemma", task=:none); config=tiny),
+                 () -> unload_model("gemma4:31b"; service=cloud, config=tiny))
+    for call in inference
+        r = withenv(call, "OLLAMA_API_KEY" => nothing)
+        @test !issuccess(r) && r.cause isa ArgumentError && occursin("OLLAMA_API_KEY", r.cause.msg)
+        @test sent(withenv(call, "OLLAMA_API_KEY" => "test-key"))
+    end
+    # The cloud lists its models without a key ("curl https://ollama.com/api/tags", https://docs.ollama.com/cloud),
+    # and Ollama's pages ask for one only for inference: the other model verbs go with the key when it is set, and
+    # without it otherwise. A token cancelled before the call stops each at the transport, before any I/O (a pull
+    # opens its stream before its deadline can act).
+    stopped = cancel!(CancelToken())
+    others = (() -> list_models(service=cloud, cancel=stopped), () -> model_info("gemma4:31b"; service=cloud, cancel=stopped),
+              () -> running_models(service=cloud, cancel=stopped), () -> delete_model("gemma4:31b"; service=cloud, cancel=stopped),
+              () -> pull_model("gemma4:31b"; service=cloud, cancel=stopped))
+    for call in others, key in (nothing, "test-key")
+        r = withenv(call, "OLLAMA_API_KEY" => key)
+        @test !issuccess(r) && r.cause isa UniLMCancelled
+    end
+    @test UniLM._ollama_auth(cloud; required=false) == [json]                          # unset: no header, no refusal
+    @test withenv(() -> UniLM._ollama_auth(cloud; required=false), "OLLAMA_API_KEY" => "test-key") ==
+          ["Authorization" => "Bearer test-key", json]
+    # A server of the caller's own sees no Authorization header, the variable set or not.
+    auth = String[]
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        push!(auth, HTTP.header(req, "Authorization", "<none>"))
+        HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(_reply(content="ok")))
+    end
+    try
+        mine = OllamaEndpoint(base_url="http://127.0.0.1:$(HTTP.port(srv))")
+        r = withenv(() -> chatrequest!(_ochat(mine)), "OLLAMA_API_KEY" => "test-key")
+        @test r isa LLMSuccess && text(r) == "ok"
+    finally
+        close(srv)
+    end
+    @test auth == ["<none>"]
 end
 
 @testset "request: fields map or are refused" begin
@@ -162,25 +251,23 @@ end
                    :modalities => ["text"], :audio => Dict("voice" => "x"), :web_search_options => Dict(),
                    :prompt_cache_key => "k", :safety_identifier => "s",
                    :prompt_cache_options => PromptCacheOptions(mode="implicit"),
-                   :moderation => ModerationConfig(model="omni-moderation-latest"))
+                   :moderation => ModerationConfig(model="omni-moderation-latest"), :prompt_cache_retention => "24h")
         err = try UniLM.encode_request(e, _ochat(e; f => v)); nothing catch x; x end
         @test err isa ArgumentError && occursin(String(f), err.msg)
     end
     @test Set(UniLM._OLLAMA_CHAT_UNMAPPED_FIELDS) == Set([:logit_bias, :user, :stream_options, :verbosity, :store,
         :metadata, :service_tier, :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
-        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation])
+        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention])
     @test_throws ArgumentError chatrequest!(_ochat(e; user="u"))     # thrown before any network I/O
 end
 
 @testset "request: thinking, format, tools" begin
     e = OllamaEndpoint()
     @test _wire(_ochat(e; reasoning_effort="none"))["think"] === false
-    for lvl in ("low", "medium", "high")
+    # Every other effort goes by name: Ollama resolves a level against the model, which applies one it
+    # defines and uses its default for another; "max" is among the levels of Ollama's API reference.
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
         @test _wire(_ochat(e; reasoning_effort=lvl))["think"] == lvl
-    end
-    for bad in ("minimal", "xhigh", "max")
-        err = try _wire(_ochat(e; reasoning_effort=bad)); nothing catch x; x end
-        @test err isa ArgumentError && occursin(bad, err.msg)
     end
     schema = Dict("type" => "object", "properties" => Dict("name" => Dict("type" => "string")), "required" => ["name"])
     w = _wire(_ochat(e; response_format=UniLM.json_schema("person", "p", schema)))
@@ -191,7 +278,7 @@ end
     wo = _wire(_ochat(e; response_format=UniLM.json_object()))
     @test wo["format"] == Dict("type" => "object") && wo["think"] === false
     @test _wire(_ochat(e; response_format=UniLM.json_object(), reasoning_effort="none"))["think"] === false
-    for lvl in ("low", "medium", "high")                    # a thinking model may skip thinking: unconstrained
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")   # a thinking model may skip thinking: unconstrained
         err = try _wire(_ochat(e; response_format=UniLM.json_object(), reasoning_effort=lvl)); nothing catch x; x end
         @test err isa ArgumentError && occursin("response_format", err.msg)
     end
@@ -454,7 +541,11 @@ end
     @test said(store=true, service_tier="auto") == said(store=true)      # the state field is named first
     @test_throws ArgumentError enc(tool_choice="required")
     @test haskey(enc(tool_choice="auto"), "model")
-    @test_throws ArgumentError enc(reasoning=Reasoning(effort="xhigh"))
+    # Every effort goes as reasoning.effort: /v1/responses reads model-defined names and maps "minimal" to
+    # "low" and "xhigh" to "max" for a model without thinking metadata.
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
+        @test enc(reasoning=Reasoning(effort=lvl))["reasoning"] == Dict("effort" => lvl)
+    end
     @test_throws ArgumentError enc(reasoning=Reasoning(effort="low", summary="auto"))
     @test_throws ArgumentError enc(text=TextConfig(format=TextFormatSpec(type="json_object")))
     @test_throws ArgumentError enc(text=TextConfig(verbosity="low"))
@@ -519,7 +610,7 @@ end
     @test enc(text=fmt, reasoning=Reasoning(effort="none"))["reasoning"]["effort"] == "none"
     @test !haskey(enc(), "reasoning")                                   # no format: the model's default
     @test enc(reasoning=Reasoning(effort="high"))["reasoning"]["effort"] == "high"
-    for lvl in ("low", "medium", "high")
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
         err = try enc(text=fmt, reasoning=Reasoning(effort=lvl)); nothing catch x; x end
         @test err isa ArgumentError && occursin("response_format", err.msg)
     end

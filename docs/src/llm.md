@@ -29,6 +29,7 @@ using UniLM
 | `TYPESAFE_BASE_URL`                | `TYPESAFEServiceEndpoint`         | Optional API root override (default `https://api.typesafe.ai`) |
 | `TYPESAFE_DEFAULT_MODEL`           | `TYPESAFEServiceEndpoint`         | Model used when a call names none (default `jev-latest`) |
 | `OLLAMA_HOST`                      | `OllamaEndpoint`                  | Server read by `OllamaEndpoint()` when no `base_url` is given, by the rules of Ollama's own clients (`"gpu-box"` → `http://gpu-box:11434`; default `http://127.0.0.1:11434`) |
+| `OLLAMA_API_KEY`                   | `OllamaEndpoint`                  | Ollama's cloud API key, read per request and sent as `Authorization: Bearer` to `https://ollama.com` alone, whenever it is set (unset there: an inference request is not sent, its call error's cause an `ArgumentError` naming it, and the model verbs go without it) |
 
 ## The APIs
 
@@ -131,16 +132,16 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 
 ### Ollama (local)
 
-`OllamaEndpoint` needs no key and has no default model (`Chat(service=OllamaEndpoint())` throws `ArgumentError`; name an installed model, e.g. `"gemma4:e4b"`). Contract of its native chat wire (`/api/chat`):
+`OllamaEndpoint` sends no key to a server of your own (Ollama's cloud, `https://ollama.com`, gets `OLLAMA_API_KEY` as a Bearer token whenever it is set; without it an inference request is not sent, the call error's cause an `ArgumentError` naming it, while `list_models`, `model_info`, `running_models`, `pull_model` and `delete_model` go without it) and has no default model (`Chat(service=OllamaEndpoint())` throws `ArgumentError`; name an installed model, e.g. `"gemma4:e4b"`). Contract of its native chat wire (`/api/chat`):
 
 - **Mapped**: `model`, `messages` (attachments → `images`, images and sound clips only — a `DocumentAttachment` or an image's `detail` level throws `ArgumentError` before I/O; captured `:ollama` thinking → `thinking`; tool calls with their ids; tool results → `tool_name` + `tool_call_id`), `tools`, `stream` (always sent), `temperature`/`top_p`/`seed`/`stop`/`presence_penalty`/`frequency_penalty` and `max_completion_tokens` (else `max_tokens`) → `options` (as `num_predict`), `response_format` → `format` (a schema; `json_object` → `{"type":"object"}`), `reasoning_effort` → `think`, plus the endpoint's `OllamaOptions` → `options`, `keep_alive`, `truncate` (always sent, default `false`), `shift` and `runner` (`"mlx"`, `"llamacpp"`, `"ggml"`; also sent on `/api/embed`, `/v1/systemone`, `model_info`, `load_model`, `unload_model` and `pull_model`; never on `delete_model`, the listings or the OpenAI-compatible routes). Ollama matches `runner` against the runner the model's manifest names, `OllamaModel.runner` (which can differ from the serving one `running_models` reports: a GGUF model listed `:ggml` is served by llama.cpp, and pinned to `:llamacpp` is the 400): a model published for one runner — every model measured, Ollama 0.40.6 — answers as if unpinned for that runner, and any other is HTTP 400 `no compatible manifest found for runners: <runner>` (404 from `/api/show`, and so from `model_info` and `load_model`), never a fallback, even while the model is loaded; a model published for several is served by its variant for the pinned one (by Ollama's source; untested). The pin goes with every request of the endpoint.
 - **Context window per runner** (Ollama 0.40.6, measured; ggml untested): llama.cpp loads the model with `num_ctx`, loads it again for another `num_ctx`, and answers a prompt that does not fit with 400 unless `truncate=true` — which can cut inside one over-long message, keeping its first tokens and its tail (5,407 → 2,050 tokens, first 4 kept). MLX (Apple Silicon) loads with `num_ctx`, keeps a loaded model's window when a later request asks for more (`unload_model` first to change it), and does not bound a chat prompt by it (a 10,842-token prompt answered on a 4,096 load). A model with vision loads with at least 2,048 tokens whatever `num_ctx` asks (Ollama's scheduler, by its source; measured: `embeddinggemma-2:740m-q8_0` asked for 1,024 loaded with 2,048 on Ollama 0.40.6 and 0.40.7). Other `OllamaOptions` are passed through; their effect on MLX is unverified.
-- **Thinking**: `"none"` → `think: false`; `"low"`/`"medium"`/`"high"` pass through; other efforts throw. Unset → the model's default, except that a `response_format` sends `think: false` (Ollama constrains output only after thinking ends); a `response_format` with a thinking effort throws.
-- **Refused** (`ArgumentError` before I/O): `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation`; `tool_choice` other than `"auto"`; tools with `strict=true`; a message `name`; a tool result that answers no earlier call. `parallel_tool_calls` is not sent (the model may return several calls in a turn).
+- **Thinking**: `"none"` → `think: false`; every other effort goes by name (`think: "<effort>"`, on `respond` `reasoning.effort`) for Ollama to resolve: a model with thinking metadata applies a level it names and its default for any other name; one without takes `"low"`/`"medium"`/`"high"`/`"max"`, and `/api/chat` answers another name with HTTP 400 `invalid think value` (Ollama 0.40.11), `/v1/responses` reading `"minimal"` as `"low"` and `"xhigh"` as `"max"`; on `/v1/responses` a model whose levels are `true`/`false` takes any effort but `"none"` as `true`, and GPT-OSS reads `"minimal"` as `"low"` and `"xhigh"` as `"high"` (Ollama's OpenAI-compatibility page). Unset → the model's default, except that a `response_format` sends `think: false` (Ollama constrains output only after thinking ends); a `response_format` with a thinking effort throws.
+- **Refused** (`ArgumentError` before I/O): `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation`, `prompt_cache_retention`; `tool_choice` other than `"auto"`; tools with `strict=true`; a message `name`; a tool result that answers no earlier call. `parallel_tool_calls` is not sent (the model may return several calls in a turn).
 - **Replies**: `message.thinking` → `ProviderContent(:ollama, [Dict("thinking" => …)])`; a tool call without an id gets `"unilm_call_<k>"` (never sent back); usage = `prompt_eval_count` / `eval_count` (thinking included), cached = `prompt_eval_cached_count`; `done_reason` → `finish_reason` (`"tool_calls"` when calls are present). Streams are newline-delimited JSON; an `{"error": …}` line on a 200 stream is an `LLMCallError`, an error body with another status an `LLMFailure` with that status.
 - **Embeddings** go to `/api/embed` (`truncate`, `keep_alive`, `options` and `runner` from the endpoint; `user` refused): a text item is sent as its (prompted) string, an item with media as `{"text"?, "image"?}` or `{"text"?, "audio"?}` with raw base64 media (an item holding both an image and a clip throws `ArgumentError` before I/O: Ollama passes an item's media in a random order, and ten requests of one such item gave `embeddinggemma-2:740m-q8_0` two different vectors on 0.40.6); an EmbeddingGemma 2 request (model name matching `embeddinggemma-?2`, not followed by a digit) adds `options.num_ctx = options.num_batch = 8192` unless the endpoint sets either (otherwise the llama.cpp builds measured refuse long inputs with 413 — `740m-q8_0` over ~2,037 tokens; with the window, measured on `740m-q8_0`, `740m-mxfp8` and `270m-q8_0-text`: 5,991 tokens embedded, 8,331 refused with 400; the 440m and 570m builds untested). **`transcribe`** goes to `/v1/audio/transcriptions` (multipart `model`, `file`, `language`, `prompt`, `response_format` `"json"` or unset; no default model — `ArgumentError`; `"text"` is refused before I/O, since Ollama reports a failure after its reply has begun only in JSON and `"text"` would read it as an empty transcript — leave it unset and read the text with `transcript_text`; `temperature`, `languages`, `keywords` and other formats refused before I/O too; the reply is read as JSON, though Ollama labels it `application/x-ndjson`). **`respond`** goes to the stateless `/v1/responses`: only `model`, `input`, `instructions`, `tools` (function tools without `strict=true`, `async`, `allowed_callers`, `defer_loading` or `output_schema`), `tool_choice="auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `text` (a `json_schema` format with its schema, no verbosity) and `reasoning` (effort only) are accepted; a `json_schema` format sends `reasoning.effort="none"` when unset and throws with a thinking effort; an `input_file` part in any form (`input_file(document)` or `input_file(; url, id, file_data)`: Ollama documents no file inputs there), an `input_image` given by file id, an `InputMessage` `phase` and a `seed` (`/v1/responses` reads none; a `Chat`'s seed reaches the model) throw `ArgumentError` before I/O; `tool_loop(::Respond)` throws; `get_response`, `cancel_response`, `delete_response` and `list_input_items` throw `ArgumentError` before I/O (nothing is stored); `compact_response` goes to `/v1/responses/compact` and needs `model=` (none → the `Chat`'s `ArgumentError` before I/O). **FIM** uses `/v1/completions`. A `respond` (streamed or not) or FIM result of a cloud model whose reply drops the tag keeps the requested name in `response.model`, the server's in `response.raw["model"]`.
 - **System One** (`ask` and the NL verbs) goes to `/v1/systemone` (`UniLM.OllamaSystemOneProtocol`; Ollama 0.35 or later, 0.35.1 or later for images, 0.40.0 or later for the MLX decision models tev1 and clef-flash; measured on 0.40.6; recordings under `/ollama/v1/systemone`). No default model: `model=` (e.g. `"tev1:4b"`) or `with_system_one(OllamaEndpoint(); model=…) do … end`, else `ArgumentError`. Refused before I/O — what the route refuses in its shared checks or documents as its maximum (Ollama 0.40.6): more than 64 questions; a Choice of more than 255 options (one option is sent); Score levels outside 2–10; a blank text `state` without images; Box questions (by Ollama's source, a Kev model on Ollama's own runner, such as `kev:0.8b-mxfp8`, skips the shared checks and takes 1–255 levels and a blank state; untested); what Ollama's API reference does not list, though some models read it: `instructions` (optional) that are not a string, object or array, an option described by anything but a string or `nothing`, Score levels or Noul criteria that are not strings (measured: `kev:0.8b-q8_0` and `d1:3b` answered an object description, `tev1:0.8b` refused it); UniLM's own refusal (Ollama would read them as none), blank `instructions` (its message: "Ollama reads blank `instructions` as none; those of "<name>" are blank: say what it asks (most local decision models require instructions)"); any option but `keep_alive` (seconds, `Inf` = stay loaded; unset → the endpoint's `keep_alive`; written last; left out of the recording key and file, `record_body`). Images: the state is an `ImageAttachment` or a vector/tuple of images then strings; the images go in top-level `images` (raw base64, request order, shared by all questions, shown before the text), the strings become `state` (none → `""`, one → that string, several → an array; a blank string allowed with images); refused before I/O: an image after a string, inside a JSON object/array, beside non-strings, or in a question. The body is `state`, `model`, `questions`, then `runner` (when set; keyed), `images` (when any; keyed as `data:<mime>;sha256,<hex>`), `keep_alive` (when set; not keyed). A model that takes less answers its own 400 → `SystemOneFailure` with Ollama's message (measured, Ollama 0.40.6: tev1 ≤ 24 options, 27 → `criteria must contain 2–26 candidates`; nimble/clef-flash ≤ 26; kev, strands-decider, d1, d1-omni answered 27; one option: `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1-omni:600m` and `d1:3b` answered `{"a": 1.0}`, `tev1:0.8b`, `tev1:4b`, `nimble:9b` and `clef-flash:9b` 400 `question "pick": criteria must contain 2–26 candidates`, `strands-decider:2b` 400 `question "pick": criteria must contain 2–255 candidates`; the route accepts a question without `instructions`, but `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be a nonempty string, object, or array` and `kev:0.8b-q8_0` 400 `questions.<name>: "instructions" must be provided`, while `clef-flash:9b` answered — pass `instructions` with local models; a model without vision → its own 400, in its own words: `tev1:0.8b` `image inputs are not supported by this decision model`, `kev:0.8b-q8_0` `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision`; vision measured on `clef-flash:9b`, `d1:3b`, `d1-omni:600m`, other models whose `/api/show` capabilities include vision untested). Ollama caps a request's text plus schema (images excluded) at 64 KiB for the models measured — not checked locally; a 76,284-byte state → a 413 `SystemOneFailure` (`text and schema must not exceed 64 KiB`) on `kev:0.8b-q8_0` (the installed GGUF Kev), `d1-omni:600m` and `tev1:0.8b`; by Ollama's source a Kev model on Ollama's own runner gets 1 MiB (untested). A `RawQuestion` is sent verbatim. Choice/Score `confidence` is recomputed from the probabilities with TypeSafe's published formulas (`(n·p_max − 1)/(n − 1)` clamped to `0 … 1`; `max(0, 1 − Σ pᵢ·|i − m| / MAD_unif)`, `m` the lowest most likely level; `1` for a single outcome); the server's value (measured: the five MLX models `1 − H(p)/ln n`; Kev and the llama.cpp path TypeSafe's) stays in `raw`. Probability-sum tolerance `n·0.5e-4 + 1e-6`, and the chosen option may sit `1e-4 + 1e-6` below the most probable. `request_id` is `nothing`; usage cached = `prompt_eval_cached_count` (0 on the llama.cpp path, which omits it); a cloud model whose reply drops its tag keeps the requested name; an `{"error": …}` body is a `SystemOneFailure` with that message, and a missing model's 404 adds `ollama pull <model>`. No default `RequestConfig` of its own (the field defaults apply: loading a model can take minutes); `ask_each` keeps 1 request in flight unless `ntasks` says otherwise.
-- `estimated_cost` of an Ollama `LLMSuccess` / `EmbeddingSuccess` / `SystemOneSuccess` / `ResponseSuccess` / `FIMSuccess` is `0.0` without a warning (unless `model=` is passed) for a local model; a cloud model — its tag (after the last `:` with no `/` after it, surrounding whitespace trimmed, compared case-insensitively) is `cloud` or ends in `-cloud`, e.g. `gpt-oss:120b-cloud` — is priced by the requested name like any other (no row → `0.0` with the one-time warning), never as a free local call: a `SystemOneSuccess`, `ResponseSuccess` or `FIMSuccess` whose reply drops the tag keeps the requested name, the server's in its `raw` (the untagged reply is inferred from Ollama's source, which sends the cloud the name without its tag and passes the reply through; not observed). Detection goes by the name alone: a cloud model copied under a name without the tag (`ollama cp`) is priced as local, `0.0` with no warning. A connection failure's error text ends with how to start the server.
+- `estimated_cost` of an Ollama `LLMSuccess` / `EmbeddingSuccess` / `SystemOneSuccess` / `ResponseSuccess` / `FIMSuccess` is `0.0` without a warning (unless `model=` is passed) for a local model; a cloud model — its tag (after the last `:` with no `/` after it, surrounding whitespace trimmed, compared case-insensitively) is `cloud` or ends in `-cloud`, e.g. `gpt-oss:120b-cloud` — is priced by the requested name like any other (no row → `0.0` with the one-time warning), never as a free local call: a `SystemOneSuccess`, `ResponseSuccess` or `FIMSuccess` whose reply drops the tag keeps the requested name, the server's in its `raw` (the untagged reply is inferred from Ollama's source, which sends the cloud the name without its tag and passes the reply through; not observed). So is every model a request to Ollama's cloud itself (an endpoint whose server is `https://ollama.com`) names, untagged as the cloud names them (`gemma4:31b`). Through a local server, detection goes by the name alone: a cloud model copied under a name without the tag (`ollama cp`) is priced as local, `0.0` with no warning. A connection failure's error text ends with how to start the server.
 - `OllamaEndpoint` keywords: `keep_alive` in [0, 1e9] seconds or `Inf`; `runner` ∈ (`:mlx`, `:llamacpp`, `:ggml`) or `nothing` (anything else, a `String` included, throws); `OLLAMA_HOST` read like Ollama's clients (bare or bracketed IPv6; `0.0.0.0`/`::` → loopback; `ollama.com` → `https://ollama.com:443`).
 
 #### Ollama model management
@@ -301,6 +302,7 @@ revise a `retires_at` it lists. A listing is the provider's view for the key tha
     _cumulative_cost::Ref{Float64} = Ref(0.0)            # internal
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # OpenAI gpt-5.6 and later; Anthropic (top-level cache_control)
     moderation::Union{ModerationConfig,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # OpenAI, deprecated: "in_memory" or "24h"
 end
 ```
 
@@ -315,6 +317,7 @@ through that accessor, never directly.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
 - **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6-sol`/`gpt-6-luna`, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
 - `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": `mode="explicit"` on a `Chat` turns prompt caching off. `moderation` takes a [`ModerationConfig`](@ref).
+- `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
 
 ### Message
 
@@ -590,14 +593,15 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
-    seed::Union{Int64,Nothing} = nothing                    # Gemini Interactions only: generation_config.seed
+    seed::Union{Int64,Nothing} = nothing                    # Gemini Interactions (generation_config.seed) and generic endpoints
 end
 ```
 
-`seed` is sent only by Gemini Interactions, as an int32 (outside that range it throws);
-OpenAI's Responses API has none, so `OPENAIServiceEndpoint`, every other OpenAI-wire endpoint
-(Azure, `GEMINIOpenAIServiceEndpoint`, generic) and `OllamaEndpoint` throw `ArgumentError` for
-it before any request. `service_tier` on `GEMINIServiceEndpoint` is `"standard"`, `"flex"`,
+`seed` is sent by Gemini Interactions, as an int32 (outside that range it throws), and by a
+`GenericOpenAIEndpoint`, as given (vLLM's Responses API forwards it to its engine); OpenAI's
+Responses API has none, so `OPENAIServiceEndpoint`, the other OpenAI-wire endpoints (Azure,
+`GEMINIOpenAIServiceEndpoint`) and `OllamaEndpoint` throw `ArgumentError` for it before any
+request. `service_tier` on `GEMINIServiceEndpoint` is `"standard"`, `"flex"`,
 `"priority"` or `"deferred"`. The positional constructor takes all 32 fields in declaration order;
 build a `Respond` with keywords, which name each field.
 
@@ -682,9 +686,9 @@ end
 ```
 
 ```julia
-# Reach a remote MCP server (server_url), an OpenAI connector (connector_id, e.g.
-# "connector_googledrive"), or a Secure MCP Tunnel (tunnel_id) — hence no single
-# required target field beyond server_label.
+# Reach a remote MCP server (server_url), an OpenAI legacy connector (connector_id, e.g.
+# "connector_googledrive"; deprecated for models released after September 1, 2026), or a
+# Secure MCP Tunnel (tunnel_id) — hence no single required target field beyond server_label.
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
     server_url::Union{String, Nothing} = nothing
@@ -1281,9 +1285,9 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
   embeddings, Responses and FIM results (a cloud model reached through Ollama, a
   tag of `cloud` or ending in `-cloud`, is priced by the requested name).
 
-The OpenAI, Anthropic and Gemini rows were verified October 22, 2026, the TypeSafe rows
-September 22, 2026 and the DeepSeek rows September 24, 2026 (its peak rates; off-peak hours
-bill half). The rows are standard short-context text rates; surcharges apply only where
+The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
+`gpt-5-search-api` October 25, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
+September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
 UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) and
 hosted-tool fees are not included. A billed tier the provider's pricing page lists no price for
 (OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens; Gemini's
@@ -2134,7 +2138,7 @@ connections per host, kept 30 s), created by the first live request.
 
 - [Jev (TypeSafe)](@ref jev_start): `service = TYPESAFEServiceEndpoint`; reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`; default model `jev-latest`
 - [OpenAI Decisions API](@ref openai_decisions_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-luna`
-- [Local decision models](@ref ollama_decisions_start): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
+- [Local decision models](@ref ollama_decisions_start): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 
 ```@setup generated
 # /generated:decision-provider-contracts
@@ -2230,7 +2234,7 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   so is a miss or lost recording of a call its callback or on_tool_call made (as the callback threw it)
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
-    #   System One backend other than TypeSafe ("/<namespace>/v1/systemone");
+    #   System One backend other than TypeSafe ("/openai-decisions/v1/decisions", "/ollama/v1/systemone");
     #   a request keyed on more (TypeSafe's long_context, list_input_items' limit, order and after,
     #   as sorted name=<JSON> lines; System One image-part digests) appends "\n" * that text to the
     #   body it is keyed on;
@@ -2259,7 +2263,7 @@ struct ReplayMissError <: Exception       # thrown by the recorded verbs (or a s
     dir::String
     key::String
     method::String                        # "POST" | "GET" | "DELETE"
-    path::String                          # as keyed: "/v1/systemone" | "/<namespace>/v1/systemone" | "/v1/models" | …
+    path::String                          # as keyed: "/v1/systemone" | "/openai-decisions/v1/decisions" | "/ollama/v1/systemone" | "/v1/models" | …
     body::String                          # as keyed: credentials "<redacted>", data-URL images as digests ("" when
                                           #   none is sent), then "\n" * key_extra if any
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
@@ -2489,9 +2493,12 @@ make a single bounded attempt (`total_deadline` the whole call, `connect_timeout
 once with `cause = UniLMCancelled`. Speech is not priced: `token_usage` and `estimated_cost` throw for
 a `SpeechSuccess`.
 
-**Transcription.** The default model is `"gpt-transcribe"` on OpenAI (and OpenAI-compatible services); an
-`OllamaEndpoint` has none, so a request to it names an installed model that hears audio
-(`model = "gemma4:e4b"`) or throws `ArgumentError` before any request. On Ollama the request
+**Transcription.** The default model is `"gpt-transcribe"` on OpenAI (and on an endpoint of your own
+that declares the audio API); an `OllamaEndpoint` has none, so a request to it names an installed model
+that hears audio (`model = "gemma4:e4b"`) or throws `ArgumentError` before any request. A
+`GenericOpenAIEndpoint` has none either: its request names the model its server serves, or throws the
+same way, and goes to the server's `/v1/audio/transcriptions` with every field it sets, as given (vLLM
+serves OpenAI's Transcriptions API there). On Ollama the request
 goes to `/v1/audio/transcriptions` and asks for JSON only; `temperature`, `languages`,
 `keywords` and a `response_format` other than `"json"` throw before I/O — `"text"` with the
 fix, since Ollama reports a failure that arrives after its reply has begun only as JSON and
@@ -2514,7 +2521,7 @@ OpenAI and `translate` need `:realtime`; `speak` on `GEMINIServiceEndpoint` is G
 - [OpenAI](@ref openai_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-sol`
 - [Anthropic](@ref anthropic_start): `service = ANTHROPICServiceEndpoint`; reads `ANTHROPIC_API_KEY`; default model `claude-opus-5-5`
 - [Google Gemini](@ref gemini_start): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-3.8-flash`
-- [Ollama](@ref ollama_guide): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
+- [Ollama](@ref ollama_guide): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 - [vLLM, LM Studio & llama.cpp](@ref local_servers_start): `service = GenericOpenAIEndpoint("http://localhost:8000", "")`; reads no environment variable; no default model (a call names one)
 - [Azure OpenAI](@ref azure_start): `service = AZUREServiceEndpoint`; reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`; default model `gpt-5.2`
 - [DeepSeek](@ref deepseek_start): `service = DeepSeekEndpoint()`; reads `DEEPSEEK_API_KEY`; default model `deepseek-flash`
@@ -2546,7 +2553,7 @@ has_capability(service, cap::Symbol) -> Bool
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
-| Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses` |
+| Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:transcription` |
 | Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:models`, `:system_one`, `:transcription` |
 
 Validation comes in two strengths, and the difference matters if you write your

@@ -14,8 +14,26 @@ get_url(s::OllamaEndpoint, ::Embeddings)::String = s.base_url * OLLAMA_EMBED_PAT
 get_url(s::OllamaEndpoint, ::FIMCompletion)::String = s.base_url * COMPLETIONS_PATH
 _resolve_base_url(s::OllamaEndpoint) = s.base_url
 
-# A local server takes no credentials.
-auth_header(::OllamaEndpoint)::Vector{Pair{String,String}} = ["Content-Type" => "application/json"]
+# A local server takes no credentials. Ollama's cloud takes its key, read from OLLAMA_API_KEY (the
+# variable https://docs.ollama.com/api/authentication exports) each time a request is built and sent
+# to that host alone, "in the `Authorization: Bearer` header", whenever it is set. The same page says
+# "Direct cloud inference at https://ollama.com/api and https://ollama.com/v1 requires an API key",
+# while the cloud's own page lists its models with no key, "curl https://ollama.com/api/tags"
+# (https://docs.ollama.com/cloud): a `required` request — inference — is refused without the key
+# before it is sent, any other goes without it.
+_ollama_cloud(s::OllamaEndpoint)::Bool = occursin(r"^https://ollama\.com(?::\d+)?(?:/|$)"i, s.base_url)
+function _ollama_auth(s::OllamaEndpoint; required::Bool)::Vector{Pair{String,String}}
+    json = "Content-Type" => "application/json"
+    _ollama_cloud(s) || return [json]
+    key = strip(get(ENV, OLLAMA_API_KEY, ""))
+    isempty(key) || return ["Authorization" => "Bearer $key", json]
+    required && throw(ArgumentError("$OLLAMA_API_KEY is not set: Ollama's cloud ($(s.base_url)) takes an API key " *
+        "as a Bearer token for inference (https://ollama.com/settings/keys)"))
+    [json]
+end
+# Every request the shared verbs send to Ollama — chat, embeddings, respond, compaction, FIM,
+# transcription, System One — is inference; the model verbs choose for themselves (ollama_models.jl).
+auth_header(s::OllamaEndpoint)::Vector{Pair{String,String}} = _ollama_auth(s; required=true)
 
 provider_capabilities(::OllamaEndpoint) =
     Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models, :system_one, :transcription])
@@ -38,7 +56,9 @@ function _ollama_cloud_model(name::AbstractString)::Bool
     tag = lowercase(model[nextind(model, i):end])
     tag == "cloud" || endswith(tag, "-cloud")
 end
-_is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)
+# A request made to Ollama's cloud itself bills its account as well, whatever the model's name: the cloud
+# names its models without a cloud tag, "such as `gemma4:31b`" (https://docs.ollama.com/cloud).
+_is_local(s::OllamaEndpoint, model::AbstractString) = !_ollama_cloud(s) && !_ollama_cloud_model(model)
 
 # A cloud model may answer without its tag: Ollama's cloud proxy sends the cloud the name stripped of its
 # cloud tag (`gpt-oss:120b` for `gpt-oss:120b-cloud`) and passes the reply through. A result keeps the
@@ -63,19 +83,21 @@ const _OLLAMA_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tool
     :reasoning_effort, :_cumulative_cost)
 const _OLLAMA_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _OLLAMA_CHAT_MAPPED_FIELDS))
 
-# reasoning_effort → `think`: "none" turns thinking off; the effort levels pass
-# through (models with a single thinking mode treat any level as on). Unset, the
+# reasoning_effort → `think`: "none" turns thinking off; any other effort goes by name,
+# since thinking levels are the model's own (https://docs.ollama.com/capabilities/thinking):
+# a model with thinking metadata applies a level it names and uses its default for any other
+# name, and one without takes "low", "medium", "high" and "max" — the levels of Ollama's API
+# reference — and answers another name with HTTP 400 on /api/chat (Ollama 0.40.11,
+# api.ValidateLegacyThinking), while /v1/responses reads "minimal" as "low" and "xhigh" as
+# "max" (https://docs.ollama.com/api/openai-compatibility). Unset, the
 # model's default applies (Gemma 4 thinks) — except with a response_format: Ollama
 # constrains a reply to the format only after a thinking block ends, so a thinking
 # model that answers without thinking is not constrained at all (gemma4:e4b answered
 # plain text to 10 of 10 schema requests with thinking at its default, and valid JSON
 # to 10 of 10 with it off, on Ollama 0.34.4). A format therefore turns thinking off, and a format
 # with a thinking effort is refused rather than sent to fail at random.
-const _OLLAMA_EFFORTS = ("none", "low", "medium", "high")
 function _ollama_think(effort::Union{String,Nothing}, constrained::Bool)
     isnothing(effort) && return constrained ? false : nothing
-    effort in _OLLAMA_EFFORTS || throw(ArgumentError(
-        "Ollama takes reasoning_effort $(join(repr.(_OLLAMA_EFFORTS), ", ")) (got $(repr(effort)))"))
     effort == "none" && return false
     constrained && throw(ArgumentError(
         "Ollama applies a response_format only after the model's thinking ends, so a reply that " *

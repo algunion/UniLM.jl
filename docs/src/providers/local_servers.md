@@ -7,14 +7,14 @@ using UniLM
 vLLM, LM Studio and llama.cpp's `llama-server` serve open models from your own machine, or a server of
 yours, through an OpenAI-compatible API, and `GenericOpenAIEndpoint` speaks it: under the server's
 base URL, a `Chat` goes to `/v1/chat/completions`, an `Embeddings` request to `/v1/embeddings`,
-`respond` to `/v1/responses` and `fim_complete` to `/v1/completions`. UniLM is an OpenAI-compatible
-client there: it holds no rule of any server, sends every field a request sets as it is, and refuses
-what [Limits and refusals](@ref local_servers_limits) lists. No verb of a capability the table below
-lists as not available sends a request through this endpoint, `transcribe` among them, though vLLM
-serves transcription at `/v1/audio/transcriptions`; `ask` refuses it too, and local decision models
-have an entry of their own: [Local decision models](@ref ollama_decisions_start). UniLM does not use
-the servers' own APIs either, such as `llama-server`'s `/completion` and `/infill` or LM Studio's REST
-API. The examples on this page ran on `llama-server`.
+`respond` to `/v1/responses`, `fim_complete` to `/v1/completions` and `transcribe` to
+`/v1/audio/transcriptions`. UniLM is an OpenAI-compatible client there: it holds no rule of any server,
+sends every field a request sets as it is, and refuses what [Limits and refusals](@ref local_servers_limits)
+lists. No verb of a capability the table below lists as not available sends a request through this
+endpoint; `ask` refuses it too, and local decision models have an entry of their own:
+[Local decision models](@ref ollama_decisions_start). UniLM does not use the servers' own APIs either,
+such as `llama-server`'s `/completion` and `/infill` or LM Studio's REST API. The examples on this page
+ran on `llama-server`.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:local_servers)
@@ -27,7 +27,7 @@ Main.ProviderFacts.at_a_glance(:local_servers)
 | [stream a reply](@ref local_servers_streaming) | `stream=true`, a `callback` and `stream_options` | the text as it arrives, then the whole message and its usage |
 | [let the model call my functions](@ref local_servers_tools) | `tools` and `tool_loop!` | the calls run and answered until the model replies |
 | [get JSON that fits a schema](@ref local_servers_structured_output) | a JSON Schema `response_format` | a reply constrained to the schema, where the server enforces it |
-| [embed texts, use respond, or fill in the middle](@ref local_servers_other_apis) | `Embeddings`, `respond`, `fim_complete` | what the server serves at those routes |
+| [embed texts, use respond, fill in the middle, or transcribe](@ref local_servers_other_apis) | `Embeddings`, `respond`, `fim_complete`, `transcribe` | what the server serves at those routes |
 | [handle a failure](@ref local_servers_failures) | the result's type | the status or the exception, and what to do |
 
 ## [Setup](@id local_servers_setup)
@@ -193,7 +193,7 @@ JSON.parse(text(chatrequest!(chat)))
 
 The formats every provider shares are on [Structured Output](@ref structured_guide).
 
-## [Embeddings, respond and FIM](@id local_servers_other_apis)
+## [Embeddings, respond, FIM and transcription](@id local_servers_other_apis)
 
 These calls reach the server's other OpenAI-compatible routes; this page did not run them, so their
 code stands without output:
@@ -204,6 +204,8 @@ embeddingrequest!(emb)                                                    # /v1/
 result = respond("Name a prime number."; service=llama, model="d1-3b")   # /v1/responses
 fim = fim_complete("def area(r):\n    "; suffix="\n    return a\n",       # /v1/completions
                    service=lmstudio, model="qwen2.5-coder-1.5b")
+heard = transcribe("memo.wav"; service=vllm,                              # /v1/audio/transcriptions
+                   model="openai/whisper-large-v3-turbo", language="en")
 ```
 
 - **Embeddings** need an embedding model: vLLM's embeddings route is "Only applicable to embedding
@@ -214,12 +216,21 @@ fim = fim_complete("def area(r):\n    "; suffix="\n    return a\n",       # /v1/
   of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
   a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
   ([task prompts](@ref ollama_embeddings__next)).
-- **respond** sends a `Respond`'s fields as they are, except a `seed`, which UniLM refuses
-  ([Limits and refusals](@ref local_servers_limits)). vLLM serves stored responses
+- **respond** sends a `Respond`'s fields as they are, a `seed` among them: vLLM's Responses API
+  "forwards vLLM sampling parameters such as `top_k`, `min_p`, `repetition_penalty`, `seed`, `stop`,
+  and `ignore_eos` to the engine"
+  ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)).
+  vLLM serves stored responses
   (`/v1/responses/{response_id}`), LM Studio takes a `previous_response_id`, and `llama-server`'s route
   "works by converting Responses request into Chat Completions request".
 - **FIM** sends the `suffix` to `/v1/completions`, where vLLM's Completions API notes "`suffix` parameter
   is not supported", so a vLLM server cannot fill in the middle.
+- **transcribe** sends the file and the fields a request sets to `/v1/audio/transcriptions`, where vLLM's
+  Transcriptions API is "Only applicable to Automatic Speech Recognition (ASR) models"
+  ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/))
+  and takes `model` as "required" ([speech to text](https://docs.vllm.ai/en/latest/serving/online_serving/speech_to_text/)):
+  the endpoint has no default model, so a call names the server's. `speak` and `translate` refuse the
+  endpoint.
 
 ## [Limits and refusals](@id local_servers_limits)
 
@@ -232,7 +243,7 @@ capabilities the table at the top of this page lists as not available refuse the
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the name the server serves the model under |
-| a `Respond` with a `seed` | `takes no seed`: the Responses request UniLM writes has no `seed` field | a `Chat`, which sends its `seed` |
+| a `transcribe` call without a `model` | `has no default transcription model` | the name the server serves the model under |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
 | an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings__next), or `task = :none` where the server writes the prompts |
 | an EmbeddingGemma request with a `dimensions` other than 768, 512, 256 and 128 | `returns 768, 512, 256, 128 dimensions`: the sizes the model was trained for | one of them |

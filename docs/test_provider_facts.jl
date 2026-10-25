@@ -265,7 +265,11 @@ end
     @test entry(:jev).env_vars == [UniLM.TYPESAFE_BASE_URL_ENV, UniLM.TYPESAFE_DEFAULT_MODEL_ENV]
     @test entry(:azure).key_vars == [UniLM.AZURE_OPENAI_API_KEY, UniLM.AZURE_OPENAI_BASE_URL, UniLM.AZURE_OPENAI_API_VERSION]
     @test entry(:azure).env_vars == ["AZURE_OPENAI_DEPLOY_NAME_<MODEL>"]
-    @test all(e -> isempty(e.env_vars), filter(e -> e.key ∉ (:jev, :azure), REGISTRY))
+    # OllamaEndpoint reads its cloud's key, OLLAMA_API_KEY, for a request to https://ollama.com.
+    @test entry(:ollama).env_vars == entry(:ollama_decisions).env_vars == [UniLM.OLLAMA_API_KEY]
+    @test occursin("reads `OLLAMA_HOST`, `OLLAMA_API_KEY`;", region_text("provider-contracts")) &&
+          occursin("reads `OLLAMA_HOST`, `OLLAMA_API_KEY`;", region_text("decision-provider-contracts"))
+    @test all(e -> isempty(e.env_vars), filter(e -> e.key ∉ (:jev, :azure, :ollama, :ollama_decisions), REGISTRY))
     @test occursin("reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`;",
                    region_text("decision-provider-contracts"))
     keys_column(chapter) = [[c.code for c in r[2] if c isa Markdown.Code] for r in only(provider_table(chapter).content).rows[2:end]]

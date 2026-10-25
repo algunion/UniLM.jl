@@ -24,7 +24,7 @@ provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, 
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])
-provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses])  # permissive default
+provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :transcription])  # permissive default
 
 """
     has_capability(service, cap::Symbol) -> Bool
@@ -220,7 +220,7 @@ const _OPENAI_APIS = (
 _check_openai_effort(::String, ::Nothing, ::Union{String,Nothing}, ::NamedTuple) = nothing
 _check_openai_sampling(::String, ::Nothing, ::Union{String,Nothing}, ::Vector{String}, ::Function) = nothing
 _check_openai_chat_tools(::String, ::Nothing, ::Union{String,Nothing}, ::Bool) = nothing
-_check_openai_retention(::String, ::Nothing, ::Union{String,Nothing}) = nothing
+_check_openai_retention(::String, ::Nothing, ::Union{String,Nothing}, ::NamedTuple) = nothing
 
 # An effort the model does not list on this API is refused, naming the next one up that it
 # accepts — OpenAI's GPT-6 guide moves a "none" (Astra, 6.1 Sol) or "minimal" request to
@@ -264,15 +264,16 @@ function _check_openai_chat_tools(model::String, rules::_OpenAIModelRules, effor
                         "use Respond for reasoning with tools"))
 end
 
-# The Responses reference marks prompt_cache_retention "Deprecated. Use
+# The Responses and Chat Completions references mark prompt_cache_retention "Deprecated. Use
 # prompt_cache_options.ttl instead." The API still answered it with HTTP 200 on gpt-6-luna
-# (2026-10-22), so this refusal is UniLM's, on the models whose lifetime is set there.
+# (Responses, 2026-10-22), so this refusal is UniLM's, on the models whose lifetime is set there;
+# the fix names the ttls `api` takes.
 function _check_openai_retention(model::String, rules::_OpenAIModelRules,
-                                 retention::Union{String,Nothing})::Nothing
+                                 retention::Union{String,Nothing}, api::NamedTuple)::Nothing
     (isnothing(retention) || rules.prompt_cache_retention) && return nothing
     throw(ArgumentError("$model takes its cache lifetime from prompt_cache_options, and OpenAI deprecates " *
-        "prompt_cache_retention (\"Use prompt_cache_options.ttl instead\"): set " *
-        "prompt_cache_options=PromptCacheOptions(ttl=\"30m\") or PromptCacheOptions(ttl=\"12h\")"))
+        "prompt_cache_retention (\"Use prompt_cache_options.ttl instead\"): set prompt_cache_options=" *
+        join(("PromptCacheOptions(ttl=$(repr(ttl)))" for ttl in api.ttls), " or ")))
 end
 
 # Ultrafast is a Responses tier of the models whose row serves it
@@ -342,6 +343,7 @@ function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     _check_openai_chat_tools(chat.model, rules, effort, !isnothing(chat.tools))
     _check_openai_service_tier(chat.service_tier, _OPENAI_APIS.chat, chat.model, rules)
     _check_openai_user(chat.user)
+    _check_openai_retention(chat.model, rules, chat.prompt_cache_retention, _OPENAI_CACHE_TTLS.chat)
     # The Chat Completions prompt_cache_options object has only mode and ttl.
     pco = chat.prompt_cache_options
     if !isnothing(pco) && (!isnothing(pco.prewarm) || !isnothing(pco.comparison_response_id))
@@ -361,7 +363,7 @@ function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
                     "top_logprobs" => !isnothing(r.top_logprobs), "include" => logprobs),
         e -> "reasoning=Reasoning(effort=$(repr(e)))")
     _check_openai_service_tier(r.service_tier, _OPENAI_APIS.responses, r.model, rules)
-    _check_openai_retention(r.model, rules, r.prompt_cache_retention)
+    _check_openai_retention(r.model, rules, r.prompt_cache_retention, _OPENAI_CACHE_TTLS.responses)
     _check_openai_user(r.user)
     _check_openai_cache_ttl(r.prompt_cache_options, _OPENAI_CACHE_TTLS.responses)
     _refuse_responses_seed(OPENAIServiceEndpoint, r)

@@ -281,8 +281,11 @@ end
 
 A Model Context Protocol (MCP) tool for the Responses API. Connect the model to a remote
 MCP server (`server_url`), an OpenAI connector (`connector_id`, e.g. `"connector_googledrive"`,
-`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Use
-`authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
+`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Connectors
+are OpenAI's legacy connectors: `connector_id` "is deprecated for models released after
+September 1, 2026", which take `server_url` or `tunnel_id`, and "Existing models retain
+connector support" ([connectors and MCP](https://developers.openai.com/api/docs/guides/tools-connectors-mcp#connectors)).
+Use `authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
 string or object forms.
 """
 @kwdef struct MCPTool <: ResponseTool
@@ -850,10 +853,11 @@ Configuration struct for an OpenAI Responses API request.
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 - `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions
   (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`, an int32: a seed outside
-  -2,147,483,648 to 2,147,483,647 throws `ArgumentError` before any request. OpenAI's Responses API
-  has no seed (Chat Completions has one), so `OPENAIServiceEndpoint` and every other
-  endpoint on the OpenAI Responses wire (Azure, `GEMINIOpenAIServiceEndpoint`, generic
-  endpoints) throw `ArgumentError` for it before any request, as does
+  -2,147,483,648 to 2,147,483,647 throws `ArgumentError` before any request. A
+  [`GenericOpenAIEndpoint`](@ref) sends it as given, as `seed`: vLLM's Responses API forwards
+  a seed to its engine. OpenAI's Responses API has no seed (Chat Completions has one), so
+  `OPENAIServiceEndpoint` and the other endpoints on the OpenAI Responses wire (Azure,
+  `GEMINIOpenAIServiceEndpoint`) throw `ArgumentError` for it before any request, as does
   [`OllamaEndpoint`](@ref), whose Responses API reads no seed
 
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
@@ -918,7 +922,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
-    seed::Union{Int64,Nothing} = nothing               # Gemini Interactions only
+    seed::Union{Int64,Nothing} = nothing               # Gemini Interactions and generic endpoints
     # The positional form takes all 32 fields in declaration order; keyword construction,
     # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
@@ -950,7 +954,8 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
 end
 
 # OpenAI's Responses API has no seed (its Chat Completions API has one), so no request on that
-# wire carries one: a set seed would vanish between the caller and the wire.
+# wire carries one: a set seed would vanish between the caller and the wire. A generic
+# endpoint's encoder adds it instead (below `encode_agentic`).
 function _refuse_responses_seed(service, r::Respond)::Nothing
     isnothing(r.seed) || throw(ArgumentError(
         "$(_service_name(service))'s Responses API takes no seed — the OpenAI Responses wire has none " *
@@ -959,7 +964,8 @@ function _refuse_responses_seed(service, r::Respond)::Nothing
     nothing
 end
 
-# The OpenAI Responses JSON. `seed` has no place in it: the OpenAI-wire encoders refuse a set one.
+# The OpenAI Responses JSON. `seed` has no place in it: the OpenAI-wire encoders refuse a set one,
+# except a generic endpoint's, which adds it.
 function JSON.lower(r::Respond)
     d = Dict{Symbol,Any}(:model => r.model, :input => r.input)
     for f in (:instructions, :tools, :tool_choice, :parallel_tool_calls,
@@ -1685,6 +1691,12 @@ wire overrides it (the Gemini Interactions backend is the in-repo reference). An
 Public extension API (not exported); see the Custom Backends guide.
 """
 encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = (_refuse_responses_seed(service, r); JSON.json(r))
+# A generic endpoint sends a set seed as given, as it sends every other field, its server's answer
+# the check: vLLM's Responses API "forwards vLLM sampling parameters such as `top_k`, `min_p`,
+# `repetition_penalty`, `seed`, `stop`, and `ignore_eos` to the engine"
+# (https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/).
+encode_agentic(::GenericOpenAIEndpoint, r::Respond)::String =
+    isnothing(r.seed) ? JSON.json(r) : JSON.json(merge(JSON.lower(r), Dict{Symbol,Any}(:seed => r.seed)))
 
 # Whether the endpoint's Responses API forgets every call (no previous_response_id,
 # no conversation): a Respond tool loop cannot chain turns there.

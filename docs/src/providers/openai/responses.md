@@ -68,6 +68,11 @@ and UniLM checks no effort for tools here. A strict tool's schema follows the ru
 [Tools on Chat Completions](@ref openai_chat_tools), and a request whose strict schema misses them "will be
 rejected with details about the missing constraints"
 ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+A tool that sets no `strict` goes without one, and OpenAI decides: "If you omit `strict`, the default
+depends on the API: Responses requests will attempt to normalize your schema into strict mode when
+possible, and will fall back to non-strict, best-effort function calling if the schema cannot be made
+compatible with strict mode. When fallback happens, the response tool will show `strict: false`"; to keep
+best-effort calling, set `strict=false`.
 
 [`function_calls`](@ref) reads a response's calls, each a `Dict` with its `call_id`, `name` and
 `arguments` (a JSON string), and [`tool_result`](@ref)`(call_id, name, output)` makes the input item that

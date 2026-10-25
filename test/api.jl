@@ -1510,3 +1510,30 @@ end
     @test LLMResultError(ImageFailure(response="x", status=500)).result isa ImageFailure
     @test occursin("unknown", sprint(showerror, LLMResultError(ImageCallError(error="boom"))))
 end
+
+# The source text of every docstring of `name` in UniLM (each method's), whitespace runs as one space.
+_doc_text(name::Symbol) = replace(join((join(map(string, d.text))
+    for d in values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)), " "), r"\s+" => " ")
+
+@testset "docstrings say what each encoder and verb does" begin
+    # A document's filename travels only where a wire has a field for it: the OpenAI Chat `file`
+    # part and the Responses `input_file` part. Anthropic's `document` block, Gemini's inline data
+    # and an Interactions document part carry none.
+    doc = _doc_text(:DocumentAttachment)
+    @test !occursin("is the name the provider is given for it", doc) &&
+          occursin("send the document without it", doc)
+    # OpenAI rejects a strict schema "with details about the missing constraints" (no status given),
+    # and on Responses an omitted strict is not non-strict: "Responses requests will attempt to
+    # normalize your schema into strict mode when possible" (function-calling guide, strict mode).
+    doc = _doc_text(:FunctionSignature)
+    @test !occursin("the API rejects strict-invalid schemas with a 400", doc) &&
+          occursin("will attempt to normalize your schema into strict mode when possible", doc)
+    # respond reaches every agentic surface an endpoint declares, OpenAI's Responses API among them.
+    doc = _doc_text(:respond)
+    @test !occursin("Send a request to the OpenAI Responses API.", doc) &&
+          occursin("of an [`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server", doc)
+    # The keyword chatrequest! hands config and cancel to the call; the Chat has no such fields.
+    doc = _doc_text(:chatrequest!)
+    @test !occursin("Every other keyword is a [`Chat`](@ref) field", doc) &&
+          occursin("Every other keyword but `config` and `cancel` is a [`Chat`](@ref) field", doc)
+end

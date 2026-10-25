@@ -2166,8 +2166,8 @@ to `result.self`).
 The conversation is EITHER `messages` — copied, so the caller's vector is never
 mutated — OR `systemprompt` and `userprompt`, each a `String` or a [`Message`](@ref).
 Passing neither, only one prompt, or `messages` together with a prompt throws
-`ArgumentError` before any network I/O. Every other keyword is a [`Chat`](@ref)
-field, for example:
+`ArgumentError` before any network I/O. Every other keyword but `config` and `cancel` is a
+[`Chat`](@ref) field, for example:
 
 - `service::ServiceEndpointSpec = OPENAIServiceEndpoint`: The provider endpoint type or instance.
 - `model::String`: The model; the service's default when omitted.
@@ -2187,6 +2187,8 @@ field, for example:
 - `logit_bias::Union{AbstractDict{String,<:Real},Nothing} = nothing`: Modify the likelihood of specified tokens appearing in the completion.
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
+
+`config` and `cancel` go to `chatrequest!(chat)`:
 - `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
 - `cancel::Union{Nothing,CancelToken} = nothing`: Cancellation token; `nothing` resolves the ambient token (see `chatrequest!(chat)`).
 """

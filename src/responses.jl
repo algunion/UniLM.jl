@@ -1749,7 +1749,9 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
 """
     respond(r::Respond; config=nothing, callback=nothing, cancel=nothing)
 
-Send a request to the OpenAI Responses API.
+Send `r` to the agentic API of `r.service`: the Responses API of OpenAI, of an
+[`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or Gemini Interactions
+on `GEMINIServiceEndpoint`.
 
 Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings,

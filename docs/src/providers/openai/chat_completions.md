@@ -35,6 +35,9 @@ to the function schema", and OpenAI recommends "always enabling" it; its schema 
 `additionalProperties: false` on every object and every field `required`, and a request whose strict
 schema misses them "will be rejected with details about the missing constraints"
 ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+A `Tool` whose `FunctionSignature` sets no `strict` goes without one, and "Chat Completions requests
+remain non-strict by default"; the same tool given to a `Respond` meets the Responses default instead
+([Tools](@ref openai_tools)).
 
 A `Chat` with `tools` sends `parallel_tool_calls: false` unless it sets another value: the model may
 otherwise "call multiple functions in a single turn", and `false` "ensures exactly zero or one tool is

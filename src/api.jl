@@ -7,11 +7,18 @@ Describes a function that can be called by the model in the Chat Completions API
 - `name::String`: The name of the function.
 - `description::Union{String,Nothing}`: A description of what the function does.
 - `parameters::Union{AbstractDict,Nothing}`: JSON Schema object describing the function parameters.
-- `strict::Union{Bool,Nothing}`: Enable strict schema adherence for function arguments
-  (structured outputs). `nothing` (default) omits the field from the request — the API
-  default, non-strict. `true` requires `parameters` to be a strict-valid schema
-  (`additionalProperties: false` on every object, all properties `required`); UniLM does
-  not validate this — the API rejects strict-invalid schemas with a 400.
+- `strict::Union{Bool,Nothing}`: Strict schema adherence for the function's arguments.
+  `nothing` (default) sends no `strict`, so the API's default applies: OpenAI's Chat
+  Completions call the function non-strict, while its Responses API, which a `Chat`
+  [`Tool`](@ref) reaches through [`Respond`](@ref), "will attempt to normalize your schema
+  into strict mode when possible" and falls back to non-strict function calling where it
+  cannot ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+  `true` asks for adherence: OpenAI's strict mode needs `additionalProperties: false` on
+  every object and every property `required`, which UniLM does not check, and OpenAI
+  rejects a request whose strict schema misses them "with details about the missing
+  constraints". The native Anthropic encoder sends the flag on the tool; native Gemini and
+  Gemini Interactions, which have no such flag, ask for validated function calling when
+  `tool_choice` is unset or `"auto"`; [`OllamaEndpoint`](@ref) refuses `strict=true`.
 
 # Example
 ```julia
@@ -386,12 +393,13 @@ AudioAttachment(path::AbstractString) = AudioAttachment(read(_attachment_file(pa
     DocumentAttachment(data::AbstractVector{UInt8}; filename="document.pdf")
 
 A PDF document for a user [`Message`](@ref), recognised from its leading bytes
-(`%PDF-`). `mime` is `"application/pdf"`; `filename` is the name the provider is
-given for it: the file's own name (`basename(path)`) or, for bytes, the keyword.
-Endpoints on the OpenAI Chat Completions wire send it as a `file` part
+(`%PDF-`). `mime` is `"application/pdf"`; `filename` is the file's own name
+(`basename(path)`) or, for bytes, the keyword. Endpoints on the OpenAI Chat Completions
+wire send the document as a `file` part with its `filename`
 ([file inputs](https://developers.openai.com/api/docs/guides/file-inputs)); for the
-Responses API, [`input_file`](@ref) turns it into an `input_file` part, and the native
-Anthropic encoder sends it as a base64 `document` block. See
+Responses API, [`input_file`](@ref) turns it into an `input_file` part with its
+`filename`. The native Anthropic encoder (a base64 `document` block), native Gemini
+(`inlineData`) and Gemini Interactions (a `document` part) send the document without it. See
 [`Attachment`](@ref) for the endpoints that refuse it. Throws `ArgumentError` for
 bytes that are not PDF, whatever the file is called, and for a blank `filename`.
 

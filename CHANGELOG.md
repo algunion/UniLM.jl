@@ -241,6 +241,15 @@
   production". `TYPESAFE_DEFAULT_MODEL`'s advised pinning `jev-1.13.0`, while `jev-latest` now
   names `jev-1.14.0`; it says to send the version a confidence threshold was tuned against, as
   TypeSafe's Models page does. No behaviour changes.
+- **Four more docstrings say what the code does.** `DocumentAttachment`'s said its `filename` is
+  the name the provider is given; only the OpenAI Chat Completions `file` part and the Responses
+  `input_file` part carry it, and Anthropic, native Gemini and Gemini Interactions get a document
+  without it. `FunctionSignature`'s called an omitted `strict` the API's non-strict default and
+  said OpenAI rejects an invalid strict schema with a 400: OpenAI's Responses API "will attempt
+  to normalize your schema into strict mode when possible" when `strict` is omitted, and names
+  no status for the rejection. `respond`'s named OpenAI's Responses API as its one target, and
+  the keyword `chatrequest!`'s listed `config` and `cancel` among the `Chat` fields. No behaviour
+  changes.
 
 ## 0.26.0
 

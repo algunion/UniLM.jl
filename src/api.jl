@@ -765,10 +765,10 @@ OpenAI-wire Responses and completions routes.
 """
 abstract type OpenAIWireEndpoint <: ServiceEndpoint end
 
-# The field-less built-in endpoints are passed as their types, on which their methods are
-# defined; an instance would hold nothing more and match none of them. So each one, called,
-# returns its type: `OPENAIServiceEndpoint()` is `OPENAIServiceEndpoint` wherever a `service`
-# is taken.
+# The field-less built-in endpoints — these four and `TYPESAFEServiceEndpoint` (typesafe.jl) —
+# are passed as their types, on which their methods are defined; an instance would hold nothing
+# more and match none of them. So each one, called, returns its type: `OPENAIServiceEndpoint()`
+# is `OPENAIServiceEndpoint` wherever a `service` is taken.
 
 """OpenAI API service endpoint (default). Requires `OPENAI_API_KEY` env variable.
 `OPENAIServiceEndpoint()` returns the type."""
@@ -949,8 +949,8 @@ GenericOpenAIEndpoint(base_url, api_key) = GenericOpenAIEndpoint(base_url, api_k
 Type alias accepting both marker types (`OPENAIServiceEndpoint`) and instances
 (`GenericOpenAIEndpoint(...)`). Used as the type of `service` fields. The field-less
 built-in endpoints — `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`,
-`GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint` — are passed as types: calling one,
-`OPENAIServiceEndpoint()`, returns the type.
+`GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `TYPESAFEServiceEndpoint` — are
+passed as types: calling one, `OPENAIServiceEndpoint()`, returns the type.
 """
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
 

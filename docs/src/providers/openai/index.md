@@ -349,7 +349,7 @@ stored responses — `get_response`, `delete_response`, `list_input_items`, `can
 | a `ResponseSuccess` whose `response_status` is `"incomplete"` | the response ended before it was complete, as when the output reaches `max_output_tokens` or the context window; [`incomplete_details`](@ref) gives the reason, and the output so far is kept | a higher `max_output_tokens`, or a shorter input |
 | a call error with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)) | a longer bound, or a stream for a long reply |
 | a call error whose `cause` is a `UniLMCancelled` | a stop: the stream's `close[] = true` or a cancelled `CancelToken` ([Streaming](@ref openai_streaming)) | nothing, if the stop was yours |
-| a call error whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended | the callback |
+| a call error whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |
 | `LLMResultError` from `text`, `output_text` or `embedding_vectors` | the result is a failure, which holds no reply | check `issuccess(result)` first |
 
 `ResponseFailure` is reserved for a response that `failed`; every other status — `incomplete`,

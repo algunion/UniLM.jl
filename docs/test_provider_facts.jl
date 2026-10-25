@@ -1,4 +1,5 @@
 using Test, Markdown, UniLM
+using Logging: with_logger, NullLogger
 using Documenter: MarkdownAST
 isdefined(Main, :ProviderFacts) || include(joinpath(@__DIR__, "ProviderFacts.jl")); using .ProviderFacts
 isdefined(Main, :DocMetrics) || include(joinpath(@__DIR__, "metrics.jl")); using .DocMetrics: outside_fences, PageError
@@ -27,7 +28,8 @@ end
 @testset "ProviderFacts — every generated table converts to MarkdownAST without raw values" begin
     for md in (provider_table(ProviderFacts.llm), provider_table(ProviderFacts.decisions), at_a_glance(:anthropic),
                at_a_glance(:jev), capability_matrix(), on_your_provider(ProviderFacts.llm, :streaming), openai_model_rules(),
-               claude_family_table(), gemini_thinking_table(), price_table(:anthropic), claude_price_rules())
+               claude_family_table(), gemini_thinking_table(), price_table(:anthropic), claude_price_rules(),
+               openai_price_terms(), openai_audio_rates())
         @test all(r -> all(c -> c isa AbstractVector, r), only(md.content).rows)
         @test !hasvalue(convert(MarkdownAST.Node, md))
     end
@@ -54,6 +56,58 @@ end
         @test occursin("over $(t.threshold) tokens", replace(estimate(m), "," => ""))
     end
     @test all(m -> occursin("`0.0`, with a warning: it has no price row", estimate(m)), unpriced)
+end
+@testset "ProviderFacts — the OpenAI price terms give every multiple estimated_cost bills, and only those" begin
+    rows = only(openai_price_terms().content).rows
+    ids = [only(r[1]).code for r in rows[2:end]]
+    terms = UniLM._OPENAI_PRICE_TERMS
+    @test ids == sort!(collect(keys(terms)))                         # every model with terms, once
+    plain(m, col) = String(strip(Markdown.plain(Markdown.Paragraph(rows[1 + findfirst(==(m), ids)][col]))))
+    limit = UniLM._OPENAI_SHORT_CONTEXT
+    # the estimate of `n` input and 100 output tokens at `tier`, its warnings for an unpriced tier muted
+    cost(m, n, tier; cached=0) = with_logger(NullLogger()) do
+        estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(model=m),
+                                  usage=UniLM.TokenUsage(prompt_tokens=n, completion_tokens=100, cached_tokens=cached,
+                                                         service_tier=tier)))
+    end
+    # the multiple a cell names for prompts up to the limit (`long=false`) or over it, `nothing` for "—"
+    function named(cell::String, long::Bool)::Union{Float64,Nothing}
+        cell == "—" && return nothing
+        parts = split(cell, ", ")
+        part = something(findfirst(p -> occursin(long ? " over" : " up to", p), parts),
+                         findfirst(p -> !occursin(" over", p) && !occursin(" up to", p), parts), Some(nothing))
+        isnothing(part) ? nothing : parse(Float64, match(r"× ([0-9.]+)", parts[part])[1])
+    end
+    n_tiers = 0
+    for m in ids, (col, tier) in ((4, "flex"), (5, "fast"), (6, "ultrafast")), long in (false, true)
+        n = long ? limit + 1000 : 1000
+        multiple = named(plain(m, col), long && terms[m].long_context)
+        @test cost(m, n, tier) ≈ something(multiple, 1.0) * cost(m, n, nothing)   # "—": the standard rates
+        n_tiers += !isnothing(multiple)
+    end
+    @test n_tiers > 0
+    for m in ids                                                      # the long-context cell is the estimate's
+        if terms[m].long_context
+            input, cached, output = ProviderFacts._openai_long_multiples(m)
+            @test plain(m, 3) == "input × $(ProviderFacts._factor(input)), cached input × " *
+                                 "$(ProviderFacts._factor(cached)), output × $(ProviderFacts._factor(output))"
+            @test cost(m, limit + 1, nothing; cached=limit + 1) ≈
+                  cached * (limit + 1) * DEFAULT_PRICING[m].cached_input + output * 100 * DEFAULT_PRICING[m].output
+        else
+            @test plain(m, 3) == "—"
+            @test cost(m, limit + 1000, nothing) ≈ (limit + 1000) * DEFAULT_PRICING[m].input + 100 * DEFAULT_PRICING[m].output
+        end
+        w30, w12 = UniLM._cache_write_multiples(terms[m])
+        @test plain(m, 2) == (w30 == w12 == 1 ? "—" : "× $(ProviderFacts._factor(w30)) input for `\"30m\"`, " *
+                                                      "× $(ProviderFacts._factor(w12)) for `\"12h\"`")
+    end
+    audio = only(openai_audio_rates().content).rows
+    @test [only(r[1]).code for r in audio[2:end]] == sort!(collect(keys(UniLM._OPENAI_AUDIO_RATES)))
+    for r in audio[2:end]
+        rate = UniLM._OPENAI_AUDIO_RATES[only(r[1]).code]
+        @test strip(Markdown.plain(Markdown.Paragraph(r[2]))) == ProviderFacts._per_million(rate.input)
+        @test strip(Markdown.plain(Markdown.Paragraph(r[3]))) == ProviderFacts._per_million(rate.output)
+    end
 end
 @testset "ProviderFacts — a header cell that names a request field is inline code" begin
     # a header cell holding only `field` as inline code; Markdown.Code compares by identity, so by type and text

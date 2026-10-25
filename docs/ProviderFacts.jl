@@ -27,7 +27,8 @@ using Main.SiteWriter: route
 
 export Chapter, ProviderEntry, NEUTRAL_TOKENS, REGISTRY, CONCEPT_PAGES, entry, provider_table, at_a_glance,
        capability_matrix, on_your_provider, openai_model_rules, claude_family_table, gemini_thinking_table,
-       price_rows, price_table, claude_price_rules, region_text, apply_regions, stale_regions
+       price_rows, price_table, claude_price_rules, openai_price_terms, openai_audio_rates, region_text,
+       apply_regions, stale_regions
 
 # ── Table cells ──────────────────────────────────────────────────────────────
 
@@ -620,6 +621,72 @@ function claude_price_rules()::Markdown.MD
     _table(["Model", "Estimated"],
            Vector{Any}[Any[_cell(_code(id)), estimate(id)] for id in sort!(unique!([collect(keys(tiers)); unpriced]))])
 end
+
+# A multiple as a cell writes it: 1.25 → "× 1.25", 2.0 → "× 2".
+_times(x::Real)::String = "× " * _factor(x)
+
+# The multiples OpenAI's bill applies to a prompt over the short-context limit, read from the
+# estimate itself: of the input rate (a prompt one token over the limit, no output), of the
+# cached-input rate (the same prompt, all of it read from the cache) and of the output rate
+# (one output token more).
+function _openai_long_multiples(model::String)::NTuple{3,Float64}
+    rates, n = _PRICES[model], UniLM._OPENAI_SHORT_CONTEXT + 1
+    bill(; cached=0, out=0) = UniLM._billed_cost(OPENAIServiceEndpoint, model,
+        UniLM.TokenUsage(prompt_tokens=n, completion_tokens=out, cached_tokens=cached), rates)
+    round.((bill() / (n * rates.input), bill(cached=n) / (n * rates.cached_input),
+            (bill(out=1) - bill()) / rates.output); digits=6)
+end
+
+# A billed tier's cell: the multiple of every rate it costs, for prompts up to the short-context
+# limit and over it where the model has a long-context rate and the two differ; "—" where
+# OpenAI's pricing page gives the tier no price.
+function _openai_tier_cell(terms, tier::String)::Vector{Any}
+    short, long = get(terms.tiers, tier, nothing), get(terms.long_tiers, tier, nothing)
+    limit = _thousands(UniLM._OPENAI_SHORT_CONTEXT) * " input tokens"
+    isnothing(short) && isnothing(long) && return _cell("—")
+    (!terms.long_context || isequal(short, long)) && return _cell(_times(something(short, long)))
+    isnothing(long) && return _cell(_times(short), " up to ", limit)
+    isnothing(short) && return _cell(_times(long), " over ", limit)
+    _cell(_times(short), " up to ", limit, ", ", _times(long), " over")
+end
+
+"""
+    openai_price_terms() -> Markdown.MD
+
+One row per OpenAI model that `estimated_cost` bills beyond its price row's rates
+(`UniLM._OPENAI_PRICE_TERMS`), sorted by id: what a cache write costs for each lifetime, as a
+multiple of the input rate; the multiples of the input, cached-input and output rates for a
+prompt over the short-context limit, read from the estimate; and the multiple of every rate
+that each billed service tier costs. "—": OpenAI's pricing page gives no such price.
+"""
+function openai_price_terms()::Markdown.MD
+    limit = _thousands(UniLM._OPENAI_SHORT_CONTEXT)
+    function writes(terms)::Vector{Any}
+        w30, w12 = UniLM._cache_write_multiples(terms)
+        w30 == w12 == 1 ? _cell("—") : _cell(_times(w30), " input for ", _code("\"30m\""), ", ",
+                                             _times(w12), " for ", _code("\"12h\""))
+    end
+    function long(model, terms)::Vector{Any}
+        terms.long_context || return _cell("—")
+        input, cached, output = _openai_long_multiples(model)
+        _cell("input ", _times(input), ", cached input ", _times(cached), ", output ", _times(output))
+    end
+    rows = Vector{Any}[Any[_cell(_code(id)), writes(t), long(id, t),
+                           (_openai_tier_cell(t, tier) for tier in ("flex", "fast", "ultrafast"))...]
+                       for (id, t) in sort!(collect(UniLM._OPENAI_PRICE_TERMS); by=first)]
+    _table(["Model", "Cache writes", "Over $limit input tokens", "Flex", "Fast", "Ultrafast"], rows)
+end
+
+"""
+    openai_audio_rates() -> Markdown.MD
+
+One row per OpenAI model whose audio tokens `estimated_cost` prices (`UniLM._OPENAI_AUDIO_RATES`),
+sorted by id: its audio input and audio output rates in USD per million tokens.
+"""
+openai_audio_rates()::Markdown.MD =
+    _table(["Model", "Audio input (USD per 1M tokens)", "Audio output (USD per 1M tokens)"],
+           Vector{Any}[Any[_cell(_code(id)), _cell(_per_million(r.input)), _cell(_per_million(r.output))]
+                       for (id, r) in sort!(collect(UniLM._OPENAI_AUDIO_RATES); by=first)])
 
 # ── Generated regions ────────────────────────────────────────────────────────
 

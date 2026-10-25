@@ -308,6 +308,9 @@ result = embeddingrequest!(emb)
 length.(embedding_vectors(result)), token_usage(result).prompt_tokens, estimated_cost(result)
 ```
 
+By default "the length of the embedding vector is `1536` for `text-embedding-3-small` or `3072` for
+`text-embedding-3-large`"
+([embeddings guide](https://developers.openai.com/api/docs/guides/embeddings#how-to-get-embeddings)).
 `dimensions` is sent as it is: the `text-embedding-3` models return a shorter vector when a request
 asks for one
 ([embeddings guide](https://developers.openai.com/api/docs/guides/embeddings#reducing-embedding-dimensions)),

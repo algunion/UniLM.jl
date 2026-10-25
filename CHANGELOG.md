@@ -43,6 +43,17 @@
   Each now returns its type (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it
   behaves as the type does. Upgrading: a value tested with `x isa T` is now tested with
   `x === T`.
+- **GPT-5.6 takes sampling controls and log probabilities at reasoning effort `"none"` only.**
+  The GPT-5.6 models (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` and their dated
+  snapshots) had no such rule, so `temperature`, `top_p` and log probabilities went out at any
+  effort; on 2026-10-25 the API answered `temperature` on `gpt-5.6-luna` at effort `"low"` with
+  HTTP 400 on both APIs ("Unsupported value: 'temperature' does not support 0.5 with this model.
+  Only the default (1) value is supported.") and took it at `"none"`. As on GPT-6 Sol and Luna,
+  `temperature`, `top_p`, `logprobs=true`, `top_logprobs` and
+  `include=["message.output_text.logprobs"]` at another effort — the default `"medium"` included —
+  now throw `ArgumentError` before anything is sent; the API's answer to `top_p` and the log
+  probabilities there was not checked. Upgrading: set `reasoning_effort="none"` on a `Chat` or
+  `reasoning=Reasoning(effort="none")` on a `Respond`, or remove them.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

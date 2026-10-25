@@ -78,14 +78,14 @@ The columns:
   22 October 2026, and again on the default model on 25 October 2026, so their Chat Completions cells
   end at `"xhigh"`.
 - **Sampling and log probabilities at**: the efforts at which UniLM sends `temperature`, `top_p` and
-  log probabilities, refusing them at the others; "—": at none; "any": UniLM checks no effort for the
-  model, OpenAI's answer being the check. OpenAI's GPT-6 guide: "When reasoning effort is not `none`,
-  remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also remove `logprobs`. For
-  Responses, remove `message.output_text.logprobs` from `include`"
+  log probabilities, refusing them at the others; "—": at none. OpenAI's GPT-6 guide: "When reasoning
+  effort is not `none`, remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also
+  remove `logprobs`. For Responses, remove `message.output_text.logprobs` from `include`"
   ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra#update-api-and-model-parameters)).
-  OpenAI's pages state no such rule for the GPT-5.6 models, whose cells are "any"; on 25 October 2026 the
-  API refused `temperature` on one of them at an effort other than `"none"`, and took it at `"none"`
-  (the evidence below).
+  OpenAI's pages state no such rule for the GPT-5.6 models; their cells follow the API, which on
+  25 October 2026 refused `temperature` on one of them at an effort other than `"none"` and took it at
+  `"none"` (the evidence below). UniLM holds `top_p` and the log probabilities to the same effort, as
+  the GPT-6 guide does; how the API answers those two on a GPT-5.6 model was not checked.
 - **Chat Completions tools at**: the efforts at which a `Chat` may carry `tools`; "—": the model takes
   tools only on the Responses API ([Tools on Chat Completions](@ref openai_chat_tools)).
 - **Ultrafast tier**: whether a `Respond` may ask for `service_tier="ultrafast"`

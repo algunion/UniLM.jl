@@ -511,10 +511,10 @@ stored response (`store=false` throws there; OpenAI takes it). A Chat [`Tool`](@
 Per-model rules on `OPENAIServiceEndpoint` are checked when the request is encoded, before any
 request, for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
 `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot: GPT-6 Astra and GPT-6.1 Sol take
-reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol and
-Luna take sampling controls and log probabilities only at effort `"none"`; GPT-6 Sol, GPT-6 Luna
-and the GPT-5.6 models take `"none"` to `"max"` and refuse `"minimal"` (use `"low"`). Other
-models are checked by the server. On `OPENAIServiceEndpoint`, `user` throws `ArgumentError` for
+reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol, GPT-6
+Luna and the GPT-5.6 models take `"none"` to `"max"`, refuse `"minimal"` (use `"low"`), and take
+sampling controls and log probabilities only at effort `"none"`. Other models are checked by the
+server. On `OPENAIServiceEndpoint`, `user` throws `ArgumentError` for
 every model: OpenAI replaces it with `safety_identifier` and `prompt_cache_key`.
 
 ## See Also

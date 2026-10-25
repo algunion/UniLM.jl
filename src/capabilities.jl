@@ -178,11 +178,14 @@ const _OPENAI_MODEL_RULES = let
                                  chat_efforts=["none", "low", "medium", "high", "xhigh"],
                                  sampling_efforts=["none"], chat_tool_efforts=["none"],
                                  prompt_cache_retention=false)
-    # GPT-5.6 takes Chat Completions tools only at "none". The `gpt-5.6` alias "routes requests
-    # to GPT-5.6 Sol" (its model page), so it takes Sol's rules.
+    # GPT-5.6 takes sampling controls, log probabilities and Chat Completions tools only at
+    # "none". Its pages state no sampling rule, but on 2026-10-25 the API answered
+    # temperature=0.5 on gpt-5.6-luna at effort "low" with HTTP 400 on Chat Completions and on
+    # Responses, and took it at "none", as GPT-6 Sol and Luna do. The `gpt-5.6` alias "routes
+    # requests to GPT-5.6 Sol" (its model page), so it takes Sol's rules.
     gpt56 = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
                               chat_efforts=["none", "low", "medium", "high", "xhigh"],
-                              chat_tool_efforts=["none"], prompt_cache_retention=false)
+                              sampling_efforts=["none"], chat_tool_efforts=["none"], prompt_cache_retention=false)
     Dict{String,_OpenAIModelRules}("gpt-6-astra" => top, "gpt-6.1-sol" => top,
                                    "gpt-6-sol" => sol_luna, "gpt-6-luna" => sol_luna,
                                    "gpt-5.6-sol" => gpt56, "gpt-5.6-terra" => gpt56, "gpt-5.6-luna" => gpt56,

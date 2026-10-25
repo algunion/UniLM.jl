@@ -273,8 +273,8 @@ at the input rate.
 OpenAI defaults to `gpt-6-sol` for `Chat` and `Respond`. OpenAI's tool path is the
 Responses API: GPT-5.6, GPT-6 Sol, and GPT-6 Luna take Chat Completions tools only with an
 explicit `reasoning_effort="none"`, and GPT-6 Astra and GPT-6.1 Sol take tools only through
-`Respond`. GPT-6 Sol and Luna also reject `temperature`, `top_p`, and log probabilities
-unless reasoning effort is `"none"` (an omitted effort is the provider default,
+`Respond`. GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models also reject `temperature`, `top_p`,
+and log probabilities unless reasoning effort is `"none"` (an omitted effort is the provider default,
 `"medium"`). GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models refuse `"minimal"` reasoning effort;
 use `"low"` instead. GPT-6 Astra and GPT-6.1 Sol reason at `"low"` or more, so they reject
 sampling controls and log probabilities at every effort. Chat Completions takes effort up to

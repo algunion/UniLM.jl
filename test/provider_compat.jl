@@ -213,7 +213,8 @@ end
     @test_throws ArgumentError JSON.lower(Reasoning(summary="auto", generate_summary="concise"))
 end
 
-@testset "GPT-5.6: Chat tools only at effort none" begin
+@testset "GPT-5.6: sampling, log probabilities and Chat tools only at effort none" begin
+    said(err) = err isa ArgumentError ? err.msg : "no refusal: the request goes out"
     for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6", "gpt-5.6-luna-2026-07-01")
         for effort in (nothing, "low")
             @test _oa_chat_err(; model, tools=_OA_PING, reasoning_effort=effort).msg ==
@@ -221,8 +222,26 @@ end
         end
         @test _oa_chat(; model, tools=_OA_PING, reasoning_effort="none")["reasoning_effort"] == "none"
         @test only(_oa_respond(; model, tools=[function_tool("ping", "Ping")])["tools"])["name"] == "ping"
-        # The row has no sampling rule: temperature goes out at the default effort.
-        @test _oa_chat(; model, temperature=0.5)["temperature"] == 0.5
+        # Sampling controls and log probabilities only at "none", as on GPT-6 Sol and Luna: on 2026-10-25
+        # gpt-5.6-luna answered temperature=0.5 at effort "low" with HTTP 400 on Chat Completions
+        # ("Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1)
+        # value is supported.") and on Responses ("Unsupported parameter: 'temperature' is not supported
+        # with this model."), and took it at "none". An omitted effort is GPT-5.6's default, "medium".
+        for (effort, shown) in ((nothing, "\"medium (default)\""), ("low", "\"low\""))
+            for kw in ((temperature=0.5,), (top_p=0.5,), (logprobs=true,), (top_logprobs=2,))
+                @test said(_oa_chat_err(; model, reasoning_effort=effort, kw...)) == "$model with reasoning effort " *
+                    "$shown does not support sampling controls or log probabilities ($(only(keys(kw)))); " *
+                    "set reasoning_effort=\"none\" or remove them"
+            end
+            reasoning = isnothing(effort) ? nothing : Reasoning(; effort)
+            for kw in ((temperature=0.5,), (top_p=0.5,), (top_logprobs=2,), (include=["message.output_text.logprobs"],))
+                @test said(_oa_respond_err(; model, reasoning, kw...)) == "$model with reasoning effort $shown " *
+                    "does not support sampling controls or log probabilities ($(only(keys(kw)))); " *
+                    "set reasoning=Reasoning(effort=\"none\") or remove them"
+            end
+        end
+        @test _oa_chat(; model, reasoning_effort="none", temperature=0.5)["temperature"] == 0.5
+        @test _oa_respond(; model, reasoning=Reasoning(effort="none"), top_p=0.5)["top_p"] == 0.5
         # gpt-5.6-sol was answered "Invalid service_tier argument" for "ultrafast".
         @test _oa_respond_err(; model, service_tier="ultrafast").msg == "$model $_OA_NO_ULTRAFAST"
         @test occursin("prompt_cache_options", _oa_respond_err(; model, prompt_cache_retention="24h").msg)

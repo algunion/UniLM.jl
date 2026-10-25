@@ -191,8 +191,9 @@ through a directory of recordings:
   `input_audio` clip, is written as sent.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
-  tool loops (a later request of a streamed turn misses inside the call's task,
-  so `fetch` throws a `TaskFailedException` around it) — never a silent call to
+  tool loops (a later request of a streamed turn, or a request a stream's
+  callback makes, misses inside the call's task, so `fetch` throws a
+  `TaskFailedException` around it) — never a silent call to
   the service, and never a call error
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names

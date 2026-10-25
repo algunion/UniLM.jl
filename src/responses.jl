@@ -1366,7 +1366,8 @@ end
 # before that — `token`, or the callback's close flag — ends the call with
 # `UniLMCancelled` in `cause`, never retried; an exception from the callback ends it
 # with that exception in `cause`. InterruptException always rethrows first (surfaces
-# as a TaskFailedException at fetch). Inside a `with_recorded_answers` scope each attempt
+# as a TaskFailedException at fetch), and so does a recorded call's miss or lost write
+# the callback throws, bare or wrapped. Inside a `with_recorded_answers` scope each attempt
 # is answered as the scopes decide — `first`, the first attempt's source, was looked up
 # before the spawn (`_first_stream_source`) — and a whole response read with no stop is
 # recorded; a miss or a lost recording rethrows unclassified, as an interrupt does.
@@ -1551,6 +1552,10 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # never retried, whatever HTTP.jl surfaced while the exchange unwound.
             failure = ctl.failure
             if !isnothing(failure)
+                # A recorded call's miss or lost write, or an interrupt, bare or inside the
+                # wrapper the callback threw it in, reaches the caller as thrown, as from a tool
+                # loop's dispatcher (`_escapes_tool`).
+                _escapes_tool(failure.thrown) && throw(failure.thrown)
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : nothing
                 thrown = failure.thrown
                 return ResponseCallError(error=_error_text(thrown), status=nothing, request_id=req_id,
@@ -1752,7 +1757,9 @@ already run; or the failure the event reported). An exception thrown by the call
 ends the call with that exception in `cause`, never retried. Time spent in the callback
 does not count toward `stream_idle_timeout`. A user `InterruptException` during a stream
 is not swallowed — it rethrows inside the task and surfaces as a `TaskFailedException`
-at `fetch`.
+at `fetch` — and neither is the [`ReplayMissError`](@ref) or [`RecordingWriteError`](@ref)
+of a recorded call made in the callback, nor either of them or an interrupt that the
+callback throws inside a wrapper (`task.exception` is what the callback threw).
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before

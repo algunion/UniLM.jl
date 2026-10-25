@@ -98,6 +98,15 @@
   "ensures function schema adherence" and the model may still answer in text. The mode
   covers every function the request declares. `"required"` and a named function are still
   sent as `ANY` (`any`), and `"none"` as `NONE`.
+- **A recorded call's miss or lost write in a stream callback reaches the caller.** A
+  `ReplayMissError` or `RecordingWriteError` that a recorded call made in a streamed
+  `chatrequest!`'s `callback` or `on_tool_call`, or a streamed `respond`'s `callback`,
+  threw was returned as the stream's `LLMCallError` (`ResponseCallError`) `cause`, a call
+  error a fallback would take for a service failure. Now it propagates, as it does from a
+  tool loop's dispatcher: `fetch` throws a `TaskFailedException` around it — around the
+  wrapper too when the callback threw it inside one, such as the `TaskFailedException` of
+  a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
+  as a bare one already did.
 
 ## 0.26.0
 

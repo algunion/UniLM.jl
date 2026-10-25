@@ -37,8 +37,10 @@ A verb the scope does not record — images, audio, files, MCP, … — never th
 behaves exactly as outside the scope. A streamed call throws it for its first request
 before returning its task; a miss on a later request of the turn (a reply the
 provider continues) is thrown inside that task, so `fetch` — and [`tool_loop!`](@ref)
-on a streamed chat — throws a `TaskFailedException` whose `task.exception` is it. It
-is thrown rather than returned as the verb's call error ([`SystemOneCallError`](@ref),
+on a streamed chat — throws a `TaskFailedException` whose `task.exception` is it, as it
+does for a miss of a call made in the stream's callback (`task.exception` is then what
+the callback threw). It is thrown rather than returned as the verb's call error
+([`SystemOneCallError`](@ref),
 [`LLMCallError`](@ref), [`ResponseCallError`](@ref), [`EmbeddingCallError`](@ref),
 [`FIMCallError`](@ref)): a gap in the recordings is not a service failure, and a
 caller's `r isa SystemOneSuccess || fallback()` path must not absorb it as if it were
@@ -121,8 +123,9 @@ and so do the calls built on them: [`nl_dispatch`](@ref), [`nl_classify`](@ref),
 [`@branch`](@ref) and the tool loops, a request made by a loop's dispatcher included.
 A streamed call reads its reply inside the task it returns and throws it there, so
 `fetch` — and [`tool_loop!`](@ref) on a streamed chat — throws a `TaskFailedException`
-whose `task.exception` is it. It is thrown rather than returned as the verb's call
-error: the answer was paid for, and a caller's
+whose `task.exception` is it; so does a stream whose callback made the call
+(`task.exception` is then what the callback threw). It is thrown rather than
+returned as the verb's call error: the answer was paid for, and a caller's
 `r isa SystemOneSuccess || fallback()` path must not absorb the lost write as a
 service failure. An MCP server tool handler's is answered, like a
 [`ReplayMissError`](@ref), with the generic JSON-RPC `-32603` and logged, never
@@ -208,7 +211,9 @@ reply inside the task it returns, so its lost write — and a miss on a later re
 of a turn the provider continues (Gemini 4 Argon's long decode) — is thrown inside
 that task: `fetch`, and so [`tool_loop!`](@ref) on a streamed chat, throws a
 `TaskFailedException` whose `task.exception` is the error. A miss on the first
-request is thrown by the streamed verb itself.
+request is thrown by the streamed verb itself. A miss or lost write of a recorded
+call made in a stream's `callback` or `on_tool_call` is thrown inside the stream's
+task too, as the callback threw it.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the

@@ -1189,6 +1189,34 @@ end
     err = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(_rl_gemini_continuation_stream), dir))
     @test err isa TaskFailedException && _rl_unwrap(err) isa ReplayMissError
 end
+@testset "recorded LLM answers — a miss or lost write of a call in a stream callback reaches the caller at fetch" begin
+    # A recorded call's miss, or its paid answer's lost recording, is thrown out of the verb and never
+    # absorbed as a service failure — also when a stream's callback made that call, bare or inside the
+    # TaskFailedException a fetched task gives it.
+    src = _ra_dir("llm-stream-callback-miss")
+    _rl_online(() -> with_recorded_answers(_rl_openai_stream, src; mode=:record))
+    _rl_online(() -> with_recorded_answers(_rl_respond_stream, src; mode=:record))
+    inner() = chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", prompt="Not recorded."); config=_RL_CFG)
+    chat_stream(cb) = chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini", stream=true); config=_RL_CFG, callback=cb)
+    respond_stream(cb) = respond(cb, "Say hello."; service=_RL_OPENAI, model="gpt-5.4-mini", config=_RL_CFG)
+    missed = (d, close) -> d isa String && inner()
+    fetched = (d, close) -> d isa String && fetch(Threads.@spawn inner())
+    for start in (chat_stream, respond_stream), (callback, thrown) in ((missed, ReplayMissError),
+                                                                        (fetched, TaskFailedException))
+        e = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> fetch(start(callback))), src))
+        @test e isa TaskFailedException && e.task.exception isa thrown && _rl_unwrap(e) isa ReplayMissError
+    end
+    # The stream and the callback's call are both answered; the call's recording cannot be written.
+    for start in (chat_stream, respond_stream)
+        dir = _rl_unwritable_dir(after=1)
+        hits = _RL_HITS[]
+        e = _rl_online(() -> _ra_caught(() -> fetch(start((d, close) -> d isa String &&
+                                                          with_recorded_answers(inner, dir; mode=:record)))))
+        @test e isa TaskFailedException && e.task.exception isa RecordingWriteError
+        @test _RL_HITS[] == hits + 2                                     # nothing sent again
+        ispath(dir) && rm(dir; recursive=true)
+    end
+end
 @testset "recorded LLM answers — a turn that ends on its second hop's miss or lost write bills its first, streamed or not" begin
     # One turn of two requests, unstreamed and streamed. Its second request misses on replay, or
     # its second reply's recording cannot be written: either way the first reply was billed, and

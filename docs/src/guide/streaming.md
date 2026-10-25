@@ -96,8 +96,10 @@ never retried, nothing is appended to the chat, and no callback runs after it. O
 the usage the provider had reported by then is added to `cumulative_cost`, as for a stop
 ([Cumulative cost](@ref cost_guide)): a reply whose final usage had arrived counts whole.
 OpenAI sends that usage after the finish reason, so an exception thrown on its finish chunk
-adds nothing. A user `InterruptException` is the exception to that rule: it
-propagates, so `fetch` throws a `TaskFailedException` wrapping it.
+adds nothing. A user `InterruptException` is the exception to that rule, as are the
+`ReplayMissError` and `RecordingWriteError` of a recorded call made in a callback (see
+[Recorded answers](@ref jev_testing_recorded)): each propagates, bare or inside the
+exception a fetched task threw, so `fetch` throws a `TaskFailedException` wrapping it.
 
 ### Streamed Tool Calls
 

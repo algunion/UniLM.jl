@@ -1796,9 +1796,9 @@ requests were billed to the chat's total, as far as their providers reported it 
 the earlier replies of the turn and the latest attempt's reported usage; nothing is committed.
 `first` is the source of the first request when it was looked up before the call's task was
 spawned (`_first_stream_source`). `InterruptException`, `ReplayMissError` and
-`RecordingWriteError` always rethrow, once the replies the turn received before the failing
-request are added to the chat's total, as an unstreamed call adds them; every other failure
-becomes a typed result value.
+`RecordingWriteError` always rethrow — also inside the wrapper a callback threw them in —
+once the replies the turn received before the failing request are added to the chat's total,
+as an unstreamed call adds them; every other failure becomes a typed result value.
 """
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
                        token::Union{Nothing,CancelToken}, first::Union{Nothing,_StreamSource}=nothing)
@@ -1822,16 +1822,18 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         end
     catch e
         # None is a failure of the call: a user's interrupt, a miss, or a paid reply's lost
-        # recording reaches the caller as an unstreamed call's does (here, at `fetch`), and as
-        # there the replies the turn received before that request are first added to the
-        # chat's total — they were billed. Not classified, so `_settled` does not run: an
-        # unstreamed call does not add the reply whose recording was lost either.
-        interrupted = !isnothing(_find_exception(x -> x isa InterruptException, e))
-        if interrupted || e isa Union{ReplayMissError,RecordingWriteError}
-            _accrue_turn!(chat, turn)
-            rethrow()
-        end
+        # recording reaches the caller as an unstreamed call's does (here, at `fetch`) — also
+        # one that user code threw, bare or inside a wrapper, as from a tool loop's dispatcher
+        # (`_escapes_tool`) — and as there the replies the turn received before that request
+        # are first added to the chat's total — they were billed. Not classified, so
+        # `_settled` does not run: an unstreamed call does not add the reply whose recording
+        # was lost either.
         u = _unwrap_exception(e)
+        thrown = u isa _UserCallbackError && _escapes_tool(u.thrown) ? u.thrown : e
+        if _escapes_tool(thrown)
+            _accrue_turn!(chat, turn)
+            thrown === e ? rethrow() : throw(thrown)
+        end
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
         failure = if u isa _UserCallbackError
             LLMCallError(error=_error_text(u.thrown), self=chat, status=nothing,
@@ -1926,7 +1928,8 @@ a running stream is immune to later changes of the process-default configuration
 
 The returned task throws only for a user `InterruptException` and, inside a
 `with_recorded_answers` scope, for a `RecordingWriteError` or the `ReplayMissError` of a
-request it looks up itself (every other failure is a typed result value), so `fetch`
+request it looks up itself or of a recorded call its callbacks make (each also inside the
+wrapper a callback threw it in; every other failure is a typed result value), so `fetch`
 then raises a `TaskFailedException` whose `task.exception` is that exception — callers
 catching these around `fetch` must unwrap it.
 """
@@ -1977,7 +1980,10 @@ callback runs after it. Time spent in these callbacks does not count toward
 `stream_idle_timeout`, which bounds only the gap between bytes off the socket. A user
 `InterruptException` is never converted into a result value: it propagates, so `fetch`
 on the streaming task throws a `TaskFailedException` whose `task.exception` is the
-`InterruptException`.
+`InterruptException`. So does the [`ReplayMissError`](@ref) or [`RecordingWriteError`](@ref)
+of a recorded call made in `callback` or `on_tool_call`, and either of them or an
+interrupt that a callback throws inside a wrapper, such as a fetched task's
+`TaskFailedException`: `task.exception` is what the callback threw.
 
 A stream that ends without committing a turn — stopped, cancelled, timed out, cut off,
 or ended by an exception from `callback` or `on_tool_call` — adds the usage its provider

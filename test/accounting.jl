@@ -707,6 +707,15 @@ end
 
 # An OpenAI Chat result of `model` with usage `u`, billed by the OpenAI endpoint's own pricing.
 _oa_result(model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; model), usage=u)
+
+@testset "gpt-5-search-api, the Chat Completions search model, has its price row" begin
+    # OpenAI's pricing page (2026-10-25), "Search": gpt-5-search-api $1.25 input, $0.125 cached input and
+    # $10.00 output per 1M tokens. A Chat with web_search_options runs on it; without a row its cost read 0.0.
+    @test DEFAULT_PRICING["gpt-5-search-api"] == UniLM._price(1.25, 0.125, 10.0)
+    u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=200_000, completion_tokens=100_000, total_tokens=1_100_000)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-5-search-api", u))),
+                   800_000 * 1.25e-6 + 200_000 * 0.125e-6 + 100_000 * 10.0e-6; rtol=1e-12)
+end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 
 @testset "OpenAI cost: cache writes by lifetime" begin

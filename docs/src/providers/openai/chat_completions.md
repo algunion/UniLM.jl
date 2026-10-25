@@ -198,9 +198,11 @@ of their own are on [Audio](@ref openai_audio).
   `result.response.output`.
 - **`web_search_options`.** Sent as given; Chat Completions "supports only specialized search models
   for web search", which "always search before responding"
-  ([web search](https://developers.openai.com/api/docs/guides/tools-web-search#chat-completions-api)). A
-  search model without a row in the price table is estimated at `0.0`, with a warning; the Responses
-  API's `web_search()` tool works on the other models ([Hosted tools](@ref openai_hosted_tools)).
+  ([web search](https://developers.openai.com/api/docs/guides/tools-web-search#chat-completions-api)).
+  `gpt-5-search-api`, the search model OpenAI's guide names for Chat Completions, is priced at its row in
+  the price table, and a search model without a row is estimated at `0.0`, with a warning; neither
+  estimate includes a fee OpenAI lists for web search apart from the token rates. The Responses API's
+  `web_search()` tool works on the other models ([Hosted tools](@ref openai_hosted_tools)).
 - **`moderation`.** A [`ModerationConfig`](@ref) runs a moderation model over the request's input and the
   generated output. OpenAI returns the results in the completion's `moderation`, which an `LLMSuccess`
   does not keep: read them from a `Respond`'s result ([Request options](@ref openai_responses_options)).

@@ -160,6 +160,11 @@
   vLLM's Responses API forwards a seed to its engine and a generic endpoint sends every other
   field as given. A generic endpoint now sends it as `seed`; `OPENAIServiceEndpoint`, Azure
   and `GEMINIOpenAIServiceEndpoint` still refuse it, since OpenAI's Responses API has none.
+- **`gpt-5-search-api` is priced.** The Chat Completions search model, which a `Chat` with
+  `web_search_options` runs on, had no row in `DEFAULT_PRICING`, so `estimated_cost` and
+  `cumulative_cost` read its calls as `0.0`, with the missing-price warning. Its row holds the
+  rates OpenAI's pricing page lists on 2026-10-25: \$1.25 input, \$0.125 cached input and \$10.00
+  output per 1M tokens. A fee for web search apart from the tokens is not included.
 
 ## 0.26.0
 

@@ -54,6 +54,14 @@
   now throw `ArgumentError` before anything is sent; the API's answer to `top_p` and the log
   probabilities there was not checked. Upgrading: set `reasoning_effort="none"` on a `Chat` or
   `reasoning=Reasoning(effort="none")` on a `Respond`, or remove them.
+- **`get_response` and `cancel_response` return a failed response as a `ResponseFailure`.** Both
+  wrapped every response read back with HTTP 200 in a `ResponseSuccess`, also one whose `status`
+  is `"failed"`, which `respond` returns as a `ResponseFailure`, so `issuccess` reported a failed
+  background response as a success. Now each returns it as `respond` does: a `ResponseFailure`
+  whose `status` is 200, whose `response` is the response's JSON, its `error` included, and whose
+  `request_id` is the reply's; `response_status` still reads `"failed"`. Every other status is
+  still a `ResponseSuccess`. Upgrading: code that read a failed response's fields from
+  `result.response` parses `result.response` (a `String`) instead, or branches on `issuccess`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

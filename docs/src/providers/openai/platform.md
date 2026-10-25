@@ -571,9 +571,9 @@ response_status(cancel_response(id)), response_status(cancel_response(id))
 it has reached a final (terminal) state", and "Cancelling twice is idempotent - subsequent calls
 simply return the final `Response` object"
 ([background mode](https://developers.openai.com/api/docs/guides/background)). A background response
-that failed comes back from `get_response` and `cancel_response` as a `ResponseSuccess` whose
-[`response_status`](@ref) is `"failed"`, while `respond` returns a failed response as a
-`ResponseFailure`. A background request may set `store=false`: "Background requests can use
+that failed comes back from `get_response` and `cancel_response` as a `ResponseFailure`, as `respond`
+returns a failed response: its `status` is 200, its `response` the response's JSON with OpenAI's
+`error`, and [`response_status`](@ref) reads `"failed"`. A background request may set `store=false`: "Background requests can use
 `store=false`, but response data is temporarily stored to support asynchronous execution and
 polling", "for roughly 10 minutes" in a Zero Data Retention project
 ([background mode](https://developers.openai.com/api/docs/guides/background)), and `get_response`

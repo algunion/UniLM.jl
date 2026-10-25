@@ -1036,7 +1036,9 @@ end
 """
     ResponseFailure <: LLMRequestResponse
 
-HTTP-level failure from the Responses API. Contains the response body, status code, and optional request ID.
+A failure from the Responses API: an HTTP status other than 200, or a response whose `status`
+is `"failed"` (read by [`respond`](@ref), [`get_response`](@ref) or [`cancel_response`](@ref)),
+whose `status` field is then 200. Contains the response body, status code, and optional request ID.
 """
 @kwdef struct ResponseFailure <: LLMRequestResponse
     response::String
@@ -1820,17 +1822,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         end
         if resp.status == 200
             decoded = _billed_response(r.service, r.model, decode_agentic(r.service, resp))
-            # A generation that came back `failed` is a failure, whichever way it was
-            # requested. The streamed limb already routes `response.failed` (OpenAI)
-            # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
-            # outcome in ResponseSuccess here made `issuccess` depend on `stream`.
-            # ONLY "failed": cancelled, expired, in_progress, requires_action and
-            # incomplete are legitimate terminals of the background, tool-action and
-            # truncated-output flows — a truncated generation still carries usable
-            # partial output, and says so in `status`/`incomplete_details`.
-            decoded.status == "failed" && return ResponseFailure(
-                response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            return ResponseSuccess(response=decoded, service=r.service)
+            return _response_result(r.service, decoded, resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1840,6 +1832,21 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing; service=r.service)
     end
+end
+
+# The result for a response read back with HTTP 200, by `respond`, `get_response` or
+# `cancel_response`: a generation whose `status` is `failed` is a failure, whichever verb
+# read it and whichever way it was requested. The streamed limb already routes
+# `response.failed` (OpenAI) and a failed interaction (Gemini) to ResponseFailure; wrapping
+# the same outcome in ResponseSuccess made `issuccess` depend on `stream`, or on the verb
+# that read it. ONLY "failed": cancelled, expired, queued, in_progress, requires_action and
+# incomplete are legitimate terminals or states of the background, tool-action and
+# truncated-output flows — a truncated generation still carries usable partial output, and
+# says so in `status`/`incomplete_details`.
+function _response_result(service, decoded::ResponseObject, resp::HTTP.Response)
+    decoded.status == "failed" && return ResponseFailure(
+        response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
+    ResponseSuccess(response=decoded, service=service)
 end
 
 # The result for an exception that ended a non-streaming Responses call (`respond`
@@ -1924,14 +1931,15 @@ end
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Retrieve an existing response by its ID. OpenAI keeps a response "for at least 30 days"
-when its request stored it (`store=true`, the default); the data of a background request
-made with `store=false` is "temporarily stored to support asynchronous execution and
-polling" ([background mode](https://developers.openai.com/api/docs/guides/background), which
-gives "roughly 10 minutes" for such requests from Zero Data Retention projects):
-`get_response` reads it while OpenAI holds it, and not once it is deleted. An endpoint
-whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
-before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
+Retrieve an existing response by its ID: a `ResponseSuccess`, or a `ResponseFailure` when
+the response's `status` is `"failed"`, as [`respond`](@ref) returns it. OpenAI keeps a
+response "for at least 30 days" when its request stored it (`store=true`, the default); the
+data of a background request made with `store=false` is "temporarily stored to support
+asynchronous execution and polling"
+([background mode](https://developers.openai.com/api/docs/guides/background), which gives
+"roughly 10 minutes" for such requests from Zero Data Retention projects): `get_response`
+reads it while OpenAI holds it, and not once it is deleted. An endpoint whose Responses API
+stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
 through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
 an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
 of returning a `ResponseCallError`.
@@ -1953,7 +1961,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _lifecycle_request(service, "GET", url, cfg, t0)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
+            return _response_result(service, decode_agentic(service, resp), resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -2052,9 +2060,10 @@ end
 """
     cancel_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success. An endpoint
-whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
-before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
+Cancel an in-progress response by its ID. Returns `ResponseSuccess` with the response it
+read back, or a `ResponseFailure` when that response's `status` is `"failed"`, as
+[`respond`](@ref) does. An endpoint whose Responses API stores no responses
+([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
 through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
 an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
 of returning a `ResponseCallError`.
@@ -2079,7 +2088,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
         resp = _lifecycle_request(service, "POST", url, cfg, t0)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
+            return _response_result(service, decode_agentic(service, resp), resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end

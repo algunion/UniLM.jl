@@ -2582,6 +2582,38 @@ end
     end
 end
 
+@testset "get_response and cancel_response read a failed generation as a failure, as respond does" begin
+    # A background response that failed is polled with get_response; the result type must not
+    # depend on the verb that read it.
+    failed = JSON.json(Dict(
+        "id" => "resp_f2", "status" => "failed", "model" => "gpt-5.5", "output" => [],
+        "error" => Dict("code" => "server_error", "message" => "the model failed")))
+    srv, url = _canned_http_server(200, failed,
+        ["Content-Type" => "application/json", "x-request-id" => "req_f2"])
+    try
+        ep = GenericOpenAIEndpoint(url, "sk-x")
+        for r in (get_response("resp_f2"; service=ep), cancel_response("resp_f2"; service=ep))
+            @test r isa ResponseFailure
+            @test !issuccess(r) && response_status(r) == "failed"
+            @test r isa ResponseFailure && r.status == 200 && r.request_id == "req_f2" && r.response == failed
+        end
+    finally
+        close(srv)
+    end
+    for st in ("completed", "in_progress", "queued", "requires_action", "cancelled", "incomplete")
+        body = JSON.json(Dict("id" => "resp_$st", "status" => st, "model" => "gpt-5.5", "output" => []))
+        srv, url = _canned_http_server(200, body, ["Content-Type" => "application/json"])
+        try
+            ep = GenericOpenAIEndpoint(url, "sk-x")
+            for r in (get_response("resp_$st"; service=ep), cancel_response("resp_$st"; service=ep))
+                @test r isa ResponseSuccess && response_status(r) == st
+            end
+        finally
+            close(srv)
+        end
+    end
+end
+
 @testset "non-failed terminals stay successes" begin
     # Only "failed" flips. Background runs (queued/in_progress), a cancelled or
     # expired run, and a requires_action turn are legitimate non-failed terminals —

@@ -157,7 +157,8 @@ JSON.parse(output_text(result))["planets"]
 A response is stored unless its request sets `store=false`, "for at least 30 days"
 ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)),
 and `get_response`, `cancel_response`, `delete_response` and `list_input_items` work on it by its id.
-[`get_response`](@ref) and [`cancel_response`](@ref) return a `ResponseSuccess`; [`delete_response`](@ref),
+[`get_response`](@ref) and [`cancel_response`](@ref) return a `ResponseSuccess`, or a `ResponseFailure` for a
+response whose `status` is `"failed"`, as `respond` does; [`delete_response`](@ref),
 [`list_input_items`](@ref), [`compact_response`](@ref) and [`count_input_tokens`](@ref) return OpenAI's
 answer as a `Dict`; a failure of any of them is a `ResponseFailure` or a `ResponseCallError`. Each makes
 one attempt, never retried ([When something fails](@ref openai_failures)).

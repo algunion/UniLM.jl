@@ -56,7 +56,7 @@ prices; `token_usage` reads the interaction's `usage` in the shape every result 
 generateContent ([Cost and usage](@ref gemini_cost)). `respond` returns an interaction whose `status`
 is `"failed"` as a `ResponseFailure`, and one that is `"completed"`, `"requires_action"`,
 `"incomplete"`, `"in_progress"` or `"cancelled"` as a `ResponseSuccess`, whose `status` says which;
-`get_response` and `cancel_response` return every interaction they read as a `ResponseSuccess`
+`get_response` and `cancel_response` return an interaction they read the same way
 ([Background requests](@ref gemini_background)).
 
 ## [Conversations](@id gemini_interactions_conversations)

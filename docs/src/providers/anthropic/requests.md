@@ -137,7 +137,7 @@ Main.ProviderFacts.claude_family_table()
 
 A model id takes the row of the same id, or of that id without a `-YYYYMMDD` snapshot suffix, never
 the row of an id it merely starts with; an id no row names, such as a model newer than this release,
-is refused only by the rules that hold for every model. The columns:
+is refused only by the rules that name no column of the table. The columns:
 
 - **Thinking**: the model's thinking mode, which decides what `reasoning_effort` sends (the table above).
 - **Effort levels**: the `reasoning_effort` levels from `"low"` to `"max"` the model takes; "—": it takes
@@ -210,8 +210,7 @@ push!(chat, Message(Val(:user), "What colour is the shape? One word.",
 text(chatrequest!(chat))
 ```
 
-The [one-page PDF](https://github.com/algunion/UniLM.jl/raw/main/docs/src/assets/bridge_report.pdf)
-holds one sentence:
+The [one-page PDF](../../assets/bridge_report.pdf) holds one sentence:
 
 ```@example anthropic
 chat = Chat(service=ANTHROPICServiceEndpoint)
@@ -283,27 +282,27 @@ only the other rules. Building an endpoint refuses an option value that breaks i
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| `temperature` or `top_p`, at any value | "answers HTTP 400 for it on every model, even at its default value": API version `2026-10-21` removed the sampling parameters | remove it |
-| `moderation`, or a field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `seed`, `stream_options`, `verbosity`, `store`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key` | "does not support": the Messages API has no such field | remove it |
-| a `service_tier` other than `"auto"`, `"standard_only"` and `"fast"` | "service_tier must be" one of the three | one of them |
-| `service_tier="fast"` on a model whose Fast mode cell is "—", or through an endpoint whose `betas` lack the beta header the cell names | "has no fast mode", "serves fast mode": the model has no fast mode, or serves it in research preview only with the beta header | a model with fast mode, or an endpoint whose `betas` hold the header |
-| `metadata` with a key other than `user_id`, or a `user_id` that is not a string | "accepts only user_id", "must be a string": the Messages API's `metadata` holds the end user's id alone | the id as a string in `metadata["user_id"]`, or in `safety_identifier` |
-| `safety_identifier`, `user` and `metadata["user_id"]` set to different ids | "set one, or set them equal": each is sent as `metadata.user_id` | one of them, or the same id in each |
-| `reasoning_effort="minimal"` | "no minimal reasoning_effort": no Claude model has the level | `"low"` |
-| `reasoning_effort` on a model whose Effort levels cell is "—" | "does not support reasoning_effort": the model has no effort parameter | leave it unset |
-| a level the model's Effort levels cell does not list | "supports reasoning_effort", then the levels it takes | one of them |
-| `reasoning_effort="none"` where the Thinking cell is "adaptive; cannot be disabled" | "cannot disable thinking": the model's thinking cannot be turned off | `"low"` |
-| `tool_choice="required"` or a named tool on a model whose Forced tool choice cell is "—" | "rejects forced tool_choice": the API answers HTTP 400 for a forced choice there | `tool_choice="auto"` with strict tools, or a JSON Schema `response_format` |
-| a `tool_choice` string other than `"auto"`, `"none"` and `"required"` | "Unknown Anthropic tool_choice" | one of them, or `UniLM.GPTToolChoice(func=:name)` |
-| a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | "references unknown tool_use id": a `tool_result` answers a `tool_use` the conversation holds | the `id` of the tool call it answers |
-| `ResponseFormat()`, a `json_object` format | "no schema-less JSON mode": the Messages API has no JSON mode without a schema | a JSON Schema `response_format` |
-| a `response_format` whose type is not `json_schema`, other than a `text` one without a schema, or a JSON Schema format without a schema object | "supports response_format json_schema", "needs a schema object" | a JSON Schema format holding its schema |
-| an `AudioAttachment` | "not audio": the Messages API takes images and PDF documents | the clip's transcript in the message |
-| an `ImageAttachment` with a `detail` level | "has no detail level": the image block has no such field | the attachment without `detail` |
-| the endpoint's `inference_geo` on a model whose `inference_geo` cell is "—" | "takes no inference_geo": the API answers HTTP 400 for it | an endpoint without `inference_geo` ([Options](@ref anthropic_options)) |
-| a request that ends with an assistant turn, on a model whose Prefill cell is "—" | "rejects messages that end with an assistant turn": the model takes no response prefill | end with a user turn, or ask for JSON with a JSON Schema `response_format` |
-| a system message pushed after a reply, with no user turn after it, where it is the last message or the model is append-only | "takes a system message after an assistant turn only once a user turn follows it": the request would end with the assistant turn, a response prefill | a user message after it, or the reply's tool results ([Conversations](@ref anthropic_conversations)) |
-| `prompt_cache_options` with `mode="explicit"`, `prewarm=true`, a `comparison_response_id`, or a `ttl` other than `"5m"` and `"1h"` | "Anthropic prompt caching takes prompt_cache_options": a `Chat` marks no cache breakpoints, takes no `max_tokens` of 0 to pre-warm a cache with, and maps no cache diagnostics | `mode="implicit"` or unset, and `ttl` `"5m"`, `"1h"` or unset ([Prompt caching](@ref anthropic_caching)) |
+| `temperature` or `top_p`, at any value | `answers HTTP 400 for it on every model, even at its default value`: API version `2026-10-21` removed the sampling parameters | remove it |
+| `moderation`, or a field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `seed`, `stream_options`, `verbosity`, `store`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key` | `does not support`: the Messages API has no such field | remove it |
+| a `service_tier` other than `"auto"`, `"standard_only"` and `"fast"` | `service_tier must be` one of the three | one of them |
+| `service_tier="fast"` on a model whose Fast mode cell is "—", or through an endpoint whose `betas` lack the beta header the cell names | `has no fast mode`, `serves fast mode`: the model has no fast mode, or serves it in research preview only with the beta header | a model with fast mode, or an endpoint whose `betas` hold the header |
+| `metadata` with a key other than `user_id`, or a `user_id` that is neither a string nor `nothing` | `accepts only user_id`, `must be a string`: the Messages API's `metadata` holds the end user's id alone | the id as a string in `metadata["user_id"]`, or in `safety_identifier` |
+| `safety_identifier`, `user` and `metadata["user_id"]` set to different ids | `set one, or set them equal`: each is sent as `metadata.user_id` | one of them, or the same id in each |
+| `reasoning_effort="minimal"` | `no minimal reasoning_effort`: no Claude model has the level | `"low"` |
+| `reasoning_effort` on a model whose Effort levels cell is "—" | `does not support reasoning_effort`: the model has no effort parameter | leave it unset |
+| a level the model's Effort levels cell does not list | `supports reasoning_effort`, then the levels it takes | one of them |
+| `reasoning_effort="none"` where the Thinking cell is "adaptive; cannot be disabled" | `cannot disable thinking`: the model's thinking cannot be turned off | `"low"` |
+| `tool_choice="required"` or a named tool on a model whose Forced tool choice cell is "—" | `rejects forced tool_choice`: the API answers HTTP 400 for a forced choice there | `tool_choice="auto"` with strict tools, or a JSON Schema `response_format` |
+| a `tool_choice` string other than `"auto"`, `"none"` and `"required"` | `Unknown Anthropic tool_choice` | one of them, or `UniLM.GPTToolChoice(func=:name)` |
+| a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | `references unknown tool_use id`: a `tool_result` answers a `tool_use` the conversation holds | the `id` of the tool call it answers |
+| `ResponseFormat()`, a `json_object` format | `no schema-less JSON mode`: the Messages API has no JSON mode without a schema | a JSON Schema `response_format` |
+| a `response_format` whose type is not `json_schema`, other than a `text` one without a schema, or a JSON Schema format without a schema object | `supports response_format json_schema`, `needs a schema object` | a JSON Schema format holding its schema |
+| an `AudioAttachment` | `not audio`: the Messages API takes images and PDF documents | the clip's transcript in the message |
+| an `ImageAttachment` with a `detail` level | `has no detail level`: the image block has no such field | the attachment without `detail` |
+| the endpoint's `inference_geo` on a model whose `inference_geo` cell is "—" | `takes no inference_geo`: the API answers HTTP 400 for it | an endpoint without `inference_geo` ([Options](@ref anthropic_options)) |
+| a request that ends with an assistant turn, on a model whose Prefill cell is "—" | `rejects messages that end with an assistant turn`: the model takes no response prefill | end with a user turn, or ask for JSON with a JSON Schema `response_format` |
+| a system message pushed after a reply, with no user turn after it, where it is the last message or the model is append-only | `takes a system message after an assistant turn only once a user turn follows it`: the request would end with the assistant turn, a response prefill | a user message after it, or the reply's tool results ([Conversations](@ref anthropic_conversations)) |
+| `prompt_cache_options` with `mode="explicit"`, `prewarm=true`, a `comparison_response_id`, or a `ttl` other than `"5m"` and `"1h"` | `Anthropic prompt caching takes prompt_cache_options`: a `Chat` marks no cache breakpoints, takes no `max_tokens` of 0 to pre-warm a cache with, and maps no cache diagnostics | `mode="implicit"` or unset, and `ttl` `"5m"`, `"1h"` or unset ([Prompt caching](@ref anthropic_caching)) |
 
 Recorded on 24 October 2026 on `claude-opus-5-5` with UniLM's development branch after 0.26.0 and the
 Messages API at `anthropic-version` 2026-10-21.

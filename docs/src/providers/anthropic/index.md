@@ -46,8 +46,9 @@ below; with no `model` it takes the default model named at the top of this page.
 `https://api.anthropic.com/v1/messages` with the key in `x-api-key` and
 `anthropic-version: 2026-10-21`.
 
-The Messages API requires `max_tokens`: a `Chat` that sets neither `max_tokens` nor
-`max_completion_tokens` sends 16000, a moderate default rather than the model's ceiling. It caps the
+The Messages API requires `max_tokens`: a `Chat` sends its `max_completion_tokens` there, else its
+`max_tokens`, and a `Chat` that sets neither `max_tokens` nor `max_completion_tokens` sends 16000, a
+moderate default rather than the model's ceiling. It caps the
 thinking and the text of a reply together, and headroom a reply leaves unused is not billed: raise it
 for long replies or a high `reasoning_effort`, since a turn whose thinking reaches the cap ends with
 `finish_reason == "length"` before the answer.
@@ -63,7 +64,7 @@ Messages API request made through it, and goes wherever a `service` goes:
 | `betas` | the names, comma-joined, in the `anthropic-beta` header | each name non-blank, without a control character or a comma, when the endpoint is built and again when a request is sent |
 | `user_profile_id` | the `anthropic-user-profile-id` header: the `uprof_` id of the end customer the requests are made for | non-blank, without a control character (CR, LF, …) |
 | `workspace_id` | the `anthropic-workspace-id` header: the workspace a request runs in, for a key that can act in more than one | non-blank, without a control character |
-| `inference_geo` | the body's `inference_geo`, where inference runs: `"global"` or `"us"`; unset, the workspace default | one of the two; a model whose `inference_geo` cell in the [family table](@ref anthropic_reasoning) is "—" refuses it before the request is sent |
+| `inference_geo` | the body's `inference_geo`, where inference runs: `"global"` or `"us"`; unset, the workspace default | one of the two; a model whose `inference_geo` cell in the [family table](@ref anthropic_reasoning) is "—" refuses it before the request is sent ([Limits and refusals](@ref anthropic_limits)) |
 
 ```julia
 claude = ANTHROPICServiceEndpoint(workspace_id="wrkspc_01ExampleWorkspace", inference_geo="us")
@@ -72,7 +73,8 @@ chat = Chat(service=claude)
 
 Building the endpoint throws `ArgumentError` for a value that breaks one of these rules; two checks
 come later, when a request is made: the model's `inference_geo` rule, which makes `chatrequest!`
-throw `ArgumentError` before anything is sent, and the re-check of `betas` below. UniLM sends a
+throw `ArgumentError` before anything is sent ([Limits and refusals](@ref anthropic_limits)), and the
+re-check of `betas` below. UniLM sends a
 beta's name only: it models no beta's request fields or response blocks, and reads one name itself,
 the beta `service_tier="fast"` needs on the models whose Fast mode cell in the family table names a
 beta header. [`list_models`](@ref) sends only the workspace of these options: of the headers they
@@ -145,7 +147,7 @@ text(chatrequest!(chat))
 
 A reply goes back as the content blocks it arrived in — thinking blocks with their signatures
 intact — without its empty text blocks, and a turn with nothing to send, such as a refusal, is left
-out. What `push!` refuses is the same on every provider ([Conversations with Chat](@ref chat_guide)).
+out. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
 
 The system messages a conversation starts with become the top-level `system` prompt, joined with a
 blank line. Where a system message pushed later goes depends on two columns of the
@@ -154,24 +156,30 @@ blank line. Where a system message pushed later goes depends on two columns of t
 - On a model whose Mid-conversation system messages cell is "yes", it stays in place, as a `system`
   turn, where the Messages API takes one: right after a user turn (tool results count as one), and
   last or right before an assistant turn. Anywhere else it joins the top-level `system` prompt,
-  except on an append-only model once an assistant turn is sent (below).
+  except, on an append-only model, one pushed after a sent assistant turn (below).
 - On a model whose cell is "—", it joins the top-level `system` prompt.
 - Append-only are the models whose Thinking prefix check cell is "yes", and any id that matches no
   row (an id with a `-YYYYMMDD` snapshot suffix takes the row of the id without it), since Anthropic
   asks every integration to be append-only
   ([preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)).
-  The models with the check accept an earlier turn's thinking blocks only while everything before
-  them is unchanged — the top-level `system` prompt, the tools and the earlier messages. So once an
+  On the models with the check, the API verifies that everything before an earlier turn's thinking
+  blocks is unchanged — the top-level `system` prompt, the tools and the earlier messages. So once an
   assistant turn is sent, UniLM never edits the top-level `system` prompt of an append-only model: a
   later system message that cannot stay in place is held back, then sent right after a later user
   turn, and the turns before each sent reply stay as they were in the request that got it. Push your
   own messages and send the replies back as they came: an edit to an earlier turn, or to the tools,
-  invalidates the thinking blocks after it, and the API answers HTTP 400.
+  invalidates the thinking blocks after it, except the edits Anthropic lists as valid, such as removing
+  the oldest thinking blocks
+  ([what counts as an edit](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#what-counts-as-an-edit)).
+  UniLM sends no `thinking.block_binding`, so the API applies its default: on an account created on or
+  after 31 August 2026 (00:00 UTC) it answers HTTP 400, and on an older account it lets the invalid
+  blocks through to the model.
 
 A system message pushed after a reply needs a user turn after it — a user message, or the results
 of the reply's tool calls — except in a response prefill on a model whose Prefill cell is "yes".
-Until one follows, `chatrequest!` throws `ArgumentError` before sending: as it stands, the request
-would end with the assistant turn, a response prefill.
+Until one follows, `chatrequest!` throws `ArgumentError` before sending
+([Limits and refusals](@ref anthropic_limits)): as it stands, the request would end with the assistant
+turn, a response prefill.
 
 ## [Streaming](@id anthropic_streaming)
 
@@ -202,11 +210,13 @@ A `Chat` streams through this `callback` keyword only: `chatrequest!` has no `do
 is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` stops the stream
 ([Stopping a Stream Early](@ref streaming_stop)).
 
-- **End.** The turn is final at Anthropic's `message_stop` event: the `Message` reaches the callback
-  then, and `fetch` returns when the HTTP body ends, at most 0.5 s later.
+- **End.** The turn is final at Anthropic's `message_stop` event, or, without one, when the HTTP body
+  ends after the stop reason: the `Message` reaches the callback then, and `fetch` returns when the
+  body ends, at most 0.5 s after `message_stop`.
 - **Usage.** The stream reports it itself — the input in `message_start`, the output in
   `message_delta` — so a streamed turn has `usage` and adds its cost to `cumulative_cost` as an
-  unstreamed one does, with no `stream_options` (a field this endpoint refuses). A stream that ends
+  unstreamed one does, with no `stream_options` (a field this endpoint refuses:
+  [Limits and refusals](@ref anthropic_limits)). A stream that ends
   without committing its turn — stopped, cancelled, timed out, cut off or ended by a callback's
   exception — adds the usage Anthropic had reported by then, the input arriving with the first
   event, as a lower bound of what was billed.
@@ -217,8 +227,11 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   from the deltas into the message's `provider_content` once every block has arrived whole, so such a
   streamed turn goes back on the next request as an unstreamed one does
   ([what goes back otherwise](@ref anthropic_reasoning)).
-- **Tool calls.** `on_tool_call(tc)` runs once per call as soon as its block closes
-  (`content_block_stop`), before the turn ends; the final `Message` holds the calls too.
+- **Tool calls.** `on_tool_call(tc)` runs once per call whose arguments decode, as soon as its block
+  closes (`content_block_stop`), before the turn ends, and for a call whose arguments do not decode
+  UniLM logs a warning instead. The final `Message` holds the calls that decode; one that does not
+  makes the result an `LLMCallError` or is dropped, by how the turn stopped
+  ([Reasoning](@ref anthropic_reasoning)).
 - **Refusals.** A refusal ends the turn with no content, as an unstreamed refusal does; the text and
   the tool calls already passed to the callbacks cannot be recalled.
 - **Pings.** Anthropic's `ping` events are bytes on the wire, so they reset the idle clock:

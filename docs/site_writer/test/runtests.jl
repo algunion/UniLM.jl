@@ -259,6 +259,15 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         @test err isa WriterError && err.page == "a/index.md" && occursin("route /a/ is also the route of a.md", err.what)
     end
 
+    @testset "a link to a file of assets/ goes to the site's copy; one to another file stops the build" begin
+        site = build_site(Dict("index.md" => "# Page\n\nThe [report](assets/report.pdf).\n",
+                               "assets/report.pdf" => "%PDF-1.4\n"))
+        @test occursin("[report](/assets/report.pdf)", read(joinpath(site, "src", "app", "page.md"), String))
+        @test read(joinpath(site, "public", "assets", "report.pdf"), String) == "%PDF-1.4\n"
+        err = build_error(Dict("index.md" => "# Page\n\nThe [notes](notes.txt).\n", "notes.txt" => "x"))
+        @test err isa WriterError && err.page == "index.md" && occursin("a local link outside assets/ (notes.txt)", err.what)
+    end
+
     @testset "inline mathematics is code only where its source writes a double-backtick span" begin
         root = mktempdir()
         mkpath(joinpath(root, "src"))

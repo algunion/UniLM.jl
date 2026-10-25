@@ -16,14 +16,15 @@ for an hour. The options a `Chat` cannot send to Anthropic are refused before th
 
 Anthropic's cache "references the entire prompt: `tools`, `system`, and `messages` (in that order)",
 and the breakpoint is where it is written: one entry, holding everything up to and including that
-block. A later request that starts with the same blocks up to that breakpoint reads the entry while it
-lives, unless a change has invalidated it, and writes what follows them; the API checks at most 20
-positions for such an entry, counting the request's breakpoint as the first and a run of consecutive
-`tool_use` blocks, or of consecutive `tool_result` blocks, as one position. Changed tools invalidate
-the entire cache, and a changed `system` prompt that prompt and the messages; a changed `tool_choice`,
-an image added or removed anywhere in the prompt and changed thinking parameters invalidate at least
-the messages, and Anthropic's table lists the other changes and what each invalidates
-([what invalidates the cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)).
+block. Anthropic isolates caches by workspace: a later request in the same workspace
+([Options](@ref anthropic_options)) that starts with the same blocks up to that breakpoint reads the
+entry while it lives, unless a change has invalidated it, and writes what follows them; the API checks
+at most 20 positions for such an entry, counting the request's breakpoint as the first and a run of
+consecutive `tool_use` blocks, or of consecutive `tool_result` blocks, as one position. Changed tools
+invalidate the entire cache, and a changed `system` prompt that prompt and the messages; a changed
+`tool_choice`, an image added or removed anywhere in the prompt and changed thinking parameters
+invalidate at least the messages, and Anthropic's table lists the other changes and what each
+invalidates ([what invalidates the cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)).
 A `Chat` builds each request from its fields as they are then, the whole conversation and tools included,
 so the next turn starts with the previous one's blocks as long as the tools, the `system` prompt and the
 earlier turns go out as they did before. A system message pushed mid-conversation can change that: it
@@ -102,9 +103,13 @@ warning per model id: pass [`estimated_cost`](@ref) a `pricing` table that holds
 to [`DEFAULT_PRICING`](@ref). A failure costs `0.0`, since it carries no usage.
 
 How a stream reports its usage, and what a stream that ends uncommitted adds, is on
-[Streaming](@ref anthropic_streaming). [`cumulative_cost`](@ref) is a lower bound of the bill: it adds
-nothing for an attempt UniLM retried, a stream Anthropic ended with an error event, or an unstreamed
-reply UniLM could not decode ([Cost Tracking](@ref cost_guide)).
+[Streaming](@ref anthropic_streaming). [`cumulative_cost`](@ref) is a lower bound of the bill, refusals
+Anthropic does not bill aside: it adds nothing for an attempt UniLM retried, a stream Anthropic ended
+with an error event, or an unstreamed reply UniLM could not decode ([Cost Tracking](@ref cost_guide)).
+It prices every refusal at the usage Anthropic reports, while Anthropic bills a refusal that arrives
+before any output only when its `stop_details.category` is one its page lists as billed: `"bio"`,
+`"frontier_llm"` and `"reasoning_extraction"` on 25 October 2026
+([how refusals are billed](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed)).
 
 The rows are Anthropic's list prices as checked on 22 October 2026; prices change, so check Anthropic's
 page before relying on an estimate.

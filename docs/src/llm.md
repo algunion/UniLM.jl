@@ -2138,7 +2138,7 @@ connections per host, kept 30 s), created by the first live request.
 
 - [Jev (TypeSafe)](@ref jev_start): `service = TYPESAFEServiceEndpoint`; reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`; default model `jev-latest`
 - [OpenAI Decisions API](@ref openai_decisions_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-luna`
-- [Local decision models](@ref ollama_decisions_start): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
+- [Local decision models](@ref ollama_decisions_start): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 
 ```@setup generated
 # /generated:decision-provider-contracts
@@ -2521,7 +2521,7 @@ OpenAI and `translate` need `:realtime`; `speak` on `GEMINIServiceEndpoint` is G
 - [OpenAI](@ref openai_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-sol`
 - [Anthropic](@ref anthropic_start): `service = ANTHROPICServiceEndpoint`; reads `ANTHROPIC_API_KEY`; default model `claude-opus-5-5`
 - [Google Gemini](@ref gemini_start): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-3.8-flash`
-- [Ollama](@ref ollama_guide): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`; no default model (a call names one)
+- [Ollama](@ref ollama_guide): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 - [vLLM, LM Studio & llama.cpp](@ref local_servers_start): `service = GenericOpenAIEndpoint("http://localhost:8000", "")`; reads no environment variable; no default model (a call names one)
 - [Azure OpenAI](@ref azure_start): `service = AZUREServiceEndpoint`; reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`; default model `gpt-5.2`
 - [DeepSeek](@ref deepseek_start): `service = DeepSeekEndpoint()`; reads `DEEPSEEK_API_KEY`; default model `deepseek-flash`

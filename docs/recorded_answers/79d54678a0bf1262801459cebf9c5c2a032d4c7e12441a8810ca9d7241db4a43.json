@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "List the planets of the solar system in order, one per line.",
+          "role": "user"
+        }
+      ],
+      "model": "gemma4:e4b",
+      "stream": true,
+      "think": false,
+      "truncate": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "stream": [
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.138085Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Mercury\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.138095Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.138146Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Venus\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.153434Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.153441Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Earth\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.1686Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.168608Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Mars\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.184237Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.184246Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Jupiter\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.199924Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.199933Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Sat\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.19996Z\",\"message\":{\"role\":\"assistant\",\"content\":\"urn\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.199963Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.215734Z\",\"message\":{\"role\":\"assistant\",\"content\":\"U\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.231415Z\",\"message\":{\"role\":\"assistant\",\"content\":\"ran\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.231422Z\",\"message\":{\"role\":\"assistant\",\"content\":\"us\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.231449Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\\n\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.247114Z\",\"message\":{\"role\":\"assistant\",\"content\":\"Ne\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.262366Z\",\"message\":{\"role\":\"assistant\",\"content\":\"pt\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.278245Z\",\"message\":{\"role\":\"assistant\",\"content\":\"une\"},\"done\":false}",
+      "{\"model\":\"gemma4:e4b\",\"created_at\":\"2026-10-25T16:20:32.278255Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\",\"total_duration\":204124208,\"load_duration\":1996166,\"prompt_eval_count\":34,\"prompt_eval_cached_count\":9,\"prompt_eval_duration\":29653792,\"eval_count\":20,\"eval_duration\":171019833}",
+      ""
+    ]
+  },
+  "recorded_at": "2026-10-25T16:20:32Z"
+}

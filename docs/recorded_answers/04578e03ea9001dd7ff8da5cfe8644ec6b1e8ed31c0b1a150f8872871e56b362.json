@@ -1,0 +1,84 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "In one sentence: what is a prime number?",
+      "instructions": "You are a concise assistant.",
+      "model": "gemma4:e4b",
+      "reasoning": {
+        "effort": "none"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "resp_292802",
+      "object": "response",
+      "created_at": 1792945232,
+      "completed_at": 1792945232,
+      "status": "completed",
+      "incomplete_details": null,
+      "model": "gemma4:e4b",
+      "previous_response_id": null,
+      "instructions": "You are a concise assistant.",
+      "output": [
+        {
+          "id": "msg_689339",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.",
+              "annotations": [],
+              "logprobs": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "tools": [],
+      "tool_choice": "auto",
+      "truncation": "disabled",
+      "parallel_tool_calls": true,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "top_p": 1,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "top_logprobs": 0,
+      "temperature": 1,
+      "reasoning": {
+        "effort": "none"
+      },
+      "usage": {
+        "input_tokens": 30,
+        "output_tokens": 23,
+        "total_tokens": 53,
+        "input_tokens_details": {
+          "cached_tokens": 15
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "store": false,
+      "background": false,
+      "service_tier": "default",
+      "metadata": {},
+      "safety_identifier": null,
+      "prompt_cache_key": null
+    }
+  },
+  "recorded_at": "2026-10-25T16:20:32Z"
+}

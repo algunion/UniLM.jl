@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/completions",
+    "body": {
+      "max_tokens": 32,
+      "model": "qwen2.5-coder:1.5b-base",
+      "prompt": "def area(r):\n    ",
+      "suffix": "\n    return a\n",
+      "temperature": 0.0
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "cmpl-92",
+      "object": "text_completion",
+      "created": 1792945234,
+      "model": "qwen2.5-coder:1.5b-base",
+      "system_fingerprint": "fp_ollama",
+      "choices": [
+        {
+          "text": "a=3.14*r*r",
+          "index": 0,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 13,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens": 9,
+        "total_tokens": 22
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T16:20:34Z"
+}

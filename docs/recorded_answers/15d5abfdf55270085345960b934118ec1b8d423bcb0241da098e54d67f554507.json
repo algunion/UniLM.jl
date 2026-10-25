@@ -1,0 +1,92 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Lyon? Use the tool, then answer in one sentence.",
+          "role": "user"
+        }
+      ],
+      "model": "d1-3b",
+      "parallel_tool_calls": false,
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "Current weather in a city",
+            "parameters": {
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Lyon\"}"
+                },
+                "id": "ictDlq7RTzQwImnGftC5JaZ29FEmSaTH"
+              }
+            ]
+          }
+        }
+      ],
+      "created": 1792945378,
+      "model": "d1-3b",
+      "system_fingerprint": "b9730-e475fa2b5",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 13,
+        "prompt_tokens": 94,
+        "total_tokens": 107,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "id": "chatcmpl-ib9faHgLpkrTvC3n31nnosQVRLuGNoJG",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 94,
+        "prompt_ms": 67.307,
+        "prompt_per_token_ms": 0.7160319148936171,
+        "prompt_per_second": 1396.5857934538756,
+        "predicted_n": 13,
+        "predicted_ms": 96.382,
+        "predicted_per_token_ms": 7.414000000000001,
+        "predicted_per_second": 134.87995683841382
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T16:22:58Z"
+}

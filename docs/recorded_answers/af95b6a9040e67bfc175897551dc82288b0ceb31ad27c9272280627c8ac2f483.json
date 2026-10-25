@@ -1,0 +1,88 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You extract facts.",
+          "role": "system"
+        },
+        {
+          "content": "Extract the person: Ada Lovelace, born 1815 in London.",
+          "role": "user"
+        }
+      ],
+      "model": "d1-3b",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "person",
+          "description": "A person",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "city": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "year": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "year",
+              "city"
+            ],
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"city\": \"London\", \"name\": \"Ada Lovelace\", \"year\": 1815}"
+          }
+        }
+      ],
+      "created": 1792945379,
+      "model": "d1-3b",
+      "system_fingerprint": "b9730-e475fa2b5",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 22,
+        "prompt_tokens": 33,
+        "total_tokens": 55,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "id": "chatcmpl-7oIntwvzRZ1LHLXyRD9U2DbDe88Vd1xL",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 33,
+        "prompt_ms": 58.675,
+        "prompt_per_token_ms": 1.7780303030303028,
+        "prompt_per_second": 562.4201107797188,
+        "predicted_n": 22,
+        "predicted_ms": 207.796,
+        "predicted_per_token_ms": 9.445272727272727,
+        "predicted_per_second": 105.87306781651235
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T16:22:59Z"
+}

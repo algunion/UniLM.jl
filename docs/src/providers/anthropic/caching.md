@@ -16,11 +16,13 @@ for an hour. The options a `Chat` cannot send to Anthropic are refused before th
 
 Anthropic's cache "references the entire prompt: `tools`, `system`, and `messages` (in that order)",
 and the breakpoint is where it is written: one entry, holding everything up to and including that
-block. A later request that starts with the same blocks up to that breakpoint reads the entry, unless a
-change has invalidated it, and writes what follows them; the API looks back at most 20 blocks for such
-an entry. Changed tools invalidate the entire cache, and a changed `system` prompt that prompt and the
-messages; a changed `tool_choice`, an image added or removed anywhere in the prompt and changed
-thinking parameters invalidate at least the messages, as do other changes Anthropic lists
+block. A later request that starts with the same blocks up to that breakpoint reads the entry while it
+lives, unless a change has invalidated it, and writes what follows them; the API checks at most 20
+positions for such an entry, counting the request's breakpoint as the first and a run of consecutive
+`tool_use` blocks, or of consecutive `tool_result` blocks, as one position. Changed tools invalidate
+the entire cache, and a changed `system` prompt that prompt and the messages; a changed `tool_choice`,
+an image added or removed anywhere in the prompt and changed thinking parameters invalidate at least
+the messages, and Anthropic's table lists the other changes and what each invalidates
 ([what invalidates the cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)).
 A `Chat` builds each request from its fields as they are then, the whole conversation and tools included,
 so the next turn starts with the previous one's blocks as long as the tools, the `system` prompt and the

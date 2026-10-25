@@ -183,11 +183,13 @@ The blocks of a reply that is not a refusal — `thinking` blocks with their sig
 `redacted_thinking` blocks, text and tool calls — are kept in its message's `provider_content` and go
 back on the next request ([Conversations](@ref anthropic_conversations)). A streamed reply keeps them
 only when every block arrived whole: with one cut short — its stop event lost, or a tool call's input
-that is no JSON object, as when `max_tokens` cuts it — the message holds no `provider_content`, and the
-turn goes back as the text and tool calls it holds, or is left out when it holds neither. Kept blocks go
-back whatever Claude model the next request names, and a turn cut at `max_tokens` that holds only
-thinking blocks goes back too, as Anthropic's guide to continuing such a turn asks. Another provider's
-encoder ignores them and sends the turn's text and tool calls alone.
+that is no JSON object on a turn cut at `max_tokens` or the context window, which drops that tool call —
+the message holds no `provider_content`, and the turn goes back as the text and tool calls it holds, or
+is left out when it holds neither; on a turn that stops with `tool_use`, `end_turn` or `stop_sequence`,
+such an input makes the result an `LLMCallError`, and nothing is appended. Kept blocks go back whatever
+Claude model the next request names, and a turn cut at `max_tokens` that holds only thinking blocks goes
+back too, as Anthropic's guide to continuing such a turn asks. Another provider's encoder ignores them
+and sends the turn's text and tool calls alone.
 
 ## [Attachments](@id anthropic_media)
 
@@ -271,9 +273,9 @@ UniLM checks a request against neither, and leaves the size of media to the API
 ([Attachments](@ref anthropic_media)). Rate limits and overload are on
 [Rate limits, overload and failures](@ref anthropic_failures).
 
-A field the Messages API has no counterpart for is refused, not dropped, since dropping it would send a
-request other than the one asked for; so is each request in the table below that the API would answer
-with an error, or would run other than asked. `chatrequest!` and `tool_loop!` throw these
+A field the Messages API has no counterpart for, `n` aside, is refused, not dropped, since dropping it
+would send a request other than the one asked for; so is each request in the table below that the API
+would answer with an error, or would run other than asked. `chatrequest!` and `tool_loop!` throw these
 `ArgumentError`s before anything is sent. A rule that names a column of the
 [family table](@ref anthropic_reasoning) holds for the ids of its rows, and an id no row names meets
 only the other rules. Building an endpoint refuses an option value that breaks its rule
@@ -300,7 +302,7 @@ only the other rules. Building an endpoint refuses an option value that breaks i
 | an `ImageAttachment` with a `detail` level | "has no detail level": the image block has no such field | the attachment without `detail` |
 | the endpoint's `inference_geo` on a model whose `inference_geo` cell is "—" | "takes no inference_geo": the API answers HTTP 400 for it | an endpoint without `inference_geo` ([Options](@ref anthropic_options)) |
 | a request that ends with an assistant turn, on a model whose Prefill cell is "—" | "rejects messages that end with an assistant turn": the model takes no response prefill | end with a user turn, or ask for JSON with a JSON Schema `response_format` |
-| a system message pushed after a reply, with no user turn after it | "takes a system message after an assistant turn only once a user turn follows it": the request would end with the assistant turn, a response prefill | a user message after it, or the reply's tool results ([Conversations](@ref anthropic_conversations)) |
+| a system message pushed after a reply, with no user turn after it, where it is the last message or the model is append-only | "takes a system message after an assistant turn only once a user turn follows it": the request would end with the assistant turn, a response prefill | a user message after it, or the reply's tool results ([Conversations](@ref anthropic_conversations)) |
 | `prompt_cache_options` with `mode="explicit"`, `prewarm=true`, a `comparison_response_id`, or a `ttl` other than `"5m"` and `"1h"` | "Anthropic prompt caching takes prompt_cache_options": a `Chat` marks no cache breakpoints, takes no `max_tokens` of 0 to pre-warm a cache with, and maps no cache diagnostics | `mode="implicit"` or unset, and `ttl` `"5m"`, `"1h"` or unset ([Prompt caching](@ref anthropic_caching)) |
 
 Recorded on 24 October 2026 on `claude-opus-5-5` with UniLM's development branch after 0.26.0 and the

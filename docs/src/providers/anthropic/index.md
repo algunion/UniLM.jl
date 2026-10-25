@@ -168,9 +168,10 @@ blank line. Where a system message pushed later goes depends on two columns of t
   own messages and send the replies back as they came: an edit to an earlier turn, or to the tools,
   invalidates the thinking blocks after it, and the API answers HTTP 400.
 
-On every model, a system message pushed after a reply needs a user turn after it — a user message,
-or the results of the reply's tool calls. Until one follows, `chatrequest!` throws `ArgumentError`
-before sending: as it stands, the request would end with the assistant turn, a response prefill.
+A system message pushed after a reply needs a user turn after it — a user message, or the results
+of the reply's tool calls — except in a response prefill on a model whose Prefill cell is "yes".
+Until one follows, `chatrequest!` throws `ArgumentError` before sending: as it stands, the request
+would end with the assistant turn, a response prefill.
 
 ## [Streaming](@id anthropic_streaming)
 

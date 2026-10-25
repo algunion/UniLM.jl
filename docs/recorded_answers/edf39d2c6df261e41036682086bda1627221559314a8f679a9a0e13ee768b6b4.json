@@ -1,0 +1,81 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
+      "model": "tev1:0.8b",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "billing": "payments, charges, invoices or refunds",
+            "technical": "the app or the website does not work as expected",
+            "shipping": "a parcel that is late, lost or arrived damaged",
+            "other": "anything else"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this message?",
+          "criteria": [
+            "Can wait",
+            "Needs attention this week",
+            "Needs attention today"
+          ]
+        },
+        "repeat": {
+          "type": "noul",
+          "instructions": "Has the customer had this problem before?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "technical",
+          "probabilities": {
+            "billing": 0.0001519492545379515,
+            "technical": 0.9638185287791029,
+            "shipping": 0.0005078581192229293,
+            "other": 0.035521663847136224
+          },
+          "confidence": 0.8851148580741348
+        },
+        "urgency": {
+          "type": "score",
+          "score": 1.6944975253262846,
+          "legend": {
+            "0": "Can wait",
+            "1": "Needs attention this week",
+            "2": "Needs attention today"
+          },
+          "probabilities": {
+            "0": 0.0043109405126278665,
+            "1": 0.2968805936484596,
+            "2": 0.6988084658389125
+          },
+          "confidence": 0.42249212540924397
+        },
+        "repeat": {
+          "type": "noul",
+          "noul": 0.5608239874437592
+        }
+      },
+      "usage": {
+        "input_tokens": 466,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 142
+    }
+  },
+  "recorded_at": "2026-10-25T19:34:40Z"
+}

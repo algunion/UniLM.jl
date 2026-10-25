@@ -1,0 +1,134 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/openai-decisions/v1/decisions",
+    "body": {
+      "model": "gpt-6-luna",
+      "input": "The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
+      "questions": [
+        {
+          "type": "choice",
+          "name": "team",
+          "instructions": "Which team should handle this message?",
+          "choices": [
+            {
+              "value": "billing",
+              "description": "payments, charges, invoices or refunds"
+            },
+            {
+              "value": "technical",
+              "description": "the app or the website does not work as expected"
+            },
+            {
+              "value": "shipping",
+              "description": "a parcel that is late, lost or arrived damaged"
+            },
+            {
+              "value": "other",
+              "description": "anything else"
+            }
+          ]
+        },
+        {
+          "type": "score",
+          "name": "urgency",
+          "instructions": "How urgent is this message?",
+          "levels": [
+            {
+              "label": "Can wait"
+            },
+            {
+              "label": "Needs attention this week"
+            },
+            {
+              "label": "Needs attention today"
+            }
+          ]
+        },
+        {
+          "type": "predicate",
+          "name": "repeat",
+          "instructions": "Has the customer had this problem before?"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_57430b96f34f4534a05fbd56faa574d2",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_57430b96f34f4534a05fbd56faa574d2"
+    },
+    "body": {
+      "model": "gpt-6-luna",
+      "answers": [
+        {
+          "type": "choice",
+          "name": "team",
+          "choice": "technical",
+          "probabilities": [
+            {
+              "value": "billing",
+              "probability": 0.0
+            },
+            {
+              "value": "technical",
+              "probability": 1.0
+            },
+            {
+              "value": "shipping",
+              "probability": 0.0
+            },
+            {
+              "value": "other",
+              "probability": 0.0
+            }
+          ],
+          "confidence": 1.0
+        },
+        {
+          "type": "score",
+          "name": "urgency",
+          "score": 2.0,
+          "probabilities": [
+            {
+              "value": 0,
+              "label": "Can wait",
+              "probability": 0.0
+            },
+            {
+              "value": 1,
+              "label": "Needs attention this week",
+              "probability": 0.0
+            },
+            {
+              "value": 2,
+              "label": "Needs attention today",
+              "probability": 1.0
+            }
+          ],
+          "confidence": 1.0
+        },
+        {
+          "type": "predicate",
+          "name": "repeat",
+          "probability": 1.0
+        }
+      ],
+      "usage": {
+        "input_tokens": 437,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 437
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T19:32:03Z"
+}

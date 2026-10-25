@@ -1,0 +1,74 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/openai-decisions/v1/decisions",
+    "body": {
+      "model": "gpt-6-luna",
+      "input": "{\"msg\":\"I was charged twice for order #4471. Please refund the duplicate payment.\"}",
+      "questions": [
+        {
+          "type": "choice",
+          "name": "meaning_1",
+          "instructions": "Select the option that best describes the provided state.",
+          "choices": [
+            {
+              "value": "the customer wants a refund"
+            },
+            {
+              "value": "the customer reports a bug in the app"
+            },
+            {
+              "value": "anything else"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_9f444e9c20db4276a5f8a2e8eaafa847",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_9f444e9c20db4276a5f8a2e8eaafa847"
+    },
+    "body": {
+      "model": "gpt-6-luna",
+      "answers": [
+        {
+          "type": "choice",
+          "name": "meaning_1",
+          "choice": "the customer wants a refund",
+          "probabilities": [
+            {
+              "value": "the customer wants a refund",
+              "probability": 1.0
+            },
+            {
+              "value": "the customer reports a bug in the app",
+              "probability": 0.0
+            },
+            {
+              "value": "anything else",
+              "probability": 0.0
+            }
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "usage": {
+        "input_tokens": 147,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 147
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T19:32:04Z"
+}

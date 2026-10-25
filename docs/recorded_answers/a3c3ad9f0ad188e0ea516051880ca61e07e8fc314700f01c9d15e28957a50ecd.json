@@ -1,0 +1,61 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "I sent the shoes back two weeks ago and have heard nothing since.",
+      "model": "jev-latest",
+      "questions": {
+        "topic": {
+          "type": "choice",
+          "instructions": "Which returns topic is the customer asking about?",
+          "criteria": {
+            "return_policy": {
+              "what": "Whether and how an item can be returned",
+              "not_for": "Progress of a return already sent",
+              "examples": [
+                "Can I return shoes I've worn once?",
+                "How long do I have to return an order?"
+              ]
+            },
+            "return_status": {
+              "what": "Progress of a return already sent",
+              "not_for": "Whether and how an item can be returned",
+              "examples": [
+                "Has my return arrived yet?",
+                "When will my refund be paid?"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a1743f23b273b890bf37ff770fdccc",
+    "request_id_header": "x-typesafe-request-id",
+    "headers": {
+      "x-typesafe-request-id": "req_01a1743f23b273b890bf37ff770fdccc"
+    },
+    "body": {
+      "model": "jev-1.14.0",
+      "answers": {
+        "topic": {
+          "type": "choice",
+          "choice": "return_status",
+          "confidence": 1.0,
+          "probabilities": {
+            "return_policy": 0.0,
+            "return_status": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 435,
+        "output_tokens": 34
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T18:07:37Z"
+}

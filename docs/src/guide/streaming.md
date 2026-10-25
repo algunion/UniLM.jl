@@ -1,19 +1,27 @@
 # [Streaming](@id streaming_guide)
 
-Both APIs support **real-time streaming** of generated tokens, so you can display partial
-results as they arrive.
-
 ```@setup streaming
 using UniLM
-using JSON
 ```
 
-## Chat Completions Streaming
+A streamed call returns a `Task` at once and hands the reply to your callback as it is generated, so
+you can show partial results as they arrive; `fetch` gives the same typed result as an unstreamed
+call. A `Chat` streams with `stream=true` and a `callback`, and `respond` with a `do` block.
+
+```@example streaming
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref streaming_providers) links each provider's rules.
+
+## [Streaming a Chat](@id streaming_chat)
 
 Set `stream=true` and provide a callback:
 
 ```@example streaming
-chat = Chat(model="gpt-5.4-mini", stream=true)
+chat = Chat(service=service, model=model, stream=true)
 push!(chat, Message(Val(:system), "You are a poet."))
 push!(chat, Message(Val(:user), "Write a very short 2-line poem about coding."))
 task = chatrequest!(chat, callback=function(chunk, close)
@@ -32,17 +40,14 @@ end
 nothing # hide
 ```
 
-The Chat Completions callback fires in a fixed sequence: with a `String` argument as text
+The callback fires in a fixed sequence: with a `String` argument as text
 arrives — each argument is newly-generated text forwarded **verbatim** (several wire deltas
 may be coalesced into one callback), so multibyte characters are never split across chunk
 boundaries — and then exactly once at end-of-stream with the fully assembled
 [`Message`](@ref), whose `content` equals the concatenation of every forwarded `String`.
 
-!!! tip "Check it with Jev"
-    When the finished text is sent on — as an email, or a reply in a ticket — check it
-    before it goes: one Jev request asks whether it leaks, overpromises or is rude, and your
-    code decides pass, review or block ([Check the draft before a customer sees it](@ref
-    jev_llm_check_draft)).
+A `Chat` streams this way on every provider. When the turn ends, how its usage arrives and when a
+tool call reaches `on_tool_call` are the provider's, as its entry's streaming section says.
 
 ### [Stopping a Stream Early](@id streaming_stop)
 
@@ -62,13 +67,12 @@ result = fetch(task)   # LLMCallError whose cause is UniLMCancelled(:callback, �
 
 A stop takes effect at once: the connection is aborted, and the call ends with
 `LLMCallError(status = nothing, cause = UniLMCancelled(:callback, elapsed))` (a
-`ResponseCallError` on the Responses path). It is never retried, no further callback
+`ResponseCallError` on a `Respond`). It is never retried, no further callback
 runs, and the partial reply is not appended to the chat — unless the provider's
 completion marker already arrived: then the turn is committed, the final-message
-callback runs, and usage may be missing. On a Chat stream the marker is the chunk
-that carries the finish reason, which on the OpenAI wire comes before the usage chunk
-and `[DONE]`, so a stop in that window — or from the final-message callback itself —
-returns the completed turn as the success it is. On the Responses path the marker is
+callback runs, and usage may be missing. On a `Chat` stream the marker is the chunk
+that carries the finish reason, so a stop after it — or from the final-message callback
+itself — returns the completed turn as the success it is. On a `Respond` stream the marker is
 the terminal event: the response it carries stands, and its callback has already run.
 
 The flag can also be set from another task that holds it. To stop a stream from
@@ -88,20 +92,19 @@ A stop requested while the stream task is inside your callback takes effect when
 the callback returns. See [Cancellation](@ref concurrency_cancellation) for the full
 contract.
 
-### Exceptions from callbacks
+### [Exceptions from callbacks](@id streaming_exceptions)
 
 An exception thrown by `callback` or `on_tool_call` ends the call: `fetch` returns an
 `LLMCallError` (or `ResponseCallError`) whose `cause` is that exception. The call is
-never retried, nothing is appended to the chat, and no callback runs after it. On a Chat,
+never retried, nothing is appended to the chat, and no callback runs after it. On a `Chat`,
 the usage the provider had reported by then is added to `cumulative_cost`, as for a stop
-([Cumulative cost](@ref cost_guide)): a reply whose final usage had arrived counts whole.
-OpenAI sends that usage after the finish reason, so an exception thrown on its finish chunk
-adds nothing. A user `InterruptException` is the exception to that rule, as are the
-`ReplayMissError` and `RecordingWriteError` of a recorded call made in a callback (see
+([Cumulative cost](@ref cost_guide)): a reply whose final usage had arrived counts whole, and when a
+provider reports its usage is on its entry. A user `InterruptException` is the exception to that rule,
+as are the `ReplayMissError` and `RecordingWriteError` of a recorded call made in a callback (see
 [Recorded answers](@ref jev_testing_recorded)): each propagates, bare or inside the
 exception a fetched task threw, so `fetch` throws a `TaskFailedException` wrapping it.
 
-### Streamed Tool Calls
+### [Streamed tool calls](@id streaming_tool_calls)
 
 When the model streams tool calls, pass `on_tool_call` to be notified as each call
 completes. It fires **at most once per tool call**, in call order, receiving a fully
@@ -113,7 +116,7 @@ they finish:
 
 ```julia
 # weather_tool defined as in the Tool Calling guide
-chat = Chat(model="gpt-5.2", tools=[weather_tool], stream=true)
+chat = Chat(service=service, model=model, tools=[weather_tool], stream=true)
 push!(chat, Message(Val(:system), "Use the tools you are given."))
 push!(chat, Message(Val(:user), "What's the weather in Paris and Tokyo?"))
 
@@ -124,9 +127,8 @@ task = chatrequest!(chat;
 result = fetch(task)
 ```
 
-`on_tool_call` is supported on the `chatrequest!` streaming path for every chat provider
-(OpenAI-wire, native Anthropic, native Gemini); the Responses-API `respond` path does not
-surface it. It is a notification hook — the final assembled `Message` still carries every
+`on_tool_call` is a keyword of `chatrequest!`, on every provider's `Chat` stream; `respond` has none. It
+is a notification hook — the final assembled `Message` still carries every
 tool call (alongside any assistant text), so code that does not set `on_tool_call` loses
 nothing and can read `result.message.tool_calls` after `fetch`. The one call it omits is
 a partial one: on a turn that did not finish with `"tool_calls"` (cut at `"length"`, say),
@@ -136,12 +138,12 @@ turn keeps its text, finish reason and usage.
 `callback` and `on_tool_call` require `stream=true`: passed to a non-streaming call, they
 raise `ArgumentError` before any request is sent, rather than being ignored.
 
-## Responses API Streaming
+## [Streaming a Respond](@id streaming_respond)
 
-The Responses API provides an even cleaner streaming interface using Julia's `do`-block syntax:
+`respond` streams with Julia's `do`-block syntax:
 
 ```@example streaming
-task = respond("Write a haiku about Julia programming.", model="gpt-5.4-mini") do chunk, close
+task = respond("Write a haiku about Julia programming."; service, model) do chunk, close
     if chunk isa String
         print(chunk)
     elseif chunk isa UniLM.ResponseObject
@@ -158,53 +160,22 @@ end
 
 The `do`-block form automatically sets `stream=true`.
 
-### With Explicit Configuration
+### [With explicit configuration](@id streaming_respond_config)
 
 ```@example streaming
 r = Respond(
+    service=service,
+    model=model,
     input="Explain quantum computing step by step",
-    model="gpt-5.2",
     stream=true,
     max_output_tokens=2000,
 )
 println("Stream enabled: ", r.stream)
 println("Request preview:")
-println(JSON.json(r))
+println(UniLM.encode_agentic(service, r))
 ```
 
-## Streaming Across Providers
-
-Streaming is not OpenAI-only. The **native Anthropic** (`ANTHROPICServiceEndpoint`) and
-**native Gemini** (`GEMINIServiceEndpoint`) backends stream with the *same* callback /
-`do`-block API shown above — only the `service` (and model) change:
-
-```julia
-# Native Anthropic streaming (Chat Completions)
-chat = Chat(service=ANTHROPICServiceEndpoint, stream=true)
-push!(chat, Message(Val(:system), "You are a poet."))
-push!(chat, Message(Val(:user), "Two lines about the sea."))
-task = chatrequest!(chat, callback=(chunk, close) -> chunk isa String && print(chunk))
-fetch(task)
-
-# Native Gemini streaming (Chat Completions)
-chat = Chat(service=GEMINIServiceEndpoint, stream=true)
-push!(chat, Message(Val(:system), "You are a poet."))
-push!(chat, Message(Val(:user), "Two lines about the mountains."))
-task = chatrequest!(chat, callback=(chunk, close) -> chunk isa String && print(chunk))
-fetch(task)
-```
-
-Streaming preserves provider-native fidelity too: for Anthropic streams, the
-content blocks (including thinking blocks and their signatures) are
-re-assembled verbatim from the SSE deltas and attached to the final
-`Message.provider_content`, so a streamed tool-calling turn round-trips
-exactly like a non-streamed one.
-
-Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, vLLM, LM Studio, …)
-stream through the same `stream=true` + callback path, and so does
-[`OllamaEndpoint`](@ref), whose native stream is newline-delimited JSON rather than SSE.
-
-## Dropped SSE Payloads
+## [Dropped SSE payloads](@id streaming_dropped)
 
 An SSE `data:` payload the parser cannot read is dropped rather than allowed to
 abort the turn, and each drop is counted for that stream. The count rides the
@@ -217,44 +188,49 @@ transport anomaly, never routine operation. On a truncated stream it is often th
 reason no message could be built at all, so it is worth reading on a failure
 result as well as on a success.
 
-## Notes
+## [Notes](@id streaming_notes)
 
 - A streaming call returns a `Task` (spawned with `Threads.@spawn`, on the default
   thread pool); `fetch` it for the final typed result. It works on any thread
   layout, a single thread included — but your callbacks run on that task, so keep
   them short and hand heavy work to another task (see
   [Concurrency, Tasks and Cancellation](@ref concurrency_guide)).
-- The returned `Task` throws only for a user `InterruptException`; every failure —
-  a timeout, a stop, a callback exception — is a typed result from `fetch`.
+- The returned `Task` throws only for a user `InterruptException`, and for a recorded call's
+  errors ([Exceptions from callbacks](@ref streaming_exceptions)); every failure — a timeout, a stop,
+  a callback exception — is a typed result from `fetch`.
 - The `close` `Ref{Bool}` can be set to `true` from the callback (or from any task
   holding it) to terminate the stream early; see
   [Stopping a Stream Early](@ref streaming_stop).
-- On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
-- A Chat stream is final at its end-of-stream sentinel (`[DONE]`, Anthropic's
-  `message_stop`): the final `Message` callback runs at once, and the result follows
-  when the HTTP body ends — at most 0.5 s later. A server that keeps the body open
-  longer has that connection closed instead of reused.
+- On completion, a `Chat`'s callback receives a `Message`; a `Respond`'s callback receives a `ResponseObject`.
+- A `Chat` stream whose provider sends an end-of-stream marker is final at it: the final `Message`
+  callback runs at once, and the result follows when the HTTP body ends — at most 0.5 s later. A
+  server that keeps the body open longer has that connection closed instead of reused.
 - **Each stream uses its own HTTP/1.1 connection**, so a consumer that applies
   backpressure to one stream cannot stall its siblings; non-streaming requests may
   share an HTTP/2 connection.
-- **Streamed usage**: `OPENAIServiceEndpoint`, `DeepSeekEndpoint` and
-  `GEMINIOpenAIServiceEndpoint` streams request
-  `stream_options = {"include_usage": true}` automatically when `stream_options` is
-  unset, so a streamed turn carries token usage (on `.usage`) and accrues cost like a
-  non-streamed one. Native Anthropic and Gemini streams report usage on their own.
-  Other OpenAI-compatible servers (Azure, generic endpoints) are not sent the field,
-  since some reject it: set
-  `stream_options=Dict("include_usage" => true)` where the server supports it, or the
-  streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:`
-  keep-alive comment lines, and provider preambles (e.g. Azure content-filter
-  results) are all tolerated without affecting the stream.
-- A provider error mid-stream on an otherwise-`200` response (e.g. an Anthropic `overloaded_error`) surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.
+- **Streamed usage**: a streamed turn carries token usage (on `.usage`) and adds its cost to
+  `cumulative_cost` like an unstreamed one where its provider reports usage in the stream — on its
+  own, or because the endpoint asks for it with `stream_options = {"include_usage": true}` when the
+  `Chat` sets no `stream_options`. Each entry says which, in its streaming section or the section of the
+  endpoint it concerns; the table [at the end](@ref streaming_providers) links every entry's streaming
+  section. Elsewhere, set `stream_options=Dict("include_usage" => true)` where the server supports it, or
+  the streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:` keep-alive comment lines
+  and a provider's preamble chunks, such as content-filter results, are all tolerated without affecting
+  the stream.
+- A provider error mid-stream on an otherwise-`200` response surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.
 - **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so do not share one across concurrent streams, and do not `push!` to it while its stream task is still running. Use [`fork`](@ref) to fan out — see [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
 
-## See Also
+## [See also](@id streaming_see_also)
 
 - [Timeouts & Retries](@ref timeouts_guide) — the stream idle bound (wire idleness
   only: time in your callbacks is not counted) and what a completed-then-torn-down
   turn resolves to.
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — streaming into a
   `Channel`, backpressure, and cancelling a stream from another task.
+- [Decisions with LLMs](@ref jev_llm_guide) — check the finished text before it is sent on
+
+## [On your provider](@id streaming_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :streaming)
+```

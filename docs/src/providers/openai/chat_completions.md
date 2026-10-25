@@ -19,7 +19,7 @@ breaks one is refused ([Limits and refusals](@ref openai_limits)).
 | `reasoning_effort` | `reasoning_effort` | [Reasoning](@ref openai_reasoning) |
 | `temperature`, `top_p`, `logprobs`, `top_logprobs` | the same fields, at the efforts the model's row allows | [Request options](@ref openai_chat_options) |
 | `max_completion_tokens`, else `max_tokens` | `max_completion_tokens` | [Request options](@ref openai_chat_options) |
-| `modalities`, `audio` | the same fields | [Audio replies](@ref chat_audio_output__next) |
+| `modalities`, `audio` | the same fields | [Audio replies](@ref chat_audio_output) |
 | `stream`, `stream_options` | the same fields; `{"include_usage": true}` when unset | [Streaming](@ref openai_streaming) |
 | `prompt_cache_options`, `prompt_cache_key`, `prompt_cache_retention` | the same fields | [Prompt caching](@ref openai_caching) |
 | `service_tier`, `web_search_options`, `moderation`, `safety_identifier`, `metadata`, `store`, `seed`, `stop`, `verbosity`, `prediction`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `n` | the same fields | [Request options](@ref openai_chat_options) |
@@ -32,7 +32,8 @@ sets them, its `description`, `parameters` and `strict` flag. `tool_choice` is s
 `"none"`, `"required"`, or `UniLM.GPTToolChoice(func=:get_weather)` for
 `{"type": "function", "function": {"name": "get_weather"}}`. Strict mode makes the calls "reliably adhere
 to the function schema", and OpenAI recommends "always enabling" it; its schema needs
-`additionalProperties: false` on every object and every field `required`
+`additionalProperties: false` on every object and every field `required`, and a request whose strict
+schema misses them "will be rejected with details about the missing constraints"
 ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
 
 A `Chat` with `tools` sends `parallel_tool_calls: false` unless it sets another value: the model may
@@ -137,7 +138,7 @@ its OpenAI model page; an audio clip needs an audio model such as `gpt-audio-1.5
 `Respond` takes images and PDFs as parts of its input, and no audio
 ([Input](@ref openai_responses_input)); the attachment types are on [Attachments](@ref attachments_guide).
 
-## [Audio replies](@id chat_audio_output__next)
+## [Audio replies](@id chat_audio_output)
 
 A model that speaks answers in audio when the `Chat` asks for it with `modalities=["text", "audio"]` and
 an `audio` voice and format; OpenAI's guide uses `gpt-audio-1.5`
@@ -225,7 +226,7 @@ push!(chat, Message(Val(:user), "Count to five."))
 print(UniLM.encode_request(chat.service, chat))
 ```
 
-The concepts every provider shares are on [Chat Completions](@ref chat_guide).
+The concepts every provider shares are on [Conversations with Chat](@ref chat_guide).
 
 Recorded on 25 October 2026 on `gpt-6-sol` and `gpt-audio-1.5` with UniLM's development branch after
 0.26.0.

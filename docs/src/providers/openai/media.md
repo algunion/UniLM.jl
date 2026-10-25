@@ -227,7 +227,7 @@ UniLM prices none of them: [`token_usage`](@ref) and [`estimated_cost`](@ref) th
 `SpeechSuccess` and a `TranscriptionSuccess`. OpenAI bills `gpt-transcribe` at "\$0.0045 / minute",
 `gpt-realtime-translate` at "\$0.034 / minute", and a speech session at the Realtime model's token
 rates ([pricing](https://developers.openai.com/api/docs/pricing#transcription-and-speech)). A `Chat`
-on an audio model answers in speech too ([Audio replies](@ref chat_audio_output__next)), and every
+on an audio model answers in speech too ([Audio replies](@ref chat_audio_output)), and every
 type is in the [Audio API](@ref audio_api) reference.
 
 ## [Realtime sessions](@id timeout_realtime__next)

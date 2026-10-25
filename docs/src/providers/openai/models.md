@@ -43,6 +43,21 @@ The listing also names models whose shutdown date has passed. Before you use a n
 check that it has a price row, as the lookup above does, and whether it needs request rules UniLM does
 not hold yet: OpenAI's model pages give each model's reasoning efforts and the APIs it serves.
 
+OpenAI describes the models of the rule table, and `gpt-5.4-mini`, on which the manual's concept pages
+run their examples, in its own words:
+
+| Model | OpenAI's description |
+| :--- | :--- |
+| `gpt-6-sol` | "built for complex coding and agentic workflows" ([GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)) |
+| `gpt-6.1-sol` | "Near-Astra performance for complex work at a lower cost" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
+| `gpt-6-astra` | "Highest intelligence", "For the most demanding reasoning, coding, and professional work" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
+| `gpt-6-luna` | "Fastest and most cost-effective", "Strong performance for focused, high-volume tasks" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
+| `gpt-5.6` | "The `gpt-5.6` alias routes requests to `gpt-5.6-sol`" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
+| `gpt-5.6-sol` | "the model for flagship capability" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)), whose "promotional pricing is available at least through November 21, 2026" ([pricing](https://developers.openai.com/api/docs/pricing)) |
+| `gpt-5.6-terra` | "for a balance of intelligence and cost" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
+| `gpt-5.6-luna` | "for efficient, high-volume workloads" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
+| `gpt-5.4-mini` | "Reasoning.effort supports: none (default), low, medium, high and xhigh" ([GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)) |
+
 ## [Reasoning](@id openai_reasoning)
 
 `reasoning_effort` on a `Chat` and `reasoning=Reasoning(effort=…)` on a `Respond` set how much a
@@ -228,7 +243,7 @@ estimate follows the reported tier.
 Audio tokens — `prompt_audio_tokens` and `completion_audio_tokens` — bill at the audio rates below,
 scaled by the factors above as the text rates are, and the rest of the call at the text rates of the
 model's row; a call whose usage counts audio on a model without audio rates is estimated at `0.0`, with a
-warning ([Audio replies](@ref chat_audio_output__next)):
+warning ([Audio replies](@ref chat_audio_output)):
 
 ```@eval
 Main.ProviderFacts.openai_audio_rates()

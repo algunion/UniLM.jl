@@ -1,35 +1,47 @@
-# [Chat Completions](@id chat_guide)
+# [Conversations with Chat](@id chat_guide)
 
-The Chat Completions API is the standard way to talk to LLM providers.
-UniLM.jl wraps it in a type-safe, stateful `Chat` object that tracks conversation history
-automatically — and works with every supported backend (OpenAI, DeepSeek, Ollama, Gemini,
-Mistral, and more).
-
-```@setup chat
+```@setup chat_completions
 using UniLM
-using JSON
 ```
 
-## Creating a Chat
+A [`Chat`](@ref) holds a conversation — its messages and the options of its requests — and
+[`chatrequest!`](@ref) sends it to a provider and, with `history=true` (the default), appends the
+reply, so the next turn carries the conversation so far. Use it to talk with a language model turn by
+turn; [`respond`](@ref) sends one request of a provider's agentic API instead
+([Agentic respond](@ref agentic_guide)).
 
-```@example chat
-chat = Chat(
-    model="gpt-5.4-mini",   # model name
-    temperature=0.7,        # sampling temperature
-)
+```@example chat_completions
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref chat_completions_providers) links each provider's
+rules.
+
+## [Creating a Chat](@id chat_completions_create)
+
+```@example chat_completions
+chat = Chat(service=service, model=model, temperature=0.7)
 println("Model: ", chat.model)
 println("Messages: ", length(chat))
 ```
 
-All parameters are optional with sensible defaults. See [`Chat`](@ref) for the full list.
+`service` names the provider and `model` its model; a `Chat` without `model` takes the provider's
+default model, and throws `ArgumentError` for a provider that has none. Every field has a default, and
+the constructor checks the ranges of the options it is given ([Parameter validation](@ref chat_completions_validation)).
+See [`Chat`](@ref) for the full list. Each entry names the models UniLM holds rules and prices for: for
+the provider bound above, [Models](@ref openai_models).
 
-## Building Conversations
+## [Building conversations](@id chat_completions_messages)
 
-Messages are added with `push!`, which enforces the conversation structure: a `push!` (or
-`pop!`) that would produce an invalid sequence throws instead. The checks live in `push!` and
-`pop!`; `chat[i] = msg` and direct edits to `chat.messages` bypass them.
+Messages are added with `push!`, which refuses one that would make the conversation invalid: it throws
+[`InvalidConversationError`](@ref) for a first message that is not a system message, and for a message
+whose role repeats the last one's — consecutive `tool` results excepted. `pop!` removes the last message
+and throws for an empty conversation. `chat[i] = msg` and direct edits to `chat.messages` bypass these
+checks.
 
-```@example chat
+```@example chat_completions
 # System message must come first
 push!(chat, Message(Val(:system), "You are a helpful Julia programming tutor. Answer in plain text, without Markdown, in at most three sentences."))
 
@@ -43,26 +55,29 @@ println("Last message role: ", chat[end].role)
 
 The convenience `Val(:system)` and `Val(:user)` constructors keep things concise. You can also use the keyword constructor:
 
-```@example chat
-chat2 = Chat()
+```@example chat_completions
+chat2 = Chat(service=service, model=model)
 push!(chat2, Message(role="system", content="Be helpful"))
 push!(chat2, Message(role="user", content="Tell me more"))
 println("chat2 length: ", length(chat2))
 ```
 
-### Conversation Rules
+A user message can also carry images, sound clips and PDF documents ([Attachments](@ref attachments_guide)).
 
+### [Conversation rules](@id chat_completions_rules)
+
+- A [`Message`](@ref) has the role `"system"`, `"user"`, `"assistant"` or `"tool"`, and at least a text,
+  tool calls, a refusal, attachments or an audio reply; its constructor throws `ArgumentError` for one
+  that has none, for another role, and for a `tool` message without its `tool_call_id`
 - The **first** message must have role `system`
 - Messages must **alternate roles** (no two consecutive messages from the same role; consecutive `tool` results are the exception)
-- At least `content`, `tool_calls`, or `refusal_message` must be non-`nothing`
-- Attempting to violate these rules throws [`InvalidConversationError`](@ref) — the invalid message is never added
-- A `Message` role must be `"system"`, `"user"`, `"assistant"` or `"tool"` (anything else throws `ArgumentError`)
+- A `push!` that breaks either rule throws [`InvalidConversationError`](@ref) — the invalid message is never added
 - With `history=true`, sending a conversation that ends with an assistant message throws
   `InvalidConversationError` before any request: the reply could not be appended to it
 
-```@example chat
+```@example chat_completions
 # Demonstrate validation — an invalid mutation throws and leaves the chat unchanged
-chat3 = Chat()
+chat3 = Chat(service=service, model=model)
 push!(chat3, Message(Val(:system), "sys"))
 push!(chat3, Message(Val(:user), "hello"))
 try
@@ -73,7 +88,7 @@ end
 println("Length after rejected push: ", length(chat3), " (still 2 — the invalid message was not added)")
 ```
 
-## Sending Requests
+## [Sending requests](@id chat_completions_send)
 
 ```julia
 result = chatrequest!(chat)
@@ -81,9 +96,7 @@ result = chatrequest!(chat)
 
 The `!` suffix is a Julia convention — `chatrequest!` mutates `chat` by appending the assistant's response to the message history (when `history=true`).
 
-### Result Handling
-
-```@example chat
+```@example chat_completions
 result = chatrequest!(chat)
 if result isa LLMSuccess
     println(result.message.content)
@@ -94,22 +107,22 @@ else
 end
 ```
 
-!!! tip "Check it with Jev"
-    Before the request, one Jev question can send a message to the team that handles it,
-    so the model writes with that team's system message ([Route before you
-    generate](@ref jev_llm_route)). After it, one Jev request can check the reply for
-    leaks, promises the policy does not allow and rudeness before a user sees it ([Check
-    the draft before a customer sees it](@ref jev_llm_check_draft)).
+`chatrequest!` returns what the service or the network did as a typed result instead of throwing it:
+an [`LLMSuccess`](@ref) holding the reply, an `LLMFailure` holding the HTTP `status` and body the
+provider answered with, or an `LLMCallError` for a call that brought no reply it could use, the
+exception — a timeout, a cancellation — in its `cause`. [Results](@ref results_guide) has them all.
 
-### One-Shot Requests via Keywords
+### [One-shot requests via keywords](@id chat_completions_keywords)
 
-Skip the `Chat` object entirely for simple one-off requests:
+Skip the `Chat` object entirely for simple one-off requests; every keyword besides the prompts, `config`
+and `cancel` is a `Chat` field:
 
-```@example chat
+```@example chat_completions
 result = chatrequest!(
     systemprompt="You are a calculator. Respond only with the number.",
     userprompt="What is 42 * 17?",
-    model="gpt-5.4-mini",
+    service=service,
+    model=model,
     temperature=0.0
 )
 if result isa LLMSuccess
@@ -119,12 +132,12 @@ else
 end
 ```
 
-## Multi-Turn Conversations
+## [Multi-turn conversations](@id chat_completions_turns)
 
 Because `chatrequest!` appends the response, you can keep chatting:
 
-```@example chat
-chat = Chat(model="gpt-5.4-mini")
+```@example chat_completions
+chat = Chat(service=service, model=model)
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
@@ -135,7 +148,7 @@ else
 end
 ```
 
-```@example chat
+```@example chat_completions
 # `chatrequest!` appends the assistant reply on success, which is what makes the next
 # user turn valid. If the previous call appended none (e.g. it failed), pushing another
 # user message would throw InvalidConversationError — so guard the follow-up turn.
@@ -153,15 +166,15 @@ else
 end
 ```
 
-## Checking Conversation Validity
+## [Checking conversation validity](@id chat_completions_validity)
 
-```@example chat
-fresh = Chat(model="gpt-5.4-mini")
+```@example chat_completions
+fresh = Chat(service=service, model=model)
 push!(fresh, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 push!(fresh, Message(Val(:user), "What is multiple dispatch?"))
 println("Is chat valid? ", issendvalid(fresh))  # true — system + user
 
-empty_chat = Chat()
+empty_chat = Chat(service=service, model=model)
 println("Is empty chat valid? ", issendvalid(empty_chat))  # false
 ```
 
@@ -171,139 +184,38 @@ This checks:
 - Last message is `user`
 - No consecutive same-role messages
 
-## [Images, audio and documents](@id chat_attachments)
+## [The request body](@id chat_completions_body)
 
-A user message carries media besides its text: an [`ImageAttachment`](@ref) (PNG, JPEG,
-GIF or WebP), an [`AudioAttachment`](@ref) (WAV or MP3) or a [`DocumentAttachment`](@ref)
-(PDF), each read from a file or from bytes and recognised by its leading bytes, never by
-its name. An image may set the `detail` level a model reads it at: `"auto"`, `"low"`,
-`"high"` or `"original"` (OpenAI's levels; native Gemini takes the first three).
+[`UniLM.encode_request`](@ref)`(service, chat)` returns the body `chatrequest!` sends the provider, with
+no key and no request — or throws the refusal of a request the provider's encoder checks:
 
-```julia
-chat = Chat(model="gpt-6-luna")
-push!(chat, Message(Val(:system), "You are concise."))
-push!(chat, Message(Val(:user), "Does the chart agree with the report's conclusion?",
-                    DocumentAttachment("report.pdf"),
-                    ImageAttachment("chart.png"; detail="high")))
-result = chatrequest!(chat)
+```@example chat_completions
+println(UniLM.encode_request(service, chat))
 ```
 
-| Endpoint | Image | Sound clip | Document |
-| :------- | :---- | :--------- | :------- |
-| OpenAI, Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints | `image_url` part (`detail` when set) | `input_audio` part | `file` part (its `filename` and a data URL) |
-| [`ANTHROPICServiceEndpoint`](@ref) | base64 `image` block before the text; a detail level is refused | refused: the Messages API has no audio input | base64 `document` block before the text |
-| [`GEMINIServiceEndpoint`](@ref) | `inlineData` part before the text; `detail` as its media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"`, and any level on the Gemini 2.5 and Gemma 4 models, refused) | `inlineData` part | `inlineData` part (`application/pdf`; no file name) |
-| [`OllamaEndpoint`](@ref) | `images` entry; a detail level is refused | `images` entry | refused |
+`JSON.json(chat)` writes the `Chat` in the Chat Completions shape of the OpenAI-compatible wire, which
+is not every provider's body.
 
-On the OpenAI Chat Completions wire (the first row), UniLM sends every kind as a content
-part, and the server decides what to do with it. For the Responses API,
-`input_file(DocumentAttachment("report.pdf"))` is the document's `input_file` part;
-[`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it, and
-[`respond`](@ref) on Gemini Interactions takes the attachments themselves in an
-[`InputMessage`](@ref)'s content (see [Agentic Workflows](@ref agentic_guide)). A refusal is
-an `ArgumentError` before any request.
+## [Retries and failures](@id chat_completions_retries)
 
-## [Audio replies](@id chat_audio_output)
+`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with
+exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent
+callers that received the same header do not retry in lockstep. A 429 whose error names spent credit or
+a reached spend, usage or quota limit is returned at once, since no retry clears it; each provider's
+failure section names the codes it sends. Attempts and total time are bounded by the resolved
+[`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass
+`config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults
+with `with_request_config` / `set_default_config!` ([Timeouts & Retries](@ref timeouts_guide)). Timeouts
+surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in
+`.cause`; a cancelled call (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)) carries a
+`UniLMCancelled` there instead.
 
-A model that speaks, such as `gpt-audio-1.5`, answers in audio when the `Chat` asks for
-it with `modalities=["text", "audio"]` and an `audio` voice and format
-([Audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions)).
-The reply's `audio_output` is an [`AudioOutput`](@ref): the audio's bytes in `data`,
-OpenAI's `id` for it, `expires_at` — the Unix time until which OpenAI keeps it for later
-turns — and its `transcript`, which is also the reply's `content`.
+A check made before sending is not a result: `chatrequest!` throws `ArgumentError` for a `callback` or
+`on_tool_call` without `stream=true`, for an endpoint whose declared capabilities lack `:chat`, and for a
+request the provider's encoder refuses, and `InvalidConversationError` for a conversation the reply could
+not be appended to — each before any request is sent.
 
-```julia
-chat = Chat(model="gpt-audio-1.5", modalities=["text", "audio"],
-            audio=Dict("voice" => "alloy", "format" => "wav"))
-push!(chat, Message(Val(:system), "Answer in one short sentence."))
-push!(chat, Message(Val(:user), "Say hi."))
-result = chatrequest!(chat)
-spoken = result.message.audio_output
-write("hi.wav", spoken.data)            # a WAV file, the format asked for
-println(spoken.transcript)              # the text of result.message.content
-
-push!(chat, Message(Val(:user), "Now say it in French."))
-chatrequest!(chat)                      # the earlier reply goes back by its id
-```
-
-The next request sends the audio turn back to OpenAI as its content — the transcript —
-and `"audio": {"id": …}`; every other endpoint receives the content alone. A
-streamed reply assembles the same `audio_output` from its chunks, and its transcript
-reaches the callback as text. OpenAI bills audio tokens at their own rates — for
-`gpt-audio-1.5`, \$32 per 1M audio input and \$64 per 1M audio output tokens, beside
-\$2.50 and \$10 for text. The result's [`TokenUsage`](@ref) counts them in
-`prompt_audio_tokens` and `completion_audio_tokens`, and [`estimated_cost`](@ref) bills them
-at those rates and the rest of the call at the text rates (see
-[How the estimate is computed](@ref cost_estimate)). A turn that sends an audio reply back
-by its id pays for that audio again, as audio input.
-
-## Models
-
-UniLM.jl works with any model name string. Common choices:
-
-| Model             | Usage                  |
-| :---------------- | :--------------------- |
-| `"gpt-6-sol"`     | Default; built for complex coding and agentic workflows, \$2/\$10 per M tokens |
-| `"gpt-6.1-sol"`   | Near-Astra quality at \$2/\$10; reasoning effort `"low"` and up, no sampling controls, tools only through [`Respond`](@ref) |
-| `"gpt-6-astra"`   | Most capable, \$10/\$50; reasoning effort `"low"` and up, no sampling controls, tools only through `Respond` |
-| `"gpt-6-luna"`    | Fastest and cheapest, \$0.10/\$0.50 |
-| `"gpt-5.6-sol"`   | GPT-5.6 flagship; promotional \$4/\$20 at least through November 21, 2026 |
-| `"gpt-5.6-terra"` | GPT-5.6 model that balances intelligence and cost, \$2/\$12 |
-| `"gpt-5.6-luna"`  | GPT-5.6 model for cost-sensitive work, \$0.20/\$1.20 |
-| `"gpt-5.4-mini"`  | Mini model; reasoning effort `"none"` by default |
-
-GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models take Chat tools only with
-`reasoning_effort="none"`, and GPT-6 Sol and Luna take sampling controls and log
-probabilities only at that effort; OpenAI's tool path is the Responses API
-([`Respond`](@ref)). On Chat Completions every GPT-6 and GPT-5.6 model — GPT-6 Astra and
-GPT-6.1 Sol too — takes reasoning effort up to `"xhigh"`, and `"max"` throws `ArgumentError`
-before any request: the API answered `"max"` with HTTP 400 on each of them (2026-10-22),
-though its reference lists it, so `"max"` goes through `Respond`. None of them takes
-`"minimal"` (use `"low"`), and GPT-6 Astra and GPT-6.1 Sol start at `"low"`. These rules apply to `OPENAIServiceEndpoint`, to
-`gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6` and
-`gpt-5.6-sol`/`-terra`/`-luna` by exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), and
-are checked before any request; other models are checked by the server.
-
-All eight are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
-the box. Any other model name is accepted — it is just a string on the wire — but
-an unpriced one estimates at `0.0` (with a one-time warning) — see
-[Unpriced models cost \$0](@ref unpriced-zero) before relying on
-`estimated_cost`.
-
-## Using Other Providers
-
-Pass a `service` to target any supported backend:
-
-```julia
-# DeepSeek (default model: deepseek-flash)
-chat = Chat(service=DeepSeekEndpoint())
-
-# Ollama (local; see "Local Models with Ollama")
-chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b")
-
-# Mistral
-chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")
-```
-
-See the [Multi-Backend Guide](@ref backend_guide) for the full list of providers and configuration.
-
-## JSON Serialization
-
-The `Chat` object serializes cleanly to JSON for the API:
-
-```@example chat
-println(JSON.json(chat))
-```
-
-## Retry Behaviour
-
-`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent callers that received the same header do not retry in lockstep. A 429 whose `error.code` reports spent credit or a reached limit — `credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded` — or whose `error.type` (or older `error.code`) is `insufficient_quota`, is returned at once: as [OpenAI's error codes](https://developers.openai.com/api/docs/guides/error-codes) say, retrying billing, spend or quota errors won't restore access. So is Gemini Interactions' daily quota, a 429 whose `error.code` is `quota_exceeded` ([Gemini API errors](https://ai.google.dev/gemini-api/docs/api-errors)); Gemini's rate limits, `RESOURCE_EXHAUSTED` among them, are retried. So is Anthropic's monthly spend cap, a 429 whose `error.details.error_code` is `enforced_spend_limit_reached`, which fails until access resumes ([Anthropic rate limits](https://platform.claude.com/docs/en/api/rate-limits)); its rate limits are retried. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; a cancelled call (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)) carries a `UniLMCancelled` there instead.
-
-Local validation is not a result: an option the provider or model cannot express, a service
-that does not declare `:chat`, or a conversation the reply could not be appended to throws
-(`ArgumentError` / `InvalidConversationError`) before any request is sent.
-
-## Parameter Validation
+## [Parameter validation](@id chat_completions_validation)
 
 The `Chat` constructor validates parameter ranges at construction time:
 
@@ -320,20 +232,24 @@ The `Chat` constructor validates parameter ranges at construction time:
 | `reasoning_effort`  | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 
 Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually
-exclusive, and an empty `tools` vector is stored as `nothing`. Provider- and model-specific
-limits (for example GPT-5.6 Chat tools requiring `reasoning_effort="none"`, or Claude's
-temperature range) are checked when the request is encoded, before any network I/O.
+exclusive, and an empty `tools` vector is stored as `nothing`. Which fields and values a provider and
+its models take is checked when the request is encoded, before any network I/O, by the rules its
+entry's limits section lists. UniLM refuses only what those rules name: a request they let through goes
+to the provider, whose answer is the check.
 
-On `OPENAIServiceEndpoint` the encoder follows the current Chat Completions reference:
-`max_tokens` goes out as `max_completion_tokens` (setting both throws), `user` throws
-`ArgumentError` (OpenAI replaces it with `safety_identifier` and `prompt_cache_key`), and
-`service_tier` must be `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` —
-`"ultrafast"` is a Responses tier. Other OpenAI-compatible endpoints send these fields as set.
-
-## See Also
+## [See also](@id chat_completions_see_also)
 
 - [`Chat`](@ref) — full type reference
 - [`Message`](@ref) — message type reference
-- [Tool Calling](@ref tools_guide) — function calling with Chat Completions
+- [Tool Calling](@ref tools_guide) — function calling with a `Chat`
 - [Streaming](@ref streaming_guide) — real-time streaming
 - [Structured Output](@ref structured_guide) — JSON-constrained generation
+- [Results](@ref results_guide) — success, failure and call error
+- [One API across providers](@ref backend_guide) — switching providers
+- [Decisions with LLMs](@ref jev_llm_guide) — route a message before the request, or check a reply before a user sees it
+
+## [On your provider](@id chat_completions_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :conversations)
+```

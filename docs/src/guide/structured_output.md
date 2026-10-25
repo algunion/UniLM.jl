@@ -1,34 +1,43 @@
 # [Structured Output](@id structured_guide)
 
-Force the model to produce valid JSON conforming to a schema. Both APIs support this.
+```@setup structured_output
+using UniLM
+using JSON
+```
 
-!!! note "Provider support varies"
-    Schema-constrained output is fully supported on **OpenAI and OpenAI-compatible** providers.
-    Support differs on the native backends — see the provider notes in the
-    [Multi-Backend guide](@ref backend_guide) before relying on strict schemas elsewhere.
+A format makes the model answer in JSON: any JSON object, or one that follows a JSON Schema you give. A
+`Chat` takes it as `response_format`, a `Respond` as `text`. How a provider constrains the reply, which
+parts of a format it sends, and which formats it refuses are on its entry.
 
-## Chat Completions
+```@example structured_output
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref structured_output_providers) links each provider's
+rules.
+
+## [On a Chat](@id structured_output_chat)
 
 Use [`ResponseFormat`](@ref) to control the output format:
 
-### Free-Form JSON
+### [Free-form JSON](@id structured_output_json_object)
 
-```@example structured
-using UniLM
-using JSON
-
+```@example structured_output
 chat = Chat(
-    model="gpt-5.4-mini",
+    service=service,
+    model=model,
     response_format=ResponseFormat()  # type="json_object"
 )
 push!(chat, Message(Val(:system), "You output JSON. Always respond with valid JSON."))
 push!(chat, Message(Val(:user), "List 3 programming languages with their year of creation."))
 println("Response format type: ", chat.response_format.type)
 println("Request body:")
-println(JSON.json(chat))
+println(UniLM.encode_request(service, chat))
 ```
 
-```@example structured
+```@example structured_output
 result = chatrequest!(chat)
 if result isa LLMSuccess
     println(JSON.json(JSON.parse(result.message.content), 2))
@@ -37,9 +46,9 @@ else
 end
 ```
 
-### JSON Schema (Strict)
+### [JSON Schema (strict)](@id structured_output_schema)
 
-```@example structured
+```@example structured_output
 schema = ResponseFormat(UniLM.JsonSchemaAPI(
     name="languages",
     description="A list of programming languages",
@@ -65,7 +74,7 @@ schema = ResponseFormat(UniLM.JsonSchemaAPI(
     strict=true
 ))
 
-chat = Chat(model="gpt-5.4-mini", response_format=schema)
+chat = Chat(service=service, model=model, response_format=schema)
 push!(chat, Message(Val(:system), "Return structured data about programming languages."))
 push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
 println("Schema name: ", schema.json_schema.name)
@@ -73,7 +82,7 @@ println("Response format type: ", schema.type)
 println("Strict: ", schema.json_schema.strict)
 ```
 
-```@example structured
+```@example structured_output
 result = chatrequest!(chat)
 if result isa LLMSuccess
     println(JSON.json(JSON.parse(result.message.content), 2))
@@ -82,20 +91,17 @@ else
 end
 ```
 
-!!! tip "Check it with Jev"
-    When every field of the record is a category, a yes/no or a rubric — which team,
-    whether the customer wants a refund, how urgent — Jev fills the struct in one request,
-    with a certainty for each field, and the constructor receives only values its field
-    types allow ([Fill a struct in one request](@ref jev_fill_struct)).
+`strict=true` asks for a reply that follows the schema exactly; whether a provider sends the format's
+`name`, `description` and `strict`, or the schema alone, is on its entry.
 
-## Responses API
+## [On a Respond](@id structured_output_respond)
 
-The Responses API uses [`TextConfig`](@ref) with convenience constructors:
+A `Respond` takes a [`TextConfig`](@ref) in `text`, made by the convenience constructors:
 
-### JSON Object
+### [JSON object](@id structured_output_respond_object)
 
-```@example structured
-result = respond("List 3 colors as a JSON object", text=json_object_format(), model="gpt-5.4-mini")
+```@example structured_output
+result = respond("List 3 colors as a JSON object", text=json_object_format(), service=service, model=model)
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -103,9 +109,9 @@ else
 end
 ```
 
-### JSON Schema
+### [JSON Schema](@id structured_output_respond_schema)
 
-```@example structured
+```@example structured_output
 fmt = json_schema_format(
     "colors",
     "A structured list of colors",
@@ -134,8 +140,8 @@ println("Format type: ", fmt.format.type)
 println("Schema strict: ", fmt.format.strict)
 ```
 
-```@example structured
-result = respond("List red, green, and blue with their hex codes", text=fmt, model="gpt-5.4-mini")
+```@example structured_output
+result = respond("List red, green, and blue with their hex codes", text=fmt, service=service, model=model)
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else
@@ -143,76 +149,14 @@ else
 end
 ```
 
-### Plain Text Format
+### [Plain text format](@id structured_output_text)
 
-```@example structured
+```@example structured_output
 tc = text_format()
 println("Default format type: ", tc.format.type)
 ```
 
-## Gemini
-
-Native Gemini takes the same options: a `Chat`'s `response_format` becomes
-`generationConfig.responseFormat` on `generateContent`, and the `text` format of a
-[`respond`](@ref) call becomes the Interactions `response_format`. Only the schema
-is sent — Gemini has no counterpart for the schema `name`, `description`, or `strict`.
-Gemini does not enforce `minLength`, `maxLength`, `minProperties`, `maxProperties`,
-`uniqueItems`, `contains`, `minContains` or `maxContains`: the API strips them from the
-schema without an error ([structured output](https://ai.google.dev/gemini-api/docs/structured-output)),
-so check those constraints on the parsed answer. `minItems` and `maxItems` are enforced.
-
-```@example structured
-capital = ResponseFormat(UniLM.JsonSchemaAPI(
-    name="capital",
-    description="A capital city and its country",
-    schema=Dict(
-        "type" => "object",
-        "properties" => Dict(
-            "city" => Dict("type" => "string"),
-            "country" => Dict("type" => "string")
-        ),
-        "required" => ["city", "country"],
-        "additionalProperties" => false
-    )
-))
-
-chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
-            reasoning_effort="low", max_tokens=1024, response_format=capital)
-push!(chat, Message(Val(:system), "You output JSON."))
-push!(chat, Message(Val(:user), "Give the capital of Norway as JSON."))
-result = chatrequest!(chat)
-if result isa LLMSuccess
-    println(sort(collect(keys(JSON.parse(result.message.content)))))
-else
-    println("Request failed — ", result)
-end
-```
-
-The Interactions form passes the same schema through `text`:
-
-```julia
-fmt = json_schema_format("capital", "A capital city and its country", capital.json_schema.schema)
-result = respond("Give the capital of Norway as JSON."; service=GEMINIServiceEndpoint,
-                 model="gemini-3.8-flash", text=fmt, max_output_tokens=256)
-```
-
-## Anthropic
-
-Native Anthropic maps a JSON Schema `response_format` onto Claude's structured outputs:
-it becomes `output_config.format = {type: "json_schema", schema}`, and only the schema
-is sent (the `name`, `description` and `strict` have no counterpart — the output is
-always constrained to the schema). Claude has no schema-less JSON mode, so
-`ResponseFormat()` (`json_object`) throws `ArgumentError` before any request.
-`FunctionSignature(strict=true)` becomes the tool's own `strict` flag.
-
-```julia
-chat = Chat(service=ANTHROPICServiceEndpoint, response_format=capital)   # default: claude-opus-5-5
-push!(chat, Message(Val(:system), "You output JSON."))
-push!(chat, Message(Val(:user), "Give the capital of Norway as JSON."))
-result = chatrequest!(chat)
-```
-
-## Convenience Constructors
+## [Convenience constructors](@id structured_output_constructors)
 
 | Constructor                              | Format                  |
 | :--------------------------------------- | :---------------------- |
@@ -220,7 +164,14 @@ result = chatrequest!(chat)
 | `json_schema_format(name, desc, schema)` | Schema-constrained JSON |
 | `text_format()`                          | Plain text (default)    |
 
-## See Also
+## [See also](@id structured_output_see_also)
 
-- [`ResponseFormat`](@ref) — Chat Completions format type
-- [`TextConfig`](@ref), [`TextFormatSpec`](@ref) — Responses API format types
+- [`ResponseFormat`](@ref) — the format of a `Chat`
+- [`TextConfig`](@ref), [`TextFormatSpec`](@ref) — the formats of a `Respond`
+- [Decisions with LLMs](@ref jev_llm_guide) — a decision model beside the LLM, for answers that are categories, yes or no, or scores; a whole record of such fields in one request: [Fill a struct in one request](@ref jev_fill_struct)
+
+## [On your provider](@id structured_output_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :structured_output)
+```

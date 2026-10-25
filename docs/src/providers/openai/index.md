@@ -30,7 +30,7 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [get JSON that fits a schema](@ref openai_structured_output) | `response_format`, or `text=json_schema_format(…)` | a reply constrained to the schema |
 | [control reasoning](@ref openai_reasoning) | `reasoning_effort`, or `reasoning=Reasoning(effort=…)` | that effort, checked against the model's row in the rule table |
 | [send images, audio and PDFs](@ref openai_media) | `ImageAttachment`, `AudioAttachment`, `DocumentAttachment` | the files as content parts of the message |
-| [get a spoken reply](@ref chat_audio_output__next) | `modalities=["text", "audio"]` and an `audio` voice and format | the audio, its transcript, and the audio sent back by id on the next turn |
+| [get a spoken reply](@ref chat_audio_output) | `modalities=["text", "audio"]` and an `audio` voice and format | the audio, its transcript, and the audio sent back by id on the next turn |
 | [embed text](@ref openai_embeddings) | `Embeddings` and `embeddingrequest!` | the vectors, filled in place |
 | [cache a long prompt](@ref openai_caching) | `prompt_cache_options` | cache reads and writes, counted in the usage |
 | [read back, delete or cancel a stored response](@ref openai_stored_responses) | `get_response`, `delete_response`, `cancel_response` | the stored response, or its removal |
@@ -201,9 +201,9 @@ text(chatrequest!(chat))
 
 The messages go out in the order they were pushed, system messages where they stand, and a reply
 goes back as its text and tool calls; a spoken reply also goes back by its audio id
-([Audio replies](@ref chat_audio_output__next)). A `Message` needs a text, tool calls, a refusal,
+([Audio replies](@ref chat_audio_output)). A `Message` needs a text, tool calls, a refusal,
 attachments or an audio reply, and its constructor throws `ArgumentError` for one that has none;
-what `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+what `push!` refuses is the same on every provider ([Conversations with Chat](@ref chat_guide)).
 
 A response is stored by OpenAI unless the request sets `store=false`: OpenAI keeps it "for at least
 30 days" ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)).
@@ -271,7 +271,7 @@ and the chunk's `usage`):
   are whole: as the next call begins, or at the end of the stream
   ([Tools on Chat Completions](@ref openai_chat_tools)).
 - **Spoken replies.** The transcript of an audio reply reaches the callback as text, and the audio is
-  assembled from its chunks ([Audio replies](@ref chat_audio_output__next)).
+  assembled from its chunks ([Audio replies](@ref chat_audio_output)).
 
 `respond` streams with a `do` block, whose function receives the text, then the
 [`ResponseObject`](@ref) of a response that completed or ended incomplete; the response's usage comes

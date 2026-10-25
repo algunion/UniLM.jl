@@ -288,6 +288,9 @@ no row names meets only the other rules.
 | an image or a sound clip in an `Embeddings` input | `the OpenAI Embeddings API takes text only`: the Embeddings API embeds text | text ([Embeddings](@ref openai_embeddings)) |
 | an embedding `task` other than `:none`, or a `title`, on an OpenAI embedding model, by the `Embeddings` constructor | `gets none: pass task = :none`, `has no task prompts, so a title has nowhere to go`: UniLM writes a task prompt, and a title in it, only for the embedding models it knows to read one, and OpenAI's are not among them | no `task` and no `title` |
 
+The image, audio and Realtime verbs refuse what [Images, audio & realtime](@ref openai_media_limits)
+lists, and the platform verbs what [Platform APIs](@ref openai_platform_limits) lists.
+
 The request's parts refuse a value outside their own sets first, on every endpoint: `PromptCacheOptions`
 any `ttl` other than `"5m"`, `"1h"`, `"30m"` and `"12h"` (`prompt cache ttl must be one of`), and
 `Reasoning` and `Chat` an effort outside the seven above (`reasoning effort must be one of`,

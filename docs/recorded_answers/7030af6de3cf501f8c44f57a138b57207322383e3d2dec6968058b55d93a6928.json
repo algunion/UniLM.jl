@@ -1,0 +1,166 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "include": [
+        "file_search_call.results"
+      ],
+      "input": "How long do I have to return a jacket, and how is the refund paid?",
+      "instructions": "Answer from the files you search, in one or two sentences.",
+      "model": "gpt-6-sol",
+      "tools": [
+        {
+          "max_num_results": 3,
+          "type": "file_search",
+          "vector_store_ids": [
+            "vs_6ade2f0d72148191a5b970d85c9826e9"
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_0c059faccac44ff88d3b9850b38ff4eb",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_0c059faccac44ff88d3b9850b38ff4eb"
+    },
+    "body": {
+      "id": "resp_0786a4eb291e9e78006ade2fa7005887d2a10dd7f749e44229",
+      "object": "response",
+      "created_at": 1792946087,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1792946090,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "Answer from the files you search, in one or two sentences.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "fs_0786a4eb291e9e78006ade2fa7d22087d2a0a6cbb6a25ebe64",
+          "type": "file_search_call",
+          "status": "completed",
+          "queries": [
+            "How long do I have to return a jacket, and how is the refund paid?",
+            "jacket return policy return window refund paid original payment method"
+          ],
+          "results": [
+            {
+              "attributes": {},
+              "file_id": "file-UoD6Ty5NGchHpMLtz28KyY",
+              "filename": "returns_policy.txt",
+              "score": 0.8756,
+              "text": "Harbor & Pine Outfitters: returns and repairs policy\n\nReturns. A customer may return any unworn item within 45 days of delivery. Items bought\non clearance can be exchanged but not refunded. Gift cards cannot be returned.\n\nRefunds. A refund goes back to the original payment method within 5 business days of\nthe return being received at the Portland warehouse. Return shipping is free for\nmembers of the Harbor Club and costs a flat 7 dollars for everyone else.\n\nRepairs. Jackets and packs carry a 2-year repair warranty from the date of purchase.\nA repair under warranty is free; outside the warranty the workshop quotes a price\nbefore any work starts. Repairs take about 3 weeks.\n\nContact. Questions about a return or a repair go to care@harborandpine.example, which\nanswers within one working day.",
+              "vector_store_id": ""
+            }
+          ]
+        },
+        {
+          "id": "msg_0786a4eb291e9e78006ade2fa942c087d2aff1e943745487ab",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [
+                {
+                  "type": "file_citation",
+                  "file_id": "file-UoD6Ty5NGchHpMLtz28KyY",
+                  "filename": "returns_policy.txt",
+                  "index": 257
+                }
+              ],
+              "logprobs": [],
+              "text": "You can return an unworn jacket within **45 days of delivery**. If it wasn’t bought on clearance, the refund goes back to your **original payment method** within 5 business days after the return reaches the warehouse; clearance items can only be exchanged. "
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "medium",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [
+        {
+          "type": "file_search",
+          "filters": null,
+          "max_num_results": 3,
+          "ranking_options": {
+            "ranker": "auto",
+            "score_threshold": 0.0
+          },
+          "vector_store_ids": [
+            "vs_6ade2f0d72148191a5b970d85c9826e9"
+          ]
+        }
+      ],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 2226,
+        "input_tokens_details": {
+          "cache_write_tokens": 1494,
+          "cached_tokens": 0
+        },
+        "output_tokens": 116,
+        "output_tokens_details": {
+          "reasoning_tokens": 44
+        },
+        "total_tokens": 2342
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-10-25T16:34:50Z"
+}

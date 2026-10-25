@@ -286,7 +286,8 @@ end
   key-value pairs, and `user`, which OpenAI replaces with the other two, is refused
   ([Limits and refusals](@ref openai_limits)).
 - **`moderation`.** A [`ModerationConfig`](@ref) runs a moderation model over the input and the output;
-  the response's `moderation` holds the results, in `result.response.raw["moderation"]`.
+  the response's `moderation` holds the results, in `result.response.raw["moderation"]`. Text and images
+  on their own are classified by [`moderate`](@ref) ([Moderation](@ref openai_moderation)).
 - **`context_management`, `stream_options`.** Sent as given: compaction settings, and the stream's
   `include_obfuscation`.
 

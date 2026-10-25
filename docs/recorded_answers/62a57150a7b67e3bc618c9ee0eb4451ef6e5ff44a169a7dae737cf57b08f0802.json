@@ -1,0 +1,75 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "inlineData": {
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA0UlEQVR4nO3PQQ7DMAwDQf//0+2xaC+VRFmM4SVyjbyzXodvuQPUAXAPgHsA3APgHoDfeyv0NT7YdCbWvUEinyinNzE0QEu9ZhAAjfWCofRbe7rAyAO21ucNtwEG6pOGDGCsPmMIA4brw4ZLAJb6mAHAAQBjfcAAAAAAAAAAAAAA4MGGv2kAjgC4DJGuawDzhmBUAjBpiBflADOGVM59gN2GbEsFsIlRq6gDeg3lBAnQZVDeVwEiQ39ZP/F9b6j782DjLcsAuAfAPQDuAXDveMAbE4sL73v1SXUAAAAASUVORK5CYII=",
+                "mimeType": "image/png"
+              }
+            },
+            {
+              "text": "What colour is the shape? One word."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Red",
+                "thoughtSignature": "EuMBCuABAWkUfRPPXmUXZJ4knjpg9VBkiAOpQCBRRdeN65ZkFnFpgZ1cNHIja5GyOcCCDhWlONOzAge/6IQ34AamLkLCr93CH7mjRyRIZdBYEef7QLnGv8pbXDUV4s1v7Ff/fgr+N73kSvef3kGxpo4gryp2bN4og5XJZ4lHED9Sl/0Ict51iodaziyrUIs5H29JlXAyZVNjz9G53VQjxncAIKP0HBFCeKYgjeMaPN+jEZ50q+pTgfmqQxgD3aUNmoaiSXPQsjYHkQY92kf5C/qXwHAvcT8O8NN2OzThqHIzbPWkX7U="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 1105,
+        "candidatesTokenCount": 1,
+        "totalTokenCount": 1139,
+        "promptTokensDetails": [
+          {
+            "modality": "IMAGE",
+            "tokenCount": 1089
+          },
+          {
+            "modality": "TEXT",
+            "tokenCount": 16
+          }
+        ],
+        "thoughtsTokenCount": 33,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "ZBXeaoxHiJiR1Q_ArJeACg"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:46Z"
+}

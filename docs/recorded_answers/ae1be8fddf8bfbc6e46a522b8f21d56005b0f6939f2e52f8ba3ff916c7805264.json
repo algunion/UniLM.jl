@@ -1,0 +1,64 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "generation_config": {
+        "thinking_level": "high",
+        "thinking_summaries": "auto"
+      },
+      "input": "A bat and a ball cost 1.10 in total, and the bat costs 1.00 more than the ball. How much does the ball cost? Answer with the amount only.",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdZaGJlYW9HaUw5LUV2ZElQaDVqc3FBOBIXWWhiZWFvR2lMOS1FdmRJUGg1anNxQTg",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 325,
+        "total_input_tokens": 42,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 42
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 4,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 279
+      },
+      "created": "2026-10-25T14:47:03Z",
+      "updated": "2026-10-25T14:47:03Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "EoYGCoMGAWkUfRMta8WBYkpJHJ0iHVtachMJVkUtvwjtHTxTwlPNIotRTm8/dqwsmEumqCeAznx5+CMYFb4nIFyXP108QCW/1Gn3Y4qwkfL1N1mWBVlb0P/Zd/lKEGvfRX3q2qSTOd5EgrWsHHgknax4W5/hqdWz7K6slnB5hvUiWJ05sIKouyB6AuhE6xbfPrTzgxhvtPYlby8gxL05NYW8qPKZ+q/zgUiSD0p0Q4+k9J187J3jeR0wjE87/SBJ8v1N6ngX/6n7FWpk2zfi2rPpQgNYYWcb/oQROYo13aEXD0JWt+rA4W7XffV/Zx3t65t/v85V8zxJYSNsSRcEDSn10nZcLQ8ShrG0CQBwO8qGUcB6Z95MQGYtjBOcB+zKp572I3yOHTidnvDU5jo0q9YKYBzZSPduGf1VIezuREuIjO0zuI9bg31z/XoIWdAgn5lc98119Cmmc3jc2YpTPhAWStF5uK9TdFWcmG8eLfR8P2//lrBwoDh/2OkDjCvfJnPZ6D9LMZZljwwt0rvy8PluTyXaL0iNDbyk8cigvtQaLfekKoGpknLIczhfbXkM05YAZFB5P22+mosDoGkUxFrCncnluLiyPgxIhh1Q0ySPWfOAp+uvfZkJnDsjeUzEv/hePnFen1W+54Riavmeg1QVuNgklEyiR2Wpm9R6+WVnnC48bQ52dCJpIgdmqbWTsDM3PL1XbDL+mEn+SHGA+DZt5OdcTX4MDNtg+ZxbsK8LPge9svnsSgBSpTVL9rfYUj4HKv82IRTESOffk5feAd0r/4hY1bcZSkHPoDXDH40jhR4Bdv05zWrdFxeb2o8jkd5G7Yn6dy6OOxfcqBkWiTi0CbU36zQh6E/1aBXPKEJF9GfW4VbQt3yOIaW/I98k+1LH+sEIxy1wy0Rtsq75XDkgr9Op/Jrmw2BxNN1/3AklHJeMCTCuoMeHzxT1NITAe8Vvfx9YMYPzEH9Wo20GA7CI7dTPWRpOYClR4BXK7TSJmwMJbCPp4iCkUQrqfabbnajFQ0RDf1MJ",
+          "summary": [
+            {
+              "text": "**Solving the Cognitive Reflection Test Question**\n\nAlright, let's break this down. It's that classic cognitive reflection test question again. Okay, so we've got a bat and a ball. We're given that the bat and ball *together* cost 1.10. And the bat costs a dollar more than the ball. The goal, as always, is to find the cost of the ball.\n\nFirst, I'll formalize this. Let's assign variables: *x* for the cost of the bat, *y* for the cost of the ball. This gives me two equations: *x + y = 1.10* and *x = y + 1.00*.\n\nNow, the classic substitution method comes to mind. Substitute the value of *x* from the second equation into the first equation: *(y + 1.00) + y = 1.10*. This simplifies down to *2y + 1.00 = 1.10*. And then, *2y = 0.10*, and therefore *y = 0.05*.\n\nSo, the ball costs 0.05. Let's make sure that's how it is presented, and in this case the prompt is \"1.10 in total\", so I'll go with \"0.05\". Simple and direct.\n\n\n",
+              "type": "text"
+            }
+          ],
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "0.05",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:47:05Z"
+}

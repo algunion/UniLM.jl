@@ -1,0 +1,93 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "What is the weather in the capital of the country that hosted the 2016 Summer Olympics?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      },
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "description": "The current weather in a city",
+              "name": "get_weather",
+              "parametersJsonSchema": {
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "type": "object"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Brasilia"
+                  },
+                  "id": "call_1410682"
+                },
+                "thoughtSignature": "EoYDCoMDAWkUfROoE5tGdIEfZ9AsOWYA4exmGC5BqovTXROnibvRavsf5MR85pyXqF6P7EDEijjXpG1VPIJP6TZtWv8ZpBWeZ9IHNM0hQ/n0IHHhc4OAldscvQZzlFVWcMUipTohS1wZ8HiR9iLh6n/8zjIIdgw8+meQdLntQ1GYJH81vz/HV77aP4NgWxq+rMhWKybgrJ6tusQ3uLDle4sCLMEPp+wGdn3rj+OYxrEMtmR0rmFEIfebecpTQ4Dp0qVOl4f9mqj9aHmvqxYI59TMEjz9OaB++/TC+Xu19v8y1mocQK6ku5ksI4RkBorvB3IA1jagNwOiU7UeVFEUnX5UJS3bBYOkxT1kX2rfJ/7qvlPtnlD9a10l8ZnyyXlS7wcgsx7GaObkqxhWZOrWNuvbfhDLsCYkuy7wcrdG9MyQqQnNWG0EP8FxpoEOl7GifG+8I9VzEzHPzWUF1L5GEkucZidLoNzBTxESDEmT2OvQzvT2aPhduklcZVLuTtwZHR3SIoxvRJ1E"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0,
+          "finishMessage": "Model generated function call(s)."
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 71,
+        "candidatesTokenCount": 17,
+        "totalTokenCount": 165,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 71
+          }
+        ],
+        "thoughtsTokenCount": 77,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "XRXeave6BIfknsEP5vj1mAY"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:39Z"
+}

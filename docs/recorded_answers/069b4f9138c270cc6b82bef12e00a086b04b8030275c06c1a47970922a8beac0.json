@@ -1,0 +1,55 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "And an interpreter?",
+      "model": "gemini-3.8-flash",
+      "previous_interaction_id": "v1_ChdkUlhlYXQta09xMkZrZFVQLV9YWmlBWRIXZFJYZWF0LWtPcTJGa2RVUC1fWFppQVk"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdkUlhlYXQta09xMkZrZFVQLV9YWmlBWRIXZlJYZWFvSFhCTkt2M2JvUHc1TzFvQW8",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 745,
+        "total_input_tokens": 331,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 331
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 28,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 386
+      },
+      "created": "2026-10-25T14:43:14Z",
+      "updated": "2026-10-25T14:43:14Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "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",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "An interpreter directly executes source code by translating and running instructions line by line on the fly, without converting the entire program into machine code beforehand.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:17Z"
+}

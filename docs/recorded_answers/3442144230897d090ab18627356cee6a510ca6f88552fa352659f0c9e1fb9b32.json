@@ -1,0 +1,65 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Which planet of the solar system is the largest?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant: answer in one short sentence."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Jupiter is the largest planet in the solar system.",
+                "thoughtSignature": "EqoDCqcDAWkUfRP1Wgy3gQSPXqSJzla31JLNsMh4pCLWrZODpeJxpkcmBpyvraCIfV5Z3Q9WI1s6dDQy6zHbiVbo7ryr0GUf0d6IR9wCsIAU97lVlh8GARYBC2DA/KyLyHKjAqLAxsoX1ty4ru33Fil0sWHEMPYHkDKKyi8E5WM0sSC8TjgNh7FzZx5R+1hYM9PStnr5wvgbRIj7IcrvEn7ahkhjd1TC06l67jMSrMwJMTGpR6gWnCWvod41G0P9awbpwK56KcFclgeyQd3So1Lwd28BRN6cQqHQE/TiMz3OHHzfGkqrD94zk5NYZYQ1OmZrFV1qGdU6ir1BN69KXxLxI4cJOuStkkqjN71o2OjBocuLN5KQvi5VRcM+Umv3kDLYd/zxzUrpUnDQ2CH+qgaFvhmiEBPYxTk8aS+SXv/Ztono0Og9nN7/al2Tc6f2zQqqqC/Awmm81GXNdJpBnDsR2m3u3Jq97xVkA/VwYsNbzzJAbhY9KBRcNmf8BbwgQlM7nmoU/ZZkdBo3ooBAGlYLobyd7VIYKovQLJiWokVAUVlRVPiYI6P6wrpM"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 23,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 105,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ],
+        "thoughtsTokenCount": 72,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "cRXeasurEoGYkdUPlZaS8Qo"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:59Z"
+}

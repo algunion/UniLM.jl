@@ -1,0 +1,82 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": [
+        {
+          "call_id": "call_1745833",
+          "name": "get_weather",
+          "result": {
+            "result": "16 °C and cloudy in Lima"
+          },
+          "type": "function_result"
+        }
+      ],
+      "model": "gemini-3.8-flash",
+      "previous_interaction_id": "v1_ChdpUlhlYXVPTUZ1YTRuc0VQZ2Q2NHFBaxIXaVJYZWF1T01GdWE0bnNFUGdkNjRxQWs",
+      "tools": [
+        {
+          "description": "The current weather in a city",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdpUlhlYXVPTUZ1YTRuc0VQZ2Q2NHFBaxIXalJYZWFzTGVMWWlwa2RVUHFZaS00UWs",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 182,
+        "total_input_tokens": 124,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 124
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 24,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 34
+      },
+      "created": "2026-10-25T14:43:27Z",
+      "updated": "2026-10-25T14:43:27Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "EooCCocCAWkUfRM83Fe9BbNaJOvwfZ1MTIaQLdwrFFZWuB/mfx1aOQ5UikheQaeVG6UzZMa13H/soLVYLkoGD3lDs2NKp/fRiElwKpGQBrv8JWNfKVMGq0muV4bFB0OaLnoF9WbdbgfqgWaG6MBTVdyoJApgGiLtcWeg3Mb0v8Zpx0Ay6RNmp0v1v134ZadNJCFZ+IAnIr7FxN4462n8GibC2GNouqq17CB89hSndevzZ/6qiUezX9mF/iXXl4f+bcuGwz65TIC/cv/BPtfosILao41HbmpkWm2/yROBWG62v4e9GjJ1PZB06wO3d9M1MCR2JrMnKXPG3g2g1tjjk11pND7Y6MyjTPq6kJA=",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "The largest city in Peru is Lima. \n\nThe current weather in Lima is **16 °C and cloudy**.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:29Z"
+}

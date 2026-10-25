@@ -1,0 +1,65 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "In one sentence: what is a prime number?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "A prime number is a whole number greater than 1 whose only factors are 1 and itself.",
+                "thoughtSignature": "Eo8JCowJAWkUfRMPkNVGEiVBH+3Xa6mIkz4dWvrAGlAhWIhgeAP99c9vBk5oy7RXvyeBG0mDrkH+axSnBdFpWluOO1IhzXlquqqPUbz0xSQREihF+FDjTXbCU44tavmHfINPaIBlhUA71RJfoOI/PluArnCMnMMKYedaMgC76mYBCfDvDMQ0NkRQmwKMZ8ff0oBYFZQG5Q4uuCVPulewWOQeJI6zwyydctyMpubKAFwo/QKUPGIARUcXiNUue6/YKrLXfSMo5iPj7Au9AmW1sjVh/XtylCNHH/c1edU88KFQOC4NeJO49MxkK/wJw629j0h/F31fVNAre2hyVsYjB+5AFa64W32GcLx5iTmtYcc/mUPR1Y8VKUtQSbN/GqCtgPTL9N5UEcRLrsPTg3+cJW1PGVZSfmcpmhlCYzv88oTfWjaFe+jiF03cotj3HfICMNXmeNN4dKVZc6Y7HHPiTt/i0VzWD1Vo6gUyCV6dFwsVc4f1yQ7ZR0Fq/BMBuEUvjpUWYS3XvFp24nXvpPDI/8y0OWsatZ1RR+mwOl1m2eqDwbHFv6IHqNxWQdrO3v2Nq7I+TCIQCb4+ITZXNk8bIhY1BL+YboXpf4vl5FUc76w1bCsbic6bDlke3F6xmAN85dzY6g99S6RTJf3XNL8ZCewU4989neyCXTbzYSx+Ju8VMm74D4CLDMRFEqHG2hX2k7Yj/E0Us/35WuhuivDJTj6huzPbSXsXrHVkAENi7PHbxQ0wJYYRMKC1BvsopU04YyFOA2cHmRru/NW2xqAUN57Ae5k26rMosCpCUvuj2IR5mBDMfMnl0yLa/9UPKTNE/Zr4tDKTVelOZTAx48W5r3KMdXUU7TBke5Ho0dfBh0jKEmOlFC9QLxOgJgxUk1T4k+GjtnjbwImYcv+uur90GPi64+rsUWtxhKrfAfXFOiPYL9ExkecceuTINSDyIYN4Ga8DaxYE0Kwcrwa3NEdYSAQxQn6DevU4Un4XySZSZqTXSZRZrhgqXMDcV6vc3EuLh2rSfqnpvTXcZ/V77Q3+s8oE9pmr8PIPjS8zwXQiYipuWz1/IkbcFk+kgpTyLQ8GwEoc99WbaIbY+e4FrwtYL829SbWuvHfRYCafi1T9zKIb4Sf1QkeqarldeflEjZYpnAZTAv9dGTOm0IHtmkio7AzyR14jjOVwpVFyF8jSmkLUFK5Z+CWINrrCd836wHey6Y+GFc37XiNVQH7qa9dfBMDKwsdMeoXFYVaGs7L0miJY/Bp0HwADVMArliFDGNHl88IML44MP3uCav8ir9QYpgj93c+S9JQX5KK20ZWzRTVs1RpSzNL4w5xxarpjXebXf4XTPxGpCHMdWzoNzZBMTsotF6HBJlk/Bo5KwBapCUTzOyHlHMDnwYVHQ57wQB1vCXPQ2CiHost29bNOWAuwYhckmjQdNrTexWktWqTnMH+RBYrmktHOasauXA1EXm8tCvBesxIk+ZrDfYwZUQWJHMTKWc0x5rMcCSK/7MA6zmze2b6wiBcAnhjDSa/nOPtPlAJcEmgU/CO0ppLKMA3zFyEZ"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 17,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 310,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 17
+          }
+        ],
+        "thoughtsTokenCount": 273,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "bRXeapitH4nrnsEPwePTyAU"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:57Z"
+}

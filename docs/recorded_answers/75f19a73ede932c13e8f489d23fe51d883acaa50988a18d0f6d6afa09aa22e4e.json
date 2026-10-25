@@ -1,0 +1,88 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Give the capital of Norway."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "generationConfig": {
+        "responseFormat": {
+          "text": {
+            "mimeType": "APPLICATION_JSON",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city",
+                "country"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      },
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\n  \"city\": \"Oslo\",\n  \"country\": \"Norway\"\n}",
+                "thoughtSignature": "EpkECpYEAWkUfRPqFmVmJMcZWZbH/R8WokROGnXGojwVUsOpVHIAI8mG4iBQhoqMlqGdkmf1Y9W83T/t/EI3bG2DMSNfRAwWVo5uWsnnEc9zb41d1d37abGw6RBbw/n5pa89CBTYtq7om0io5jMpShNJQiUY9ASYxDG4DYvyugLwJxgXEm9yLCGgUHLGsS3/793zTdlGdtG/LsptzlQECUIlgaGXO29A257Nmi7X27Hb6GrFhyRQ++01fpKhpmW5B+B4akXc0DMkv4IlBRwYnUVfrzsK31VOFl6ebum8qNzLWDYyi4m9OcV63u71leneqXPluM+oCSy1wBG4vwPpSyU7CgABdSagw+b27oTRf9HM8/EBXw8YNufCuSG2OEoqi7ov4/oDNPwMFfq8PBHM8K9TewbDIdo30S1HhH/ruNaMlzTOTtSCwgrKWtRcJVCr5dWmcB+CgCISrftHgtYRonC1cE3oN4ZxDTX9AiTD5WAeeUDMAs5c3/fKZXL8rvGXI4+GbGD1mBOxibtOk/xMfB7SUyW43wgUjZFTE3Xa7XL+hYigxGjowmdHuhDDo9Qu7tSJO2742TQ+ASujoEQ8lDEmV9DI25HJ626umQ+Gr9R8hJzfIUt6Mj6Gg25zxDZINIvH9m4JDQq9SK9WVvnqKOTRzLoTYQGif9yb1I49OKu4LIvpcSCFYoOv85C5qDGI4/4dUzoNBw8w+6Jg"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 13,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 159,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13
+          }
+        ],
+        "thoughtsTokenCount": 126,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "YRXeapPEKYHi7M8Pt4jXkA0"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:43Z"
+}

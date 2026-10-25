@@ -1,0 +1,115 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "What is the weather in the capital of the country that hosted the 2016 Summer Olympics?"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "parts": [
+            {
+              "functionCall": {
+                "args": {
+                  "city": "Brasilia"
+                },
+                "id": "call_1410682",
+                "name": "get_weather"
+              },
+              "thoughtSignature": "EoYDCoMDAWkUfROoE5tGdIEfZ9AsOWYA4exmGC5BqovTXROnibvRavsf5MR85pyXqF6P7EDEijjXpG1VPIJP6TZtWv8ZpBWeZ9IHNM0hQ/n0IHHhc4OAldscvQZzlFVWcMUipTohS1wZ8HiR9iLh6n/8zjIIdgw8+meQdLntQ1GYJH81vz/HV77aP4NgWxq+rMhWKybgrJ6tusQ3uLDle4sCLMEPp+wGdn3rj+OYxrEMtmR0rmFEIfebecpTQ4Dp0qVOl4f9mqj9aHmvqxYI59TMEjz9OaB++/TC+Xu19v8y1mocQK6ku5ksI4RkBorvB3IA1jagNwOiU7UeVFEUnX5UJS3bBYOkxT1kX2rfJ/7qvlPtnlD9a10l8ZnyyXlS7wcgsx7GaObkqxhWZOrWNuvbfhDLsCYkuy7wcrdG9MyQqQnNWG0EP8FxpoEOl7GifG+8I9VzEzHPzWUF1L5GEkucZidLoNzBTxESDEmT2OvQzvT2aPhduklcZVLuTtwZHR3SIoxvRJ1E"
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "parts": [
+            {
+              "functionResponse": {
+                "id": "call_1410682",
+                "name": "get_weather",
+                "response": {
+                  "result": "18 °C and sunny in Brasilia"
+                }
+              }
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      },
+      "tools": [
+        {
+          "functionDeclarations": [
+            {
+              "description": "The current weather in a city",
+              "name": "get_weather",
+              "parametersJsonSchema": {
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "type": "object"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "The weather in Brasília, Brazil is currently 18 °C and sunny.",
+                "thoughtSignature": "ErUBCrIBAWkUfRO2XPh37NrjMTZJISnFEfvIZ1SRtdUy+zTwAWpFYcWNsdAaYjDsKSeXgTbQWyVAp2NMJHf4wvk9qqCNyMwolPmLZnfXv1FwtJA9qTNbGUqbb2DKYLnJ1DyddD3F59qcnAnLA4CmdYf0KNEgPQenT9A70segZA2G1aSkTBx2pa/S+/qxbYADG0DUFhK9B0CZe5gUR6uo3TNS0rmNknl9j5PWC295pnzc/g5XId+Xcg=="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 187,
+        "candidatesTokenCount": 16,
+        "totalTokenCount": 221,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 187
+          }
+        ],
+        "thoughtsTokenCount": 18,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "XxXeauHELbb7kdUP4cScwQs"
+    }
+  },
+  "recorded_at": "2026-10-25T14:42:41Z"
+}

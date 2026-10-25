@@ -67,7 +67,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
     isnothing(r.seed)               || (gen[:seed] = _gemini_seed(r.seed))
-    isnothing(r.tool_choice)        || (gen[:tool_choice] = _interactions_tool_choice(r.tool_choice))
+    (tc = _interactions_tool_choice(r)) === nothing || (gen[:tool_choice] = tc)
     if (reasoning = r.reasoning) !== nothing
         isnothing(reasoning.context) && isnothing(reasoning.mode) || throw(ArgumentError(
             "Gemini Interactions does not support reasoning context or mode"))
@@ -111,7 +111,8 @@ end
 # Interactions function tools use the flat OpenAI-Responses shape observed on the wire:
 # {type:"function", name, description?, parameters?}. No functionDeclarations wrapper.
 # The API reference's Function tool lists only those fields, so a set OpenAI-only
-# FunctionTool option is refused rather than dropped; `strict` is not sent.
+# FunctionTool option is refused rather than dropped; `strict` has no field there and sets
+# the request's tool_choice mode instead (`_interactions_tool_choice(::Respond)`).
 const _INTERACTIONS_UNSUPPORTED_TOOL_FIELDS = (:async, :allowed_callers, :defer_loading, :output_schema)
 
 function _interactions_tool(t)
@@ -259,12 +260,27 @@ function _interactions_media(url, what::String)::NTuple{2,String}
 end
 
 # Neutral tool_choice → generation_config.tool_choice.allowed_tools.{mode, tools}
-# (confirmed live: mode auto/any/none; tools = function-name strings).
+# (confirmed live: mode auto/any/none, and validated on gemini-3.8-flash on 2026-10-25;
+# tools = function-name strings).
 _interactions_tool_choice(tc::AbstractString) =
     tc == "auto"     ? Dict{Symbol,Any}(:allowed_tools => Dict{Symbol,Any}(:mode => "auto")) :
     tc == "none"     ? Dict{Symbol,Any}(:allowed_tools => Dict{Symbol,Any}(:mode => "none")) :
     tc == "required" ? Dict{Symbol,Any}(:allowed_tools => Dict{Symbol,Any}(:mode => "any")) :
     throw(ArgumentError("Unknown tool_choice string $(repr(tc)) for Gemini Interactions"))
+
+# A function tool marked strict asks for arguments that conform to its schema; Interactions has
+# no field for it on the tool, but a tool_choice mode, `validated`: "Model ensures function schema
+# adherence" (https://ai.google.dev/gemini-api/docs/function-calling). So a strict tool makes an
+# unset or "auto" tool_choice `validated`; "required", a named function and "none" keep their modes.
+function _interactions_tool_choice(r::Respond)
+    tc = r.tool_choice
+    any(_strict_function, something(r.tools, ())) && (isnothing(tc) || tc == "auto") &&
+        return Dict{Symbol,Any}(:allowed_tools => Dict{Symbol,Any}(:mode => "validated"))
+    isnothing(tc) ? nothing : _interactions_tool_choice(tc)
+end
+# Whether a Respond tool is a function tool marked strict; a tool loop's CallableTool unwraps to its
+# tool (tool_loop.jl).
+_strict_function(t) = t isa FunctionTool && t.strict === true
 
 function _interactions_tool_choice(tc::AbstractDict)
     _g(k) = get(tc, k, get(tc, String(k), nothing))   # tolerate Symbol- or String-keyed dicts

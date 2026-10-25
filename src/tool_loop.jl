@@ -33,6 +33,7 @@ JSON.lower(ct::CallableTool) = JSON.lower(ct.tool)
 # JSON.lower unwrap the OpenAI wire uses). Defined here — _interactions_tool lives in
 # interactions.jl (loaded before tool_loop.jl), CallableTool is defined just above.
 _interactions_tool(ct::CallableTool) = _interactions_tool(ct.tool)
+_strict_function(ct::CallableTool) = _strict_function(ct.tool)
 
 # A Chat `Tool` given to `Respond` becomes the equivalent `FunctionTool` (see
 # `_respond_tool` in responses.jl); one wrapped in a CallableTool — the tools a Chat loop

@@ -178,7 +178,12 @@ Google routes the deprecated `gemini-3.7-flash` to `gemini-3.8-flash` and `gemin
 that model — `result.model` from `modelVersion` on Chat, `response.model` on `respond` — which is
 the model [`estimated_cost`](@ref) prices: an alias or a routed id is billed at its target's rates.
 Native Gemini tool declarations use `parametersJsonSchema`, preserving standard
-JSON Schema constraints such as `additionalProperties`.
+JSON Schema constraints such as `additionalProperties`. A declaration has no `strict` flag: a
+tool marked `strict=true` sets the request's function-calling mode instead, for every function
+the request declares. With `tool_choice` unset or `"auto"` that mode is `VALIDATED`
+(`validated` on `respond`), in which, Google says, the model "ensures function schema
+adherence" and may still answer in text; `"required"` and a named function are sent as `ANY`
+(`any` on `respond`) and `"none"` as `NONE`, as they are without a strict tool.
 
 `response_format` is mapped natively: JSON object and JSON Schema output become
 `generationConfig.responseFormat` (see [Structured Output](@ref structured_guide)).

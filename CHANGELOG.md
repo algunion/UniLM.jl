@@ -90,6 +90,14 @@
   again, up to `max_attempts` attempts in all, each after its backoff. That 429 is now
   final, as OpenAI's spend and quota codes are; a `rate_limit_error` without it is still
   retried.
+- **A tool marked `strict=true` asks native Gemini for schema adherence.** A Gemini function
+  declaration has no `strict` flag, so `GEMINIServiceEndpoint` sent a strict tool — on a
+  `Chat`, and on `respond` (Gemini Interactions) — as a plain one, and the caller silently
+  got no adherence. A strict tool now sets the request's function-calling mode: with
+  `tool_choice` unset or `"auto"`, `VALIDATED` (`validated` on `respond`), in which Gemini
+  "ensures function schema adherence" and the model may still answer in text. The mode
+  covers every function the request declares. `"required"` and a named function are still
+  sent as `ANY` (`any`), and `"none"` as `NONE`.
 
 ## 0.26.0
 

@@ -83,6 +83,32 @@ end
     @test body["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
 end
 
+@testset "encode — a strict tool asks for VALIDATED; a forced or disabled call keeps its mode" begin
+    # Gemini has no per-tool strict flag. Its function-calling modes: VALIDATED "ensures function
+    # schema adherence" while the model may answer in text; ANY "is constrained to always predict a
+    # function call and ensures function schema adherence"
+    # (https://ai.google.dev/gemini-api/docs/function-calling#function-calling-modes).
+    params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
+                  "required" => ["city"], "additionalProperties" => false)
+    strict = Tool(func=FunctionSignature(name="get_weather", parameters=params, strict=true))
+    loose = Tool(func=FunctionSignature(name="get_time", parameters=Dict("type" => "object")))
+    function config(tools, tc=nothing)
+        chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", tools=tools, tool_choice=tc,
+                    messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+        body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
+        haskey(body, "toolConfig") ? body["toolConfig"]["functionCallingConfig"] : nothing
+    end
+    @test config([strict]) == Dict("mode" => "VALIDATED")
+    @test config([loose, strict], "auto") == Dict("mode" => "VALIDATED")     # one strict tool is enough
+    @test config([strict], "required") == Dict("mode" => "ANY")
+    @test config([strict], GPTToolChoice(func="get_weather")) ==
+          Dict("mode" => "ANY", "allowedFunctionNames" => ["get_weather"])
+    @test config([strict], "none") == Dict("mode" => "NONE")
+    # Without a strict tool the request is as before.
+    @test isnothing(config([loose])) && config([loose], "auto") == Dict("mode" => "AUTO")
+    @test isnothing(config([Tool(func=FunctionSignature(name="f", strict=false))]))
+end
+
 @testset "encode — multi-turn: functionCall echo (+thoughtSignature) & functionResponse correlation" begin
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     # push! requires the first-ever message on a fresh Chat to be system (api.jl:663-671)

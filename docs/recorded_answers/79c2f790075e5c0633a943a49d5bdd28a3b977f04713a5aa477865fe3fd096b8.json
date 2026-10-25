@@ -1,0 +1,65 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "In one sentence: what is a prime number?",
+          "role": "user"
+        },
+        {
+          "content": "A prime number is a whole number greater than 1 that has exactly two positive divisors: 1 and itself.",
+          "role": "assistant"
+        },
+        {
+          "content": "And a composite number?",
+          "role": "user"
+        }
+      ],
+      "model": "deepseek-flash"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "12d3e459-8c84-424c-8992-064f45e3303f",
+      "object": "chat.completion",
+      "created": 1792965825,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "A composite number is a whole number greater than 1 that has more than two positive divisors, meaning it can be formed by multiplying smaller whole numbers greater than 1.",
+            "reasoning_content": "We need answer one sentence likely. Need concise. Composite number definition: whole number greater than 1 with more than two positive divisors, i.e., not prime. Need answer."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 78,
+        "completion_tokens": 71,
+        "total_tokens": 149,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 78
+      },
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:45Z"
+}

@@ -258,20 +258,21 @@ const REGISTRY = _validated([
         default_model=UniLM.default_model(AZUREServiceEndpoint),
         pages=["providers/azure.md"], start_id="azure_start",
         features=_features(:azure, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
-            :cost, :limits, :failures, :models)),
+            :reasoning, :media, :caching, :cost, :limits, :failures, :models)),
         tokens=["Azure OpenAI", "Azure", "AZUREServiceEndpoint", "AZURE_OPENAI_", _OPENAI_MODELS...]),
     ProviderEntry(key=:deepseek, chapter=llm, provider=:deepseek, name="DeepSeek",
         endpoints=[DeepSeekEndpoint()], usage="DeepSeekEndpoint()", key_vars=[UniLM.DEEPSEEK_API_KEY],
         env_vars=String[], default_model=UniLM.default_model(DeepSeekEndpoint()),
         pages=["providers/deepseek.md"], start_id="deepseek_start",
-        features=_features(:deepseek, (:setup, :first_call, :conversations, :streaming, :reasoning, :completions,
-            :caching, :cost, :limits, :failures, :models)),
+        features=_features(:deepseek, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
+            :reasoning, :media, :completions, :caching, :cost, :limits, :failures, :models)),
         tokens=["DeepSeek", "DeepSeekEndpoint", _MODEL_PREFIXES.deepseek...]),
     ProviderEntry(key=:openai_compatible, chapter=llm, provider=:mistral, name="Mistral & OpenAI-compatible services",
         endpoints=[MistralEndpoint()], usage="MistralEndpoint()", key_vars=[UniLM.MISTRAL_API_KEY],
         env_vars=String[], default_model=nothing,
         pages=["providers/openai_compatible.md"], start_id="openai_compatible_start",
-        features=_features(:openai_compatible, (:setup, :first_call, :streaming, :tools, :limits, :failures)),
+        features=_features(:openai_compatible, (:setup, :first_call, :conversations, :streaming, :tools,
+            :structured_output, :media, :completions, :embeddings, :audio, :cost, :limits, :failures, :models)),
         tokens=["Mistral", "MistralEndpoint", "mistral-", "codestral-"]),
     ProviderEntry(key=:jev, chapter=decisions, provider=:typesafe, name="Jev (TypeSafe)",
         endpoints=[TYPESAFEServiceEndpoint], usage="TYPESAFEServiceEndpoint", key_vars=[UniLM.TYPESAFE_API_KEY],
@@ -356,6 +357,46 @@ const DECISION_CAPABILITIES = sort!(collect(provider_capabilities(TYPESAFEServic
 _capabilities(e::ProviderEntry)::Vector{Symbol} =
     filter(c -> any(ep -> has_capability(ep, c), e.endpoints), _CAPABILITIES)
 
+# Whether the entry's capabilities are the code's permissive default, `GenericOpenAIEndpoint`'s: UniLM
+# sends those requests to whatever server the endpoint names, which may serve them or not, so the tables
+# say "sent unchecked" where they say "yes" or "Supports" for an endpoint whose set UniLM checks.
+_unchecked(e::ProviderEntry)::Bool = any(ep -> ep isa GenericOpenAIEndpoint, e.endpoints)
+
+# Whether `speak` reaches the endpoint `ep`: Gemini TTS on the native Gemini endpoint, else an OpenAI
+# Realtime session, which only an endpoint with `:realtime` opens (src/audio.jl). No capability symbol
+# names speech, so the language-model tables read the verb's own route and show it as `_SPEECH`.
+function _speaks(ep)::Bool
+    wire = try
+        UniLM._speech_wire(ep)
+    catch err
+        err isa ArgumentError || rethrow()
+        return false                                   # the endpoint has no speech route
+    end
+    wire isa UniLM._GeminiSpeechWire || has_capability(ep, :realtime)
+end
+_speaks(e::ProviderEntry)::Bool = any(_speaks, e.endpoints)
+
+const _SPEECH = _Inline["speech (", _code("speak"), ")"]
+
+# Whether some language-model entry speaks, so that the others list speech as not available.
+const _SPOKEN = any(e -> e.chapter == llm && _speaks(e), REGISTRY)
+
+# A capability cell: "sent unchecked: " where `unchecked` and `caps` is not empty, each of `caps` as
+# inline code, then speech where `speech`; "—" when it holds neither.
+function _capability_cell(caps::Vector{Symbol}, speech::Bool; unchecked::Bool=false)::Vector{Any}
+    parts = _Inline[]
+    unchecked && !isempty(caps) && push!(parts, "sent unchecked: ")
+    for (i, c) in pairs(caps)
+        i > 1 && push!(parts, ", ")
+        push!(parts, _code(string(c)))
+    end
+    if speech
+        isempty(caps) || push!(parts, ", ")
+        append!(parts, _SPEECH)
+    end
+    isempty(parts) ? _cell("—") : _cell(parts)
+end
+
 # How code names each endpoint of an entry: the primary's usage, then the others' types.
 _endpoints(e::ProviderEntry)::Vector{Any} =
     _codes([e.usage; [String(nameof(ep isa Type ? ep : typeof(ep))) for ep in e.endpoints[2:end]]])
@@ -384,6 +425,10 @@ capabilities some endpoint of it has (for a decision entry, those of `DECISION_C
 and the capabilities other registry endpoints declare that none of its endpoints has. A
 language-model entry's two capability cells leave out the capabilities only the Decisions
 chapter documents (`system_one`: serving decision models); that chapter's entries list them.
+They hold speech (`speak`) as well, which no capability symbol names: in Supports where `speak`
+reaches an endpoint of the entry, else in Not available. The Supports cell of an entry whose
+capabilities are `GenericOpenAIEndpoint`'s permissive default starts "sent unchecked: ": UniLM sends
+those requests without knowing whether the server serves them.
 """
 function at_a_glance(key::Symbol)::Markdown.MD
     e = entry(key)
@@ -392,7 +437,9 @@ function at_a_glance(key::Symbol)::Markdown.MD
     row = Any[_endpoints(e), _codes(e.key_vars), _model(e.default_model)]
     if e.chapter == llm
         push!(header, "Not available")
-        push!(row, _codes(filter(∉(_DECISIONS_ONLY), has)), _codes(setdiff(_CAPABILITIES, has, _DECISIONS_ONLY)))
+        speaks = _speaks(e)
+        push!(row, _capability_cell(filter(∉(_DECISIONS_ONLY), has), speaks; unchecked=_unchecked(e)),
+              _capability_cell(setdiff(_CAPABILITIES, has, _DECISIONS_ONLY), _SPOKEN && !speaks))
     else
         push!(row, _codes(filter(in(DECISION_CAPABILITIES), has)))
     end
@@ -404,15 +451,21 @@ end
 
 One row per capability a registry endpoint declares, sorted, and one column per
 language-model entry, in registry order: "yes" where some endpoint of the entry has the
-capability, else "—". It has no row for a capability only the Decisions chapter documents
-(`system_one`: serving decision models), which no language-model entry lists.
+capability — "sent unchecked" for an entry whose capabilities are `GenericOpenAIEndpoint`'s
+permissive default, whose requests UniLM sends without knowing whether the server serves them —,
+else "—". A row for speech (`speak`), which no capability symbol names, takes its sorted place:
+"yes" where `speak` reaches an endpoint of the entry. It has no row for a capability only the
+Decisions chapter documents (`system_one`: serving decision models), which no language-model entry
+lists.
 """
 function capability_matrix()::Markdown.MD
     entries = filter(e -> e.chapter == llm, REGISTRY)
     has = [Set(_capabilities(e)) for e in entries]
-    rows = Vector{Any}[Any[_cell(_code(String(c))), (_yes(c in h) for h in has)...]
-                       for c in _CAPABILITIES if c ∉ _DECISIONS_ONLY]
-    _table(["Capability"; [e.name for e in entries]], rows)
+    mark(e, yes) = yes ? _cell(_unchecked(e) ? "sent unchecked" : "yes") : _cell("—")
+    rows = Pair{String,Vector{Any}}[String(c) => Any[_cell(_code(String(c))), (mark(e, c in h) for (e, h) in zip(entries, has))...]
+                                    for c in _CAPABILITIES if c ∉ _DECISIONS_ONLY]
+    _SPOKEN && push!(rows, "speech" => Any[_cell(_SPEECH), (_yes(_speaks(e)) for e in entries)...])
+    _table(["Capability"; [e.name for e in entries]], Vector{Any}[last(r) for r in sort!(rows; by=first)])
 end
 
 """

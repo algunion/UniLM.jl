@@ -136,6 +136,34 @@ end
     @test !occursin("system_one", plain(capability_matrix()))
     @test ProviderFacts.DECISION_CAPABILITIES == [:models, :system_one]
 end
+@testset "ProviderFacts — a generic endpoint's capabilities are sent unchecked; speech is where speak goes" begin
+    llm = filter(e -> e.chapter == ProviderFacts.llm, REGISTRY)
+    # GenericOpenAIEndpoint's set is the code's permissive default: UniLM sends those requests to whatever
+    # server the endpoint names, so neither its at-a-glance row nor its matrix column says "supports".
+    generic = filter(e -> any(ep -> ep isa GenericOpenAIEndpoint, e.endpoints), llm)
+    @test sort!([e.key for e in generic]) == [:local_servers, :openai_compatible]       # premise
+    cell(key, col) = String(strip(Markdown.plain(Markdown.Paragraph(only(at_a_glance(key).content).rows[2][col]))))
+    @test [e.key for e in llm if startswith(cell(e.key, 4), "sent unchecked: ")] == [e.key for e in generic]
+    @test occursin("`responses`", cell(:openai_compatible, 4))           # listed, as sent unchecked
+    rows = only(capability_matrix().content).rows
+    matrix(r, c) = String(strip(Markdown.plain(Markdown.Paragraph(rows[r][c]))))
+    columns = [findfirst(==(e), llm) + 1 for e in generic]
+    @test all(r -> all(c -> matrix(r, c) in ("sent unchecked", "—"), columns), 2:length(rows))
+    @test any(r -> matrix(r, first(columns)) == "sent unchecked", 2:length(rows))
+    @test !any(r -> any(c -> matrix(r, c) == "sent unchecked", setdiff(2:length(llm) + 1, columns)), 2:length(rows))
+    # No capability symbol names speech: speak reaches the native Gemini endpoint (Gemini TTS) and OpenAI's
+    # (a Realtime session), and refuses every other endpoint of the chapter.
+    speaks = [:openai, :gemini]
+    @test [e.key for e in llm if occursin("speech (`speak`)", cell(e.key, 4))] == speaks
+    @test [e.key for e in llm if occursin("speech (`speak`)", cell(e.key, 5))] == setdiff([e.key for e in llm], speaks)
+    speech = only(r for r in 2:length(rows) if matrix(r, 1) == "speech (`speak`)")
+    @test [e.key for (i, e) in pairs(llm) if matrix(speech, i + 1) == "yes"] == speaks
+end
+@testset "ProviderFacts — the entries whose requests carry attachments and conversations have those sections" begin
+    # an OpenAI-wire endpoint sends a user message's attachments as content parts, and a Chat keeps the conversation
+    @test [k for k in (:azure, :deepseek, :openai_compatible) if !haskey(entry(k).features, :media)] == Symbol[]
+    @test haskey(entry(:openai_compatible).features, :conversations)
+end
 @testset "ProviderFacts — the registry and price checks refuse a broken table, naming what is wrong" begin
     remake(e; changes...) = ProviderEntry(; (f => get(changes, f, getfield(e, f)) for f in fieldnames(ProviderEntry))...)
     function refusal(entries)                       # the entry and field the check names; `nothing` when it accepts

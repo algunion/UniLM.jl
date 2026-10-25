@@ -1,0 +1,96 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Lyon? Use the tool, then answer in one sentence.",
+          "role": "user"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Lyon\"}",
+                "name": "get_weather"
+              },
+              "id": "call_00_ET_gwCp4GfrTziH23chrdKU4321",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "content": "18°C and sunny in Lyon",
+          "role": "tool",
+          "tool_call_id": "call_00_ET_gwCp4GfrTziH23chrdKU4321"
+        }
+      ],
+      "model": "deepseek-flash",
+      "parallel_tool_calls": false,
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "Current weather in a city",
+            "parameters": {
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "18e883a9-b563-4c58-b50f-141bed452915",
+      "object": "chat.completion",
+      "created": 1792965828,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "It's currently 18°C and sunny in Lyon.",
+            "reasoning_content": ""
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 368,
+        "completion_tokens": 13,
+        "total_tokens": 381,
+        "prompt_tokens_details": {
+          "cached_tokens": 128
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 240
+      },
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:49Z"
+}

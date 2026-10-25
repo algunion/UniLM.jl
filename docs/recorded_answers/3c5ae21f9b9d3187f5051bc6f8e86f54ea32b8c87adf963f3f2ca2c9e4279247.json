@@ -1,0 +1,43 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/beta/v1/completions",
+    "body": {
+      "max_tokens": 128,
+      "model": "deepseek-flash",
+      "prompt": "def fib(a):",
+      "suffix": "    return fib(a-1) + fib(a-2)"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "eae36300-6877-4b9e-bff6-65e81dca27b3",
+      "choices": [
+        {
+          "text": "    if a <= 1:\n        return a",
+          "index": 0,
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "created": 1792965832,
+      "model": "deepseek-flash",
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501",
+      "object": "text_completion",
+      "usage": {
+        "prompt_tokens": 21,
+        "completion_tokens": 11,
+        "total_tokens": 32,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 21
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:52Z"
+}

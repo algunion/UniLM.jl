@@ -1,0 +1,60 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "Answer in JSON with the keys name and year.",
+          "role": "system"
+        },
+        {
+          "content": "Who wrote the first published computer program, and in which year?",
+          "role": "user"
+        }
+      ],
+      "model": "deepseek-flash",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "66cdbb09-e96e-43c0-80a5-32559a5b3a02",
+      "object": "chat.completion",
+      "created": 1792965829,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"name\":\"Ada Lovelace\",\"year\":1843}",
+            "reasoning_content": "We need answer question. Need parse: \"Who wrote the first published computer program, and in which year?\" Need JSON keys name and year. Need determine likely Ada Lovelace wrote first published computer program (algorithm for Bernoulli numbers) in 1843 in Notes on Analytical Engine. Sometimes \"first published computer program\" was Ada Lovelace in 1843. Need name and year. Could be \"Ada Lovelace\" year 1843. Need output JSON only. Ensure valid."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 75,
+        "completion_tokens": 114,
+        "total_tokens": 189,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 100
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 75
+      },
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:50Z"
+}

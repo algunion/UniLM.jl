@@ -159,6 +159,11 @@ end
     speech = only(r for r in 2:length(rows) if matrix(r, 1) == "speech (`speak`)")
     @test [e.key for (i, e) in pairs(llm) if matrix(speech, i + 1) == "yes"] == speaks
 end
+@testset "ProviderFacts — the entries whose requests carry attachments and conversations have those sections" begin
+    # an OpenAI-wire endpoint sends a user message's attachments as content parts, and a Chat keeps the conversation
+    @test [k for k in (:azure, :deepseek, :openai_compatible) if !haskey(entry(k).features, :media)] == Symbol[]
+    @test haskey(entry(:openai_compatible).features, :conversations)
+end
 @testset "ProviderFacts — the registry and price checks refuse a broken table, naming what is wrong" begin
     remake(e; changes...) = ProviderEntry(; (f => get(changes, f, getfield(e, f)) for f in fieldnames(ProviderEntry))...)
     function refusal(entries)                       # the entry and field the check names; `nothing` when it accepts

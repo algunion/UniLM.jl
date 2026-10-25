@@ -100,6 +100,8 @@ Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `C
 ([chat completions](https://docs.mistral.ai/api/endpoint/chat)). What Mistral does with a field its
 reference does not list, such as `seed`, is untested.
 
+## [Conversations](@id openai_compatible_conversations)
+
 ## [Streaming](@id openai_compatible_streaming)
 
 With `stream=true`, `chatrequest!` returns a `Task` at once, and `fetch` gives the same typed result as
@@ -165,6 +167,8 @@ JSON.parse(text(chatrequest!(chat)))
 ```
 
 The formats every provider shares are on [Structured Output](@ref structured_guide).
+
+## [Attachments](@id openai_compatible_media)
 
 ## [Embeddings](@id openai_compatible_embeddings)
 

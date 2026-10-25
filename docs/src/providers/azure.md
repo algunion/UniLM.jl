@@ -213,6 +213,8 @@ returns no reasoning text, so [`reasoning_text`](@ref) gives `nothing`.
 chat = Chat(service=AZUREServiceEndpoint, reasoning_effort="low", max_completion_tokens=2000)
 ```
 
+## [Attachments](@id azure_media)
+
 ## [Limits and refusals](@id azure_limits)
 
 A deployment's quota sets its tokens and requests per minute

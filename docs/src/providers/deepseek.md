@@ -252,6 +252,8 @@ sets no `max_tokens` may generate "8K in non-thinking mode, 64K in thinking mode
 DeepSeek's name for the cap: a `Chat`'s `max_completion_tokens` goes out under that name, which
 DeepSeek's reference does not list.
 
+## [Attachments](@id deepseek_media)
+
 ## [FIM and prefix completion](@id deepseek_completions)
 
 Both are DeepSeek beta features, which UniLM sends to the beta base URL,

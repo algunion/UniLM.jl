@@ -1405,6 +1405,10 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
         # `_with_recorded_deadline`): the catch restores it as the surfaced cause
         # when the library's teardown of the bound-closed socket replaces it.
         bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
+        # The response head, once read, and the attempt's source, once known: a whole
+        # response recovered from its connection's teardown is recorded with them.
+        head_ref = Ref{Union{Nothing,HTTP.Response}}(nothing)
+        src = _LIVE_STREAM
         cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, guard[], x, c)
         ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
         # The exchange, live or replayed: the request written, the head read, the stream parsed.
@@ -1415,7 +1419,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # the whole send/first-byte exchange; the total deadline governs a stream
             # only up to this point — after it, only the idle guard runs (a long
             # healthy stream is not a failure).
-            _with_recorded_deadline(() -> begin
+            head_ref[] = _with_recorded_deadline(() -> begin
                     write(io, body)
                     HTTP.closewrite(io)
                     HTTP.startread(io)
@@ -1576,9 +1580,14 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # are not teardown-shaped still surface. Twin of the chat driver's rule
             # in `_stream_attempt`.
             if stopped || _stream_teardown_noise(e, breach)
-                !isnothing(result[]) &&
+                if !isnothing(result[])
+                    # Its terminal event arrived before the teardown: the response is whole, and
+                    # recorded as a clean one is, unless a stop ended its reading.
+                    h = head_ref[]
+                    !stopped && h isa HTTP.Response && h.status == 200 && _commit_stream!(src, h, take!(raw_buffer))
                     return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
                                            service=r.service)
+                end
                 te = terminal_error[]
                 !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
             end

@@ -185,7 +185,8 @@ build that calls it live cannot be reproduced; one recorded answer, replayed, ca
   itself (and so out of the tool loops; for a later request of a streamed turn, out
   of the call's task, as below). `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
-  `dir`, replacing an earlier recording of the same request, readable or not, so a
+  `dir` (a stream once its reply is whole, as below), replacing an earlier
+  recording of the same request, readable or not, so a
   request repeated identically — a polling loop's — leaves the last 200 it got,
   which a `:replay` scope then gives every repetition. A non-200 result is returned
   as usual and never recorded.
@@ -266,9 +267,13 @@ replayed answer goes through the same decoding as a live
 200 and has the same type and fields: a `Chat` gets the reply appended and its
 cost accumulated, and `Embeddings` get their vectors. A replayed stream is read
 through the same parsers and callbacks as a live one, with no first-byte deadline or
-idle guard; a stream is recorded only when its reply is whole and was read with no
-stop. A cancelled token ends a call before any recording is read, exactly as it ends
-one before anything is sent.
+idle guard; a stream is recorded only when its reply is whole — its final event
+arrived: the sentinel (`[DONE]`, Anthropic's `message_stop`, Ollama's `done`), the end
+of a native Gemini stream, or a Responses or Interactions terminal event — and was read
+with no stop, also when its connection fails after that event. A stream that ends with
+an error event, or is cut before its final event, is not recorded, even when the call
+keeps the turn its finish reason completed. A cancelled token ends a call before any
+recording is read, exactly as it ends one before anything is sent.
 
 The scope is a `ScopedValue`, so it covers the tasks started inside `f`
 (`Threads.@spawn`, `asyncmap`). Scopes nest: an inner scope's service is the

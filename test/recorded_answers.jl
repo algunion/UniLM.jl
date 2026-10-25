@@ -1217,6 +1217,79 @@ end
         ispath(dir) && rm(dir; recursive=true)
     end
 end
+
+# A raw peer that answers every request with `bytes` as one chunk of a chunked body cut before its
+# end — the last chunk without its final CRLF, then a close — so the read that would end the body
+# fails after the stream's bytes; `posts` counts the requests.
+function _rl_cut_stream_server(bytes::String)
+    listener = Sockets.listen(Sockets.localhost, 0)
+    url = "http://127.0.0.1:$(Int(Sockets.getsockname(listener)[2]))"
+    posts = Threads.Atomic{Int}(0)
+    function drain(sock)                     # the request: its head, then its body, sized or chunked
+        req = ""
+        while (he = findfirst("\r\n\r\n", req)) === nothing
+            b = readavailable(sock); isempty(b) && return; req *= String(b)
+        end
+        head = SubString(req, 1, last(he))
+        len = match(r"(?i)content-length:\s*(\d+)", head)
+        whole() = occursin(r"(?i)transfer-encoding:\s*chunked", head) ? occursin("0\r\n\r\n", req) :
+                  isnothing(len) || sizeof(req) >= last(he) + parse(Int, len.captures[1])
+        while !whole()
+            b = readavailable(sock); isempty(b) && return; req *= String(b)
+        end
+    end
+    Threads.@spawn try
+        while true
+            sock = Sockets.accept(listener)
+            Threads.atomic_add!(posts, 1)
+            try
+                drain(sock)
+                write(sock, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nx-request-id: req_cut\r\n" *
+                            "Transfer-Encoding: chunked\r\n\r\n")
+                write(sock, string(string(sizeof(bytes); base=16), "\r\n", bytes, "\r\n", "0\r\n"))
+            finally
+                close(sock)
+            end
+        end
+    catch                                    # the listener closed: the test is over
+    end
+    (; listener, url, posts)
+end
+
+@testset "recorded LLM answers — a stream whose connection fails after its final event is recorded; one cut before it is not" begin
+    # A reply is recorded once it is whole — its final event arrived — and no stop ended its reading,
+    # whatever the connection does after that event. A stream cut before it is not recorded, though
+    # the call keeps the turn its finish reason completed.
+    chat_bytes = _rl_chat_stream(Dict("model" => "mock"), 1, nothing)       # through `data: [DONE]`
+    respond_bytes = _rl_responses_stream(Dict("model" => "mock"), 1)        # through `response.completed`
+    cfg = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
+    chat_call(url) = fetch(chatrequest!(Chat(service=GenericOpenAIEndpoint(url, ""), model="mock", stream=true,
+        messages=[Message(Val(:system), "Be brief."), Message(Val(:user), "Say hello.")]); config=cfg))
+    respond_call(url) = fetch(respond(Respond(service=GenericOpenAIEndpoint(url, ""), model="mock",
+                                              input="Say hello.", stream=true); config=cfg))
+    for (name, call, bytes) in (("chat", chat_call, chat_bytes), ("respond", respond_call, respond_bytes))
+        srv = _rl_cut_stream_server(bytes)
+        dir = _ra_dir("llm-stream-cut-after-final-$name")
+        try
+            live = with_recorded_answers(() -> call(srv.url), dir; mode=:record)
+            @test live isa Union{LLMSuccess,ResponseSuccess} && srv.posts[] == 1
+            @test length(readdir(dir)) == 1                                  # recorded, as a clean stream is
+            replayed = with_recorded_answers(() -> call(srv.url), dir)
+            @test srv.posts[] == 1 && _rl_text(replayed) == _rl_text(live)
+        finally
+            close(srv.listener)
+        end
+    end
+    srv = _rl_cut_stream_server(String(chopsuffix(chat_bytes, "data: [DONE]\n\n")))   # the finish chunk, then the cut
+    dir = _ra_dir("llm-stream-cut-before-final")
+    try
+        live = with_recorded_answers(() -> chat_call(srv.url), dir; mode=:record)
+        @test live isa LLMSuccess && live.message.finish_reason == "stop"   # the turn is kept …
+        @test isempty(readdir(dir))                                         # … and not recorded
+    finally
+        close(srv.listener)
+    end
+end
 @testset "recorded LLM answers — a turn that ends on its second hop's miss or lost write bills its first, streamed or not" begin
     # One turn of two requests, unstreamed and streamed. Its second request misses on replay, or
     # its second reply's recording cannot be written: either way the first reply was billed, and

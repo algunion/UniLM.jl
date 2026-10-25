@@ -2213,7 +2213,9 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #                 (an unrecorded verb behaves as outside the scope); no recording or an
     #                 unreadable one throws ReplayMissError
     # :record         call the service; write each HTTP 200 to dir, replacing any earlier file
-    #                 (a request repeated identically, as a polling loop's, leaves its last 200)
+    #                 (a request repeated identically, as a polling loop's, leaves its last 200);
+    #                 a stream once its final event arrived, read with no stop, even if its
+    #                 connection then fails, and never one cut before that event
     # :record_missing replay what dir holds; call and record the rest; an unreadable
     #                 file throws ReplayMissError (never overwritten); a recorded 200 replays before
     #                 any request is sent, so a polling loop gets its first status on every later poll

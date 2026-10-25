@@ -1587,8 +1587,9 @@ decide (`_attempt_source!`): a recording is read through the same body as a live
 (`_ReplayedStream`), with no first-byte deadline or idle guard and with the same stop
 checks, and the API key is read only for a request that is sent. A whole reply, read with
 no stop — the turn's final message or a reply that continues it — is recorded before the
-turn is committed (`_commit_stream!`). A miss (`ReplayMissError`) and a recording that
-cannot be written (`RecordingWriteError`) are thrown unclassified.
+turn is committed (`_commit_stream!`), also when the connection fails after its final
+event. A miss (`ReplayMissError`) and a recording that cannot be written
+(`RecordingWriteError`) are thrown unclassified.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl, turn::_StreamTurn)
@@ -1601,6 +1602,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # `_with_recorded_deadline`): the catch restores it as the surfaced cause
     # when the library's teardown of the bound-closed socket replaces it.
     bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
+    # The response head, once read, and the attempt's source, once known: a whole reply
+    # recovered from its connection's teardown is recorded with them.
+    head_ref = Ref{Union{Nothing,HTTP.Response}}(nothing)
+    src = _LIVE_STREAM
     cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
     otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
     # Outside every recording scope the request is sent, and its headers are built first, as
@@ -1622,6 +1627,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                 HTTP.closewrite(io)
                 HTTP.startread(io)
             end, () -> _abort_request_phase(io, ctx), _first_byte_bound(io, cfg, t0), :request, bound)
+        head_ref[] = head
         _stream_head!(chat.service, state, head)
         idle[] = _idle_guard(() -> close(io), _idle_bound(io, cfg))
         # The terminal first: at `[DONE]` the turn is finalized at once, however long
@@ -1747,6 +1753,13 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         # surface below. Finalization is at-most-once, so this never doubles the terminal
         # callback.
         if answered && (stopped || _stream_teardown_noise(e, breach))
+            # A reply whose final event arrived before the teardown — the read reached the
+            # sentinel, or a clean end with a finish reason, so the turn's message was built or
+            # the reply handed on — is whole: it is recorded as a clean one is, unless a stop
+            # ended its reading. One cut before that event is not whole, and not recorded.
+            h = head_ref[]
+            !(isnothing(m[]) && isnothing(next[])) && !stopped && h isa HTTP.Response && h.status == 200 &&
+                _commit_stream!(src, h, take!(raw_buffer))
             # A reply that continues the turn is not the turn's end, yet it was answered and
             # billed: it is handed on to the next request, stop or not. After a stop the next
             # request meets the stop before sending anything, so the call ends as a stop

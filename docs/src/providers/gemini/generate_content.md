@@ -89,10 +89,13 @@ travel on its parts, which UniLM sends back as they came ([Conversations](@ref g
 ## [Tools](@id gemini_tools)
 
 Each `Tool` in `tools` goes out as a function declaration: its `name`, its `description` when it
-has one, and its `parameters` as `parametersJsonSchema`, the JSON Schema whole. A function's name
-"Must be a-z, A-Z, 0-9, or contain underscores and dashes, with a maximum length of 128"
+has one, and its `parameters` as `parametersJsonSchema`, the JSON Schema whole. Google's reference
+gives a declaration's name "Must be a-z, A-Z, 0-9, or contain underscores, colons, dots, and dashes,
+with a maximum length of 128", and the name a call and its response carry "Must be a-z, A-Z, 0-9, or
+contain underscores and dashes, with a maximum length of 128"
 ([generateContent reference](https://ai.google.dev/api/generate-content)); UniLM sends a name as
-given. `tool_choice` becomes the request's function-calling mode:
+given, so a name of letters, digits, `_` and `-` holds for both. `tool_choice` becomes the request's
+function-calling mode:
 
 | `tool_choice` | `toolConfig.functionCallingConfig` | With a tool marked `strict=true` |
 | :--- | :--- | :--- |
@@ -404,8 +407,9 @@ already received are added to `cumulative_cost`. Continuation is exercised again
 live `CONTINUATION` reply has not been observed for this release. `GEMINIOpenAIServiceEndpoint` does
 not continue.
 
-Gemini 4 Argon also thinks for minutes: Google sets a "Time limit per request" of "20 minutes" and
-advises "Set your HTTP read timeout to 20 minutes"
+Gemini 4 Argon also thinks for minutes: on a non-streaming call "The server closes the connection after
+10 minutes", on a stream "The server closes the stream after 20 minutes", and Google advises "Set your
+HTTP read timeout to 20 minutes"
 ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)). A
 `chatrequest!` or `respond` call to a model whose id starts `gemini-4-`, on either endpoint, takes
 `request_timeout`, `stream_idle_timeout` and `total_deadline` of 1200 seconds while no
@@ -459,8 +463,8 @@ endpoint: audio on a model the page prices without audio (the image models) or d
 in the output, and audio in a call that also hit the cache on one of those four models, whose
 cached-audio price the usage cannot tell apart.
 
-A call Google bills at a tier its pricing page lists no price for — `"deferred"` — is estimated at
-the standard rates, with one warning per model and tier. A model with no row, any other id
+A reply that names a tier other than standard, flex and priority — `"deferred"`, say — is estimated
+at the standard rates, with one warning per model and tier. A model with no row, any other id
 included, is estimated at `0.0`, with one warning per model id: pass [`estimated_cost`](@ref) a
 `pricing` table that holds its row, or add the row to [`DEFAULT_PRICING`](@ref). A failure costs
 `0.0`, since it carries no usage. How a stream reports its usage is on [Streaming](@ref gemini_streaming),

@@ -68,9 +68,9 @@ eu = token_usage(edited)
 its thinking counted as output; the image is output too — 1,120 of the generation's tokens above, by
 the `candidatesTokensDetails` of its `raw` usage, as Google says "Output images at 1K (1024x1024px)
 consume 1120 tokens" ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). UniLM does not price
-images: [`estimated_cost`](@ref) throws
-`ArgumentError` for an image result unless you pass `model=` and a `pricing` row of your own. The
-options every provider shares are on [Image Generation](@ref images_guide).
+images: [`estimated_cost`](@ref) throws `ArgumentError` for an image result unless you pass `model=`,
+which it prices by a `pricing` row of your own, and estimates at `0.0`, with a warning, where no row
+names it. The options every provider shares are on [Image Generation](@ref images_guide).
 
 ## [Audio](@id gemini_audio)
 
@@ -141,8 +141,9 @@ the `gemini-embedding-2` model. Instead, include the task as an instruction in y
 front of each text: `"task: search result | query: "` for `:search_query`, `"title: … | text: "`
 for `:document`, with an [`EmbeddingInput`](@ref)'s `title` (`none` without one), and the others as
 [Embeddings](@ref embeddings_guide) lists them. A text without a task goes as it is. Google normalizes
-only the default size: "While the default 3072-dimension embeddings are always normalized", a smaller
-one should be normalized before it is compared
+every size on `gemini-embedding-2`: "While the default 3072-dimension embeddings are always normalized,
+Gemini Embedding 2 also auto-normalizes truncated dimensions (e.g., 768, 1536)"; only on
+`gemini-embedding-001` "you must manually normalize non-3072 dimensions"
 ([embeddings](https://ai.google.dev/gemini-api/docs/embeddings)).
 
 The endpoint takes text: an `EmbeddingInput` with an image or a sound clip is refused before the
@@ -172,9 +173,10 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
 - **Sampling and tiers.** `temperature` and `top_p` follow the rule of
   [Request options](@ref gemini_request_options), and `service_tier` takes `"standard"`, `"flex"` and
   `"priority"`, the tiers Google matches "in name and logic" there; another value is refused. The
-  replies name no billed tier, so a result records the one its request asked for: `"flex"` is priced
-  at the Flex rates and `"priority"` at the Priority rates, an upper bound, since a downgraded Priority
-  request bills at the standard rate and this wire does not say so.
+  replies named no billed tier on 22 October 2026, so a result records the one its request asked for
+  (a tier a reply names is kept): `"flex"` is priced at the Flex rates and `"priority"` at the Priority
+  rates, an upper bound, since a downgraded Priority request bills at the standard rate and this wire
+  did not say so.
 - **Everything else is sent as set.** No other check runs: `reasoning_effort` goes as it is, Google
   mapping it to a thinking level, and `prompt_cache_options`, a request that ends with an assistant
   turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach Google, which answered
@@ -184,9 +186,9 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   OpenAI compatibility for thought signatures in chat completion APIs"; a multi-turn tool loop on this
   wire is untested.
 - **Usage.** A stream asks for its usage, `stream_options = {"include_usage": true}`, when the `Chat`
-  sets none, so a streamed turn is priced. The usage counts no audio apart, so a clip is priced at the
-  text rate, a lower bound on the four models with an audio price of their own, for which such a request
-  warns once per model.
+  sets none, so a streamed turn is priced. The usage counted no audio apart on 23 October 2026, so a
+  clip is priced at the text rate, a lower bound on the four models with an audio price of their own,
+  for which such a request warns once per model.
 - **No continuation, no other verbs.** A long reply is not continued ([Long generations](@ref gemini_long_decode)),
   though a `gemini-4-` model keeps its 20-minute default bounds; `respond`, `list_models`, `speak` and
   the image verbs refuse the endpoint, and `embeddingrequest!` is its own job

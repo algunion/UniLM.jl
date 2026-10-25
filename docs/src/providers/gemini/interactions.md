@@ -53,9 +53,11 @@ prices; `token_usage` reads the interaction's `usage` in the shape every result 
 `total_output_tokens` and `total_thought_tokens`, `reasoning_tokens` the thought tokens,
 `cached_tokens` its `total_cached_tokens`, `prompt_audio_tokens` the audio among the input, and
 `service_tier` the interaction's `service_tier`, the tier that billed it. They are priced as on
-generateContent ([Cost and usage](@ref gemini_cost)). An interaction whose `status` is `"failed"` is
-a `ResponseFailure`; `"completed"`, `"requires_action"`, `"incomplete"`, `"in_progress"` and
-`"cancelled"` are a `ResponseSuccess`, whose `status` says which.
+generateContent ([Cost and usage](@ref gemini_cost)). `respond` returns an interaction whose `status`
+is `"failed"` as a `ResponseFailure`, and one that is `"completed"`, `"requires_action"`,
+`"incomplete"`, `"in_progress"` or `"cancelled"` as a `ResponseSuccess`, whose `status` says which;
+`get_response` and `cancel_response` return every interaction they read as a `ResponseSuccess`
+([Background requests](@ref gemini_background)).
 
 ## [Conversations](@id gemini_interactions_conversations)
 
@@ -73,9 +75,11 @@ output_text(followup)
 Google adds that continuing this way helps its cache: "Using `previous_interaction_id` (stateful) to
 continue conversations allows the system to more easily utilize implicit caching for the conversation
 history" ([Interactions overview](https://ai.google.dev/gemini-api/docs/interactions-overview)). With
-`store=false` Google keeps nothing: each request carries the whole conversation as its input
-([Inputs](@ref gemini_interactions_input)), and Google asks that its thought steps go back "exactly as
-they were received from the model" ([thinking](https://ai.google.dev/gemini-api/docs/thinking)). UniLM
+`store=false` Google stores no interaction to continue — it "prevents using `previous_interaction_id`
+for subsequent turns" ([Interactions overview](https://ai.google.dev/gemini-api/docs/interactions-overview))
+—, so each request carries the whole conversation as its input ([Inputs](@ref gemini_interactions_input)),
+and Google asks that its thought steps go back "exactly as they were received from the model"
+([thinking](https://ai.google.dev/gemini-api/docs/thinking)). UniLM
 sends a step in the Interactions shape as it is; sending a result's `output` back as the next input is
 untested.
 
@@ -196,7 +200,7 @@ r2 = respond(Respond(service=GEMINIServiceEndpoint, previous_response_id=r1.resp
 
 ## [Hosted tools](@id gemini_hosted_tools)
 
-Google runs three tools for the model on this API, which UniLM builds:
+Of the tools Google runs for the model on this API, UniLM builds three:
 [`gemini_google_search`](@ref) (`{"type": "google_search"}`), [`gemini_code_execution`](@ref)
 (`{"type": "code_execution"}`) and [`gemini_url_context`](@ref) (`{"type": "url_context"}`). Pass
 them in `tools`:
@@ -223,7 +227,7 @@ answer: read the queries, results and code there. Google puts a grounded answer'
 `annotations`" on its text ([Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)),
 and the message UniLM builds from a `model_output` step keeps the text alone, so
 [`url_citations`](@ref) finds none in an interaction: read them from the `model_output` step in
-`response.raw["steps"]`, as the second block above does. Another tool the API takes — Google's error
+`response.raw["steps"]`, as the last block above does. Another tool the API takes — Google's error
 reference names `mcp_server`, `file_search`, `google_maps` and `computer_use` among its tool types
 ([Interactions errors](https://ai.google.dev/gemini-api/docs/api-errors)) — goes as a `Dict` in the
 API's own shape, which UniLM sends as it is. The input a tool read
@@ -237,7 +241,7 @@ per month (shared across all Gemini 3 and newer models), then \$14 per 1,000 req
 A `text` format becomes the top-level `response_format`: [`json_schema_format`](@ref) sends
 `{"type": "text", "mime_type": "application/json", "schema": …}`, and [`json_object_format`](@ref) the
 same without a schema. Only the schema is sent, not the format's name, description or `strict`;
-`verbosity` is refused.
+`verbosity` is refused ([Limits and refusals](@ref gemini_limits)).
 
 ```@example gemini
 using JSON

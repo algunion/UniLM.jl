@@ -182,8 +182,9 @@ reports — `supportedGenerationMethods` and whether the model thinks (`thinking
 sent in `raw`; the listing carries no dates, so `created`, `deprecated` and `retires` are `nothing`
 ([Model Listings](@ref models_api)). An error status on any page is a `ModelListFailure`; a call
 that brings no listing — no key, no connection, a timeout, a reply that is not the listing — is a
-`ModelListCallError`. `list_models` throws `ArgumentError` for `GEMINIOpenAIServiceEndpoint`,
-which has no listing.
+`ModelListCallError`. `list_models` throws `ArgumentError` for `GEMINIOpenAIServiceEndpoint`:
+UniLM lists no models through it, though Google's compatible endpoint has a listing of its own,
+`GET /v1beta/openai/models` ([OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)).
 
 A listing bills no tokens and is not recorded, so its output here is quoted from a live run:
 
@@ -236,8 +237,9 @@ levels of the models that served them when this release was made ([Reasoning](@r
 Before you use a newly listed model, check that it has a price row, as the last line above does: a
 `Chat` or `Respond` result of a model without one is estimated at `0.0`
 ([Cost and usage](@ref gemini_cost)). Of the ids that line lists, the aliases bill at the rows of the
-models that serve them, since a reply names its serving model; the image and speech models serve
-verbs that `estimated_cost` does not price
+models that serve them, since a reply names its serving model (on 22 October 2026, `gemini-flash-latest`
+answered as `gemini-3.8-flash` and `gemini-pro-latest` as `gemini-3.1-pro-preview`); the image and
+speech models serve verbs that `estimated_cost` does not price
 ([Images, speech, embeddings & the compatible endpoint](@ref gemini_media_page)); the others would be
 estimated at `0.0`.
 
@@ -249,16 +251,18 @@ A model's input and output token limits are in its [`list_models`](@ref) entry
 [When something fails](@ref gemini_failures).
 
 A field a Gemini API has no counterpart for is refused, not dropped, since dropping it would send a
-request other than the one asked for; so is each request in the table below that the API would
-answer with an error. `chatrequest!`, `tool_loop!`, `respond`, `tool_loop`, `generate_image`,
-`edit_image` and `speak` throw these `ArgumentError`s before anything is sent. A row that names the
+request other than the one asked for. The one exception is a `Chat`'s `parallel_tool_calls`, which a
+`Chat` with tools sets on its own and which is not sent, whatever its value ([Tools](@ref gemini_tools)).
+Each request in the table below that the API would answer with an error is refused too.
+`chatrequest!`, `tool_loop!`, `respond`, `tool_loop`, `generate_image`, `edit_image`, `speak` and
+`embeddingrequest!` throw these `ArgumentError`s before anything is sent. A row that names the
 thinking table holds for the ids of its rows ([Reasoning](@ref gemini_reasoning)); an id no row
 names meets only the other rules.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | `temperature` or `top_p`, on a `Chat`, a `Respond` or `GEMINIOpenAIServiceEndpoint`, for a model other than the earlier ones listed in [Request options](@ref gemini_request_options) | `so UniLM sends sampling parameters only to`: from Gemini 3.6 Flash and 3.5 Flash-Lite on, the API ignores them | remove it |
-| a request that ends with an assistant turn, on a model other than those earlier ones | `answers HTTP 400 to a request that ends with a model turn` | end with a user message; shape the answer with a system message or `response_format` |
+| a `Chat` that ends with an assistant turn, on a model other than those earlier ones | `answers HTTP 400 to a request that ends with a model turn` | end with a user message; shape the answer with a system message or `response_format` |
 | `moderation`, or a `Chat` field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `stream_options`, `verbosity`, `metadata`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key` | `Native Gemini Chat does not support field(s)`: generateContent has no such field | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
 | `prompt_cache_options`, on a `Chat` or a `Respond` | `Gemini takes no prompt_cache_options`: Gemini caches repeated prefixes on its own, and UniLM does not wrap its explicit caching | remove it ([Prompt caching](@ref gemini_caching)) |
 | `reasoning_effort` `"none"`, `"xhigh"` or `"max"`, on a `Chat` or in a `Reasoning` | `Gemini thinking effort must be minimal, low, medium, or high` | one of those four |
@@ -266,11 +270,12 @@ names meets only the other rules.
 | any `reasoning_effort` on a `Chat` for a `gemini-2.5-` model | `Gemini 2.5 generateContent uses thinkingBudget` | leave it unset, or send a `Respond` with `Reasoning` |
 | a `service_tier` other than `"standard"`, `"flex"` and `"priority"` on a `Chat`, or those and `"deferred"` on a `Respond` | `Gemini generateContent takes service_tier`, `Gemini's OpenAI-compatible endpoint takes service_tier`, `Gemini Interactions takes service_tier` | one of them |
 | a `seed` outside the int32 range, on a `Chat` or a `Respond` | `Gemini takes a seed from`: `seed` is an int32 | a seed from -2,147,483,648 to 2,147,483,647 |
-| a `safety_identifier` longer than 63 characters, or holding a character other than lowercase letters, letters of scripts without case (such as Chinese), digits, `_` and `-` | `sends safety_identifier as a request label`: it goes as a request label, which Google's label rules bound | a shorter id, such as 32 hex characters of a hash |
+| a `safety_identifier` longer than 63 characters, or holding a character other than lowercase letters, letters of scripts without case (such as Chinese), numeric characters, `_` and `-` | `sends safety_identifier as a request label`: it goes as a request label, which Google's label rules bound | a shorter id, such as 32 hex characters of a hash |
 | a `tool_choice` string other than `"auto"`, `"none"` and `"required"` | `Unknown Gemini tool_choice`, `Unknown tool_choice string` | one of them, or a named function |
 | a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | `functionResponse references unknown tool_call id` | the `id` of the call it answers |
 | a `response_format` whose type is not `text`, `json_object` or `json_schema`, or a JSON Schema format without a schema object | `supports response_format text, json_object, or json_schema`, `needs a schema object` | a format of those types, with its schema |
-| an `ImageAttachment` with `detail="original"` | `Gemini has no media resolution for an image at its own dimensions` | `"low"`, `"high"` or `"auto"` |
+| an image with `detail="original"`: an `ImageAttachment`, or an `input_image` on a `Respond` | `Gemini has no media resolution for an image at its own dimensions` | `"low"`, `"high"` or `"auto"` |
+| an `input_image` on a `Respond` whose `detail` is not `"auto"`, `"low"`, `"high"` or `"original"` | `an image's detail level on Gemini is` | `"low"`, `"high"` or `"auto"` |
 | an image `detail` level on `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-image`, `gemma-4-31b-it` or `gemma-4-26b-a4b-it` | `takes no per-image media resolution` | the image without `detail` |
 | a `Respond` field with no Interactions counterpart: `parallel_tool_calls`, `truncation`, `metadata`, `user`, `include`, `max_tool_calls`, `top_logprobs`, `prompt_cache_key`, `prompt_cache_retention`, `conversation`, `context_management`, `stream_options`, `moderation` | `Gemini Interactions does not support the Respond field(s)` | remove it |
 | `max_output_tokens` above 65,536 on a `gemini-4-argon` `Respond` without `background=true` | `takes max_output_tokens above 65536 only in the background` | `background=true` ([Background requests](@ref gemini_background)), or a lower `max_output_tokens` |
@@ -323,7 +328,7 @@ sends again, or `quota_exceeded`, "your daily quota", which it returns at once
 | a call-error result whose `cause` is a `UniLMCancelled` | a stop before the turn's finish reason arrived: the stream's `close[] = true` (`:callback`) or a cancelled `CancelToken` (`:token`); nothing is appended | nothing, if the stop was yours |
 | a call-error result whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |
 | `ResponseCallError` whose `error` names a missing `"id"` or `"status"` | a 200 that is not an interaction ([The Interactions API](@ref gemini_interactions_page)) | the request again |
-| `ResponseFailure` with `status` 200 | the interaction's `status` is `"failed"`; `response` holds it | the request again |
+| `ResponseFailure` with `status` 200 from `respond` | the interaction's `status` is `"failed"`; `response` holds it | the request again |
 | `ResponseCallError` from a streamed `respond`, its `error` the stream's error event | Google sent an `error` event in the stream, as its error reference describes ([Interactions errors](https://ai.google.dev/gemini-api/docs/api-errors)) | the request again |
 | `finish_reason == "length"` | the reply reached `maxOutputTokens` or the model's output limit, thinking included | a higher `max_tokens`, or a lower thinking level |
 | `finish_reason == "content_filter"` | a safety filter stopped the reply; `refusal_message` holds Google's `finishMessage`, when it sent one | another request ([Finish reasons and safety](@ref gemini_finish_reasons)) |

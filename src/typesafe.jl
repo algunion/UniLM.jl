@@ -101,7 +101,9 @@ from `{"model", "answers", "usage"}`, the request id read from the
 shapes. Recordings are keyed under the plain path (no namespace). It sends a
 [`RawQuestion`](@ref) verbatim and never expects a refusal.
 
-TypeSafe marks images and Box questions experimental. Each distinct
+TypeSafe marks images and Box questions "Dreamer-ready": they "aren't yet up to our
+standards to call ready for production", and their request format, answers and limits "can
+change between releases" ([Images](https://docs.typesafe.ai/images)). Each distinct
 [`ImageAttachment`](@ref) of a request — in the state, an instruction, a
 criterion or a raw question's fields — is sent once, as a part of a
 `multipart/form-data` request whose first part, `request`, holds the JSON body;
@@ -167,7 +169,7 @@ _system_one_concurrency(::TypeSafeProtocol, service)::Int = 16
 # service (422), so they are refused here, before a round trip.
 const _TYPESAFE_MAX_OPTIONS = 255
 const _TYPESAFE_MAX_LEVELS = 10
-# Its request rules (https://docs.typesafe.ai/api#request-rules): a body over 32 MiB,
+# Its request rules (https://docs.typesafe.ai/api/errors#request-rules): a body over 32 MiB,
 # multipart framing included, is answered 413, and more than 64 levels of objects and
 # arrays in the state, an instruction or a criterion 400.
 const _TYPESAFE_MAX_BODY = 32 * 1024 * 1024

@@ -777,9 +777,9 @@ image's bytes into the JSON as numbers.
 - **Sent once, billed per use.** Each distinct image goes out once, as a part of
   a multipart request, and every place it stood holds a reference to it. Every
   use is billed, so an image several questions need belongs in the state, once.
-- **The opt-in.** TypeSafe marks images experimental — their request format,
-  answers and limits may change between releases
-  ([Images](https://docs.typesafe.ai/images)) — and reads them only from a
+- **The opt-in.** TypeSafe marks images "Dreamer-ready", not yet ready for
+  production — their request format, answers and limits "can change between
+  releases" ([Images](https://docs.typesafe.ai/images)) — and reads them only from a
   request that carries the header `TypeSafe-Danger-Zone-Images: true`. UniLM
   adds it whenever a request holds an image: passing one is the opt-in.
 - **Checked before sending.** PNG or JPEG, a still image (no animated PNG), at

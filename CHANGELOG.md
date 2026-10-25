@@ -236,6 +236,11 @@
   backoff without it, which can be shorter, while `ask_each` and a `SystemOneFailure`'s
   `retry_after` already read it. Every verb, streamed or not, now waits at least what
   `retry-after-ms` asks for, else `Retry-After`.
+- **The TypeSafe docstrings use TypeSafe's words.** `TypeSafeProtocol`'s said TypeSafe marks
+  images and Box questions experimental; TypeSafe calls them "Dreamer-ready", not yet "ready for
+  production". `TYPESAFE_DEFAULT_MODEL`'s advised pinning `jev-1.13.0`, while `jev-latest` now
+  names `jev-1.14.0`; it says to send the version a confidence threshold was tuned against, as
+  TypeSafe's Models page does. No behaviour changes.
 
 ## 0.26.0
 

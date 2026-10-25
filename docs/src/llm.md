@@ -1875,7 +1875,7 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   the image stood holds `"<image:" * first 32 hex digits of its SHA-256 * ">"`, and
   the body lists them under `assets`. `TypeSafe-Danger-Zone-Images: true` is sent
   whenever a request has an image or a Box question (TypeSafe marks both
-  experimental). Each use of an image is billed. A Score `legend` entry that is an
+  "Dreamer-ready", not yet ready for production). Each use of an image is billed. A Score `legend` entry that is an
   image comes back as the request's `ImageAttachment`. A recording is keyed on the
   JSON part plus one `asset-k <sha256>` line per image (`key_extra`), never on or
   with the bytes. `box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,

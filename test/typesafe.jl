@@ -798,3 +798,17 @@ end
     @test :retry_after in fieldnames(SystemOneFailure)
     @test SystemOneFailure(response="", status=429).retry_after === nothing
 end
+
+@testset "the TypeSafe docstrings say what TypeSafe's pages say" begin
+    # A docstring's source text, its whitespace runs as one space (`@doc` gives the raw `DocStr`
+    # unless Markdown is loaded).
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    # "Dreamer-ready. Images and Box questions aren't yet up to our standards to call ready for
+    # production" (https://docs.typesafe.ai/images): TypeSafe's word, not "experimental".
+    proto = flat(@doc UniLM.TypeSafeProtocol)
+    @test occursin("\"Dreamer-ready\"", proto) && !occursin("experimental", proto)
+    # "If you have tuned confidence thresholds against one version, send that version's ID instead of
+    # the alias", and `jev-latest` points to `jev-1.14.0` (https://docs.typesafe.ai/models).
+    alias = flat(@doc UniLM.TYPESAFE_DEFAULT_MODEL)
+    @test occursin("send that version's id", alias) && !occursin("pin `jev-1.13.0`", alias)
+end

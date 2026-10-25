@@ -51,7 +51,8 @@ export OPENAI_API_KEY="sk-..."
 UniLM reads the variable each time a request is sent: a `chatrequest!` or `respond` without it
 returns a call-error result, an `LLMCallError` or a `ResponseCallError`, whose `cause` is the
 `KeyError` naming it. `OPENAIServiceEndpoint` is the default `service` of `Chat`, `Respond` and
-`Embeddings`; the examples on these pages pass it as `service=OPENAIServiceEndpoint`, the bare type.
+`Embeddings`; the examples on these pages pass it as `service=OPENAIServiceEndpoint`, the bare type, or
+leave it to the default.
 Requests go to `https://api.openai.com` — a `Chat` to `/v1/chat/completions`, a `Respond` to
 `/v1/responses` — with the key in an `Authorization: Bearer` header.
 
@@ -111,7 +112,7 @@ for reasoning with tools"
 On Chat Completions, a model of the [rule table](@ref openai_reasoning) takes function tools only at
 the efforts its Chat Completions tools column lists, none where the cell is "—", and the reasoning
 efforts the two APIs take differ per model: UniLM refuses a request that breaks either rule, and the
-refusal's message names the fix. The hosted tools are tools of the Responses API: Chat Completions
+refusal's message names the fix ([Limits and refusals](@ref openai_limits)). The hosted tools are tools of the Responses API: Chat Completions
 "supports only specialized search models for web search"
 ([web search](https://developers.openai.com/api/docs/guides/tools-web-search#chat-completions-api)).
 Audio input and spoken replies are Chat Completions features, which OpenAI's audio guide directs
@@ -352,7 +353,7 @@ stored responses — `get_response`, `delete_response`, `list_input_items`, `can
 | `LLMResultError` from `text`, `output_text` or `embedding_vectors` | the result is a failure, which holds no reply | check `issuccess(result)` first |
 
 `ResponseFailure` is reserved for a response that `failed`; every other status — `incomplete`,
-`cancelled`, `queued`, `in_progress`, `requires_action` — is a `ResponseSuccess`, read with
+`cancelled`, `queued`, `in_progress` — is a `ResponseSuccess`, read with
 [`response_status`](@ref). A response cut at `max_output_tokens` before any visible output can "incur
 costs for input and reasoning tokens without receiving a visible response"
 ([reasoning](https://developers.openai.com/api/docs/guides/reasoning#allocating-space-for-reasoning)).

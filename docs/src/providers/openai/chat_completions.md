@@ -156,10 +156,11 @@ spoken = chatrequest!(chat).message.audio_output
 ```
 
 The next request sends the audio turn back as its text and `"audio": {"id": …}`, "Data about a previous
-audio response from the model", until `expires_at`, the Unix time "for when this audio response will no
-longer be accessible on the server for use in multi-turn conversations"
+audio response from the model". UniLM sends that id whatever the turn's `expires_at`, the Unix time "for
+when this audio response will no longer be accessible on the server for use in multi-turn conversations"
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), the assistant
-message's `audio` and the reply's `audio`):
+message's `audio` and the reply's `audio`): a conversation that goes on after that time sends the id of
+audio that is no longer accessible.
 
 ```@example openai
 push!(chat, Message(Val(:user), "Now say it in French."))
@@ -182,15 +183,17 @@ of their own are on [Audio](@ref openai_audio).
 - **`max_completion_tokens`, `max_tokens`.** OpenAI deprecates `max_tokens` "in favor of
   `max_completion_tokens`", which bounds "visible output tokens and reasoning tokens"
   ([Create chat completion](https://developers.openai.com/api/reference/resources/chat)): a `Chat` that
-  sets `max_tokens` sends it as `max_completion_tokens`, and one that sets both is refused.
+  sets `max_tokens` sends it as `max_completion_tokens`, and one that sets both is refused
+  ([Limits and refusals](@ref openai_limits)).
 - **`service_tier`.** `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"`; Fast mode is
   `"fast"` or its former name `"priority"`, and OpenAI reports `"priority"` for it "For GPT-5.6 and
   earlier models" ([Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)). Ultrafast is a
   Responses tier. The tier OpenAI reports is the result's `usage.service_tier`, which
   [Cost and usage](@ref openai_cost) prices.
-- **`logprobs`, `top_logprobs`.** Sent unless the model's row refuses them at the request's effort,
-  `logprobs=true` asking for "the log probabilities of each output token"; a `Chat` result keeps no log probabilities, since an
-  `LLMSuccess` holds the reply's message and usage. A `Respond` with
+- **`logprobs`, `top_logprobs`.** Sent unless the model's row refuses them at the request's effort
+  ([Limits and refusals](@ref openai_limits)), `logprobs=true` asking for "the log probabilities of each
+  output token"; a `Chat` result keeps no log probabilities, since an `LLMSuccess` holds the reply's
+  message and usage. A `Respond` with
   `include=["message.output_text.logprobs"]` keeps them in its output items,
   `result.response.output`.
 - **`web_search_options`.** Sent as given; Chat Completions "supports only specialized search models
@@ -202,7 +205,8 @@ of their own are on [Audio](@ref openai_audio).
   generated output. OpenAI returns the results in the completion's `moderation`, which an `LLMSuccess`
   does not keep: read them from a `Respond`'s result ([Request options](@ref openai_responses_options)).
 - **`safety_identifier`.** "A stable identifier used to help detect users of your application", at most
-  128 characters; `user`, which OpenAI replaces with it and `prompt_cache_key`, is refused.
+  128 characters; `user`, which OpenAI replaces with it and `prompt_cache_key`, is refused
+  ([Limits and refusals](@ref openai_limits)).
 - **`store`, `metadata`.** `store=true` keeps the completion "for use in our model distillation or evals
   products"; UniLM reads no stored completion back. `metadata` holds up to 16 key-value pairs.
 - **`verbosity`, `prediction`, `seed`, `stop`, `presence_penalty`, `frequency_penalty`, `logit_bias`.**

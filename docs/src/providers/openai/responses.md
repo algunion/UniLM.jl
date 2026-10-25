@@ -40,8 +40,9 @@ of a [`DocumentAttachment`](@ref). An attachment itself is refused in a Response
 `AudioAttachment` among them ([Limits and refusals](@ref openai_limits)).
 
 An assistant message you replay, rather than chain with `previous_response_id`, keeps the `phase` the
-model gave it, `"commentary"` for an intermediate update or `"final_answer"`: OpenAI asks callers to
-"preserve and resend phase on all assistant messages — dropping it can degrade performance"
+model gave it, `"commentary"` for an intermediate update or `"final_answer"`: OpenAI asks callers, for
+"models like `gpt-5.3-codex` and beyond", to "preserve and resend phase on all assistant messages —
+dropping it can degrade performance"
 ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create),
 `input`). [`output_text`](@ref) leaves a `"commentary"` message out of the answer.
 [`UniLM.encode_agentic`](@ref) shows the body `respond` sends, with no key and no request:
@@ -100,8 +101,8 @@ call the application must carry out itself (`computer_call`, `apply_patch_call`,
 
 ## [Hosted tools](@id openai_hosted_tools)
 
-The other tools of a `Respond` run on OpenAI's side, and their results come back in the response's
-output items:
+The other tools of a `Respond` are OpenAI's built-in tools: most run on OpenAI's side, and their results
+come back in the response's output items; the last row's are calls the application carries out:
 
 | Tool | Made by | Its results |
 | :--- | :--- | :--- |
@@ -152,11 +153,11 @@ JSON.parse(output_text(result))["planets"]
 
 A response is stored unless its request sets `store=false`, "for at least 30 days"
 ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)),
-and OpenAI's lifecycle calls work on it by its id. [`get_response`](@ref) and [`cancel_response`](@ref)
-return a `ResponseSuccess`; [`delete_response`](@ref), [`list_input_items`](@ref),
-[`compact_response`](@ref) and [`count_input_tokens`](@ref) return OpenAI's answer as a `Dict`; a
-failure of any of them is a `ResponseFailure` or a `ResponseCallError`. Each makes one attempt, never retried
-([When something fails](@ref openai_failures)).
+and `get_response`, `cancel_response`, `delete_response` and `list_input_items` work on it by its id.
+[`get_response`](@ref) and [`cancel_response`](@ref) return a `ResponseSuccess`; [`delete_response`](@ref),
+[`list_input_items`](@ref), [`compact_response`](@ref) and [`count_input_tokens`](@ref) return OpenAI's
+answer as a `Dict`; a failure of any of them is a `ResponseFailure` or a `ResponseCallError`. Each makes
+one attempt, never retried ([When something fails](@ref openai_failures)).
 
 ```@example openai
 r = respond("Say 'stored response test' and nothing else.", store=true, model="gpt-5.4-mini")
@@ -189,7 +190,7 @@ end
 [`count_input_tokens`](@ref) asks how many input tokens a request would use, "the exact count the model
 will receive", without generating
 ([counting tokens](https://developers.openai.com/api/docs/guides/token-counting)); with no `model` it
-counts for OpenAI's default model:
+counts for the default model named at the top of the [start page](@ref openai_start):
 
 ```@example openai
 result = count_input_tokens(input="Tell me a joke about programming")
@@ -282,7 +283,8 @@ end
 - **`max_tool_calls`.** "The maximum number of total calls to built-in tools that can be processed in a
   response".
 - **`metadata`, `safety_identifier`, `prompt_cache_key`.** Sent as given; `metadata` holds up to 16
-  key-value pairs, and `user`, which OpenAI replaces with the other two, is refused.
+  key-value pairs, and `user`, which OpenAI replaces with the other two, is refused
+  ([Limits and refusals](@ref openai_limits)).
 - **`moderation`.** A [`ModerationConfig`](@ref) runs a moderation model over the input and the output;
   the response's `moderation` holds the results, in `result.response.raw["moderation"]`.
 - **`context_management`, `stream_options`.** Sent as given: compaction settings, and the stream's

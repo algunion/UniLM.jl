@@ -62,20 +62,35 @@ The columns:
   the efforts, but the API answered `"max"` with HTTP 400 when these rows were written, on
   22 October 2026, and again on the default model on 25 October 2026, so their Chat Completions cells
   end at `"xhigh"`.
-- **Sampling and log probabilities at**: the efforts at which the model takes `temperature`, `top_p`
-  and log probabilities ("any": every effort; "—": none). OpenAI's GPT-6 guide: "When reasoning effort
-  is not `none`, remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also remove
-  `logprobs`. For Responses, remove `message.output_text.logprobs` from `include`"
+- **Sampling and log probabilities at**: the efforts at which UniLM sends `temperature`, `top_p` and
+  log probabilities, refusing them at the others; "—": at none; "any": UniLM checks no effort for the
+  model, OpenAI's answer being the check. OpenAI's GPT-6 guide: "When reasoning effort is not `none`,
+  remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also remove `logprobs`. For
+  Responses, remove `message.output_text.logprobs` from `include`"
   ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra#update-api-and-model-parameters)).
+  OpenAI's pages state no such rule for the GPT-5.6 models, whose cells are "any"; on 25 October 2026 the
+  API refused `temperature` on one of them at an effort other than `"none"`, and took it at `"none"`
+  (the evidence below).
 - **Chat Completions tools at**: the efforts at which a `Chat` may carry `tools`; "—": the model takes
   tools only on the Responses API ([Tools on Chat Completions](@ref openai_chat_tools)).
 - **Ultrafast tier**: whether a `Respond` may ask for `service_tier="ultrafast"`
   ([Request options](@ref openai_responses_options)).
 - **`prompt_cache_retention`**: whether a `Respond` may set it ([Prompt caching](@ref openai_caching)).
-- **Default effort**: the effort OpenAI runs a request at when it sets none, and the effort UniLM checks
-  such a request at ([Setup](@ref openai_setup)). OpenAI's reasoning guide: "GPT-6.1 Sol, GPT-6 Sol, and
-  GPT-6 Luna also default to `medium` reasoning effort"
-  ([reasoning](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)).
+- **Default effort**: the effort UniLM checks a request that sets none at ([Setup](@ref openai_setup)),
+  meant as the one OpenAI runs it at. OpenAI's reasoning guide: "If you omit `reasoning.effort`, GPT-5.6
+  defaults to `medium`", and "GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna also default to `medium` reasoning
+  effort" ([reasoning](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)); its pages
+  name no default for GPT-6 Astra, whose response to a request that set none reported `reasoning.effort`
+  `"medium"` on 25 October 2026 (the evidence below).
+
+!!! details "Evidence"
+    Live requests of 25 October 2026, sent as raw HTTP. `gpt-6-astra` on the Responses API with no `reasoning` and `max_output_tokens=16`:
+    HTTP 200, the response's `reasoning` was `{"context": "all_turns", "effort": "medium", "mode":
+    "standard", "summary": null}`. `gpt-5.6-luna` with `temperature=0.5`: at `reasoning_effort="low"`,
+    HTTP 400 on Chat Completions, "Unsupported value: 'temperature' does not support 0.5 with this model.
+    Only the default (1) value is supported."; with `reasoning={"effort": "low"}`, HTTP 400 on the
+    Responses API, "Unsupported parameter: 'temperature' is not supported with this model."; at
+    `reasoning_effort="none"`, HTTP 200 on Chat Completions.
 
 `Reasoning` configures the reasoning of whatever model a `Respond` names: UniLM checks its effort per
 model only for the rows above, and sends it unchecked for a model no row names, OpenAI's answer being
@@ -257,7 +272,7 @@ no row names meets only the other rules.
 | `user` on a `Chat` or a `Respond` | `OpenAI replaces the deprecated user field`: the field "is being replaced by `safety_identifier` and `prompt_cache_key`" | `safety_identifier` for the end user, `prompt_cache_key` for cache routing |
 | `max_tokens` and `max_completion_tokens` both set on a `Chat` | `OpenAI sends max_tokens as max_completion_tokens`: `max_tokens` "is now deprecated in favor of `max_completion_tokens`", which UniLM sends it as | one of them |
 | `prompt_cache_options` with `prewarm` or `comparison_response_id` on a `Chat` | `Chat Completions prompt_cache_options accepts only mode and ttl`: the Chat Completions object has no other field | a `Respond` ([Prompt caching](@ref openai_caching)) |
-| a `prompt_cache_options` `ttl` the API does not take: other than `"30m"` on a `Chat`, other than `"30m"` and `"12h"` on a `Respond` | `OpenAI Chat Completions accepts prompt_cache_options ttl`, `OpenAI Responses accepts prompt_cache_options ttl`: the API answers HTTP 400 for another | `"30m"`, or `"12h"` on a `Respond` |
+| a `prompt_cache_options` `ttl` of `"5m"` or `"1h"`, or `"12h"` on a `Chat` | `OpenAI Chat Completions accepts prompt_cache_options ttl`, `OpenAI Responses accepts prompt_cache_options ttl`: the API answers HTTP 400 for it | `"30m"`, or `"12h"` on a `Respond` |
 | `prompt_cache_retention` on a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` |
 | `seed` on a `Respond` | `Responses API takes no seed`: the Responses API has no seed, while Chat Completions has one | a `Chat`, or no seed |
 | `conversation` and `previous_response_id` together on a `Respond` | `conversation and previous_response_id cannot be combined`: `previous_response_id` "Cannot be used in conjunction with `conversation`" | one of them |
@@ -271,6 +286,11 @@ no row names meets only the other rules.
 | an `image_generation_tool` `action`, `moderation`, `partial_images` or `input_fidelity` outside its values | `image_generation action must be`, `image_generation moderation must be`, `image_generation partial_images must be`, `image_generation input_fidelity must be`: UniLM sends only the values the message lists | one of those values |
 | a `ModerationConfig` `input_mode` or `output_mode` other than `"score"` and `"block"` | `moderation input_mode must be`, `moderation output_mode must be`: a moderation policy's mode is one of the two | `"score"` or `"block"` |
 | an image or a sound clip in an `Embeddings` input | `the OpenAI Embeddings API takes text only`: the Embeddings API embeds text | text ([Embeddings](@ref openai_embeddings)) |
-| an embedding `task` other than `:none`, or a `title`, on an OpenAI embedding model | `gets none: pass task = :none`, `has no task prompts, so a title has nowhere to go`: UniLM writes a task prompt, and a title in it, only for the embedding models it knows to read one, and OpenAI's are not among them | no `task` and no `title` |
+| an embedding `task` other than `:none`, or a `title`, on an OpenAI embedding model, by the `Embeddings` constructor | `gets none: pass task = :none`, `has no task prompts, so a title has nowhere to go`: UniLM writes a task prompt, and a title in it, only for the embedding models it knows to read one, and OpenAI's are not among them | no `task` and no `title` |
+
+The request's parts refuse a value outside their own sets first, on every endpoint: `PromptCacheOptions`
+any `ttl` other than `"5m"`, `"1h"`, `"30m"` and `"12h"` (`prompt cache ttl must be one of`), and
+`Reasoning` and `Chat` an effort outside the seven above (`reasoning effort must be one of`,
+`reasoning_effort must be one of`).
 
 Recorded on 25 October 2026 on `gpt-6-sol` with UniLM's development branch after 0.26.0.

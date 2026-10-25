@@ -111,10 +111,10 @@
   as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
   had reported, as for any other exception a callback throws.
 - **A recorded stream whose connection fails after its final event is kept.** With the
-  stream recording added above, a streamed `chatrequest!` or `respond` in a `:record` or
+  stream recording added above, a streamed `chatrequest!` in a `:record` or
   `:record_missing` scope whose reply was whole — its final event (`[DONE]`,
-  `message_stop`, a Responses terminal event) had arrived — but whose connection then
-  failed returned its success unrecorded, so a later `:replay` missed. It is now recorded
+  `message_stop`) had arrived — but whose connection then failed returned its success
+  unrecorded, so a later `:replay` missed. It is now recorded
   as a clean stream is. A stream cut before its final event is still not recorded, even
   when the call keeps the turn its finish reason completed, and `with_recorded_answers`
   now says so.

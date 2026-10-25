@@ -1277,7 +1277,9 @@ end
 @testset "recorded LLM answers — a stream whose connection fails after its final event is recorded; one cut before it is not" begin
     # A reply is recorded once it is whole — its final event arrived — and no stop ended its reading,
     # whatever the connection does after that event. A stream cut before it is not recorded, though
-    # the call keeps the turn its finish reason completed.
+    # the call keeps the turn its finish reason completed. The chat stream reads its body to the end
+    # after `[DONE]`, so the cut reaches it; `respond` stops reading at its terminal event (HTTP.jl's
+    # `closeread` discards the unread rest), so the cut never reaches it: recorded as a clean stream.
     chat_bytes = _rl_chat_stream(Dict("model" => "mock"), 1, nothing)       # through `data: [DONE]`
     respond_bytes = _rl_responses_stream(Dict("model" => "mock"), 1)        # through `response.completed`
     cfg = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)

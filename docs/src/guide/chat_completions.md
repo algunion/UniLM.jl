@@ -30,7 +30,8 @@ println("Messages: ", length(chat))
 `service` names the provider and `model` its model; a `Chat` without `model` takes the provider's
 default model, and throws `ArgumentError` for a provider that has none. Every field has a default, and
 the constructor checks the ranges of the options it is given ([Parameter validation](@ref chat_completions_validation)).
-See [`Chat`](@ref) for the full list.
+See [`Chat`](@ref) for the full list. Each entry names the models UniLM holds rules and prices for: for
+the provider bound above, [Models](@ref openai_models).
 
 ## [Building conversations](@id chat_completions_messages)
 
@@ -113,8 +114,8 @@ exception — a timeout, a cancellation — in its `cause`. [Results](@ref resul
 
 ### [One-shot requests via keywords](@id chat_completions_keywords)
 
-Skip the `Chat` object entirely for simple one-off requests; every keyword besides the prompts is a
-`Chat` field:
+Skip the `Chat` object entirely for simple one-off requests; every keyword besides the prompts, `config`
+and `cancel` is a `Chat` field:
 
 ```@example chat_completions
 result = chatrequest!(
@@ -235,23 +236,6 @@ exclusive, and an empty `tools` vector is stored as `nothing`. Which fields and 
 its models take is checked when the request is encoded, before any network I/O, by the rules its
 entry's limits section lists. UniLM refuses only what those rules name: a request they let through goes
 to the provider, whose answer is the check.
-
-## [Model notes](@id chat_completions_models)
-
-`model` names any model the provider serves. The rules and prices UniLM holds for a provider's models
-are on its entry, those of the provider bound above on [Models](@ref openai_models); its descriptions of
-some of them:
-
-| `model` | The provider's description |
-| :--- | :--- |
-| `gpt-6-sol` | "built for complex coding and agentic workflows" ([GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)) |
-| `gpt-6.1-sol` | "Near-Astra performance for complex work at a lower cost" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
-| `gpt-6-astra` | "Highest intelligence", "For the most demanding reasoning, coding, and professional work" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
-| `gpt-6-luna` | "Fastest and most cost-effective", "Strong performance for focused, high-volume tasks" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
-| `gpt-5.6-sol` | "the model for flagship capability" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)), whose "promotional pricing is available at least through November 21, 2026" ([pricing](https://developers.openai.com/api/docs/pricing)) |
-| `gpt-5.6-terra` | "for a balance of intelligence and cost" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
-| `gpt-5.6-luna` | "for efficient, high-volume workloads" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
-| `gpt-5.4-mini` | reasoning effort "none (default), low, medium, high and xhigh" ([GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)) |
 
 ## [See also](@id chat_completions_see_also)
 

@@ -62,7 +62,8 @@ result isa LLMSuccess, issuccess(result)
 [`text`](@ref) is the reply of an `LLMSuccess`, and [`output_text`](@ref) the answer of a
 `ResponseSuccess`; `result.message` holds the whole reply, its `finish_reason`, `tool_calls` and
 `refusal_message` among it. An `LLMSuccess`'s `model` is the model the provider reports having served
-the turn, `nothing` where it reports none, and a `ResponseSuccess`'s is `result.response.model`.
+the turn where UniLM keeps the name its reply gives, and `nothing` otherwise (each entry's first call says
+which); a `ResponseSuccess`'s is `result.response.model`.
 [`token_usage`](@ref) reads the usage in one shape for every provider,
 a [`TokenUsage`](@ref) — `prompt_tokens` counts all the input, cache reads and writes included, and
 `completion_tokens` all the output, reasoning included — and [`estimated_cost`](@ref) prices it in USD

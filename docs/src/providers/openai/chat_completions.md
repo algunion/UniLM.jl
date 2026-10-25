@@ -32,7 +32,8 @@ sets them, its `description`, `parameters` and `strict` flag. `tool_choice` is s
 `"none"`, `"required"`, or `UniLM.GPTToolChoice(func=:get_weather)` for
 `{"type": "function", "function": {"name": "get_weather"}}`. Strict mode makes the calls "reliably adhere
 to the function schema", and OpenAI recommends "always enabling" it; its schema needs
-`additionalProperties: false` on every object and every field `required`
+`additionalProperties: false` on every object and every field `required`, and a request whose strict
+schema misses them "will be rejected with details about the missing constraints"
 ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
 
 A `Chat` with `tools` sends `parallel_tool_calls: false` unless it sets another value: the model may
@@ -223,7 +224,7 @@ push!(chat, Message(Val(:user), "Count to five."))
 print(UniLM.encode_request(chat.service, chat))
 ```
 
-The concepts every provider shares are on [Chat Completions](@ref chat_guide).
+The concepts every provider shares are on [Conversations with Chat](@ref chat_guide).
 
 Recorded on 25 October 2026 on `gpt-6-sol` and `gpt-audio-1.5` with UniLM's development branch after
 0.26.0.

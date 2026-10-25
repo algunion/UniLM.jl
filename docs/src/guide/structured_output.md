@@ -168,7 +168,7 @@ println("Default format type: ", tc.format.type)
 
 - [`ResponseFormat`](@ref) — the format of a `Chat`
 - [`TextConfig`](@ref), [`TextFormatSpec`](@ref) — the formats of a `Respond`
-- [Decisions with LLMs](@ref jev_llm_guide) — a decision model beside the LLM, for answers that are categories, yes or no, or scores
+- [Decisions with LLMs](@ref jev_llm_guide) — a decision model beside the LLM, for answers that are categories, yes or no, or scores; a whole record of such fields in one request: [Fill a struct in one request](@ref jev_fill_struct)
 
 ## [On your provider](@id structured_output_providers)
 

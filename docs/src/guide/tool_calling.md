@@ -49,11 +49,10 @@ println(JSON.json(JSON.lower(weather_tool)))
 ### [Strict function calling](@id tool_calling_strict)
 
 Pass `strict=true` to ask the provider to hold each call's arguments to your schema. What a provider
-does with the flag — and what a strict schema needs there — is on its entry. Omitting `strict` (the
-default) sends no flag at all: the request body is identical to previous UniLM versions.
-On `OPENAIServiceEndpoint`, a strict schema that misses those needs is refused by the API: "the request
-will be rejected with details about the missing constraints"
-([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+does with the flag — what a strict schema needs there, and what it answers to one that misses it — is on
+its entry: for the provider bound above, [Tools on Chat Completions](@ref openai_chat_tools) and, for a
+`Respond`, [Tools](@ref openai_tools). Omitting `strict` (the default) sends no flag at all: the request
+body is identical to previous UniLM versions.
 
 ```@example tool_calling
 strict_tool = Tool(
@@ -158,7 +157,8 @@ tool = function_tool(
         "properties" => Dict(
             "expression" => Dict("type" => "string")
         ),
-        "required" => ["expression"]
+        "required" => ["expression"],
+        "additionalProperties" => false
     ),
     strict=true
 )

@@ -211,11 +211,12 @@ result as well as on a success.
 - **Streamed usage**: a streamed turn carries token usage (on `.usage`) and adds its cost to
   `cumulative_cost` like an unstreamed one where its provider reports usage in the stream — on its
   own, or because the endpoint asks for it with `stream_options = {"include_usage": true}` when the
-  `Chat` sets no `stream_options`; each entry's streaming section says which.
-  `DeepSeekEndpoint` streams ask for it; `AZUREServiceEndpoint` streams do not, and their content-filter preambles are tolerated.
-  Elsewhere, set `stream_options=Dict("include_usage" => true)` where the server supports it, or the
-  streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:` keep-alive comment lines
-  and a provider's preamble chunks are all tolerated without affecting the stream.
+  `Chat` sets no `stream_options`. Each entry says which, in its streaming section or the section of the
+  endpoint it concerns; the table [at the end](@ref streaming_providers) links every entry's streaming
+  section. Elsewhere, set `stream_options=Dict("include_usage" => true)` where the server supports it, or
+  the streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:` keep-alive comment lines
+  and a provider's preamble chunks, such as content-filter results, are all tolerated without affecting
+  the stream.
 - A provider error mid-stream on an otherwise-`200` response surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.
 - **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so do not share one across concurrent streams, and do not `push!` to it while its stream task is still running. Use [`fork`](@ref) to fan out — see [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
 

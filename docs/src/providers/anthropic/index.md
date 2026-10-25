@@ -147,7 +147,7 @@ text(chatrequest!(chat))
 
 A reply goes back as the content blocks it arrived in — thinking blocks with their signatures
 intact — without its empty text blocks, and a turn with nothing to send, such as a refusal, is left
-out. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+out. What `push!` refuses is the same on every provider ([Conversations with Chat](@ref chat_guide)).
 
 The system messages a conversation starts with become the top-level `system` prompt, joined with a
 blank line. Where a system message pushed later goes depends on two columns of the

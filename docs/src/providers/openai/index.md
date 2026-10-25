@@ -203,7 +203,7 @@ The messages go out in the order they were pushed, system messages where they st
 goes back as its text and tool calls; a spoken reply also goes back by its audio id
 ([Audio replies](@ref chat_audio_output)). A `Message` needs a text, tool calls, a refusal,
 attachments or an audio reply, and its constructor throws `ArgumentError` for one that has none;
-what `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+what `push!` refuses is the same on every provider ([Conversations with Chat](@ref chat_guide)).
 
 A response is stored by OpenAI unless the request sets `store=false`: OpenAI keeps it "for at least
 30 days" ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)).

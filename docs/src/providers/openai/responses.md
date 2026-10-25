@@ -10,7 +10,7 @@ builds the `Respond` from its keywords and sends it, `respond(r)` sends one buil
 `tool_loop` runs the function calls of a response until the model answers. Before anything is sent, the
 request is checked against OpenAI's rules and the model's row in the [rule table](@ref openai_reasoning),
 and a request that breaks one is refused ([Limits and refusals](@ref openai_limits)). The verb every
-provider of an agentic API shares is on [Agentic Workflows](@ref agentic_guide).
+provider of an agentic API shares is on [Agentic respond](@ref agentic_guide).
 
 | `Respond` field | Responses API | Rules |
 | :--- | :--- | :--- |
@@ -64,7 +64,10 @@ A function tool is a [`FunctionTool`](@ref), made by
 `FunctionTool`. OpenAI's guide to its GPT-6 models routes tool calling to this API: "Use Responses for
 reasoning with tools"
 ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra#update-api-and-model-parameters)),
-and UniLM checks no effort for tools here.
+and UniLM checks no effort for tools here. A strict tool's schema follows the rules of
+[Tools on Chat Completions](@ref openai_chat_tools), and a request whose strict schema misses them "will be
+rejected with details about the missing constraints"
+([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
 
 [`function_calls`](@ref) reads a response's calls, each a `Dict` with its `call_id`, `name` and
 `arguments` (a JSON string), and [`tool_result`](@ref)`(call_id, name, output)` makes the input item that

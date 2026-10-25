@@ -53,9 +53,11 @@ u = token_usage(result)
 `input` is a string, the user's message, or a vector of input items: [`InputMessage`](@ref)s, whose
 content is a string or a vector of parts — [`input_text`](@ref), [`input_image`](@ref),
 [`input_file`](@ref) —, and items such as a [`tool_result`](@ref). `instructions` is the system
-guidance. Which roles, parts and media a provider takes, and the `Respond` fields it refuses before the
-request, are on its entry. [`UniLM.encode_agentic`](@ref) returns the body `respond` sends, with no key
-and no request:
+guidance. `reasoning=Reasoning(effort=…, summary="auto")` sets how much a reasoning model thinks and asks
+for summaries of its reasoning, where the provider gives them, which [`reasoning_summaries`](@ref) reads.
+Which roles, parts and media a provider takes, the efforts and summaries its models take, and the
+`Respond` fields it refuses before the request, are on its entry. [`UniLM.encode_agentic`](@ref) returns
+the body `respond` sends, with no key and no request:
 
 ```@example agentic
 r = Respond(service=service, model=model, instructions="You are a concise assistant.",
@@ -102,10 +104,11 @@ r2 = respond(Respond(; service, model, previous_response_id=r1.response.id,
 ```
 
 `tool_choice` is `"auto"`, `"none"` or `"required"`, or an object a builder makes:
-[`tool_choice_function`](@ref)`(name)` forces one function, and [`tool_choice_hosted`](@ref),
-[`tool_choice_mcp`](@ref), [`tool_choice_custom`](@ref) and [`tool_choice_allowed`](@ref) select other
-kinds of tool. A provider may also run tools of its own, such as web search or code execution, passed in
-`tools`. Which choices and tools a provider takes is on its entry.
+[`tool_choice_function`](@ref)`(name)` forces one function; [`tool_choice_hosted`](@ref),
+[`tool_choice_mcp`](@ref) and [`tool_choice_custom`](@ref) select other kinds of tool, and
+[`tool_choice_allowed`](@ref) limits the model to some of its tools. A provider may also run tools of its
+own, such as web search or code execution, passed in `tools`. Which choices and tools a provider takes is
+on its entry.
 
 ## [Background requests](@id agentic_background)
 
@@ -133,5 +136,5 @@ cancel_response(started.response.id; service)
 ## [On your provider](@id agentic_providers)
 
 ```@eval
-Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :tools)
+Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)
 ```

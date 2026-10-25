@@ -1,23 +1,31 @@
 # [Tool Calling](@id tools_guide)
 
-Both the Chat Completions and Responses APIs support **function/tool calling** — the model
-can decide to invoke functions you define, and you return the results.
+```@setup tool_calling
+using UniLM
+using JSON
+```
 
-## Chat Completions Tool Calling
+A model can ask to call functions you define: it answers with tool calls — a function's name and its
+arguments — instead of text, your code runs them, and their results go back on the next turn until the
+model answers. A `Chat` takes [`Tool`](@ref)s and a `Respond` [`FunctionTool`](@ref)s;
+[`tool_loop!`](@ref) and [`tool_loop`](@ref) run the round trips for you.
 
-OpenAI's tool path is the Responses API: use [`Respond`](@ref) to combine reasoning with
-tool calls. On Chat Completions, GPT-5.6, GPT-6 Sol, and GPT-6 Luna take tools only with
-`reasoning_effort="none"`, and GPT-6 Astra and GPT-6.1 Sol take none at all — their tools
-go through `Respond`. Both rules are checked before any request is sent.
+```@example tool_calling
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
 
-### Defining Tools
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref tool_calling_providers) links each provider's
+rules.
+
+## [Tools on a Chat](@id tool_calling_chat)
+
+### [Defining tools](@id tool_calling_define)
 
 Wrap your function schema in a [`Tool`](@ref):
 
-```@example tools
-using UniLM
-using JSON
-
+```@example tool_calling
 weather_tool = Tool(
     func=FunctionSignature(
         name="get_weather",
@@ -38,15 +46,16 @@ println("Tool JSON:")
 println(JSON.json(JSON.lower(weather_tool)))
 ```
 
-### Strict Function Calling
+### [Strict function calling](@id tool_calling_strict)
 
-Pass `strict=true` to make the API guarantee that tool-call arguments conform to your
-schema (no extra keys, all required fields present). A strict schema must set
-`additionalProperties => false` on every object and mark every property as `required`
-— the API rejects strict-invalid schemas with a 400. Omitting `strict` (the default)
-sends no flag at all: the request body is identical to previous UniLM versions.
+Pass `strict=true` to ask the provider to hold each call's arguments to your schema. What a provider
+does with the flag — and what a strict schema needs there — is on its entry. Omitting `strict` (the
+default) sends no flag at all: the request body is identical to previous UniLM versions.
+On `OPENAIServiceEndpoint`, a strict schema that misses those needs is refused by the API: "the request
+will be rejected with details about the missing constraints"
+([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
 
-```@example tools
+```@example tool_calling
 strict_tool = Tool(
     func=FunctionSignature(
         name="get_weather",
@@ -65,24 +74,29 @@ strict_tool = Tool(
 println(JSON.json(strict_tool))
 ```
 
-### Making Tool-Enabled Requests
+### [Making tool-enabled requests](@id tool_calling_request)
 
-```@example tools
-chat = Chat(model="gpt-5.2", tools=[weather_tool])
+A `Chat` with `tools` sends them with every request. It has `parallel_tool_calls = false` unless it
+sets another value, and what a provider does with that is on its entry.
+[`UniLM.encode_request`](@ref) shows the body the provider is sent:
+
+```@example tool_calling
+chat = Chat(service=service, model=model, tools=[weather_tool])
 push!(chat, Message(Val(:system), "You are a helpful assistant with access to weather data."))
 push!(chat, Message(Val(:user), "What's the weather in Paris?"))
 println("Chat has ", length(chat.tools), " tool(s) registered")
 println("Request body:")
-println(JSON.json(chat))
+println(UniLM.encode_request(service, chat))
 ```
 
-### Handling Tool Calls
+### [Handling tool calls](@id tool_calling_calls)
 
 When the model wants to call a function, the result message will have `finish_reason == "tool_calls"`:
 
-```@example tools
+```@example tool_calling
 chat = Chat(
-    model="gpt-5.4-mini",
+    service=service,
+    model=model,
     tools=[weather_tool],
     tool_choice=UniLM.GPTToolChoice(func=:get_weather)
 )
@@ -112,34 +126,30 @@ run, arguments that do not parse are an `LLMCallError` instead.
     notified as each tool call completes — at most once per call — instead of waiting for
     the final message. See the [Streaming guide](@ref streaming_guide).
 
-!!! note "Gemini calls without wire ids"
-    Gemini's chat path (`generateContent`) may omit `FunctionCall.id`. UniLM assigns
-    such calls a synthetic positional id (`unilm_call_1`, `unilm_call_2`, …) so parallel
-    tool results correlate correctly; synthetic ids never appear on the Gemini wire
-    (the re-encoded request omits the id and correlates positionally, per the
-    API contract). The `unilm_call_` prefix is reserved. This applies to the chat
-    surface only — the Interactions API always returns server-generated call ids.
-
-### Controlling Tool Choice
+### [Controlling tool choice](@id tool_calling_choice)
 
 ```julia
 # Let the model decide
-chat = Chat(tools=[weather_tool], tool_choice="auto", reasoning_effort="none")
+chat = Chat(service=service, model=model, tools=[weather_tool], tool_choice="auto")
 
 # Force the model to use a tool
-chat = Chat(tools=[weather_tool], tool_choice="required", reasoning_effort="none")
+chat = Chat(service=service, model=model, tools=[weather_tool], tool_choice="required")
 
 # Prevent tool use
-chat = Chat(tools=[weather_tool], tool_choice="none", reasoning_effort="none")
+chat = Chat(service=service, model=model, tools=[weather_tool], tool_choice="none")
+
+# Force one function
+chat = Chat(service=service, model=model, tools=[weather_tool],
+            tool_choice=UniLM.GPTToolChoice(func=:get_weather))
 ```
 
-## Responses API Tool Calling
+Which choices a provider takes, and how it sends them, is on its entry.
 
-The Responses API makes tool calling more ergonomic with dedicated types.
+## [Tools on a Respond](@id tool_calling_respond)
 
-### Function Tools
+A `Respond` takes [`FunctionTool`](@ref)s, made by [`function_tool`](@ref):
 
-```@example tools
+```@example tool_calling
 tool = function_tool(
     "calculate",
     "Evaluate a math expression",
@@ -156,7 +166,10 @@ println("Tool: ", tool.name, " (strict=", tool.strict, ")")
 println("JSON: ", JSON.json(JSON.lower(tool)))
 ```
 
-```@example tools
+[`function_calls`](@ref) reads a response's calls, each a `Dict` with its `call_id`, `name` and
+`arguments` (a JSON string):
+
+```@example tool_calling
 weather_fn = function_tool(
     "get_weather",
     "Get current weather for a location",
@@ -169,7 +182,7 @@ weather_fn = function_tool(
         "required" => ["location"]
     )
 )
-result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn], model="gpt-5.4-mini")
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn], service=service, model=model)
 calls = function_calls(result)   # empty for a failed call
 if !isempty(calls)
     println("Function: ", calls[1]["name"])
@@ -179,72 +192,14 @@ else
 end
 ```
 
-### Web Search
+### [Tool choice and tool results](@id tool_calling_respond_choice)
 
-The model can search the web — no function implementation needed:
+`tool_choice` is `"auto"`, `"none"` or `"required"`, or the object a builder makes —
+[`tool_choice_function`](@ref), [`tool_choice_hosted`](@ref), [`tool_choice_allowed`](@ref),
+[`tool_choice_mcp`](@ref), [`tool_choice_custom`](@ref):
 
-```@example tools
-ws = web_search(context_size="high")
-println("Web search tool type: ", typeof(ws))
-println("Context size: ", ws.search_context_size)
-```
-
-```@example tools
-result = respond(
-    "What is the latest stable release of the Julia programming language? Answer in one plain-text sentence.",
-    tools=[web_search()],
-    model="gpt-5.4-mini"
-)
-if result isa ResponseSuccess
-    println(output_text(result))
-else
-    println("Request failed — ", result)
-end
-```
-
-### File Search
-
-Search over your uploaded vector stores:
-
-```julia
-result = respond(
-    "Find the error handling policy",
-    tools=[file_search(["vs_store_id_123"], max_results=5)]
-)
-```
-
-### Combining Tools
-
-Mix different tool types freely:
-
-```@example tools
-tools = [
-    web_search(),
-    function_tool("save_summary", "Save a summary to the database",
-        parameters=Dict(
-            "type" => "object",
-            "properties" => Dict(
-                "title" => Dict("type" => "string"),
-                "content" => Dict("type" => "string")
-            )
-        )
-    )
-]
-println("Number of tools: ", length(tools))
-for t in tools
-    println("  - ", typeof(t))
-end
-```
-
-### Tool Choice, Tool Results & Hosted Tools
-
-Constrain which tool the model may call with the `tool_choice=` builders
-([`tool_choice_function`](@ref), [`tool_choice_hosted`](@ref),
-[`tool_choice_allowed`](@ref), [`tool_choice_mcp`](@ref),
-[`tool_choice_custom`](@ref)):
-
-```@example tools
-r = Respond(input="What's the weather?",
+```@example tool_calling
+r = Respond(service=service, model=model, input="What's the weather?",
             tools=[function_tool("get_weather", "Get weather",
                        parameters=Dict("type" => "object",
                                        "properties" => Dict("location" => Dict("type" => "string"))))],
@@ -255,20 +210,17 @@ println(r.tool_choice)
 Return a tool's output on the next turn with [`tool_result`](@ref):
 
 ```julia
-respond(Respond(; previous_response_id=r1.response.id,
+respond(Respond(; service, model, previous_response_id=r1.response.id,
                 input=[tool_result("call_abc", "get_weather", "72F and sunny")]))
 ```
 
-Gemini Interactions adds server-side hosted tools — see the
-[Agentic Workflows guide](@ref agentic_guide) for [`gemini_google_search`](@ref)
-and friends. When Gemini returns tool calls, the provider's opaque reasoning
-token is preserved on [`ToolCall`](@ref)`.thought_signature` and echoed
-automatically on the next turn.
+A provider may also run tools of its own, such as web search or code execution, which a `Respond`
+takes in `tools`, beside function tools. Which choices and tools a provider takes is on its entry.
 
-## Automated Tool Loop
+## [Automated tool loop](@id tool_calling_loop)
 
-Instead of manually handling tool calls, use [`tool_loop!`](@ref) (Chat Completions) or
-[`tool_loop`](@ref) (Responses API) for automatic dispatch. Both send a request, run the
+Instead of manually handling tool calls, use [`tool_loop!`](@ref) (on a `Chat`) or
+[`tool_loop`](@ref) (on a `Respond`) for automatic dispatch. Both send a request, run the
 calls the model asked for through your dispatcher (or the `CallableTool` callables), send
 the results back, and repeat until the model answers in text, a request fails, or
 `max_turns` (default 10) round-trips are used.
@@ -288,22 +240,15 @@ the results back, and repeat until the model answers in text, a request fails, o
   last response the model sent (a tool-call turn whose calls ran), with `completed=false`
   and `llm_error = "max turns (N) exhausted"`.
 
-!!! tip "Check it with Jev"
-    Wrap the dispatcher so that a sensitive call runs only if the user asked for it: a
-    Jev question reads the proposed call against the user's own words, and the call runs,
-    waits for a confirmation, or is refused ([Approve tool calls](@ref jev_llm_tool_calls)).
-    With a large registry, one Jev question ranks the tools, and the model is offered only
-    the top few ([Offer the LLM only the tools it needs](@ref jev_llm_shortlist)).
+### [On a Chat](@id tool_calling_loop_chat)
 
-### Chat Completions
-
-```@example tools
+```@example tool_calling
 ct = CallableTool(weather_tool, (name, args) -> "22C, sunny in $(args["location"])")
 println("Callable tool wrapping: ", ct.tool.func.name)
 ```
 
 ```julia
-chat = Chat(model="gpt-5.2", tools=[ct.tool])
+chat = Chat(service=service, model=model, tools=[ct.tool])
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "What's the weather in Paris?"))
 result = tool_loop!(chat; tools=[ct])
@@ -325,56 +270,52 @@ with no calls counts too); `"length"` ends it with `completed=false` and
 `callback` and `on_tool_call` are passed to [`chatrequest!`](@ref) unchanged, so they need
 a `Chat` with `stream=true`.
 
-### Responses API
+### [On a Respond](@id tool_calling_loop_respond)
 
 ```julia
 ct = CallableTool(
     function_tool("get_weather", "Get weather", parameters=Dict(...)),
     (name, args) -> "22C, sunny")
-result = tool_loop("What's the weather?"; tools=[ct])
+result = tool_loop("What's the weather?"; service, model, tools=[ct])
 ```
 
-The Responses loop chains turns through `previous_response_id` — or, when the `Respond`
-sets `conversation`, through the conversation alone (the API rejects the two together).
-It runs function calls only on a `completed` or `requires_action` turn; any other status
-(for example `incomplete`, whose calls may be partial) stops it with `completed=false` and
-an `llm_error` naming the status and the `incomplete_details` reason. A call whose
+The `Respond` loop chains its turns with `previous_response_id`, or through the `conversation`
+the `Respond` sets. It runs function calls only on a `completed` or `requires_action` turn; any
+other status (for example `incomplete`, whose calls may be partial) stops it with `completed=false`
+and an `llm_error` naming the status and the `incomplete_details` reason. A call whose
 `arguments` are not a JSON object is answered with an `"Error: invalid arguments: …"`
-output, like a dispatcher error, and the loop goes on. A turn that requests a client-side
-action the loop cannot execute — `custom_tool_call`, `apply_patch_call`,
-`computer_call`, a `shell_call` the platform did not run itself (a
-hosted shell answers its own call with a `shell_call_output` in the same output) or an
-`mcp_approval_request` — stops it with `completed=false`, naming the pending type, and
-none of that turn's calls run.
+output, like a dispatcher error, and the loop goes on. A turn that asks for a call the
+application must carry out itself — a kind of call the loop cannot run — stops it with
+`completed=false`, naming the pending call's type, and none of that turn's calls run.
 
-## MCP Tool Integration
+## [MCP tool integration](@id tool_calling_mcp)
 
 MCP servers expose tools that integrate directly with the tool loop via
 [`mcp_tools`](@ref) and [`mcp_tools_respond`](@ref).
 See the [MCP Guide](@ref mcp_guide) for full details.
 
 ```julia
-# Chat Completions + MCP
+# A Chat + MCP
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
-chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+chat = Chat(service=service, model=model, tools=map(t -> t.tool, tools))
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 
-# Responses API + MCP
+# A Respond + MCP
 tools = mcp_tools_respond(session)
-result = tool_loop("Do something"; tools=tools)
+result = tool_loop("Do something"; service, model, tools=tools)
 ```
 
-## Inspecting the Result
+## [Inspecting the result](@id tool_calling_result)
 
 `tool_loop` / `tool_loop!` return a [`ToolLoopResult`](@ref): the last `response` the loop
 received, the list of `tool_calls` that ran (each a [`ToolCallOutcome`](@ref)),
 `turns_used`, whether it `completed`, and — when it did not — the `llm_error` saying why.
 
 ```julia
-result = tool_loop("What's the weather in Paris and Tokyo?"; tools=[ct])
+result = tool_loop("What's the weather in Paris and Tokyo?"; service, model, tools=[ct])
 
 if result.completed
     println(output_text(result.response))
@@ -390,11 +331,17 @@ for oc in result.tool_calls          # one ToolCallOutcome per executed tool cal
 end
 ```
 
-## See Also
+## [See also](@id tool_calling_see_also)
 
-- [`Tool`](@ref), [`FunctionSignature`](@ref) — Chat Completions tool types
-- [`FunctionTool`](@ref), [`WebSearchTool`](@ref), [`FileSearchTool`](@ref) — Responses API tool types
-- [`function_tool`](@ref), [`web_search`](@ref), [`file_search`](@ref) — convenience constructors
+- [`Tool`](@ref), [`FunctionSignature`](@ref) — the tools of a `Chat`
+- [`FunctionTool`](@ref), [`function_tool`](@ref) — the function tools of a `Respond`
 - [`CallableTool`](@ref), [`ToolCallOutcome`](@ref), [`ToolLoopResult`](@ref) — tool loop types
 - [`tool_loop!`](@ref), [`tool_loop`](@ref) — automated tool dispatch
 - [MCP Guide](@ref mcp_guide) — MCP server integration
+- [Decisions with LLMs](@ref jev_llm_guide) — approve a tool call before it runs, or offer the model only the tools a request needs
+
+## [On your provider](@id tool_calling_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :tools)
+```

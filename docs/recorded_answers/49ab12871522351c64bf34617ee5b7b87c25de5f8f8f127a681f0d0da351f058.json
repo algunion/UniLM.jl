@@ -1,0 +1,155 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "List the planets of the solar system in order.",
+      "model": "gpt-6-sol",
+      "text": {
+        "format": {
+          "description": "The planets of the solar system in order",
+          "name": "planets",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "planets": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "planets"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "json_schema"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_3e710f0cf20a4e04b2d2cbef8ee1f227",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_3e710f0cf20a4e04b2d2cbef8ee1f227"
+    },
+    "body": {
+      "id": "resp_0334134f72c02cd4006ade05c33d5887d2a75f15e4784d8f0c",
+      "object": "response",
+      "created_at": 1792935363,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1792935364,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_0334134f72c02cd4006ade05c4665487d2bc0b5d3b4b778c79",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"planets\":[\"Mercury\",\"Venus\",\"Earth\",\"Mars\",\"Jupiter\",\"Saturn\",\"Uranus\",\"Neptune\"]}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "medium",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "json_schema",
+          "description": "The planets of the solar system in order",
+          "name": "planets",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "planets": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "planets"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 55,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 36,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 91
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-10-25T13:36:04Z"
+}

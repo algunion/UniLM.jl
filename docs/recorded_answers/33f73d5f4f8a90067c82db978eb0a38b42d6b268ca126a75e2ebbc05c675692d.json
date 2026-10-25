@@ -1,0 +1,115 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "In one sentence: what is a prime number?",
+      "instructions": "You are a concise assistant.",
+      "model": "gpt-6-sol"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_e277539edab74e28b4abb61e70b6c8c2",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_e277539edab74e28b4abb61e70b6c8c2"
+    },
+    "body": {
+      "id": "resp_0e72048b7b6df281006ade05adc41c87d2950c2092c67603bb",
+      "object": "response",
+      "created_at": 1792935341,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1792935342,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "You are a concise assistant.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_0e72048b7b6df281006ade05ae4fbc87d2aaef807da31f1b90",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "A prime number is a whole number greater than 1 that has exactly two positive divisors: 1 and itself."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "medium",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 26,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 28,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 54
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:42Z"
+}

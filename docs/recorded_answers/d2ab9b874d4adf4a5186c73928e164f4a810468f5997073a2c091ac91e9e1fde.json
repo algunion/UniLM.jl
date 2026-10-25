@@ -1,0 +1,124 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Oslo and in Lima?",
+          "role": "user"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Oslo\"}",
+                "name": "get_weather"
+              },
+              "id": "call_jRDkWXVWA7fYnD6FYl6sxMe0",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "content": "18 °C and sunny in Oslo",
+          "role": "tool",
+          "tool_call_id": "call_jRDkWXVWA7fYnD6FYl6sxMe0"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Lima\"}",
+                "name": "get_weather"
+              },
+              "id": "call_CucSl3pt44JGda0k0P5dIMTy",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "content": "18 °C and sunny in Lima",
+          "role": "tool",
+          "tool_call_id": "call_CucSl3pt44JGda0k0P5dIMTy"
+        }
+      ],
+      "model": "gpt-6-sol",
+      "parallel_tool_calls": false,
+      "reasoning_effort": "none",
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            },
+            "strict": true
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_24871d73135048b0ae17e14c3b0ef3c4",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_24871d73135048b0ae17e14c3b0ef3c4"
+    },
+    "body": {
+      "id": "chatcmpl-EcsfgmsZzKm8QedjILkhSVGi7JJoy",
+      "object": "chat.completion",
+      "created": 1792935328,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "It’s currently **18 °C and sunny** in both Oslo and Lima.",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 216,
+        "completion_tokens": 19,
+        "total_tokens": 235,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:29Z"
+}

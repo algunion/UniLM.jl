@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": {
+        "msg": "I was charged twice for order #4471. Please refund the duplicate payment."
+      },
+      "model": "tev1:0.8b",
+      "questions": {
+        "meaning_1": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants a refund": null,
+            "the customer reports a bug in the app": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "meaning_1": {
+          "type": "choice",
+          "choice": "the customer wants a refund",
+          "probabilities": {
+            "the customer wants a refund": 0.994756003742812,
+            "the customer reports a bug in the app": 0.00010594373745432382,
+            "anything else": 0.005138052519733646
+          },
+          "confidence": 0.969704530445757
+        }
+      },
+      "usage": {
+        "input_tokens": 171,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 0
+    }
+  },
+  "recorded_at": "2026-10-25T19:39:02Z"
+}

@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "Do you ship to Norway, and how much does delivery cost?",
+      "model": "tev1:0.8b",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "anything else",
+          "probabilities": {
+            "payments, charges, invoices or refunds": 0.44851802764264403,
+            "the app or the website does not work as expected": 0.0015119094998840294,
+            "a parcel that is late, lost or arrived damaged": 0.0010586342217705914,
+            "anything else": 0.5489114286357013
+          },
+          "confidence": 0.49076972038934574
+        }
+      },
+      "usage": {
+        "input_tokens": 203,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 44
+    }
+  },
+  "recorded_at": "2026-10-25T19:34:40Z"
+}

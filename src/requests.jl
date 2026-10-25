@@ -798,8 +798,9 @@ call-error result, naming it: as a `KeyError`, or for `TYPESAFEServiceEndpoint` 
 `ArgumentError` naming the variable, which a blank value gets too. An `OllamaEndpoint`
 sends no credentials (a local server takes none), except to Ollama's cloud,
 `https://ollama.com`, which gets `OLLAMA_API_KEY` as a Bearer token, read here, a missing or
-blank one an `ArgumentError` naming the variable; and a `GenericOpenAIEndpoint` whose key is
-empty sends no `Authorization` header.
+blank one an `ArgumentError` naming the variable (these are the headers of its inference
+requests; its model verbs go without the key when it is unset); and a `GenericOpenAIEndpoint`
+whose key is empty sends no `Authorization` header.
 
 Public extension API (not exported); see the Custom Backends guide.
 """

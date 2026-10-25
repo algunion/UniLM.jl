@@ -1145,11 +1145,15 @@ reports a model's `thinking_levels` and `thinking_default`.
 
 A server of the caller's own gets no API key. Ollama's cloud does: a request to
 `https://ollama.com` (which `OLLAMA_HOST=ollama.com` names) carries the `OLLAMA_API_KEY`
-environment variable as `Authorization: Bearer`, read each time a request is built, since
-"Direct cloud inference at `https://ollama.com/api` and `https://ollama.com/v1` requires an
-API key" ([authentication](https://docs.ollama.com/api/authentication)); with the variable
-unset or blank the request is not sent: the call error's `cause` is an `ArgumentError` naming
-it. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
+environment variable as `Authorization: Bearer` whenever it is set, read each time a request
+is built. Ollama asks for it for inference — "Direct cloud inference at
+`https://ollama.com/api` and `https://ollama.com/v1` requires an API key"
+([authentication](https://docs.ollama.com/api/authentication)) — and lists the cloud's models
+without one ([cloud](https://docs.ollama.com/cloud)). With the variable unset or blank, an
+inference request (chat, embeddings, `respond`, compaction, FIM, transcription, System One, a
+model's load or unload) is not sent — the call error's `cause` is an `ArgumentError` naming it —
+and [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
+[`pull_model`](@ref) and [`delete_model`](@ref) go without it. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
 `-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by the

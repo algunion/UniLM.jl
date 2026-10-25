@@ -143,7 +143,7 @@ end
     @test UniLM.auth_header(e) == ["Content-Type" => "application/json"]
 end
 
-@testset "Ollama's cloud takes OLLAMA_API_KEY as a Bearer token; without it nothing is sent" begin
+@testset "Ollama's cloud takes OLLAMA_API_KEY as a Bearer token; without it no inference request is sent" begin
     # "Direct cloud inference at https://ollama.com/api and https://ollama.com/v1 requires an API key", sent in
     # the Authorization: Bearer header (https://docs.ollama.com/api/authentication). No request reaches the
     # cloud here: the header is what auth_header gives the transport, and every call below runs under a
@@ -173,19 +173,35 @@ end
             end
         end
     end
-    # Through the verbs: without the key the call error's cause is that ArgumentError, before the transport is
-    # reached; with it the request gets as far as the transport, where the deadline ends it unsent.
+    # Through the verbs: an inference request without the key ends in a call error whose cause is that
+    # ArgumentError, before the transport is reached; with it the request gets as far as the transport, where the
+    # deadline ends it unsent.
     tiny = RequestConfig(total_deadline=1e-300)
-    calls = (() -> chatrequest!(Chat(service=cloud, model="gemma4:31b", messages=[Message(Val(:user), "hi")]); config=tiny),
-             () -> respond(Respond(service=cloud, model="gemma4:31b", input="hi"); config=tiny),
-             () -> embeddingrequest!(Embeddings("hi"; service=cloud, model="embeddinggemma", task=:none); config=tiny),
-             () -> list_models(service=cloud, config=tiny))
-    for call in calls
+    sent(r) = !issuccess(r) && r.cause isa UniLMTimeout && r.cause.phase === :deadline   # reached the transport
+    inference = (() -> chatrequest!(Chat(service=cloud, model="gemma4:31b", messages=[Message(Val(:user), "hi")]); config=tiny),
+                 () -> respond(Respond(service=cloud, model="gemma4:31b", input="hi"); config=tiny),
+                 () -> embeddingrequest!(Embeddings("hi"; service=cloud, model="embeddinggemma", task=:none); config=tiny),
+                 () -> unload_model("gemma4:31b"; service=cloud, config=tiny))
+    for call in inference
         r = withenv(call, "OLLAMA_API_KEY" => nothing)
         @test !issuccess(r) && r.cause isa ArgumentError && occursin("OLLAMA_API_KEY", r.cause.msg)
-        r = withenv(call, "OLLAMA_API_KEY" => "test-key")
-        @test !issuccess(r) && r.cause isa UniLMTimeout && r.cause.phase === :deadline
+        @test sent(withenv(call, "OLLAMA_API_KEY" => "test-key"))
     end
+    # The cloud lists its models without a key ("curl https://ollama.com/api/tags", https://docs.ollama.com/cloud),
+    # and Ollama's pages ask for one only for inference: the other model verbs go with the key when it is set, and
+    # without it otherwise. A token cancelled before the call stops each at the transport, before any I/O (a pull
+    # opens its stream before its deadline can act).
+    stopped = cancel!(CancelToken())
+    others = (() -> list_models(service=cloud, cancel=stopped), () -> model_info("gemma4:31b"; service=cloud, cancel=stopped),
+              () -> running_models(service=cloud, cancel=stopped), () -> delete_model("gemma4:31b"; service=cloud, cancel=stopped),
+              () -> pull_model("gemma4:31b"; service=cloud, cancel=stopped))
+    for call in others, key in (nothing, "test-key")
+        r = withenv(call, "OLLAMA_API_KEY" => key)
+        @test !issuccess(r) && r.cause isa UniLMCancelled
+    end
+    @test UniLM._ollama_auth(cloud; required=false) == [json]                          # unset: no header, no refusal
+    @test withenv(() -> UniLM._ollama_auth(cloud; required=false), "OLLAMA_API_KEY" => "test-key") ==
+          ["Authorization" => "Bearer test-key", json]
     # A server of the caller's own sees no Authorization header, the variable set or not.
     auth = String[]
     srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req

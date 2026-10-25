@@ -239,7 +239,10 @@ function _ollama_call(decode::Union{Function,Nothing}, service::OllamaEndpoint, 
                       config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns())
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel)
     try
-        resp = _http_with_retries(cfg, t0, method, service.base_url * path, auth_header(service), body; cancel=tok)
+        # A load or an unload goes to an inference route and needs the cloud's key; the listing and the other
+        # model routes go without it (see `_ollama_auth`).
+        headers = _ollama_auth(service; required=path in (OLLAMA_CHAT_PATH, OLLAMA_EMBED_PATH))
+        resp = _http_with_retries(cfg, t0, method, service.base_url * path, headers, body; cancel=tok)
         resp.status == 200 || return _failure(OllamaFailure, resp)
         isnothing(decode) && return OllamaSuccess(response=nothing)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -514,7 +517,7 @@ function pull_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     end
     try
         # Uncompressed, so each line arrives as the server wrote it.
-        resp = _http_open("POST", service.base_url * "/api/pull", [auth_header(service); "Accept-Encoding" => "identity"];
+        resp = _http_open("POST", service.base_url * "/api/pull", [_ollama_auth(service; required=false); "Accept-Encoding" => "identity"];
                           cfg, t0, cancel=tok, context=ctx, decompress=false) do io
             status = _with_recorded_deadline(() -> begin
                     write(io, JSON.json(_ollama_runner!(Dict{String,Any}("model" => model), service)))

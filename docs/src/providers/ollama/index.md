@@ -72,12 +72,15 @@ endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_o
 
 Ollama's local API "does not require authentication", and UniLM sends a server of your own no key. Direct
 cloud inference at `https://ollama.com/api` and `https://ollama.com/v1` "requires an API key", used "in
-the `Authorization: Bearer` header" ([authentication](https://docs.ollama.com/api/authentication)): an
-endpoint whose server is `https://ollama.com`, as `OLLAMA_HOST=ollama.com` makes it, sends the
-`OLLAMA_API_KEY` environment variable that way, read each time a request is built, and to no other
-host. With the variable unset or blank nothing is sent: the call returns a call error whose `cause` is
-an `ArgumentError` naming `OLLAMA_API_KEY`. No request was sent to the cloud for this page (its
-requests bill). A cloud model runs through the local server once you sign in with
+the `Authorization: Bearer` header" ([authentication](https://docs.ollama.com/api/authentication)), and
+Ollama lists the cloud's models without one, `curl https://ollama.com/api/tags`
+([cloud](https://docs.ollama.com/cloud)). An endpoint whose server is `https://ollama.com`, as
+`OLLAMA_HOST=ollama.com` makes it, sends the `OLLAMA_API_KEY` environment variable that way whenever it
+is set, read each time a request is built, and to no other host. With the variable unset or blank, an
+inference request is not sent: the call returns a call error whose `cause` is an `ArgumentError` naming
+`OLLAMA_API_KEY`; [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
+[`pull_model`](@ref) and [`delete_model`](@ref) go without it. No request was sent to the cloud for this
+page (its requests bill). A cloud model runs through the local server once you sign in with
 `ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first__next) says how
 UniLM prices it.
 

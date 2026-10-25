@@ -150,11 +150,14 @@
   as `"max"`.
 - **Ollama's cloud gets its API key.** Direct cloud inference at `https://ollama.com`, where
   `OLLAMA_HOST=ollama.com` points `OllamaEndpoint()`, "requires an API key" in the
-  `Authorization: Bearer` header, and UniLM sent none, so every such request went out without
-  one. An endpoint whose server is `https://ollama.com` now sends the `OLLAMA_API_KEY`
-  environment variable that way, read each time a request is built; unset or blank, nothing is
-  sent, and the call error's `cause` is an `ArgumentError` naming the variable. No other
-  server gets the key.
+  `Authorization: Bearer` header, and UniLM sent none, so every inference request went out
+  without one. An endpoint whose server is `https://ollama.com` now sends the `OLLAMA_API_KEY`
+  environment variable that way whenever it is set, read each time a request is built. Unset
+  or blank, an inference request — chat, embeddings, `respond`, compaction, FIM, transcription,
+  System One, a model's load or unload — is not sent, and the call error's `cause` is an
+  `ArgumentError` naming the variable; `list_models` (which Ollama's cloud page runs without a
+  key), `model_info`, `running_models`, `pull_model` and `delete_model` go without it. No
+  other server gets the key.
 - **A `GenericOpenAIEndpoint` `respond` sends its `seed`.** A `Respond` with a `seed` was
   refused on every endpoint of the OpenAI Responses wire, a generic one included, though
   vLLM's Responses API forwards a seed to its engine and a generic endpoint sends every other

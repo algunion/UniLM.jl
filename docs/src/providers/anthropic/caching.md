@@ -15,13 +15,16 @@ for an hour. The options a `Chat` cannot send to Anthropic are refused before th
 ([Limits and refusals](@ref anthropic_limits)).
 
 The breakpoint is where the cache is written: one entry, holding everything up to and including that
-block. A later request reads the entry when it starts with the same blocks up to that breakpoint, as the
-next turn of a conversation does, since a `Chat` sends the whole conversation each time; it writes what
-follows them, and the API looks back at most 20 blocks for such an entry. Two requests that share only a
-long system prompt, each with its own question, write two entries and read none: a `Chat` marks no
-breakpoint of its own. A prefix shorter than the model's minimum cacheable prompt, which Anthropic sets
-per model between 512 and 4,096 tokens, is not cached, and the API returns no error: the usage then shows
-neither a write nor a read.
+block. A later request reads the entry when it starts with the same blocks up to that breakpoint, and
+writes what follows them; the API looks back at most 20 blocks for such an entry. The next turn of a
+conversation starts with them, since a `Chat` sends the whole conversation each time, unless a system
+message pushed after a reply joins the top-level `system` prompt, which can happen only on the models
+whose Thinking prefix check cell in the [family table](@ref anthropic_reasoning) is "—"
+([Conversations](@ref anthropic_conversations)): that request then starts with another prompt, so it
+reads nothing and writes it all again. Two requests that share only a long system prompt, each with its own
+question, write two entries and read none: a `Chat` marks no breakpoint of its own. A prefix shorter than
+the model's minimum cacheable prompt, which Anthropic sets per model between 512 and 4,096 tokens, is not
+cached, and the API returns no error: the usage then shows neither a write nor a read.
 
 The usage counts the reads and the writes ([First call](@ref anthropic_first_call)), and
 `cache_write_extended_tokens` the writes kept for an hour; what each costs is in
@@ -40,7 +43,7 @@ text(result)
 
 ```@example anthropic
 u = result.usage
-(; u.prompt_tokens, u.cache_write_tokens, u.cached_tokens, cost = estimated_cost(result))
+(; u.prompt_tokens, u.cache_write_tokens, u.cached_tokens, cost = round(estimated_cost(result); digits=6))
 ```
 
 ```@example anthropic
@@ -51,7 +54,7 @@ text(result)
 
 ```@example anthropic
 u = result.usage
-(; u.prompt_tokens, u.cache_write_tokens, u.cached_tokens, cost = estimated_cost(result))
+(; u.prompt_tokens, u.cache_write_tokens, u.cached_tokens, cost = round(estimated_cost(result); digits=6))
 ```
 
 The first request wrote the system prompt and its question to the cache. The second read them back and
@@ -76,21 +79,11 @@ each factor that applies, the factors stacking:
 - a model's long-prompt multiplier, for a prompt over its threshold, all of its input counted, cache
   reads and writes included.
 
-Two kinds of model are not estimated at their row's rates alone: those with a long-prompt multiplier,
-and those of the family table that have no price row:
+Two kinds of model are priced otherwise: a model with a long-prompt multiplier bills more over its
+threshold, and a model of the family table without a price row is estimated at `0.0`:
 
 ```@eval
-using Markdown, UniLM
-times(x) = isinteger(x) ? string(Int(x)) : string(x)
-thousands(n) = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => ",")
-rows = ["| Model | Estimated |", "| :--- | :--- |"]
-for (m, t) in sort!(collect(UniLM._CLAUDE_LONG_PROMPT_TIERS); by=first)
-    push!(rows, "| `$m` | every rate × $(times(t.multiplier)) for a prompt over $(thousands(t.threshold)) tokens |")
-end
-for m in sort!([m for m in keys(UniLM._CLAUDE_FAMILIES) if !haskey(UniLM.DEFAULT_PRICING, m)])
-    push!(rows, "| `$m` | `0.0`, with a warning: it has no price row |")
-end
-Markdown.parse(join(rows, '\n'))
+Main.ProviderFacts.claude_price_rules()
 ```
 
 A call Anthropic reports at Priority Tier (`service_tier == "priority"`) is estimated at the list rates,
@@ -114,25 +107,31 @@ Main.ProviderFacts.price_table(:anthropic)
 
 ## [Rate limits, overload and failures](@id anthropic_failures)
 
-`chatrequest!` returns what the service or the network did as a typed result, and does not throw it: an
-`LLMFailure` when Anthropic answered with an error status, an `LLMCallError` when no answer came
-([Results](@ref results_guide)). It sends a request again after a transient status — 429 and 529 among
-them, and Anthropic's 500 and 504 — with backoff, waiting at least what a `retry-after` header asks, until
-the call's [`RequestConfig`](@ref) leaves no attempt (3 by default) or no time (`total_deadline`, 900 s),
-and then returns the last answer ([Timeouts & Retries](@ref timeouts_guide)). A streamed request is sent
-again only while none of its callbacks has run.
+`chatrequest!` returns what the service or the network did as a typed result, and does not throw it
+([Results](@ref results_guide)). An `LLMFailure` holds an HTTP `status` and, as `response`, what came
+with it: the body of a status other than 200; the event of an in-band `overloaded_error`, with status
+529; or what a stream that ended before its turn had sent, with status 200. An `LLMCallError` holds, as
+`error`, the text of an exception or of another in-band error event, and the exception as `cause` when
+there is one. UniLM sends a request again after a transient status, 429 and 529 among them and
+Anthropic's 500 and 504, as often as the call's [`RequestConfig`](@ref) allows, and then returns the last
+answer ([Timeouts & Retries](@ref timeouts_guide)); a streamed request is sent again only while none of
+its callbacks has run.
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
 | `ArgumentError` from `chatrequest!` or `tool_loop!`, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref anthropic_limits)) | what its row says |
+| `InvalidConversationError` from `chatrequest!`, nothing sent | with `history=true`, the conversation ends with an assistant message, so the reply could not be appended | a user message after it, or `history=false` to send it as a prefill ([Request options](@ref anthropic_request_options)) |
 | `LLMCallError` whose `cause` is a `KeyError` | `ANTHROPIC_API_KEY` is not set ([Setup](@ref anthropic_setup)) | set it |
-| `LLMFailure` with `status` 400, 401, 402, 403, 404, 409 or 413 | Anthropic refused the request, and UniLM does not send it again: `response` holds Anthropic's error, whose `type` names the kind (`invalid_request_error`, `authentication_error`, `request_too_large`, …) and whose `message` the reason ([errors](https://platform.claude.com/docs/en/api/errors)) | what the message says; a 400 that names a spend limit you set ends when you raise the limit |
+| `LLMFailure` with `status` 400, 401, 402, 403, 404, 409 or 413 | Anthropic refused the request, and UniLM does not send it again: `response` holds Anthropic's error, whose `type` names the kind (`invalid_request_error`, `authentication_error`, `request_too_large`, …) and whose `message` the reason ([errors](https://platform.claude.com/docs/en/api/errors)) | what the message says; a 400 that names a spend limit you set lasts until the time its message names, or until you raise or remove the limit |
 | `LLMFailure` with `status` 429 | a rate limit (`rate_limit_error`); UniLM sends every Anthropic 429 again, the one of the monthly spend cap too, whose error names `enforced_spend_limit_reached` and which goes on failing until access resumes ([rate limits](https://platform.claude.com/docs/en/api/rate-limits)) | fewer requests or tokens per minute, or more `max_attempts` or a longer `total_deadline`; at the spend cap, a higher usage tier |
 | `LLMFailure` with `status` 529 | Anthropic is overloaded (`overloaded_error`) by traffic across all its users; sent again as a 429 is | the request again, later |
 | `LLMFailure` with `status` 529 from a stream | an `overloaded_error` event in an HTTP 200 stream, which UniLM retries as a 529 until the request's first `callback` or `on_tool_call` runs, and returns from then on: the text already passed on stays passed, and nothing is appended to the `Chat` | the turn again |
 | `LLMCallError` with `status` `nothing` from a stream, the event in `error` | an error event of another type, such as `api_error`; not sent again | the turn again |
 | `LLMFailure` with `status` 200 from a stream | the stream ended before the turn did, with no stop reason and no `message_stop`; `response` holds what arrived, and nothing is appended | the turn again |
 | `LLMCallError` with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)) | a longer bound, or a stream for a long reply |
+| `LLMCallError` whose `cause` is the connection's exception, such as an `HTTP.ConnectError` for a refused connection | the network failed, on each attempt the call's `RequestConfig` allows, or on a stream once a callback had run | the connection, then the request again |
+| `LLMCallError` whose `cause` is a `UniLMCancelled` | a stop before the turn's stop reason arrived: the stream's `close[] = true` (`:callback`) or a cancelled `CancelToken` (`:token`); nothing is appended ([Streaming](@ref anthropic_streaming)) | nothing, if the stop was yours |
+| `LLMCallError` whose `cause` is what your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended | the callback |
 | `LLMCallError`: "Anthropic response is not a message …" | a 200 that is not a message ([First call](@ref anthropic_first_call)) | report it to Anthropic with its `request_id` |
 | `finish_reason == "length"` | the reply reached `max_tokens` or the context window ([First call](@ref anthropic_first_call)) | a higher `max_tokens` ([Setup](@ref anthropic_setup)), or a shorter conversation |
 | `finish_reason == "content_filter"` | Claude refused: the turn has no content, and `refusal_message` the explanation | another request; the refused turn is left out of the next one ([Conversations](@ref anthropic_conversations)) |
@@ -213,8 +212,9 @@ chat = Chat(service=compat, model="claude-opus-5-5")
 
 There UniLM is an OpenAI-compatible client and no more:
 
-- **No default model, no checks.** A `Chat` without `model` throws `ArgumentError`. Every field the
-  `Chat` sets is sent, `temperature` and `reasoning_effort` included, and no row of
+- **No default model, no Anthropic rules.** A `Chat` without `model` throws `ArgumentError`. Only the
+  checks every `Chat` gets run, its constructor's among them (a `temperature` from 0 to 2, `n` of 1, …):
+  every field the `Chat` sets is sent, `temperature` and `reasoning_effort` included, and no row of
   [Limits and refusals](@ref anthropic_limits) applies. Anthropic ignores most fields it does not
   support, `response_format`, `reasoning_effort` and a tool's `strict` among them, and joins every system
   message into the top-level `system` prompt.

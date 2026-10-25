@@ -269,7 +269,7 @@ A request's output stops at its `max_tokens` ([Setup](@ref anthropic_setup)), an
 `max_tokens` and its input limit are in its [`list_models`](@ref) entry ([Models](@ref anthropic_models)).
 UniLM checks a request against neither, and leaves the size of media to the API
 ([Attachments](@ref anthropic_media)). Rate limits and overload are on
-[When something fails](@ref anthropic_failures).
+[Rate limits, overload and failures](@ref anthropic_failures).
 
 A field the Messages API has no counterpart for is refused, not dropped, since dropping it would send a
 request other than the one asked for; so is each request in the table below that the API would answer

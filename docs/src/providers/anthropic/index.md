@@ -75,9 +75,9 @@ come later, when a request is made: the model's `inference_geo` rule, which make
 throw `ArgumentError` before anything is sent, and the re-check of `betas` below. UniLM sends a
 beta's name only: it models no beta's request fields or response blocks, and reads one name itself,
 the beta `service_tier="fast"` needs on the models whose Fast mode cell in the family table names a
-beta header. [`list_models`](@ref) sends only the workspace of these options: Anthropic's
-Models API reference names no user-profile header for `GET /v1/models` and marks `anthropic-beta`
-deprecated there. Instances with the same options are equal (`==`, `hash`). The fields are read-only:
+beta header. [`list_models`](@ref) sends only the workspace of these options: of the headers they
+set, Anthropic's Models API reference names only `anthropic-workspace-id` for `GET /v1/models`.
+Instances with the same options are equal (`==`, `hash`). The fields are read-only:
 to change an option, build a new endpoint. A name changed in place in the `betas` vector is checked
 again when the header is built, and one that breaks the rule fails the call before anything is sent,
 its call-error result holding the `ArgumentError` as `cause`. US-only inference is priced at a
@@ -107,7 +107,7 @@ result.model, result.message.finish_reason
 no content and the explanation in `refusal_message`. An unstreamed reply with status 200 that is not
 a message — no `content` array or no `stop_reason` — is an `LLMCallError`, never an empty success.
 A failure result, `LLMFailure` or `LLMCallError`, keeps the `request-id` header of Anthropic's
-reply, when one came, as `request_id` ([When something fails](@ref anthropic_failures)).
+reply, when one came, as `request_id` ([Rate limits, overload and failures](@ref anthropic_failures)).
 
 ```@example anthropic
 u = result.usage

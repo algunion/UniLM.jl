@@ -313,14 +313,17 @@ model whose values are `true` and `false` thinks or does not; "If the model reso
 `/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default."
 ([thinking](https://docs.ollama.com/capabilities/thinking)). [`model_info`](@ref) reads them as
 `thinking_levels` and `thinking_default`: `[false, true]` and `true` for Gemma 4 E4B, which names no
-levels. No page says what such a model does with a named level; on Ollama 0.40.11, `think` `"low"`,
-`"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the same answer to the bat-and-ball
-prompt below at temperature 0 (observed on 25 October 2026), and a `think: "max"` request to
+levels. No page says what such a model does with a named level on `/api/chat`; on Ollama 0.40.11,
+`think` `"low"`, `"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the same answer to the
+bat-and-ball prompt below at temperature 0 (observed on 25 October 2026), and a `think: "max"` request to
 `gemma4:e4b` was answered with HTTP 200, an answer without thinking, in the one request sent that day.
 To a model without thinking metadata, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
 and `"max"`, such as `"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11:
-`qwen2.5-coder:1.5b-base`, whose `/api/show` reports no thinking, on 25 October 2026), while `respond`'s
-`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"` for such a model
+`qwen2.5-coder:1.5b-base`, whose `/api/show` reports no thinking, on 25 October 2026). `respond`'s
+`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"` for such a model; there,
+"Boolean-only models that support enabling thinking map recognized compatibility efforts to `true`", so
+a model whose values are `true` and `false`, Gemma 4 E4B among them, takes any effort but `"none"` as
+`true`, and GPT-OSS reads `"minimal"` as `"low"` and `"xhigh"` as `"high"`
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)).
 The thinking comes back beside the answer, and [`reasoning_text`](@ref) reads it:
 

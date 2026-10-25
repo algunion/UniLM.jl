@@ -98,8 +98,9 @@ u = token_usage(r)
 
 `prompt_tokens` is TypeSafe's `input_tokens` and `completion_tokens` its `output_tokens`.
 [`estimated_cost`](@ref) prices the versioned id that answered, `r.response.model`, not the alias the request
-named: a `jev-X.Y.Z` id with no row of its own in the table above is priced at the `jev-latest` row, and any
-other name with no row at `0.0`, with a warning. What a picture costs is on [Images](@ref jev_images__next);
+named: here `jev-1.14.0`, which has a row of its own in the table above, so `haskey` is `true`. A `jev-X.Y.Z` id
+with no row of its own, such as a release newer than the table, is priced at the `jev-latest` row, and any other
+name with no row at `0.0`, with a warning. What a picture costs is on [Images](@ref jev_images__next);
 totals across calls and prices of your own are on [Cost Tracking](@ref cost_guide).
 
 ## [Testing and recordings](@id jev_testing)

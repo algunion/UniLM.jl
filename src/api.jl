@@ -914,7 +914,7 @@ end
     GenericOpenAIEndpoint(base_url, api_key, key_env="")
 
 Configurable endpoint for any OpenAI-compatible API provider. Supports Chat Completions,
-Embeddings, and (where the provider implements it) the Responses API.
+Embeddings, FIM, transcription and (where the provider implements it) the Responses API.
 
 # Fields
 - `base_url::String`: Base URL without trailing slash (e.g., `"http://localhost:11434"`)
@@ -1142,12 +1142,15 @@ which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `run
 A `Chat`'s `reasoning_effort`, and a `Respond`'s [`Reasoning`](@ref) effort, go to Ollama by
 name: `"none"` turns thinking off (`think: false`), and every other effort is sent as it is,
 for Ollama to resolve against the model, whose thinking levels are its own
-([thinking](https://docs.ollama.com/capabilities/thinking)). A model with thinking metadata
-applies a level it names and uses its default for any other name; a model without takes
-`"low"`, `"medium"`, `"high"` and `"max"`, and on `/api/chat` answers another name, such as
-`"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11), while
-`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"`. [`model_info`](@ref)
-reports a model's `thinking_levels` and `thinking_default`.
+([thinking](https://docs.ollama.com/capabilities/thinking)). On `/api/chat`, a model with
+thinking metadata applies a level it names and uses its default for any other name; a model
+without takes `"low"`, `"medium"`, `"high"` and `"max"`, and answers another name, such as
+`"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11). On
+`/v1/responses` ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), a
+model without metadata reads `"minimal"` as `"low"` and `"xhigh"` as `"max"`, a model whose
+levels are `true` and `false` takes any effort but `"none"` as `true`, and GPT-OSS reads
+`"minimal"` as `"low"` and `"xhigh"` as `"high"`. [`model_info`](@ref) reports a model's
+`thinking_levels` and `thinking_default`.
 
 A server of the caller's own gets no API key. Ollama's cloud does: a request to
 `https://ollama.com` (which `OLLAMA_HOST=ollama.com` names) carries the `OLLAMA_API_KEY`

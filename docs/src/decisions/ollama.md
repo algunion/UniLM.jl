@@ -7,11 +7,12 @@ using UniLM, JSON
 Ollama serves decision models on your own machine — Tev1, Nimble, Kev, Clef Flash, Strands Decider and the others
 it lists as [decision models](https://ollama.com/search?c=decision) — through its System One route,
 `POST /v1/systemone`, which answers choice, yes/no and scoring questions about a state with probabilities and
-writes no text ([System One](https://docs.ollama.com/api/systemone)); no key is sent, and a local model costs
-nothing. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide__next) language-model entry, sends
-[`ask`](@ref) and the verbs built on it there, and no decision verb refuses it. Of the route, UniLM does not wrap a
-`keep_alive` given as a duration string, or a direct request to Ollama's cloud at `ollama.com`, which needs an API
-key UniLM does not send; a cloud model reached through your local server takes the same requests as a local one.
+writes no text ([System One](https://docs.ollama.com/api/systemone)); no key is sent to a server of your own, and a
+local model costs nothing. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide__next) language-model
+entry, sends [`ask`](@ref) and the verbs built on it there, and no decision verb refuses it. Of the route, UniLM does
+not wrap a `keep_alive` given as a duration string; a cloud model reached through your local server takes the same
+requests as a local one, and a request to Ollama's cloud itself, `https://ollama.com`, carries the `OLLAMA_API_KEY`
+its inference needs and is not sent without it ([Setup](@ref ollama_setup)).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:ollama_decisions)
@@ -51,7 +52,8 @@ A call goes to Ollama when it names `service = OllamaEndpoint()`, or when it nam
 [`with_system_one`](@ref)`(OllamaEndpoint(); model = …)` scope encloses it. Ollama has no default model: a call names
 an installed decision model with `model = …`, or, when it names no `service`, takes the scope's; a call left with no
 model is refused before anything is sent ([Limits and refusals](@ref ollama_decisions_limits)). `OllamaEndpoint()`
-reads `OLLAMA_HOST` when it is built, else `http://127.0.0.1:11434` ([Setup](@ref ollama_setup)); no key is sent.
+reads `OLLAMA_HOST` when it is built, else `http://127.0.0.1:11434` ([Setup](@ref ollama_setup)); no key is sent to
+a server of your own.
 
 ## [Options](@id ollama_decisions_options)
 

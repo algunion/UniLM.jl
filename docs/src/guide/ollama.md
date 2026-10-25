@@ -173,7 +173,7 @@ JSON.parse(text(chatrequest!(chat)))
 With a `response_format`, the request turns thinking off. Ollama applies the format
 only after the model's thinking ends, so a thinking model that answers without
 thinking would not be constrained at all; for the same reason a `response_format`
-together with a thinking effort (`"low"`, `"medium"`, `"high"`) is refused before
+together with a thinking effort (any effort but `"none"`) is refused before
 the request is sent.
 
 A format limits which tokens the model may emit, not how many, so a reply can run on

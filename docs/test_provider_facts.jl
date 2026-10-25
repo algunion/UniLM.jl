@@ -27,7 +27,7 @@ end
 @testset "ProviderFacts — every generated table converts to MarkdownAST without raw values" begin
     for md in (provider_table(ProviderFacts.llm), provider_table(ProviderFacts.decisions), at_a_glance(:anthropic),
                at_a_glance(:jev), capability_matrix(), on_your_provider(ProviderFacts.llm, :streaming), openai_model_rules(),
-               claude_family_table(), gemini_thinking_table(), price_table(:anthropic))
+               claude_family_table(), gemini_thinking_table(), price_table(:anthropic), claude_price_rules())
         @test all(r -> all(c -> c isa AbstractVector, r), only(md.content).rows)
         @test !hasvalue(convert(MarkdownAST.Node, md))
     end
@@ -38,6 +38,22 @@ end
     @test sort([m for p in (:openai, :anthropic, :gemini, :deepseek, :jev) for m in price_rows(p)]) ==
           sort(collect(keys(UniLM.DEFAULT_PRICING)))                               # every row in exactly one table
     @test "claude-haiku-5-5" in price_rows(:anthropic)
+end
+@testset "ProviderFacts — the Claude price rules list every long-prompt tier and every family model without a price row" begin
+    rows = only(claude_price_rules().content).rows[2:end]
+    ids = [only(r[1]).code for r in rows]
+    tiers, priced = UniLM._CLAUDE_LONG_PROMPT_TIERS, price_rows(:anthropic)
+    unpriced = [m for m in keys(UniLM._CLAUDE_FAMILIES) if m ∉ priced]
+    @test !isempty(tiers) && !isempty(unpriced)                     # premise: today each kind has a row
+    @test ids == sort!(unique!([collect(keys(tiers)); unpriced]))   # every tier and every unpriced family, once
+    estimate(m) = Markdown.plain(Markdown.Paragraph(rows[findfirst(==(m), ids)][2]))
+    for (m, t) in tiers
+        m in priced || continue                                     # a model with no row is estimated at 0.0
+        @test occursin("every rate × $(isinteger(t.multiplier) ? Int(t.multiplier) : t.multiplier) for a prompt over",
+                       estimate(m))
+        @test occursin("over $(t.threshold) tokens", replace(estimate(m), "," => ""))
+    end
+    @test all(m -> occursin("`0.0`, with a warning: it has no price row", estimate(m)), unpriced)
 end
 @testset "ProviderFacts — a header cell that names a request field is inline code" begin
     # a header cell holding only `field` as inline code; Markdown.Code compares by identity, so by type and text

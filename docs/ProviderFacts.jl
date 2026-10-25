@@ -27,7 +27,7 @@ using Main.SiteWriter: route
 
 export Chapter, ProviderEntry, NEUTRAL_TOKENS, REGISTRY, CONCEPT_PAGES, entry, provider_table, at_a_glance,
        capability_matrix, on_your_provider, openai_model_rules, claude_family_table, gemini_thinking_table,
-       price_rows, price_table, region_text, apply_regions, stale_regions
+       price_rows, price_table, claude_price_rules, region_text, apply_regions, stale_regions
 
 # ── Table cells ──────────────────────────────────────────────────────────────
 
@@ -595,6 +595,30 @@ rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file w
 function price_table(table::Symbol)::Markdown.MD
     _table(["Model", "Input (USD per 1M tokens)", "Cached input (USD per 1M tokens)", "Output (USD per 1M tokens)"],
            Vector{Any}[_price_row(id, _PRICES[id]) for id in price_rows(table)])
+end
+
+# A whole number with a comma between each group of three digits: 100000 → "100,000".
+_thousands(n::Integer)::String = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => ",")
+# A multiplier as written in prose: 5.0 → "5", 2.5 → "2.5".
+_factor(x::Real)::String = isinteger(x) ? string(Int(x)) : string(x)
+
+"""
+    claude_price_rules() -> Markdown.MD
+
+One row per Claude model that `estimated_cost` does not price at its row's rates alone, sorted
+by id: a model of UniLM's family table (`UniLM._CLAUDE_FAMILIES`) with no row in the prices
+this file loaded, estimated at `0.0` with a warning, and a model with a long-prompt multiplier
+(`UniLM._CLAUDE_LONG_PROMPT_TIERS`), with the prompt length over which every rate is
+multiplied, and by how much.
+"""
+function claude_price_rules()::Markdown.MD
+    tiers = UniLM._CLAUDE_LONG_PROMPT_TIERS
+    unpriced = [id for id in keys(UniLM._CLAUDE_FAMILIES) if !haskey(_PRICES, id)]
+    estimate(id) = haskey(_PRICES, id) ?
+        _cell("every rate × $(_factor(tiers[id].multiplier)) for a prompt over $(_thousands(tiers[id].threshold)) tokens") :
+        _cell(_code("0.0"), ", with a warning: it has no price row")
+    _table(["Model", "Estimated"],
+           Vector{Any}[Any[_cell(_code(id)), estimate(id)] for id in sort!(unique!([collect(keys(tiers)); unpriced]))])
 end
 
 # ── Generated regions ────────────────────────────────────────────────────────

@@ -270,6 +270,13 @@ _prefix_complete_url(s::DeepSeekEndpoint) = DEEPSEEK_BETA_BASE_URL * CHAT_COMPLE
 _prefix_complete_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
 _prefix_complete_url(s) = get_url(s, Chat())  # fallback for other endpoints
 
+# The reply, a Chat Completions one, through the endpoint's own decoder: DeepSeek's keeps the
+# turn's `reasoning_content`, which a later request with tools must send back or DeepSeek answers
+# HTTP 400 (https://api-docs.deepseek.com/guides/thinking_mode). An endpoint off the OpenAI wire
+# is sent the OpenAI wire's body here, and its reply is read as that wire's.
+_prefix_decode(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = decode_response(service, resp)
+_prefix_decode(_, resp::HTTP.Response) = extract_message(resp)
+
 """
     prefix_complete(chat::Chat; config=nothing, cancel=nothing) -> LLMRequestResponse
 
@@ -323,12 +330,12 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
         end
 
         if resp.status == 200
-            extracted = extract_message(resp)
+            extracted = _prefix_decode(chat.service, resp)
             continuation = extracted.message
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=extracted.model)
+            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.

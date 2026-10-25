@@ -77,6 +77,12 @@
   `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
   (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
   or beside a container `Dict` that names `file_ids`, is an `ArgumentError`.
+- **`prefix_complete` on `DeepSeekEndpoint` keeps the reply's `reasoning_content`.** The
+  prefix completion was read with the generic Chat Completions decoder, which drops it, so
+  `reasoning_text` was `nothing` and a later request with `tools` on that chat sent the
+  turn without it, which DeepSeek answers with HTTP 400. The reply is now read with the
+  endpoint's own decoder: the turn keeps its reasoning, as a `chatrequest!` turn does, and
+  a later request with `tools` sends it back.
 
 ## 0.26.0
 

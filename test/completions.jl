@@ -319,6 +319,42 @@ end
     end
 end
 
+# DeepSeek's own endpoint, decoder included, behind the local URL.
+struct _DSPrefixHere <: UniLM.OpenAIWireEndpoint
+    real::DeepSeekEndpoint
+end
+UniLM.provider_capabilities(s::_DSPrefixHere) = UniLM.provider_capabilities(s.real)
+UniLM.auth_header(::_DSPrefixHere) = ["Content-Type" => "application/json"]
+UniLM._prefix_complete_url(::_DSPrefixHere) = _COMPL_URL[]
+UniLM.decode_response(s::_DSPrefixHere, resp::HTTP.Response) = UniLM.decode_response(s.real, resp)
+
+@testset "prefix_complete keeps DeepSeek's reasoning_content: read back, and sent with tools" begin
+    # DeepSeek: with tools, "the reasoning_content must be fully passed back … If your code does not
+    # correctly pass back reasoning_content, the API will return a 400 error"
+    # (https://api-docs.deepseek.com/guides/thinking_mode).
+    server, url = _compl_canned_server(200, JSON.json(Dict("model" => "deepseek-flash",
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "message" => Dict("role" => "assistant",
+                           "content" => "print('hi')\n```", "reasoning_content" => "because"))],
+        "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 3, "total_tokens" => 11))),
+        ["Content-Type" => "application/json"])
+    _COMPL_URL[] = url
+    try
+        chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+                    messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Python hello world"),
+                              Message(role=UniLM.RoleAssistant, content="```python\n")])
+        r = prefix_complete(chat)
+        @test r isa LLMSuccess && reasoning_text(r) == "because"
+        @test reasoning_text(last(chat)) == "because"               # the committed whole turn keeps it
+        next = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
+                    messages=[chat.messages; Message(Val(:user), "Now run it.")],
+                    tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))])
+        turn = JSON.parse(UniLM.encode_request(DeepSeekEndpoint("sk-test"), next))["messages"][3]
+        @test turn["content"] == "```python\nprint('hi')\n```" && turn["reasoning_content"] == "because"
+    finally
+        close(server)
+    end
+end
+
 @testset "fim_complete and prefix_complete: a cancelled token sends nothing" begin
     tok = cancel!(CancelToken())
     cfg = RequestConfig(max_attempts=3, total_deadline=60.0)

@@ -80,11 +80,11 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [Limits and refusals](@id <entry>_limits)
 
-> Template: The token and size limits a request meets, and which of them UniLM checks (rate limits go to the failures section); then one row per refusal before the request is sent (`ArgumentError`): what is refused; the Why cell opens with words of its message in quotes — a refusal with several messages quotes each by its own words, comma-separated — and then gives the reason; the fix.
+> Template: The token and size limits a request meets, and which of them UniLM checks (rate limits go to the failures section); then one row per refusal before the request is sent (`ArgumentError`): what is refused; the Why cell opens with words of its message as a code span, without quote marks, so that the message's underscores render as written — a refusal with several messages gives each its own span, comma-separated — and then gives the reason; the fix.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| <refusal> | "<words>": <cause> | <fix> |
+| <refusal> | `<words>`: <cause> | <fix> |
 
 ## [Prompt caching](@id <entry>_caching)
 

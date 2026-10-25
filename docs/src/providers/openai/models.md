@@ -228,7 +228,7 @@ estimate follows the reported tier.
 Audio tokens — `prompt_audio_tokens` and `completion_audio_tokens` — bill at the audio rates below,
 scaled by the factors above as the text rates are, and the rest of the call at the text rates of the
 model's row; a call whose usage counts audio on a model without audio rates is estimated at `0.0`, with a
-warning ([Audio replies](@ref chat_audio_output__next)):
+warning ([Audio replies](@ref chat_audio_output)):
 
 ```@eval
 Main.ProviderFacts.openai_audio_rates()

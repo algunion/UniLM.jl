@@ -16,15 +16,15 @@ for an hour. The options a `Chat` cannot send to Anthropic are refused before th
 
 The breakpoint is where the cache is written: one entry, holding everything up to and including that
 block. A later request reads the entry when it starts with the same blocks up to that breakpoint, and
-writes what follows them; the API looks back at most 20 blocks for such an entry. The next turn of a
-conversation starts with them, since a `Chat` sends the whole conversation each time, unless a system
-message pushed after the last reply has joined the top-level `system` prompt
-([Conversations](@ref anthropic_conversations) says when one does): that request then starts with
-another prompt, so it reads nothing and writes it all again. Two requests that share only a long system
-prompt, each with its own question, write two entries and read none: a `Chat` marks no breakpoint of its
-own. A prefix shorter than the model's minimum cacheable prompt, which Anthropic sets per model between
-512 and 4,096 tokens, is not cached, and the API returns no error: the usage then shows neither a write
-nor a read.
+writes what follows them; the API looks back at most 20 blocks for such an entry. A `Chat` sends the
+whole conversation each time, so the next turn starts with those blocks as long as the prompt and the
+earlier turns go out as they did before. A system message pushed mid-conversation can change that: it
+may join the top-level `system` prompt, and the request then reads none of what the earlier requests
+wrote and writes it all again, or move within the messages ([Conversations](@ref anthropic_conversations)
+says how UniLM places one). Two requests that share only a long system prompt, each with its own
+question, write two entries and read none: a `Chat` marks no breakpoint of its own. A prefix shorter than
+the model's minimum cacheable prompt, which Anthropic sets per model between 512 and 4,096 tokens, is not
+cached, and the API returns no error: the usage then shows neither a write nor a read.
 
 The usage counts the reads and the writes ([First call](@ref anthropic_first_call)), and
 `cache_write_extended_tokens` the writes kept for an hour; what each costs is in

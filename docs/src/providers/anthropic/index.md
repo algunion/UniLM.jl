@@ -154,7 +154,7 @@ blank line. Where a system message pushed later goes depends on two columns of t
 - On a model whose Mid-conversation system messages cell is "yes", it stays in place, as a `system`
   turn, where the Messages API takes one: right after a user turn (tool results count as one), and
   last or right before an assistant turn. Anywhere else it joins the top-level `system` prompt,
-  unless the model is append-only.
+  except on an append-only model once an assistant turn is sent (below).
 - On a model whose cell is "—", it joins the top-level `system` prompt.
 - Append-only are the models whose Thinking prefix check cell is "yes", and any id that matches no
   row (an id with a `-YYYYMMDD` snapshot suffix takes the row of the id without it), since Anthropic
@@ -163,10 +163,10 @@ blank line. Where a system message pushed later goes depends on two columns of t
   The models with the check accept an earlier turn's thinking blocks only while everything before
   them is unchanged — the top-level `system` prompt, the tools and the earlier messages. So once an
   assistant turn is sent, UniLM never edits the top-level `system` prompt of an append-only model: a
-  later system message that cannot stay in place is sent right after the next user turn, and each
-  request extends the one before. Push your own messages and send the replies
-  back as they came: an edit to an earlier turn, or to the tools, invalidates the thinking blocks
-  after it, and the API answers HTTP 400.
+  later system message that cannot stay in place is held back, then sent right after a later user
+  turn, and the turns before each sent reply stay as they were in the request that got it. Push your
+  own messages and send the replies back as they came: an edit to an earlier turn, or to the tools,
+  invalidates the thinking blocks after it, and the API answers HTTP 400.
 
 On every model, a system message pushed after a reply needs a user turn after it — a user message,
 or the results of the reply's tool calls. Until one follows, `chatrequest!` throws `ArgumentError`

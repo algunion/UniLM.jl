@@ -83,6 +83,13 @@
   turn without it, which DeepSeek answers with HTTP 400. The reply is now read with the
   endpoint's own decoder: the turn keeps its reasoning, as a `chatrequest!` turn does, and
   a later request with `tools` sends it back.
+- **Anthropic's monthly spend cap is returned at once.** At the spend cap Anthropic answers
+  HTTP 429 with the `rate_limit_error` type of a rate limit and
+  `error.details.error_code` `enforced_spend_limit_reached`, and says retrying "fails until
+  access resumes". UniLM read only `error.code` and `error.type`, so it sent the request
+  again, up to `max_attempts` attempts in all, each after its backoff. That 429 is now
+  final, as OpenAI's spend and quota codes are; a `rate_limit_error` without it is still
+  retried.
 
 ## 0.26.0
 

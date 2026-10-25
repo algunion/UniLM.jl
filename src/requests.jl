@@ -23,29 +23,33 @@ _is_retryable(status::Integer)::Bool =
 # errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes);
 # Gemini Interactions names its daily quota `quota_exceeded`, "You have exceeded your daily
 # quota", to "Wait until the quota resets or request a quota increase"
-# (https://ai.google.dev/gemini-api/docs/api-errors). A rate limit — OpenAI's code `slow_down`,
+# (https://ai.google.dev/gemini-api/docs/api-errors). Anthropic names its monthly spend cap in
+# `error.details.error_code`, `enforced_spend_limit_reached`, beside the `rate_limit_error` type of
+# a rate limit: "Retrying, including the SDK's automatic retries, fails until access resumes"
+# (https://platform.claude.com/docs/en/api/rate-limits). A rate limit — OpenAI's code `slow_down`,
 # or none; Gemini's `rate_limit_exceeded`, or generateContent's RESOURCE_EXHAUSTED, which Google
-# says to retry with backoff — clears with time.
+# says to retry with backoff; Anthropic's without those details — clears with time.
 const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
                           "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
-                          "insufficient_quota", "quota_exceeded")
+                          "insufficient_quota", "quota_exceeded", "enforced_spend_limit_reached")
 
 # Whether a failed exchange is worth another attempt: its status and, for a 429, its body.
 _is_retryable(status::Integer, body)::Bool =
     _is_retryable(status) && !(status == 429 && any(in(_FINAL_429_CODES), _error_names(body)))
 _is_retryable(resp::HTTP.Response)::Bool = _is_retryable(resp.status, resp.body)
 
-# The `error.code` and `error.type` strings of a JSON error body (`{"error": {"code": …,
-# "type": …}}`), each `nothing` where the body names none; a body of another kind (HTTP.jl's
-# empty body) names neither. A stream driver's body buffer is read without consuming it.
-_error_names(_)::NTuple{2,Nothing} = (nothing, nothing)
+# The `error.code`, `error.type` and `error.details.error_code` strings of a JSON error body
+# (`{"error": {"code": …, "type": …, "details": {"error_code": …}}}`), each `nothing` where the
+# body names none; a body of another kind (HTTP.jl's empty body) names none. A stream driver's
+# body buffer is read without consuming it.
+_error_names(_)::NTuple{3,Nothing} = (nothing, nothing, nothing)
 _error_names(body::IOBuffer) = _error_names(take!(copy(body)))
-function _error_names(body::Union{AbstractString,AbstractVector{UInt8}})::NTuple{2,Union{String,Nothing}}
-    JSON.isvalidjson(body) || return (nothing, nothing)
+function _error_names(body::Union{AbstractString,AbstractVector{UInt8}})::NTuple{3,Union{String,Nothing}}
+    JSON.isvalidjson(body) || return (nothing, nothing, nothing)
     parsed = JSON.parse(body)
     err = parsed isa AbstractDict ? get(parsed, "error", nothing) : nothing
-    name(key) = (v = err isa AbstractDict ? get(err, key, nothing) : nothing; v isa AbstractString ? String(v) : nothing)
-    (name("code"), name("type"))
+    name(obj, key) = (v = obj isa AbstractDict ? get(obj, key, nothing) : nothing; v isa AbstractString ? String(v) : nothing)
+    (name(err, "code"), name(err, "type"), name(err isa AbstractDict ? get(err, "details", nothing) : nothing, "error_code"))
 end
 
 # RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.

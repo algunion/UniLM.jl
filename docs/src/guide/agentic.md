@@ -1,18 +1,33 @@
-# [Agentic Workflows](@id agentic_guide)
-
-`respond` is the unified *agentic verb*. The same call targets OpenAI's Responses
-API by default, or Google's Gemini Interactions API by setting
-`service=GEMINIServiceEndpoint` — identical inputs, tools, lifecycle, and
-usage/cost accounting.
+# [Agentic respond](@id agentic_guide)
 
 ```@setup agentic
 using UniLM
 ```
 
-## One call, two providers
+[`respond`](@ref) sends one request to a provider's agentic API — the input, `instructions`, tools and
+options of a [`Respond`](@ref) — and returns the response as output items: the answer's messages,
+function calls, reasoning, the work of the tools the provider runs. A provider that stores responses
+lets the next request name the last one instead of sending the conversation again. `respond` runs on an
+endpoint whose capabilities hold `:responses` or `:agentic`
+([Capabilities by provider](@ref capabilities_guide)), and throws `ArgumentError` before anything is
+sent on one whose declared capabilities hold neither; a `Chat` serves every language-model provider
+([Conversations with Chat](@ref chat_guide)).
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one plain-text sentence.", model="gpt-5.4-mini")
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref agentic_providers) links each provider's rules.
+
+## [A first response](@id agentic_first)
+
+`respond(input; kwargs...)` builds the `Respond` from its keywords and sends it, and `respond(r)` sends
+one built before:
+
+```@example agentic
+result = respond("Explain multiple dispatch in one plain-text sentence."; service, model)
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -20,187 +35,103 @@ else
 end
 ```
 
-Swap the provider with a single keyword:
+The result is a [`ResponseSuccess`](@ref) whose `response` is a [`ResponseObject`](@ref) — its `id`,
+`status`, `model`, `output` items, `usage` and the whole body as `raw` —, a `ResponseFailure`, or a
+`ResponseCallError` ([Results](@ref results_guide)). [`output_text`](@ref) joins the text of the
+answer's messages, [`token_usage`](@ref) reads the usage in the shape every result shares, and
+[`estimated_cost`](@ref) prices it:
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one plain-text sentence."; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
-if result isa ResponseSuccess
-    println(output_text(result))
-else
-    println("Request failed — ", result)
-end
+u = token_usage(result)
+(; result.response.status, u.prompt_tokens, u.completion_tokens, cost = round(estimated_cost(result); digits=6))
 ```
 
-## Messages, images, audio and documents (Gemini)
+`respond` with a `do` block streams the answer as it arrives ([Streaming](@ref streaming_respond)).
 
-The Interactions API takes its input as a list of steps, so `respond` sends each
-[`InputMessage`](@ref) as one: a user message as a `user_input` step and an assistant
-message as a `model_output` step (a Dict with a `role` is read the same way). A system or
-developer message throws `ArgumentError` — send that guidance as `instructions` — and so
-does a message `phase`, which only OpenAI's Responses API reads. A message's content is
-text, or a vector of parts: [`input_text`](@ref) parts, and media as
-[`ImageAttachment`](@ref), [`AudioAttachment`](@ref) and [`DocumentAttachment`](@ref)
-values, each sent as an Interactions `image`, `audio` or `document` part holding its bytes;
-[`input_file`](@ref)`(document)` and an [`input_image`](@ref) with a base64 data URL are sent
-the same way. An image's `detail` is its `resolution` (`"low"` or `"high"`; `"auto"` leaves
-the model's default; `"original"` throws). A web URL, an OpenAI file id and a cache
-breakpoint have no equivalent here, and throw `ArgumentError` before any request.
+## [Input and instructions](@id agentic_input)
 
-```julia
-r = respond(Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
-    input=[InputMessage(role="user", content=[input_text("What colour is the circle? One word."),
-                                              ImageAttachment("circle.png")])]))
-```
-
-`service_tier` takes `"standard"`, `"flex"`, `"priority"` or `"deferred"`
-([optimization](https://ai.google.dev/gemini-api/docs/optimization)), `seed` is sent as
-`generation_config.seed`, and `safety_identifier` as the request label `safety_identifier`
-(at most 63 lowercase letters, digits, underscores and dashes).
-
-## Hosted tools (Gemini)
-
-Control Gemini thinking with the same typed configuration used by OpenAI:
-
-```julia
-r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="Explain recursion briefly.",
-            reasoning=Reasoning(effort="low", summary="auto"), max_output_tokens=1024)
-```
-
-This maps to Interactions `generation_config.thinking_level` and
-`thinking_summaries`. Gemini 4 Argon and Gemini 3.8 Flash support low, medium, and high
-effort. Gemini ignores `temperature` and `top_p` on Gemini 3.6 Flash, 3.5 Flash-Lite and
-every later model, so `respond` throws `ArgumentError` for them there, and Gemini 4 Argon
-takes a `max_output_tokens` above 65,536 only with `background=true`
-([long decode](https://ai.google.dev/gemini-api/docs/long-decode)); see
-[Multi-Backend Support](@ref backend_guide) for every rule. Continue with
-`previous_response_id` to preserve server state and signatures.
-[Google thinking documentation](https://ai.google.dev/gemini-api/docs/thinking).
-
-Gemini Interactions exposes server-side hosted tools via
-[`gemini_google_search`](@ref), [`gemini_code_execution`](@ref), and
-[`gemini_url_context`](@ref) — pass them in `tools=`:
+`input` is a string, the user's message, or a vector of input items: [`InputMessage`](@ref)s, whose
+content is a string or a vector of parts — [`input_text`](@ref), [`input_image`](@ref),
+[`input_file`](@ref) —, and items such as a [`tool_result`](@ref). `instructions` is the system
+guidance. Which roles, parts and media a provider takes, and the `Respond` fields it refuses before the
+request, are on its entry. [`UniLM.encode_agentic`](@ref) returns the body `respond` sends, with no key
+and no request:
 
 ```@example agentic
-result = respond("What is the latest stable Julia release? Answer in one plain-text sentence.";
-                 service=GEMINIServiceEndpoint, tools=[gemini_google_search()], model="gemini-3.8-flash")
-if result isa ResponseSuccess
-    println(output_text(result))
-else
-    println("Request failed — ", result)
-end
+r = Respond(service=service, model=model, instructions="You are a concise assistant.",
+            input=[InputMessage(role="user", content=[input_text("Which planet is the largest?")])])
+print(UniLM.encode_agentic(service, r))
 ```
 
-## Constraining tool choice
+## [Continuing a conversation](@id agentic_conversations)
 
-Force a specific function with [`tool_choice_function`](@ref) (works on both
-providers). The other builders — [`tool_choice_hosted`](@ref),
-[`tool_choice_mcp`](@ref), [`tool_choice_custom`](@ref),
-[`tool_choice_allowed`](@ref) — are OpenAI-Responses selectors: on Gemini,
-`respond` throws `ArgumentError` for them before any request.
+`previous_response_id` names a stored response, and the request sends only the new input, since the
+provider holds the conversation so far. Whether a provider stores responses, and what UniLM does with
+`previous_response_id` where it does not, is on its entry; without stored responses, the whole
+conversation goes in `input`.
 
 ```julia
-respond("What's the weather in Paris?";
-        tools=[my_function_tool],
-        tool_choice=tool_choice_function("get_weather"))
+r1 = respond("Which planet of the solar system is the largest?"; service, model)
+r2 = respond("And the smallest?"; service, model, previous_response_id=r1.response.id)
 ```
 
-## Automated tool loop
+## [Tools](@id agentic_tools)
 
-The [`tool_loop`](@ref) driver (see the [Tool Calling guide](@ref tools_guide))
-runs the call/execute/respond cycle automatically, and works across providers —
-add `service=` to target Gemini:
+A function tool is a [`FunctionTool`](@ref), made by [`function_tool`](@ref), and a
+[`CallableTool`](@ref) pairs one with the Julia function that answers it. [`function_calls`](@ref)
+reads a response's calls, each a `Dict` with its `call_id`, `name` and `arguments` (a JSON string), and
+[`tool_result`](@ref)`(call_id, name, output)` makes the input item that answers one on the next
+request. [`tool_loop`](@ref) does both until the model answers in text; [Tool Calling](@ref tools_guide)
+has its rules:
 
 ```julia
 ct = CallableTool(function_tool("get_weather", "Get weather",
         parameters=Dict("type" => "object",
                         "properties" => Dict("location" => Dict("type" => "string")))),
     (name, args) -> "22C, sunny")
-result = tool_loop("What's the weather in Paris?"; service=GEMINIServiceEndpoint, tools=[ct])
+result = tool_loop("What's the weather in Paris?"; service, model, tools=[ct])
 # result.completed == true when the model returns a final text answer
 ```
 
-The loop takes the same `cancel` and `tool_concurrency` keywords on both providers; see
-[Tool Calling](@ref tools_guide) for its stop rules.
-
-!!! tip "Check it with Jev"
-    Before the loop, one Jev question can score how much expertise a request needs and
-    pick the cheap or the strong model for it ([Pick the model](@ref jev_llm_pick_model)).
-    Inside it, wrap the dispatcher so that a sensitive tool call runs only if the user
-    asked for it ([Approve tool calls](@ref jev_llm_tool_calls)).
-
-## Feeding tool output back manually
-
-Use [`tool_result`](@ref) to return a function's output on the next turn:
+To answer a call yourself, send its result in a request that continues the response:
 
 ```julia
-r2 = respond(Respond(; service=GEMINIServiceEndpoint,
-                     previous_response_id=r1.response.id,
-                     input=[tool_result("call_abc", "get_weather", "72F and sunny")]))
+call = first(function_calls(r1))
+r2 = respond(Respond(; service, model, previous_response_id=r1.response.id,
+                     input=[tool_result(call["call_id"], call["name"], "72F and sunny")]))
 ```
 
-## Lifecycle (background requests)
+`tool_choice` is `"auto"`, `"none"` or `"required"`, or an object a builder makes:
+[`tool_choice_function`](@ref)`(name)` forces one function, and [`tool_choice_hosted`](@ref),
+[`tool_choice_mcp`](@ref), [`tool_choice_custom`](@ref) and [`tool_choice_allowed`](@ref) select other
+kinds of tool. A provider may also run tools of its own, such as web search or code execution, passed in
+`tools`. Which choices and tools a provider takes is on its entry.
 
-[`get_response`](@ref) and [`cancel_response`](@ref) take a `service=` keyword,
-so background Gemini Interactions are managed the same way as OpenAI:
+## [Background requests](@id agentic_background)
+
+With `background=true`, `respond` returns at once with the response's `id` and `status`, and the
+response runs on the provider's side; [`get_response`](@ref) reads it by its id and
+[`cancel_response`](@ref) stops it. Both take a `service` keyword and make one attempt, never retried
+([Timeouts & Retries](@ref timeouts_guide)), so a poll is your own loop. Whether a provider runs
+background requests, and what it answers while one is queued, is on its entry.
 
 ```julia
-status = get_response("<interaction_id>"; service=GEMINIServiceEndpoint)
-cancel_response("<interaction_id>"; service=GEMINIServiceEndpoint)
+started = respond("Write a long essay on the history of numerical computing."; service, model,
+                  background=true)
+status = response_status(get_response(started.response.id; service))
+cancel_response(started.response.id; service)
 ```
 
-Note: a freshly created background interaction id may briefly return a
-`403 permission_denied` `ResponseFailure` before the resource becomes
-retrievable. Poll with a short delay before treating that as a real
-permission error. The automatic retry policy deliberately does not retry
-403 (permission errors are normally permanent), so this is the caller's
-poll loop to handle.
+## [See also](@id agentic_see_also)
 
-## Usage & cost (cross-provider)
+- [Tool Calling](@ref tools_guide) — defining tools and the tool loops
+- [Streaming](@ref streaming_guide) — `respond` with a `do` block
+- [Results](@ref results_guide) — success, failure and call error
+- [One API across providers](@ref backend_guide) — switching providers
+- [Decisions with LLMs](@ref jev_llm_guide) — pick the model a request needs, or approve a tool call before it runs
 
-[`token_usage`](@ref) and [`estimated_cost`](@ref) work for Gemini too — the
-Interactions decoder normalizes usage into the shared shape, counting tool-use prompt
-tokens as input, and [`DEFAULT_PRICING`](@ref) includes `gemini-4-argon` and
-`gemini-3.8-flash` (hosted-tool per-call fees are not modeled). An interaction is priced
-as the model that served it, `response.model`, so an alias or a routed id is billed at
-its target's rates, and at the tier it reports in `service_tier` (`token_usage(r).service_tier`):
-input and output at half the standard rates on Flex and at 1.8 times on Priority, a cache hit at
-the price the model's table lists (see [Multi-Backend Support](@ref backend_guide)).
+## [On your provider](@id agentic_providers)
 
-```@example agentic
-r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
-if r isa ResponseSuccess
-    println("usage: ", token_usage(r))
-    println("est. cost: \$", round(estimated_cost(r); digits=6))
-else
-    println("Request failed — ", r)
-end
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :tools)
 ```
-
-## Streaming
-
-Streamed Gemini Interactions assemble each step from the wire's incremental events
-and rebuild the output exactly as the non-streamed decode does: a streamed
-`respond(...; tools=…, stream=true)` finishes with status `requires_action` and its
-[`function_calls`](@ref) populated, like the non-streamed form. Thought steps carry
-their signature and their `summary` (from the streamed thought summaries); consecutive
-`model_output` steps — the hops of a long answer, thoughts between them or not — make one
-message, whose text is their text parts joined with no separator, as Google's SDK reads it,
-while a tool's step (a function call or result, a hosted tool's call or result) or a
-`user_input` step ends it, and the `model_output` steps after one make a message of their own
-([`output_text`](@ref) joins the messages with a newline); and a function call whose
-`arguments` are `null` reads as `"{}"`. Initial text in
-`step.start` and subsequent deltas are both included, in step order. Thought summaries
-stay separate from answer text ([`reasoning_summaries`](@ref) reads them), while
-signatures remain available in the provider's raw steps.
-
-An interaction body — streamed or not — without a non-empty `id` or `status` is not an
-interaction: `respond`, `get_response` and `cancel_response` return a
-`ResponseCallError` for it instead of an empty success. The faults an interaction records
-in its `errors` array reach `response.error`, the first of them; `response.raw["errors"]`
-holds them all.
-
-## See Also
-
-- [Responses API](@ref responses_guide) — OpenAI-specific `respond`/`Respond` details
-- [Tool Calling](@ref tools_guide) — defining tools and the tool loop
-- [Multi-Backend](@ref backend_guide) — provider setup and capabilities

@@ -1,0 +1,54 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "In one sentence: what does a compiler do?",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdkUlhlYXQta09xMkZrZFVQLV9YWmlBWRIXZFJYZWF0LWtPcTJGa2RVUC1fWFppQVk",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 365,
+        "total_input_tokens": 11,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 11
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 28,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 326
+      },
+      "created": "2026-10-25T14:43:05Z",
+      "updated": "2026-10-25T14:43:05Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "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",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "A compiler translates human-readable source code written in a high-level programming language into machine code that a computer's processor can execute.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:08Z"
+}

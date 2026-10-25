@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:streamGenerateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "List the planets of the solar system in order, one per line."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "stream": [
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Mercury\\nVenus\\nEarth\\nMars\\nJupiter\\nSaturn\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 21,\"candidatesTokenCount\": 12,\"totalTokenCount\": 214,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 21}],\"thoughtsTokenCount\": 181,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.8-flash\",\"responseId\": \"ahXeaofSGYWAxs0PuqfDkAg\"}\r",
+      "\r",
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\nUranus\\nNeptune\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 21,\"candidatesTokenCount\": 20,\"totalTokenCount\": 222,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 21}],\"thoughtsTokenCount\": 181,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.8-flash\",\"responseId\": \"ahXeaofSGYWAxs0PuqfDkAg\"}\r",
+      "\r",
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"Es4GCssGAWkUfRPD5+GVwcBysQN4sAoIL+0Zyj66UewngAnbfZeMhe4N4Cpd3sa+hrKkwAWg1RvKIpfuL8W+rY4IRQWyL/PjjcRq8R9ywxbz0NCQ/NKPt0BmHqF8Y/cxIqUXLtnvbak2vvZp24p36NocJxFhzszyGn10a31T67Ww7Yy4C8oRM2jYkmFAJ5PJMK4CiTMqS/OkRCnC43fOELZmI7ZWQVKkNlTpH26dP/ZgfI+M2EDV+6TqHaIr07+BcDCHwdt27WDaEeSPYC/H/hrxx7/6IlZsZZQC0X57KcO8aUNZ1+D6bYhtB727mm5Z0j0D1APr4iW/2AvtXslDlELu/zvq/BYMILz4V7sTl/3lJ4KwuczPWvT/e4HFKvkWad5zd00+qShzT1JhV9uhfvZpBQ2OGLOGk/NcXIc3sYBjO8ihSibjihl+Va8raijJjpVL6N30NTXeyDJ4td8ENoiXDGwvpn3h0N6X8fe9O+SrU/Fw4TtDyFWDbd5sDkx72JN9Chd8awn3fri31AjQcUy5ndEnazNjoP0PKejwuyxMo9TxffIgyEs6Rs5RTLudPzzyDBFZC/CLqX9n6I3+c/X8+YkebK9EaL3DaqYyNMPHLDSyWIph/lc5Ji0rpuD3iNusOScFfjvAJx6JBAz3Xtlie7GBBWzhx0wAldnGw0Bnu6JyfJ4wKhk1qE0zmhIByerkcCxsrwrunbHcxYywP72zOUbnSLoJnCViPFkMSQaoAIL0xly/6kpDPsX4tHz4GyJmIE5iI3cnrfZr1BTO5bwQTMWf+PtDVsLpZp/u4D3deN4iW8LpvCKEEmROQ7c7Kg18fcNPMpnnl0uy9KYrSaUHp7oACgEsMoLkU8hRVxsVa/Yk5IHHwkYGYiRCaLKGmGRsyAdxj0YptM4rBDtHPYtIP31H4ZfcXoIgggT6Ji2wZLXKUX/P3cEcCXK7iPDIsP5pSnuTS0Q+0R8/5M1WeHzv6nT3e5kj+kPcSi3Kl8P3YoHGzsM1McC8QfUK7Z69q65wtFq/ASqmaHtSnSHfb0a9T3gmsurJCV5Rd/mHGoLc601i0B+eOy8WcW8HE4qn/qQLY/oS0EpzbVpSD9p94X5DWGPz3E5k8520gusx9PS0\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 21,\"candidatesTokenCount\": 20,\"totalTokenCount\": 222,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 21}],\"thoughtsTokenCount\": 181,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.8-flash\",\"responseId\": \"ahXeaofSGYWAxs0PuqfDkAg\"}\r",
+      "\r",
+      ""
+    ]
+  },
+  "recorded_at": "2026-10-25T14:42:53Z"
+}

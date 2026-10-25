@@ -1,0 +1,82 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Which planet of the solar system is the largest?"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "parts": [
+            {
+              "text": "Jupiter is the largest planet in the solar system.",
+              "thoughtSignature": "EqoDCqcDAWkUfRP1Wgy3gQSPXqSJzla31JLNsMh4pCLWrZODpeJxpkcmBpyvraCIfV5Z3Q9WI1s6dDQy6zHbiVbo7ryr0GUf0d6IR9wCsIAU97lVlh8GARYBC2DA/KyLyHKjAqLAxsoX1ty4ru33Fil0sWHEMPYHkDKKyi8E5WM0sSC8TjgNh7FzZx5R+1hYM9PStnr5wvgbRIj7IcrvEn7ahkhjd1TC06l67jMSrMwJMTGpR6gWnCWvod41G0P9awbpwK56KcFclgeyQd3So1Lwd28BRN6cQqHQE/TiMz3OHHzfGkqrD94zk5NYZYQ1OmZrFV1qGdU6ir1BN69KXxLxI4cJOuStkkqjN71o2OjBocuLN5KQvi5VRcM+Umv3kDLYd/zxzUrpUnDQ2CH+qgaFvhmiEBPYxTk8aS+SXv/Ztono0Og9nN7/al2Tc6f2zQqqqC/Awmm81GXNdJpBnDsR2m3u3Jq97xVkA/VwYsNbzzJAbhY9KBRcNmf8BbwgQlM7nmoU/ZZkdBo3ooBAGlYLobyd7VIYKovQLJiWokVAUVlRVPiYI6P6wrpM"
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "parts": [
+            {
+              "text": "And the smallest?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant: answer in one short sentence."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Mercury is the smallest planet in the solar system.",
+                "thoughtSignature": "Eq0DCqoDAWkUfRNX6C9tnsySds7zQjYeOGQ8hlhs+qqQc9aeD3ux9B7MKP7M7CJwPwg7of0LmBpnywuUBh3Bxn8a28WgNh2kIUiDT5xbrQt5IQeS+s8i/IcJJfyDAOTDB+6sqvdjFkcya1TFJAOyvRtX9UwWxRFUj/nSE7u969UpM0OOAgazzGE1NZAak87LdpJdRPjAlPFrB+JP25isqoCY8mrgpFhW2ATl9Ba4/Lhd9lX+JEcVI6TVpMTtvxzCm79OQk2Whfck9TpWJhxtZ6X4DTs8WYWP0zFc4sGIFRK0+bujXV5VWFWis3Zvwlj2g1IpzulYzGPED1ehU6RoziLG2lwm3hO35h+Qgpf4GcPxR5VHNtKQaMWac1FcfEApi+yprKMD7kyPOslLlB+1I78OCMVrxUFsOE8asoGJWt5P0Pe6v/o/El3A6lPEpQtvxLharPExpquRpckpmXgqNyEaMJObwk9nl+tTNaINm6DEdE/unngrT0uCmQ6PEeD7rbrK56aY+2cxU4npdX9autoSlljTS3zU8NhgaJlo/UYcfxKf/Lty8BwWTcQXdW/o"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 111,
+        "candidatesTokenCount": 10,
+        "totalTokenCount": 193,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 111
+          }
+        ],
+        "thoughtsTokenCount": 72,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "cxXeavOPFIunkdUPjN-2gQg"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:01Z"
+}

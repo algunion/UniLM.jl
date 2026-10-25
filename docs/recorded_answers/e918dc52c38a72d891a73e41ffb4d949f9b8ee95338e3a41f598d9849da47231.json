@@ -1,0 +1,73 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "Give the capital of Peru.",
+      "model": "gemini-3.8-flash",
+      "response_format": {
+        "mime_type": "application/json",
+        "schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city",
+            "country"
+          ],
+          "type": "object"
+        },
+        "type": "text"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdseFhlYW9MNk91ejRuc0VQN2MyWWdRYxIXbHhYZWFvTDZPdXo0bnNFUDdjMllnUWM",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 197,
+        "total_input_tokens": 7,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 7
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 19,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 171
+      },
+      "created": "2026-10-25T14:43:39Z",
+      "updated": "2026-10-25T14:43:39Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "EpoFCpcFAWkUfRMmQODzRwFlPRE/hV+wxhtoi4YezcLATfjTWaoKkGZnShWb0JPyM5Uoz6OPtR1tc4g4pHnWwmLz+J22qoCKsh+rZV+nMQjLrV1JEJQ4Os10DDs2M70lp02WXXSUMIRjlrfgHx1TPuVN/TylCXLu9M8+GDzHryrQ/oQsCMGB4lWTKHgP8MT5IwZELRWTBZGxVjJQ6fYFLWoH0HStr1nay8ebb5IJANti3iL3K1Fgqj9SGk+RUX5O+C7ItInlGOYv9m7ibeF0Cic49MHbu0Mr0t5hLcQ8pZDEYulCWTO+MJCJK7qorMsHV8xsr9kSM8Jg7mhEEAsqLaxIgsWu1c3qH1gDtoSVsYTC4BXdsde5izNbNoa44DkyRitAygSFQzDLsLgcVeZ8tN2UsQW1EHevvZ4aiYd+9RO37QJ4fkMks/lxJZkeMslNCwP88ZxpGODDFyF3ziFmOgu5BoqoZeDX8gDhHnJ9rXaVpCdnyfRwjYUBS6ysM/OjyYXcKeziViMuZHDCTmonsNKx9gkWoxQzQX0Z22tA4v1vxDUfOcXpHy11xY2vgPTiloX33B0VBzX6AZQlD0hkxL1f31dvrC10Xe/jJDAyGd2MZHUODihnNq6/ye3Prl4koNRdCMnQHuoYWMSY0e14HlY00zm59YEAs31X29kiKWyMhkhu3sYUMVTznw11KmsV1/uHfMOXmiyrrCDAn9DwY3VAG52D0YP7tvkmKwN96JD8koeWAKR5p/DIHa0A7YQRd6cudidjj1fPwrpVF/65KQkf7DSHvuyyppKULdnVlqHp/fAmKTtLeLeapoQFD96zEGq5NHxYWKCiUIEfTjkvDd1KWjeG5fAgiSBG7yudinWOzSKCEUTzmNfD3vRl",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "{\n  \"city\": \"Lima\",\n  \"country\": \"Peru\"\n}",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:41Z"
+}

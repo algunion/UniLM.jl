@@ -1,0 +1,71 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "What is the weather in the largest city of Peru?",
+      "model": "gemini-3.8-flash",
+      "tools": [
+        {
+          "description": "The current weather in a city",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChdpUlhlYXVPTUZ1YTRuc0VQZ2Q2NHFBaxIXaVJYZWF1T01GdWE0bnNFUGdkNjRxQWs",
+      "status": "requires_action",
+      "usage": {
+        "total_tokens": 143,
+        "total_input_tokens": 55,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 55
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 16,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 72
+      },
+      "created": "2026-10-25T14:43:22Z",
+      "updated": "2026-10-25T14:43:22Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "EvYCCvMCAWkUfRPQjyG4BEwGHY1YLs30qPJ4e6ccWE8hNuhKN4ys/ZKV2JPFzqdDEDhAfW9dQnwlTgsee/3EpLa9G7EeZVKEK0+bKRVDNgO8EiU22O/qiorllx/3k7YxuFxvzj+N93pUHeFfC4CSot2ZLQ6j+Z4phwTRuDZPl9KkToX7RiU2U+YzMvoNcAb7/C71AquC1GVQT+xN4SsnHBr1GLDz6ibvW/4F/4W96inczgf0bIJ1YvRI/0mbcLdtD9ZT/CkPF2VG5oHYyvufLVU8gdpgg5aRfy40HfTEqkWoasczOv/DcmvzlMQC9FmdiMDZTruL0zakYb8GmZcxiEPtmDGiPn5XBa5l1SwEB/4fZnzKKIc2bUkWwYFZVL6IELIB+rHHJiFYzcTkAitFxycXScq9iF8uErtA9H6vBNmog/i4z/yW27VB4Pk9CWcrVlJLIqSsy6omjQ+zVqbXpsPddrQ8NAVD9Sy58+LFBlZmrOQ2Zt8NnLc=",
+          "type": "thought"
+        },
+        {
+          "id": "call_1745833",
+          "type": "function_call",
+          "name": "get_weather",
+          "arguments": {
+            "city": "Lima"
+          }
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-10-25T14:43:24Z"
+}

@@ -77,6 +77,8 @@ end
         @test !occursin("system_one", plain(at_a_glance(k)))
     end
     @test occursin("system_one", plain(at_a_glance(:jev)))                       # a decision entry's row lists it
+    supports = [c.code for c in only(at_a_glance(:anthropic).content).rows[2][4] if c isa Markdown.Code]
+    @test "models" in supports                    # a capability decision entries share stays in an LLM row
     @test !occursin("system_one", plain(capability_matrix()))
     @test ProviderFacts.DECISION_CAPABILITIES == [:models, :system_one]
 end
@@ -116,9 +118,11 @@ end
     twofive = filter(r -> startswith(model(r), "gemini-2.5-"), rows)
     @test !isempty(twofive) && all(r -> isempty(levels(r[3])), twofive)        # thinkingBudget, not levels
     @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
-    taken = UniLM._GEMINI_THINKING_LEVELS                                        # model => the levels the check accepts
-    refused = first(setdiff(union(values(taken)...), taken["gemini-3.8-flash"]))   # another model's level, not this one's
-    @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", [refused])  # other refusals propagate
+    taken = UniLM._GEMINI_THINKING_LEVELS            # model => its thinking levels on Interactions (`respond`)
+    others = setdiff(union(values(taken)...), taken["gemini-3.8-flash"])           # other models' levels, not this one's
+    @test !isempty(others) || error("premise: another model takes a thinking level gemini-3.8-flash does not")
+    isempty(others) ||
+        @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", [first(others)])  # other refusals propagate
 end
 @testset "ProviderFacts — regions regenerate and staleness is detected, in both marker forms" begin
     html = "a\n\n<!-- generated:providers -->\n\nold\n\n<!-- /generated:providers -->\n\nb\n"

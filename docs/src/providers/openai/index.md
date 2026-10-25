@@ -37,6 +37,9 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [know what a call cost](@ref openai_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
 | [generate or edit images](@ref openai_images) | `generate_image`, `edit_image` | images from OpenAI's Images API |
 | [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, audio from text |
+| [hold a Realtime session](@ref timeout_realtime__next) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
+| [answer from my own files](@ref retrieval_guide__next) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
+| [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |
 | [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)` | each model's id, creation time and shutdown date |
 | [handle a failure](@ref openai_failures) | the result's type | the status or the exception, never an empty success |
 
@@ -226,7 +229,7 @@ be carried over to the next response"
 A Conversations API object holds a conversation instead: `respond(input; conversation=id)` adds the
 response's input and output to it, and a `Respond` refuses `conversation` together with
 `previous_response_id` ([Limits and refusals](@ref openai_limits)); the conversation itself is made
-by [`create_conversation`](@ref) ([Platform APIs](@ref openai_platform_page)). A request that replays
+by [`create_conversation`](@ref) ([Platform APIs](@ref openai_conversations_api)). A request that replays
 the conversation's items itself, rather than chaining, sends them as its `input`
 ([Input](@ref openai_responses_input)).
 
@@ -337,7 +340,7 @@ stored responses — `get_response`, `delete_response`, `list_input_items`, `can
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
-| `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref openai_limits)) | what its row says |
+| `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref openai_limits); for images, audio and Realtime, [Images, audio & realtime](@ref openai_media_limits); for the platform verbs, [Platform APIs](@ref openai_platform_limits)) | what its row says |
 | `InvalidConversationError` from `chatrequest!`, nothing sent | with `history=true`, the conversation ends with an assistant message, so the reply could not be appended | a user message after it, or `history=false` |
 | a call error whose `cause` is a `KeyError` | `OPENAI_API_KEY` is not set ([Setup](@ref openai_setup)) | set it |
 | a failure with `status` 400, 401, 403, 404 or another status not listed above | OpenAI refused the request, and UniLM does not send it again: `response` holds OpenAI's error, whose `message` names the reason | what the message says |

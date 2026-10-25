@@ -108,7 +108,7 @@ come back in the response's output items; the last row's are calls the applicati
 | :--- | :--- | :--- |
 | web search | [`web_search`](@ref)`(; context_size, location, filters)` | the answer's [`url_citations`](@ref); [`web_search_results`](@ref) |
 | file search | [`file_search`](@ref)`(vector_store_ids; max_results, ranking, filters)` | [`file_search_results`](@ref); the stores on [Retrieval & file search](@ref retrieval_guide__next) |
-| code interpreter | [`code_interpreter`](@ref)`()` | [`code_interpreter_outputs`](@ref); its settings on [Platform APIs](@ref openai_platform_page) |
+| code interpreter | [`code_interpreter`](@ref)`()` | [`code_interpreter_outputs`](@ref); its settings on [Platform APIs](@ref openai_containers) |
 | image generation | [`image_generation_tool`](@ref)`(; size, quality, action, …)` | the images as base64, [`image_generation_results`](@ref) |
 | remote MCP servers | [`mcp_tool`](@ref)`(label, url; require_approval, allowed_tools, …)` | [`mcp_call_outputs`](@ref); [`mcp_approval_requests`](@ref) |
 | computer use, shell, patches, custom tools | [`computer_tool`](@ref), [`shell`](@ref), [`apply_patch_tool`](@ref), [`custom_tool`](@ref) | calls the application carries out; a shell call only when OpenAI did not run it |
@@ -286,7 +286,8 @@ end
   key-value pairs, and `user`, which OpenAI replaces with the other two, is refused
   ([Limits and refusals](@ref openai_limits)).
 - **`moderation`.** A [`ModerationConfig`](@ref) runs a moderation model over the input and the output;
-  the response's `moderation` holds the results, in `result.response.raw["moderation"]`.
+  the response's `moderation` holds the results, in `result.response.raw["moderation"]`. Text and images
+  on their own are classified by [`moderate`](@ref) ([Moderation](@ref openai_moderation)).
 - **`context_management`, `stream_options`.** Sent as given: compaction settings, and the stream's
   `include_obfuscation`.
 

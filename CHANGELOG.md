@@ -185,6 +185,13 @@
   and `with_recorded_answers`' lists `prompt_cache_options` among the options never keyed and
   names each backend's access for recording, not `TYPESAFE_API_KEY` for all; `@branch`'s says
   which model an omitted `model` means, and that Ollama has none. No behaviour changes.
+- **An OpenAI audio reply goes back as its transcript once its audio expires.** A `Chat` on
+  `OPENAIServiceEndpoint` sent an earlier audio reply back by its id whatever the reply's
+  `expires_at`, the time from which OpenAI says the audio "will no longer be accessible on the
+  server for use in multi-turn conversations", so a conversation continued after it sent the id
+  of audio OpenAI no longer keeps. From `expires_at` on, the turn goes as its content alone — its
+  transcript unless it holds other text — as every other endpoint gets it; before `expires_at`,
+  or with no expiry known, it still goes by its id.
 
 ## 0.26.0
 

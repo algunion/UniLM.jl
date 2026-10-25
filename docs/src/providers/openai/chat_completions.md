@@ -157,11 +157,12 @@ spoken = chatrequest!(chat).message.audio_output
 ```
 
 The next request sends the audio turn back as its text and `"audio": {"id": …}`, "Data about a previous
-audio response from the model". UniLM sends that id whatever the turn's `expires_at`, the Unix time "for
-when this audio response will no longer be accessible on the server for use in multi-turn conversations"
+audio response from the model", until the turn's `expires_at`, the Unix time "for when this audio
+response will no longer be accessible on the server for use in multi-turn conversations"
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), the assistant
-message's `audio` and the reply's `audio`): a conversation that goes on after that time sends the id of
-audio that is no longer accessible.
+message's `audio` and the reply's `audio`). From that time on it sends the turn as its text alone; a turn
+whose `expires_at` is `nothing` goes by its id. This page replays recorded replies, and the first one's
+`expires_at` had passed when the request below was recorded, so it sends that reply as its transcript:
 
 ```@example openai
 push!(chat, Message(Val(:user), "Now say it in French."))
@@ -172,8 +173,8 @@ u = result.usage
 ```
 
 The usage counts the audio apart, `prompt_audio_tokens` of the input and `completion_audio_tokens` of the
-output: here the input's audio is the first reply, sent back by its id. [`estimated_cost`](@ref) bills
-them at the model's audio rates
+output: here the input holds no audio, its first reply having gone back as text, while a reply sent back
+by its id counts as input audio. [`estimated_cost`](@ref) bills them at the model's audio rates
 ([Cost and usage](@ref openai_cost)). A streamed reply assembles the same `audio_output` from its chunks,
 the transcript reaching the callback as text and the expiry coming in the last update; a stream cut
 between the finish and that update keeps the turn with `expires_at == nothing`. Speech and transcription

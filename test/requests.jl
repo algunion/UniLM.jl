@@ -642,11 +642,13 @@ end
     @testset "the next request sends the turn back: by id to OpenAI, as its transcript elsewhere" begin
         conversation() = [Message(Val(:system), "Be brief."), Message(Val(:user), "Say hi."),
                           Message(role=RoleAssistant, audio_output=spoken), Message(Val(:user), "Again, in French.")]
-        # The decoded reply, appended as chatrequest! appends it, goes back to OpenAI by its id.
+        # The decoded reply, appended as chatrequest! appends it, goes back to OpenAI by its id while
+        # OpenAI keeps its audio (an expiry in 2100).
         chat = Chat(model="gpt-audio-1.5", modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "wav"))
         push!(chat, Message(Val(:system), "Be brief."))
         push!(chat, Message(Val(:user), "Say hi."))
-        update!(chat, UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "audio" => wire_audio))).message)
+        kept = merge(wire_audio, Dict("expires_at" => 4102444800))
+        update!(chat, UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "audio" => kept))).message)
         push!(chat, Message(Val(:user), "Again, in French."))
         sent = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, chat))
         @test sent["messages"] == [Dict("role" => "system", "content" => "Be brief."), Dict("role" => "user", "content" => "Say hi."),
@@ -677,6 +679,27 @@ end
         emptied = [conversation()[1:2]; Message(role=RoleAssistant, content="", audio_output=spoken); conversation()[4]]
         @test JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, Chat(service=ANTHROPICServiceEndpoint,
             model="claude-haiku-5-5", messages=emptied)))["messages"][2] == Dict("role" => "assistant", "content" => "Hi there!")
+    end
+
+    @testset "OpenAI gets the turn by id until its expires_at, and as its transcript from then on" begin
+        # expires_at is "when this audio response will no longer be accessible on the server for use in
+        # multi-turn conversations" (the Chat Completions reference): from then on the id names no audio.
+        turn(expires_at; content=nothing) = Message(role=RoleAssistant, content=content,
+            audio_output=AudioOutput(id="audio_abc123", data=wav, expires_at=expires_at, transcript="Hi there!"))
+        sent(turns...) = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, Chat(model="gpt-audio-1.5",
+            messages=[Message(Val(:user), "Say hi."), turns..., Message(Val(:user), "Again.")])))["messages"][2:end-1]
+        by_id = Dict("role" => "assistant", "content" => "Hi there!", "audio" => Dict("id" => "audio_abc123"))
+        as_text = Dict("role" => "assistant", "content" => "Hi there!")
+        now = floor(Int, time())
+        @test sent(turn(978307200)) == [as_text]          # 2001-01-01, long past
+        @test sent(turn(now)) == [as_text]                # the expiry itself is past it: no longer accessible
+        @test sent(turn(now + 3600)) == [by_id]           # an hour left
+        @test sent(turn(4102444800)) == [by_id]           # 2100-01-01
+        # An expiry the reply never gave (a stream cut before its last update) is no expiry: by id, as before.
+        @test sent(turn(nothing)) == [by_id]
+        # Each turn by its own expiry; one holding other text keeps that text, and only the id goes.
+        @test sent(turn(now + 3600), turn(978307200; content="Hello.")) ==
+              [by_id, Dict("role" => "assistant", "content" => "Hello.")]
     end
 end
 

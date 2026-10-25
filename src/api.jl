@@ -471,11 +471,11 @@ that speaks, such as `gpt-audio-1.5`
   `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
   bytes that begin with none, such as `"pcm16"`'s raw samples.
 - `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
-  audio for later turns; after it, OpenAI answers a turn that sends the id back with HTTP
-  400 `audio_not_found`, the answer observed for an id it never issued. `nothing` when it
-  is unknown: the reply names none, or a streamed reply's expiry, which comes alone in its
-  last update after the turn's finish, was lost to a connection that closed between the
-  two; the turn is kept either way.
+  audio for later turns; from then on the turn goes back without its id (below): OpenAI no
+  longer holds the audio, and it answered an id it never issued with HTTP 400
+  `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
+  reply's expiry, which comes alone in its last update after the turn's finish, was lost to
+  a connection that closed between the two; the turn is kept either way.
 - `transcript::String`: what the audio says; the turn's `content` too, unless the turn
   holds other text.
 
@@ -484,7 +484,8 @@ assembles it from its `delta.audio` chunks, and the transcript reaches the strea
 callback as text. When the conversation goes on, the OpenAI Chat encoder
 (`OPENAIServiceEndpoint`) sends the turn back as
 `{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
-beside the id. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+beside the id, until `expires_at`, and always when `expires_at` is `nothing`; from
+`expires_at` on it sends the content alone. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
 DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
 the turn's content alone, the neutral form it also sends for another provider's
 [`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.
@@ -589,7 +590,7 @@ JSON.omit_null(::Type{Message}) = true
 # The request wire form. provider_content is a decode-side round-trip cache for
 # provider-native blocks (same precedent as ToolCall.thought_signature) and
 # finish_reason is a response-only field: neither is sent; audio_output goes back by
-# its id on OpenAI's own wire only (`_wire_messages`). A refusal travels under
+# its id on OpenAI's own wire only, until it expires (`_wire_messages`). A refusal travels under
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),
@@ -1608,20 +1609,25 @@ _asks_stream_usage(_) = false
 
 # The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the
 # audio of an audio reply and takes it back by id, `"audio": {"id": …}` beside the turn's
-# content (the assistant message of the Chat Completions reference); every other endpoint
-# gets the content alone, the transcript unless the turn holds other text. A conversation
-# without an audio reply goes out as it is.
+# content (the assistant message of the Chat Completions reference), until the reply's
+# `expires_at`, "when this audio response will no longer be accessible on the server for use
+# in multi-turn conversations" (the reply's `audio`): from then on, and on every other
+# endpoint, the turn goes as its content alone, the transcript unless the turn holds other
+# text. A turn whose expiry is unknown goes by id. A conversation without an audio reply goes
+# out as it is.
 _wire_messages(_, messages::Conversation) = messages
 _wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
     any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages
 
 function _audio_turn(m::Message)
     audio = m.audio_output
-    isnothing(audio) && return m
+    (isnothing(audio) || _audio_expired(audio)) && return m
     d = JSON.lower(m)
     d[:audio] = Dict(:id => audio.id)
     d
 end
+
+_audio_expired(a::AudioOutput)::Bool = !isnothing(a.expires_at) && time() >= a.expires_at
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)

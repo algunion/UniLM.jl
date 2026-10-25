@@ -87,7 +87,7 @@ end
     # Gemini has no per-tool strict flag. Its function-calling modes: VALIDATED "ensures function
     # schema adherence" while the model may answer in text; ANY "is constrained to always predict a
     # function call and ensures function schema adherence"
-    # (https://ai.google.dev/gemini-api/docs/function-calling#function-calling-modes).
+    # (https://ai.google.dev/gemini-api/docs/generate-content/function-calling).
     params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
                   "required" => ["city"], "additionalProperties" => false)
     strict = Tool(func=FunctionSignature(name="get_weather", parameters=params, strict=true))

@@ -420,10 +420,10 @@ end
 # A tool marked strict asks for arguments that conform to its schema. A declaration has no such
 # flag; the request's function-calling mode has: VALIDATED "ensures function schema adherence"
 # while the model may still answer in text, as under AUTO, and ANY, which requires a call, "ensures
-# function schema adherence" too (https://ai.google.dev/gemini-api/docs/function-calling). So a
-# strict tool makes an unset or "auto" tool_choice VALIDATED (gemini-3.8-flash answered a strict
-# tool under it with a function call on 2026-10-25); "required", a named function and "none" keep
-# their modes.
+# function schema adherence" too
+# (https://ai.google.dev/gemini-api/docs/generate-content/function-calling). So a strict tool
+# makes an unset or "auto" tool_choice VALIDATED (gemini-3.8-flash answered a strict tool under it
+# with a function call on 2026-10-25); "required", a named function and "none" keep their modes.
 function _gemini_tool_config(chat::Chat)
     tc = chat.tool_choice
     any(t -> t.func.strict === true, something(chat.tools, Tool[])) && (isnothing(tc) || tc == "auto") &&

@@ -25,6 +25,24 @@
   `:record_missing` gets its first status back on every later poll. Upgrading: record what a
   `:replay` scope now needs (`mode = :record_missing`), and record a polling loop with
   `:record`, which keeps the last status.
+- **`code_interpreter()` sends the container OpenAI requires.** OpenAI's code interpreter
+  tool "requires a container object"; `CodeInterpreterTool` sent none unless one was
+  given, and sent `file_ids` beside the tool. It now sends `{"type": "auto"}` unless
+  given another container, sends `file_ids` inside that auto container, and takes a
+  container id (`code_interpreter(container="cntr_…")`), which it refused before.
+  `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
+  (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
+  or beside a container `Dict` that names `file_ids`, is an `ArgumentError`. Upgrading:
+  drop `container=nothing`; the auto container is the default.
+- **A field-less built-in endpoint, called, is its type.** `OPENAIServiceEndpoint()`,
+  `AZUREServiceEndpoint()`, `GEMINIServiceEndpoint()`, `GEMINIOpenAIServiceEndpoint()` and
+  `TYPESAFEServiceEndpoint()` built an instance that `service` accepted but that none of
+  the endpoint's methods, all defined on the type, served: it got no default model,
+  skipped the type's encoding rules and failed at request time with a `MethodError` (on
+  TypeSafe, `ask` refused it with an `ArgumentError` saying it declares no capabilities).
+  Each now returns its type (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it
+  behaves as the type does. Upgrading: a value tested with `x isa T` is now tested with
+  `x === T`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -33,8 +51,9 @@
   sent and, once its reply is whole and read with no stop, recorded as the lines of its
   body (`response.stream`); so are `get_response`, `delete_response`, `list_input_items`
   (keyed with its `limit`, `order` and `after`), `cancel_response`, `compact_response`,
-  `count_input_tokens`, `fim_complete` and `prefix_complete`. A recording also keeps the
-  response headers a replay gives back (`response.headers`: the request-id header and
+  `count_input_tokens`, `fim_complete` and `prefix_complete`. A stream is recorded once it
+  is whole, also when its connection fails after the final event, and never when it was
+  cut before that event. A recording also keeps the response headers a replay gives back (`response.headers`: the request-id header and
   `x-gemini-service-tier`). A miss on a stream's first request is thrown by the verb; its
   lost recording, or a miss on a later request of a turn the provider continues, is
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
@@ -69,14 +88,6 @@
   an `InterruptException` ended a streamed turn the provider continued over several requests
   (a long Gemini generation), `cumulative_cost` left out the replies already received; they
   are now added before the interrupt propagates, as an unstreamed turn adds them.
-- **`code_interpreter()` sends the container OpenAI requires.** OpenAI's code interpreter
-  tool "requires a container object"; `CodeInterpreterTool` sent none unless one was
-  given, and sent `file_ids` beside the tool. It now sends `{"type": "auto"}` unless
-  given another container, sends `file_ids` inside that auto container, and takes a
-  container id (`code_interpreter(container="cntr_…")`), which it refused before.
-  `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
-  (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
-  or beside a container `Dict` that names `file_ids`, is an `ArgumentError`.
 - **`prefix_complete` on `DeepSeekEndpoint` keeps and sends back `reasoning_content`.** The
   prefix completion was read with the generic Chat Completions decoder, which drops it, so
   `reasoning_text` was `nothing` and a later request with `tools` on that chat sent the
@@ -110,22 +121,6 @@
   a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
   as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
   had reported, as for any other exception a callback throws.
-- **A recorded stream whose connection fails after its final event is kept.** With the
-  stream recording added above, a streamed `chatrequest!` in a `:record` or
-  `:record_missing` scope whose reply was whole — its final event (`[DONE]`,
-  `message_stop`) had arrived — but whose connection then failed returned its success
-  unrecorded, so a later `:replay` missed. It is now recorded
-  as a clean stream is. A stream cut before its final event is still not recorded, even
-  when the call keeps the turn its finish reason completed, and `with_recorded_answers`
-  now says so.
-- **A field-less built-in endpoint, called, is its type.** `OPENAIServiceEndpoint()`,
-  `AZUREServiceEndpoint()`, `GEMINIServiceEndpoint()`, `GEMINIOpenAIServiceEndpoint()` and
-  `TYPESAFEServiceEndpoint()` built an instance that `service` accepted but that none of
-  the endpoint's methods, all defined on the type, served: it got no default model,
-  skipped the type's encoding rules and failed at request time with a `MethodError` (on
-  TypeSafe, `ask` refused it with an `ArgumentError` saying it declares no capabilities).
-  Each now returns its type
-  (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it behaves as the type does.
 
 ## 0.26.0
 

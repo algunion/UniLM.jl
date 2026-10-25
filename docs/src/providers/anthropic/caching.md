@@ -128,7 +128,7 @@ with it: the body of a status other than 200; the event of an in-band `overloade
 there is one. UniLM sends a request again after a transient status, 429 and 529 among them and
 Anthropic's 500 and 504, as often as the call's [`RequestConfig`](@ref) allows, and then returns the last
 answer ([Timeouts & Retries](@ref timeouts_guide)); a streamed request is sent again only while none of
-its callbacks has run.
+its callbacks has run. A 429 of the monthly spend cap is not transient: UniLM returns it at once.
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |

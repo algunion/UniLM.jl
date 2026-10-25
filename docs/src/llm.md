@@ -2227,7 +2227,7 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     # a streamed call: a miss on its first request is thrown by the verb; its lost recording, or a
     #   miss on a later request of a turn the provider continues, is thrown inside its task, so fetch
     #   (and tool_loop! on a streamed chat) throws a TaskFailedException whose task.exception it is;
-    #   so is a miss or lost recording of a call its callback or on_tool_call made (as that call threw it)
+    #   so is a miss or lost recording of a call its callback or on_tool_call made (as the callback threw it)
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
     #   System One backend other than TypeSafe ("/<namespace>/v1/systemone");

@@ -28,7 +28,7 @@ Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 
 Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
-`gpt-5-search-api` on 2026-10-25), TypeSafe rows on 2026-09-22, DeepSeek rows on 2026-09-24 (prices
+`gpt-5-search-api` on 2026-10-25), TypeSafe rows on 2026-10-25, DeepSeek rows on 2026-09-24 (prices
 drift — re-verify before relying on them).
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
@@ -134,9 +134,10 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
     "gemini-robotics-er-2-preview" => _price(1.0, 0.10, 5.0),  # doubles on 2027-01-01
     "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only
-    # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-09-22):
-    # $42 per Btok of input, and output tokens are currently free. The aliases
+    # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-10-25): Jev 1.14 and
+    # Jev 1.13 at $42 per Btok of input, and output tokens are currently free. The aliases
     # resolve to the versioned id, which is what the response reports back.
+    "jev-1.14.0"    => _price(0.042, 0.042, 0.0),
     "jev-1.13.0"    => _price(0.042, 0.042, 0.0),
     "jev-latest"    => _price(0.042, 0.042, 0.0),
     "jev-preview"   => _price(0.042, 0.042, 0.0),
@@ -208,8 +209,9 @@ Model lookup: the exact id first, then the id without a dated snapshot suffix
 (`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-opus-4-5-20251101` →
 `claude-opus-4-5`). A versioned Jev id with no row of its
 own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-latest`
-row. That is an assumption: TypeSafe lists one price, for Jev 1.13; a later version is
-assumed to keep it until the pricing page says otherwise. The same lookup prices
+row. That is an assumption: TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price,
+USD 42 per billion input tokens (2026-10-25); a later version is assumed to keep it until the page
+says otherwise. The same lookup prices
 [`SystemOneSuccess`](@ref) results.
 
 The row's rates bill fresh input tokens and cache writes at `input`, cache reads at

@@ -1285,9 +1285,9 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
   embeddings, Responses and FIM results (a cloud model reached through Ollama, a
   tag of `cloud` or ending in `-cloud`, is priced by the requested name).
 
-The OpenAI, Anthropic and Gemini rows were verified October 22, 2026, the TypeSafe rows
-September 22, 2026 and the DeepSeek rows September 24, 2026 (its peak rates; off-peak hours
-bill half). The rows are standard short-context text rates; surcharges apply only where
+The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
+`gpt-5-search-api` October 25, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
+September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
 UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) and
 hosted-tool fees are not included. A billed tier the provider's pricing page lists no price for
 (OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens; Gemini's

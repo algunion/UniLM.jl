@@ -165,6 +165,11 @@
   `cumulative_cost` read its calls as `0.0`, with the missing-price warning. Its row holds the
   rates OpenAI's pricing page lists on 2026-10-25: \$1.25 input, \$0.125 cached input and \$10.00
   output per 1M tokens. A fee for web search apart from the tokens is not included.
+- **`jev-1.14.0` has its price row.** TypeSafe's Models page lists Jev 1.14 (`jev-1.14.0`)
+  beside Jev 1.13 at \$42 per Btok of input, output free, and `DEFAULT_PRICING` had no row for
+  it: a result naming it was priced through the `jev-latest` fallback, at that same rate, and
+  the `estimated_cost` docstrings said TypeSafe lists a price for Jev 1.13 alone. The row is in
+  the table, and the docstrings name both versions.
 
 ## 0.26.0
 

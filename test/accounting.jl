@@ -131,15 +131,15 @@ end
     end
 
     @testset "versioned Jev id without a row is priced at jev-latest" begin
-        # Assumption: TypeSafe lists one price, for Jev 1.13 ($42 per Btok of input; output
-        # free); a later version is assumed to keep it until the pricing page says otherwise.
+        # Assumption: TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price ($42 per Btok of
+        # input; output free); a later version is assumed to keep it until the page says otherwise.
         # Responses report the versioned id that answered, e.g. a release newer than the table.
         ju = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500, total_tokens=1_000_500)
         s1(model) = SystemOneSuccess(UniLM.SystemOneResponse(model, Dict{String,UniLM.SystemOneAnswer}(),
             ju, nothing, Dict{String,Any}()))
-        @test !haskey(DEFAULT_PRICING, "jev-1.14.0")
-        @test estimated_cost(s1("jev-1.14.0")) ≈ 0.042
-        @test estimated_cost(s1("jev-1.14.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
+        @test !haskey(DEFAULT_PRICING, "jev-1.15.0")
+        @test estimated_cost(s1("jev-1.15.0")) ≈ 0.042
+        @test estimated_cost(s1("jev-1.15.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
         @test estimated_cost(s1("jev-latest"); model="jev-2.0.10") ≈ 0.042
         @test estimated_cost(LLMSuccess(message=m, self=Chat(model="jev-2.0.10"), usage=ju)) ≈ 0.042
         unpriced = (:warn, "no price row for this model; its estimated cost is 0.0")
@@ -151,6 +151,21 @@ end
         # A dated snapshot suffix is stripped before the lookup: the base version's row applies.
         @test estimated_cost(s1("jev-1.13.0-2026-09-22")) == estimated_cost(s1("jev-1.13.0")) > 0
     end
+end
+
+@testset "TypeSafe price rows: Jev 1.14 and Jev 1.13 at the Models page's price" begin
+    # https://docs.typesafe.ai/models (2026-10-25): jev-1.14.0 and jev-1.13.0 at $42 per Btok of input, output
+    # free; jev-latest and jev-preview point at jev-1.14.0.
+    for model in ("jev-1.14.0", "jev-1.13.0", "jev-latest", "jev-preview")
+        @test DEFAULT_PRICING[model] == UniLM._price(0.042, 0.042, 0.0)
+    end
+    # Both estimated_cost docstrings (one per method) state the price for the versions TypeSafe lists, not
+    # for Jev 1.13 alone; read raw from the module's docs, which hold every method's docstring.
+    docs = values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :estimated_cost)].docs)
+    doc = replace(join((join(string.(d.text)) for d in docs), " "), r"\s+" => " ")
+    @test !occursin("TypeSafe lists one price, for Jev 1.13", doc) && !occursin("lists for Jev 1.13)", doc)
+    @test occursin("TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price", doc)
+    @test occursin("the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13", doc)
 end
 
 @testset "cumulative_cost" begin

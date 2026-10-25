@@ -1688,7 +1688,8 @@ overrides it. TypeSafe bills input tokens only — output tokens are currently
 free, which the shipped `jev-*` price rows encode as an output rate of `0.0`. An
 id with a dated snapshot suffix uses its base id's row; a versioned `jev-X.Y.Z`
 id without its own row is priced at the `jev-latest` row (assuming a later Jev
-keeps the price TypeSafe lists for Jev 1.13); any other unpriced name returns
+keeps the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13); any other
+unpriced name returns
 `0.0`. An answer from a local model through an [`OllamaEndpoint`](@ref) costs
 `0.0`, without a missing-price warning, unless `model` is passed; a cloud model
 reached through it (a tag of `cloud` or ending in `-cloud`) is priced by the name

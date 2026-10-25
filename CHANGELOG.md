@@ -157,7 +157,9 @@
   System One, a model's load or unload — is not sent, and the call error's `cause` is an
   `ArgumentError` naming the variable; `list_models` (which Ollama's cloud page runs without a
   key), `model_info`, `running_models`, `pull_model` and `delete_model` go without it. No
-  other server gets the key.
+  other server gets the key. Such a call is priced by the name it requests, as a cloud model
+  reached through the local server is — the cloud names its models without a cloud tag — and
+  never as a free local call: a name with no price row logs the missing-price warning.
 - **A `GenericOpenAIEndpoint` `respond` sends its `seed`.** A `Respond` with a `seed` was
   refused on every endpoint of the OpenAI Responses wire, a generic one included, though
   vLLM's Responses API forwards a seed to its engine and a generic endpoint sends every other

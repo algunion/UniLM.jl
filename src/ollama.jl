@@ -56,7 +56,9 @@ function _ollama_cloud_model(name::AbstractString)::Bool
     tag = lowercase(model[nextind(model, i):end])
     tag == "cloud" || endswith(tag, "-cloud")
 end
-_is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)
+# A request made to Ollama's cloud itself bills its account as well, whatever the model's name: the cloud
+# names its models without a cloud tag, "such as `gemma4:31b`" (https://docs.ollama.com/cloud).
+_is_local(s::OllamaEndpoint, model::AbstractString) = !_ollama_cloud(s) && !_ollama_cloud_model(model)
 
 # A cloud model may answer without its tag: Ollama's cloud proxy sends the cloud the name stripped of its
 # cloud tag (`gpt-oss:120b` for `gpt-oss:120b-cloud`) and passes the reply through. A result keeps the

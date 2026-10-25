@@ -102,8 +102,9 @@ r.response.model, token_usage(r).prompt_tokens, r.response.request_id, estimated
 
 `r.response.model` is the model the request named, Ollama sends no request id, and a local model's answer costs
 `0.0`, with no warning. A cloud model reached through the server — a tag of `cloud`, or one ending in `-cloud` — is
-priced by the requested name instead; UniLM's price table holds no row for one, so [`estimated_cost`](@ref) gives
-`0.0` with a warning that the row is missing ([Cost Tracking](@ref cost_guide)). [`nl_classify`](@ref) makes the
+priced by the requested name instead, as is every model a request to Ollama's cloud itself names (an endpoint whose
+server is `https://ollama.com`); UniLM's price table holds no row for one, so [`estimated_cost`](@ref) gives `0.0` with
+a warning that the row is missing ([Cost Tracking](@ref cost_guide)). [`nl_classify`](@ref) makes the
 same kind of decision in one call and returns the key whose description fits
 ([Dispatch on Meaning](@ref nl_dispatch_guide)):
 

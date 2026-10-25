@@ -1160,9 +1160,11 @@ A cloud model reached through the local server — a model whose tag is `cloud` 
 name requested, never as a free local call: a System One, `respond` or FIM result whose
 reply drops the tag (`gpt-oss:120b`) keeps the requested name, and the server's stays in
 its `raw`, while a chat or embeddings result is priced by the model its request names; a
-name missing from the price table logs the missing-price warning. A model is recognised as
-cloud by that tag alone, so a cloud model copied under a name without it (`ollama cp`)
-is priced as local, at `0.0`.
+name missing from the price table logs the missing-price warning. Every model a request to
+Ollama's cloud itself (`https://ollama.com`) names is priced the same way: the cloud bills it,
+and names its models without a tag, "such as `gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)).
+Through a local server a model is recognised as cloud by that tag alone, so a cloud model copied
+under a name without it (`ollama cp`) is priced as local, at `0.0`.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)

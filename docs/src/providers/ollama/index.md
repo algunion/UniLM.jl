@@ -123,12 +123,14 @@ it had run elsewhere. A cloud model reached through the same server — one whos
 ends in `-cloud`, such as `gemma4:cloud` or `gpt-oss:120b-cloud` — runs in
 [Ollama's cloud](https://docs.ollama.com/cloud), and UniLM prices each of its results by the requested
 name, like any other model, never as a free local call; a name missing from the price table gets the
-missing-price warning. A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
+missing-price warning. So does every model a request to Ollama's cloud itself names — an endpoint whose
+server is `https://ollama.com` ([Setup](@ref ollama_setup)) — whose names carry no cloud tag, "such as
+`gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)). A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
 0.40.6's source, which sends the cloud the name without it; untested, as no cloud call was made): a
 System One, `respond` or FIM result keeps the requested name, and the server's stays in its `raw`,
-while a chat or embeddings result is priced by the model its request names. UniLM recognises a cloud
-model by its tag alone, so one copied under a name without it (`ollama cp`) is priced as local, at
-`0.0`, with no warning.
+while a chat or embeddings result is priced by the model its request names. Through your own server,
+UniLM recognises a cloud model by its tag alone, so one copied under a name without it (`ollama cp`) is
+priced as local, at `0.0`, with no warning.
 
 The first request to a model also loads it into memory: about 1.7 s for Gemma 4 E4B on an Apple M4
 Max with 64 GB (Ollama 0.40.6), after which a short answer took about 0.1 s. [`load_model`](@ref) loads

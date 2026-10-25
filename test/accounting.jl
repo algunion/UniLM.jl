@@ -587,6 +587,30 @@ end
     @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
 end
 
+@testset "a call made directly to Ollama's cloud is priced by name, as a cloud model is" begin
+    # https://docs.ollama.com/cloud: a direct API request to ollama.com names the model as the cloud lists it,
+    # "such as `gemma4:31b`", with no cloud tag. Ollama bills such a call, so it is priced by name — no row, then
+    # the missing-price warning — never as a free local call.
+    direct = OllamaEndpoint(base_url="https://ollama.com")
+    succ(model) = (c = Chat(service=direct, model=model); push!(c, Message(Val(:system), "s"));
+                   push!(c, Message(Val(:user), "hi"));
+                   LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c,
+                              usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)))
+    @test (@test_logs (:warn, r"no price row") estimated_cost(succ("zz-direct:31b"))) == 0.0
+    row = UniLM._price(1.0, 0.1, 2.0)
+    @test (@test_logs estimated_cost(succ("zz-direct-priced:31b"); pricing=Dict("zz-direct-priced:31b" => row))) ≈
+          10 * 1e-6 + 5 * 2e-6
+    s1 = SystemOneSuccess(SystemOneResponse("zz-direct-s1:31b", Dict{String,SystemOneAnswer}(),
+                          TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), direct))
+    @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+    # The same name through a server of the caller's own is a local model, and free.
+    c = Chat(service=OllamaEndpoint(base_url="http://box:11434"), model="zz-direct:31b")
+    push!(c, Message(Val(:system), "s")); push!(c, Message(Val(:user), "hi"))
+    loc = LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c,
+                     usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15))
+    @test (@test_logs estimated_cost(loc)) == 0.0
+end
+
 @testset "Responses usage reads cache-write details" begin
     # https://developers.openai.com/api/docs/guides/prompt-caching: input_tokens counts every
     # input token; cache_write_tokens_details splits the writes by lifetime (ttl_30m_tokens +

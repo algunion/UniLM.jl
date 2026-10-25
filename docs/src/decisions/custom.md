@@ -39,8 +39,9 @@ wire = UniLM.encode_system_one(UniLM.system_one_protocol(JevGateway), JevGateway
 ```
 
 `ask(state, questions...; service = JevGateway)` sends that request there, with the key read from
-`JEV_GATEWAY_KEY` only when it goes out. Its requests are TypeSafe's byte for byte, with TypeSafe's limits, default
-model, timeouts and retries, and its recordings are keyed as TypeSafe's — on the request's path and body, never its
+`JEV_GATEWAY_KEY` only when it goes out. Its request bodies are TypeSafe's byte for byte (the headers are its own
+`auth_header`'s), with TypeSafe's limits, default model, timeouts and retries, and its recordings are keyed as
+TypeSafe's — on the request's path and body, never its
 host — so an answer recorded through one replays for the other
 ([Testing and recordings](@ref jev_testing)).
 
@@ -117,8 +118,9 @@ r = UniLM.decode_system_one(LabelProtocol(), LabelAPI, request, reply)
 (r["team"].choice, round(r["team"].confidence; digits = 2))
 ```
 
-With these, `ask(state, "team" => choice(…); service = LabelAPI)`, a `with_system_one(LabelAPI)` scope and the
-natural-language verbs reach the service, and [`with_recorded_answers`](@ref) records and replays its exchanges, filed
+With these, `ask(state, "team" => choice(…); service = LabelAPI)`, a `with_system_one(LabelAPI)` scope,
+[`nl_classify`](@ref) and [`@branch`](@ref) reach the service ([`nl_dispatch`](@ref) sends a JSON object, which this
+encoder refuses), and [`with_recorded_answers`](@ref) records and replays its exchanges, filed
 under `/LabelProtocol/v1/label`: the protocol's name in front of the wire's path, so they never replay as another
 provider's. The encoder refuses what the wire cannot carry rather than adapt it, as every built-in provider does:
 a request changed to fit would ask a question you did not write.

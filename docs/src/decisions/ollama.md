@@ -49,9 +49,9 @@ Ollama 0.40.6, and its new examples on 0.40.11.
 
 A call goes to Ollama when it names `service = OllamaEndpoint()`, or when it names no `service` and a
 [`with_system_one`](@ref)`(OllamaEndpoint(); model = …)` scope encloses it. Ollama has no default model: a call names
-an installed decision model with `model = …`, or takes the scope's, and one that names none is refused before
-anything is sent ([Limits and refusals](@ref ollama_decisions_limits)). `OllamaEndpoint()` reads `OLLAMA_HOST` when
-it is built, else `http://127.0.0.1:11434` ([Setup](@ref ollama_setup)); no key is sent.
+an installed decision model with `model = …`, or, when it names no `service`, takes the scope's; a call left with no
+model is refused before anything is sent ([Limits and refusals](@ref ollama_decisions_limits)). `OllamaEndpoint()`
+reads `OLLAMA_HOST` when it is built, else `http://127.0.0.1:11434` ([Setup](@ref ollama_setup)); no key is sent.
 
 ## [Options](@id ollama_decisions_options)
 
@@ -187,9 +187,13 @@ The route answers three kinds of question, in any mix in one request
 ([System One](https://docs.ollama.com/api/systemone)): a [`choice`](@ref) picks one option, a [`score`](@ref) places
 the state on levels lowest first, and a [`noul`](@ref) gives the probability that a statement holds, its `yes` and
 `no` sent as the descriptions of `"true"` and `"false"`. A [`RawQuestion`](@ref) is sent as written, for the server
-to judge; a [`box`](@ref) is refused ([Limits and refusals](@ref ollama_decisions_limits)). Each question is
-answered on its own: "Answers are not passed to later questions"
-([System One](https://docs.ollama.com/api/systemone)).
+to judge; a [`box`](@ref) is refused ([Limits and refusals](@ref ollama_decisions_limits)). No answer is passed to
+a later question: "Answers are not passed to later questions" ([System One](https://docs.ollama.com/api/systemone)).
+By Ollama's source at v0.40.11, though, every prompt for Nimble and Clef holds all the questions of the request,
+Clef's under "Decide every field jointly"
+([decision/prompts.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/prompts.go),
+[decision/clef.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/clef.go)), while a Tev1 prompt holds its
+own question alone.
 
 ```@example ollama_decisions
 q = ask("The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
@@ -264,7 +268,7 @@ One request asked both questions about the picture: `clef-flash:9b` saw red, at 
   request's `state` — none: an empty string, one: that string, several: an array — and a blank text beside
   pictures is sent, as Ollama's source accepts an empty state that comes with pictures
   ([decision/systemone.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/systemone.go)).
-- **Refused before sending:** a picture after a text, which Ollama would show first; a picture inside a JSON object
+- **Refused before sending:** a picture after a text, which Clef would read first; a picture inside a JSON object
   or array (to [`nl_dispatch`](@ref), which sends its arguments inside an object, pass `state = [image, …texts]`);
   pictures beside values that are not texts; a picture in a question
   ([Limits and refusals](@ref ollama_decisions_limits)).
@@ -304,7 +308,7 @@ not write.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| a call that names no model, outside a scope that names one | `has no default System One model`: Ollama has no default | `model = "tev1:0.8b"`, or a `with_system_one(OllamaEndpoint(); model = …)` scope |
+| a call that names no model, unless it names no `service` inside a scope that names one | `has no default System One model`: Ollama has no default | `model = "tev1:0.8b"`, or a `with_system_one(OllamaEndpoint(); model = …)` scope |
 | more than 64 questions | `Ollama accepts at most 64 questions per request` | split them across requests |
 | a Choice of more than 255 options | `Ollama accepts at most 255 options per question` | split it, or narrow the options |
 | an option described by anything but a string or `nothing` | `Ollama reads a Choice option's description as a string or` | describe it in words, or pass `nothing` |
@@ -342,8 +346,9 @@ end
 ```
 
 A model may take less than the route, and says so with its own HTTP 400, which comes back as a
-[`SystemOneFailure`](@ref) carrying Ollama's message; the messages below begin with the question's name,
-`question "pick": …`. A Choice of one option is sent too:
+[`SystemOneFailure`](@ref) carrying Ollama's message. Measured on Ollama 0.40.6 (21 October 2026), the nine models
+answered as below; the messages begin with the question's name, `question "pick": …`, and a Choice of one option
+is sent too:
 
 | Model | Runner | Options per Choice | One option came back as | 27 options came back as |
 | :--- | :--- | :--- | :--- | :--- |
@@ -396,7 +401,7 @@ answered = only(seen)["classify"]
 ```
 
 tev1 put 0.534 of the probability on `billing`, out of four options: the formula above makes that a confidence of
-`(4 × 0.534 − 1)/3 = 0.378`, below the 0.6 asked for, so the message went to a person; the entropy measure Ollama
+`(4 × 0.5337 − 1)/3 ≈ 0.378`, below the 0.6 asked for, so the message went to a person; the entropy measure Ollama
 reports reads the same answer as 0.375. The two measures part most on a peaked answer: tev1's answer about shipping
 to Norway, 0.811 on `other`, is 0.748 by the formula and 0.638 by the entropy
 ([One formula, calibrated per model](@ref backends_confidence__next)).
@@ -550,12 +555,12 @@ r.error
 | a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: a question without instructions, fewer or more options than it takes, a picture it cannot see | give every question instructions; see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
 | status 400, `no compatible manifest found for runners: <runner>` | the endpoint pins a runner the model has no build for | leave `runner` unset, or pin the runner the listing names ([Options](@ref ollama_decisions_options)) |
 | status 400 about the loaded context | the input does not fit the window the model is loaded with, and Ollama never truncates it | shorten the state, or ask fewer questions at once |
-| status 413, `text and schema must not exceed 64 KiB` | the text and the questions of a local request over 64 KiB, or the whole request over 32 MiB | shorten the state, or split the questions |
+| status 413 (`text and schema must not exceed 64 KiB` for the first) | the text and the questions of a local request over 64 KiB, or the whole request over 32 MiB | shorten the state, or split the questions |
 | status 500 | the model failed to load, render or score; a vision runner returned repeated 500s after many sequential requests ([#19062](https://github.com/ollama/ollama/issues/19062)) | retry; restart Ollama if it repeats |
 | answers that stop making sense, with status 200 | a runner returned wrong answers until the model was unloaded ([#19090](https://github.com/ollama/ollama/issues/19090)) | `keep_alive = 0` on a request unloads the model |
 | status 401 or 402 | a cloud model without signing in, or not on your plan | `ollama signin`, or a plan with the model |
 | a `SystemOneCallError` whose `cause` is a `UniLMTimeout` or a `UniLMCancelled` | a timeout, or a cancelled token | a `RequestConfig` of your own |
-| a `SystemOneCallError` after a 200 | an answer that does not fit the request | look at the reply's `raw` and the model's build |
+| a `SystemOneCallError` after a 200 | an answer that does not fit the request | read its `error`, which names the answer that did not fit, and check the model's build |
 | a `ReplayMissError`, thrown | in a replay scope, a request with no recording | record it with the server running ([Testing and recordings](@ref ollama_decisions_testing)) |
 | a `SystemOneError`, thrown | an answer read from a failed call | test `issuccess(r)` first |
 

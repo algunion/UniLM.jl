@@ -82,8 +82,8 @@ A call takes its provider from the first of these that is set:
 3. TypeSafe.
 
 Its model is the call's own `model = …`; else, when the call names no `service`, the scope's model; else the
-provider's default: on TypeSafe `jev-latest`, or `TYPESAFE_DEFAULT_MODEL` when it is set, read when the request is
-sent; on OpenAI `gpt-6-luna`; on Ollama none, so a call that names no model there is an `ArgumentError` before
+provider's default, the model at the top of its entry — on TypeSafe `TYPESAFE_DEFAULT_MODEL` instead when it is set,
+read when the request is sent; on Ollama none, so a call that names no model there is an `ArgumentError` before
 anything is sent. Its provider options follow the same rule: the call's own — keywords of [`ask`](@ref) and
 [`ask_each`](@ref), `options = (…)` on the natural-language verbs — else, when the call names no `service`, the
 scope's, set as keywords of `with_system_one`:
@@ -117,7 +117,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
 | Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1/systemone` |
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
-| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `gpt-6-luna`, the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
+| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start__next) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 200 questions (OpenAI takes 400) | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
 | Guidance | strings, objects, arrays and pictures, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`; strings elsewhere |
@@ -134,11 +134,13 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Status, 25 October 2026 | `jev-latest` and `jev-preview` are Jev 1.14; images "dreamer-ready" | generally available | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026) |
 
 The Where a picture may stand row is what UniLM sends. TypeSafe takes a picture "anywhere text can go in a System
-One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API also takes pictures in a question's instructions since its
-general availability ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#include-images-in-question-instructions)),
+One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API also takes pictures in a question's
+instructions, one of the additions its guide lists since the public beta
+([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#include-images-in-question-instructions)),
 which UniLM refuses. Ollama takes a request's pictures as one list, `images`, shared by every question
-([System One](https://docs.ollama.com/api/systemone)) and shown to the model before the text, so UniLM refuses a
-picture after a text. Each entry has the rest: [Jev's Images](@ref jev_images__next),
+([System One](https://docs.ollama.com/api/systemone)), apart from the state's text, and by Ollama's source Clef reads
+them before that text ([decision/clef.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/clef.go)); UniLM
+refuses a picture after a text on every model. Each entry has the rest: [Jev's Images](@ref jev_images__next),
 [OpenAI's Questions](@ref openai_decisions_questions) and [Ollama's Images](@ref ollama_decisions_images).
 
 - **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at `https://api.openai.com`; Ollama at the
@@ -193,12 +195,15 @@ only when it is sent there. Each entry's Limits and refusals section lists its r
 ## [One formula, calibrated per model](@id backends_confidence__next)
 
 **The job:** act on an answer only when the provider is sure enough, on whichever provider answers. **Without a
-shared definition:** each provider's "confidence" is its own number. **With one:** `confidence` is the same formula
-on every provider — and how much a value is worth still depends on the model, so a threshold is tuned for each.
+shared definition:** each provider's "confidence" is its own number. **With one:** TypeSafe sends `confidence` by one
+formula, UniLM computes it by the same formula on Ollama, and OpenAI's own value matched it in the Choice answers
+recorded here; how much a value is worth still depends on the model, so a threshold is tuned for each.
 
 `confidence` is TypeSafe's published measure ([Confidence](https://docs.typesafe.ai/confidence)):
 `(n·p_max − 1)/(n − 1)` for a Choice of `n` options, and `1 − Σᵢ pᵢ·|i − m| / MAD_unif` for a Score whose most
-likely level is `m`, floored at 0. TypeSafe and OpenAI send it with each answer. Ollama documents its own measure,
+likely level is `m`, floored at 0. TypeSafe sends it with each answer, and OpenAI's own `confidence` equals the
+Choice formula, to two decimals, in every Choice answer recorded for this manual
+([Confidence and tuning](@ref openai_decisions_confidence)). Ollama documents its own measure,
 `1 − H(p)/ln N`, a measure of the whole distribution's entropy ([System One](https://docs.ollama.com/api/systemone)),
 so the Ollama wrapper computes TypeSafe's from the probabilities for every model and keeps the server's value in
 the answer's `raw` ([Confidence and tuning](@ref ollama_decisions_confidence)):
@@ -211,8 +216,8 @@ println("team ", team, ", p_max ", round(maximum(values(a.probabilities)); digit
 ```
 
 tev1 put 0.811 of the probability on `other`, out of four options: TypeSafe's formula makes that a confidence of
-`(4 × 0.811 − 1)/3 = 0.748`, while the entropy measure Ollama reports reads the same answer as 0.638. On every
-provider, `confidence` is the first kind of number.
+`(4 × 0.811 − 1)/3 = 0.748`, while the entropy measure Ollama reports reads the same answer as 0.638. On TypeSafe
+and Ollama, `confidence` is the first kind of number, and so is OpenAI's in the Choice answers recorded here.
 
 One formula is not one calibration. On our labelled tickets, Jev's top probabilities matched how often it was
 right, while OpenAI's Decisions API was right more often than its top probability said: it is under-confident. The

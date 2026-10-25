@@ -50,8 +50,8 @@ returns a [`SystemOneCallError`](@ref) ([When something fails](@ref openai_decis
 OpenAI's guide, fetched on 25 October 2026, opens with "The Decisions API is now generally available" and lists
 what the API gained "since the public beta": prompt caching, pictures in question instructions, JSON input, up to
 400 questions per request, image URLs, conversation history, usage reporting, GPT-Live's integration and Private
-Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM sends what the beta
-took: it refuses more than 200 questions, and a picture anywhere but the state
+Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM still refuses what the
+beta refused: more than 200 questions, and a picture anywhere but the state
 ([Limits and refusals](@ref openai_decisions_limits)).
 
 ## [Options](@id openai_decisions_options)
@@ -171,8 +171,9 @@ What reaches the model:
   strings; and a predicate has no place for a Noul's `yes` and `no`, so fold them into its instructions. Each is a
   refusal ([Limits and refusals](@ref openai_decisions_limits)).
 
-A Choice takes 2 to 255 options and a Score 2 to 10 levels
-([Score against a rubric](https://developers.openai.com/api/docs/guides/decisions#score-against-a-rubric)); UniLM
+A Choice takes 2 to 255 options
+([Create a decision](https://developers.openai.com/api/reference/resources/decisions/methods/create)) and a Score 2 to
+10 levels ([Score against a rubric](https://developers.openai.com/api/docs/guides/decisions#score-against-a-rubric)); UniLM
 sends at most 200 questions per request, where OpenAI's guide now takes up to 400
 ([Ask multiple questions](https://developers.openai.com/api/docs/guides/decisions#ask-multiple-questions)); a
 request outside these is refused before it is sent ([Limits and refusals](@ref openai_decisions_limits)). A picture
@@ -208,8 +209,9 @@ end
 
 Had OpenAI declined either question, the `fallback` and the `_` line would have answered `:person`.
 [`nl_dispatch`](@ref) sends the arguments it dispatches on as a JSON object, which OpenAI receives as its JSON text;
-a picture among them is refused, since a picture goes in the state only: pass `state = [image, "…"]` to send one.
-A verb whose call offers a single option is refused too, since a Choice takes two or more: add a catch-all such as
+a picture among them is refused, since a picture goes in the state only: pass `state = [image, "…"]` to send one
+([Limits and refusals](@ref openai_decisions_limits)). A verb whose call offers a single option is refused too, since a
+Choice takes two or more ([Limits and refusals](@ref openai_decisions_limits)): add a catch-all such as
 `"anything else"`, which OpenAI's guide advises "when your categories don't cover every possible input"
 ([Select from fixed options](https://developers.openai.com/api/docs/guides/decisions#select-from-fixed-options)).
 
@@ -226,6 +228,7 @@ sending:
 | Choice options | 2 to 255 per question | yes |
 | Score levels | 2 to 10 per question | yes |
 | Text | 10,485,760 characters for the input, and for each text part of a message | yes |
+| Guidance | 1,048,576 characters for a question's instructions and its name, an option's value and description, and a level's label | no |
 | Images | in the input, or in a question's instructions; no number on OpenAI's pages | in the input only, at most 128: UniLM refuses more |
 | Rate limits | per organization and project, varying by model | no ([When something fails](@ref openai_decisions_failures)) |
 
@@ -256,7 +259,7 @@ answer would carry no sign of the change.
 Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question name,
 criteria that are not valid, a state or guidance holding `NaN` or `Inf`, an `AudioAttachment` or a
 `DocumentAttachment` anywhere in the request, and an `ImageAttachment` with a `detail` level, which OpenAI's
-reference now accepts on an image; [Reading answers](@ref Reading-answers) covers a malformed request on every
+reference accepts on an image; [Reading answers](@ref Reading-answers) covers a malformed request on every
 provider.
 
 ```@example openai_decisions

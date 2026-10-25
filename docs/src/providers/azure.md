@@ -20,9 +20,13 @@ Main.ProviderFacts.at_a_glance(:azure)
 
 ## [Structured output](@id azure_structured_output)
 
-## [Cost and usage](@id azure_cost)
+## [Reasoning](@id azure_reasoning)
 
 ## [Limits and refusals](@id azure_limits)
+
+## [Prompt caching](@id azure_caching)
+
+## [Cost and usage](@id azure_cost)
 
 ## [When something fails](@id azure_failures)
 

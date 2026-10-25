@@ -74,7 +74,8 @@ check `file_counts` for a file that failed.
   not exceed half of `max_chunk_size_tokens`"
   ([Create vector store](https://developers.openai.com/api/reference/resources/vector_stores/methods/create)).
 - **Files.** "The maximum file size is 512 MB. Each file should contain no more than 5,000,000
-  tokens per file"; the [file search](https://developers.openai.com/api/docs/guides/tools-file-search#supported-files)
+  tokens per file" ([retrieval](https://developers.openai.com/api/docs/guides/retrieval#limits)); the
+  [file search](https://developers.openai.com/api/docs/guides/tools-file-search#supported-files)
   guide lists the formats a store takes, from `.txt`, `.md` and `.pdf` to source code. Uploading
   and the purposes a file takes are on [Files and uploads](@ref openai_files).
 - **Expiry.** `expires_after` with the anchor `"last_active_at"` and a number of `days`: "Once a
@@ -95,7 +96,7 @@ the file search tool call"
 `include`). The call names the store the run above made, by its id:
 
 ```@example openai
-vs_id = "vs_6ade2f0d72148191a5b970d85c9826e9"   # the store made above
+vs_id = "vs_6ade2f0d72148191a5b970d85c9826e9"   # the run's store, deleted below; yours: vector_store_id(vs.response)
 result = respond("How long do I have to return a jacket, and how is the refund paid?";
                  service=OPENAIServiceEndpoint,
                  instructions="Answer from the files you search, in one or two sentences.",
@@ -116,8 +117,10 @@ The answer comes from the file: the response's output holds a `file_search_call`
 queries the model searched for and, because of `include`, their `results`, then the message, whose
 `output_text` carries `file_citation` annotations naming the files it drew on.
 [`file_search_results`](@ref) returns the `file_search_call` items as OpenAI sent them, so a chunk's
-fields are read from the `Dict`; without `include` an item carries no results, and the answer is
-the same. The other tools OpenAI runs are on [Hosted tools](@ref openai_hosted_tools).
+fields are read from the `Dict`. Without `include`, "the file search call will not return search
+results by default", while "you can see annotations (references to files) in the output text"
+([file search](https://developers.openai.com/api/docs/guides/tools-file-search#include-search-results-in-the-response)).
+The other tools OpenAI runs are on [Hosted tools](@ref openai_hosted_tools).
 
 The tool's options are sent under OpenAI's names:
 

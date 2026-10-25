@@ -19,7 +19,8 @@ OpenAI's options are sent as given, for OpenAI to judge:
   count must be between 655,360 and 8,294,400 (4K)"
   ([image generation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
 - **`quality`**: `"low"`, `"medium"`, `"high"` or `"auto"`, and `"xhigh"` and `"max"` on the 2.5
-  models, which "default to `auto`"; "Use `quality: "low"` for quick drafts".
+  models, which "default to `auto`"; "Use `quality: "low"` for quick drafts"
+  ([image generation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
 - **`background`, `output_format`, `output_compression`**: `"transparent"`, `"opaque"` or
   `"auto"`, a transparent one with `"png"` or `"webp"`; the format `"png"`, the default,
   `"jpeg"` or `"webp"`; the compression from 0 to 100 of a JPEG or WebP, which "defaults to 100".
@@ -66,6 +67,7 @@ edited isa ImageSuccess || error("the edit failed: $edited")
 save_image(image_data(edited)[1], "lighthouse_winter.jpg")
 eu = token_usage(edited)
 (; eu.prompt_tokens, eu.completion_tokens)
+# Edited on 25 October 2026 with UniLM's development branch after 0.26.0 on gpt-image-2.5-sunburst:
 # (prompt_tokens = 666, completion_tokens = 107)
 ```
 
@@ -178,8 +180,10 @@ text, which `raw` does not hold; subtitles, timestamps and speaker labels come f
 deprecated, which "will shut down on **February 26, 2027**" with `/v1/audio/translations`
 ([transcription](https://developers.openai.com/api/docs/guides/transcription#existing-integrations-with-deprecated-models)).
 The default model is `gpt-transcribe` on OpenAI, and on an endpoint of your own that declares
-`:audio` or `:transcription`; an endpoint that declares neither cannot transcribe, and `transcribe`
-throws `ArgumentError` before any request ([Limits and refusals](@ref openai_media_limits)).
+`:audio` or `:transcription`; an endpoint that declares its capabilities without either cannot
+transcribe: `transcribe` throws `ArgumentError` before any request
+([Limits and refusals](@ref openai_media_limits)), and one that declares none, a `MethodError`
+([Platform APIs](@ref openai_platform_shared)).
 
 [`translate`](@ref) streams the speech of a WAV file through a Realtime translation session,
 `wss://api.openai.com/v1/realtime/translations` on `gpt-realtime-translate`, into `language`
@@ -335,7 +339,7 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | a transcription keyword with `<`, `>` or a line break | `Transcription keywords cannot contain <, >, or line breaks`: OpenAI "rejects the entire request when it encounters one of these characters" ([file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)) | the keyword without them |
 | a transcription `response_format` other than `"json"`, `"text"`, `"srt"`, `"verbose_json"`, `"vtt"` and `"diarized_json"` | `response_format must be one of`: the formats of OpenAI's transcriptions | one of them |
 | a transcription `temperature` outside 0 to 1 | `temperature must be between 0 and 1` | a value in the range |
-| `transcribe` on an endpoint that declares neither `:audio` nor `:transcription`: of the endpoints UniLM ships, every one but `OPENAIServiceEndpoint` and `OllamaEndpoint`, among them `AZUREServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint`, `MistralEndpoint` and `GenericOpenAIEndpoint` | `Audio API is not supported by`: the endpoint has no transcription route | `OPENAIServiceEndpoint` |
+| `transcribe` on an endpoint that declares its capabilities without `:audio` or `:transcription`: of the endpoints UniLM ships, every one but `OPENAIServiceEndpoint` and `OllamaEndpoint`, among them `AZUREServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint`, `MistralEndpoint` and `GenericOpenAIEndpoint` | `Audio API is not supported by`: the endpoint has no transcription route | `OPENAIServiceEndpoint` |
 | `translate` with a blank `language` | `translate needs a target language` | a language code, such as `"fr"` |
 | `translate` with a file that is not 16-bit PCM WAV, or that holds no samples | `cannot translate`, `holds no audio samples`: a translation session takes 24 kHz PCM16, which UniLM makes from a 16-bit PCM WAV file only | a 16-bit PCM WAV file, as `ffmpeg -i in.m4a -c:a pcm_s16le out.wav` makes |
-| `realtime_connect` or `translate` on another endpoint | `is not supported by`, `supports only OPENAIServiceEndpoint`: the Realtime WebSocket is served by `api.openai.com`, and another endpoint's key must not be sent there | `OPENAIServiceEndpoint` |
+| `realtime_connect`, `translate` or `speak` on another endpoint that declares its capabilities (`speak` but on `GEMINIServiceEndpoint`, which speaks through Gemini TTS), and `mint_realtime_secret` on one that declares them without `:realtime` | `is not supported by`, `supports only OPENAIServiceEndpoint`, `has no speech route`: the Realtime WebSocket is served by `api.openai.com`, and another endpoint's key must not be sent there | `OPENAIServiceEndpoint` |

@@ -26,9 +26,9 @@ These calls are not recorded, so their output on this page is quoted from dated 
 - **Results.** A verb returns a typed result, and throws only for what it refuses before sending
   ([Limits and refusals](@ref openai_platform_limits)): a `*Success`; a `*Failure` for an error
   status, holding the `status`, the body as `response` and the `x-request-id` header as
-  `request_id`; or a `*CallError` when no usable reply came — a transport failure, a timeout, a
-  cancel, a reply that does not decode —, holding the text as `error` and the exception as
-  `cause`. `FileSuccess`, `FileFailure` and `FileCallError` are the Files family, and the others
+  `request_id` (a `RealtimeFailure` carries none); or a `*CallError` when no usable reply came — a
+  transport failure, a timeout, a cancel, a reply that does not decode —, holding the text as
+  `error` and the exception as `cause`. `FileSuccess`, `FileFailure` and `FileCallError` are the Files family, and the others
   are named alike ([Results](@ref results_guide)).
 - **One attempt.** Each call makes a single attempt, bounded by the call's `config`, a
   [`RequestConfig`](@ref); `max_attempts` does not change it. A create is never sent again: a POST
@@ -43,20 +43,25 @@ These calls are not recorded, so their output on this page is quoted from dated 
 - **Cost.** The results carry no usage: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for
   them. What OpenAI charges for storage, containers and batches is on its
   [pricing page](https://developers.openai.com/api/docs/pricing).
-- **Deletes.** A delete counts only when OpenAI's reply says `"deleted": true`: a reply without it,
-  or with `false`, is the call error, the object being in place as far as UniLM can tell.
+- **Deletes.** A delete that OpenAI answers with a deletion record — of a file, a vector store, a
+  container or a conversation — counts only when the record says `"deleted": true`: a reply without
+  it, or with `false`, is the call error, the object being in place as far as UniLM can tell.
+  `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
-  `:fine_tuning`, `:moderation`, `:transcription` (which `:audio` implies) or `:realtime` —, all of which
-  `OPENAIServiceEndpoint` declares, and refuses an endpoint that declares its capabilities without
-  it ([Limits and refusals](@ref openai_platform_limits)); an endpoint that declares none is not
+  `:fine_tuning`, `:moderation`, `:transcription` (which `:audio` implies) or `:realtime` —, all
+  of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
+  a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime__next)),
+  and refuses an endpoint that declares its capabilities without it
+  ([Limits and refusals](@ref openai_platform_limits)); an endpoint that declares none is not
   dispatched to, a `MethodError` ([Capabilities by provider](@ref capabilities_guide)).
 
 ## [Files and uploads](@id openai_files)
 
 [`upload_file`](@ref)`(path, purpose)` sends a file to `POST /v1/files` as
 `multipart/form-data`, with the purpose `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` or
-`"user_data"`; the Evals API's `"evals"` is refused, since OpenAI's Evals "become read-only" on
+`"user_data"`; the Evals API's `"evals"` is refused ([Limits and refusals](@ref openai_platform_limits)),
+since OpenAI's Evals "become read-only" on
 31 October 2026 and "are scheduled to shut down" on 30 November 2026
 ([deprecations](https://developers.openai.com/api/docs/deprecations#2026-06-03-evals-platform)).
 "Individual files can be up to 512 MB, and each project can store up to 2.5 TB of files in total";
@@ -78,7 +83,8 @@ f.filename, f.purpose, f.bytes
 # ("questions.jsonl", "batch", 127)
 
 listed = list_files(purpose="batch", limit=5)
-listed isa FileListSuccess && any(x -> x.id == f.id, listed.response.data)
+listed isa FileListSuccess || error("listing failed: $listed")
+any(x -> x.id == f.id, listed.response.data)
 # true
 
 content = file_content(f.id)
@@ -91,9 +97,9 @@ delete_file(f.id)
 ```
 
 !!! details "Evidence"
-    Runs of 25 October 2026, 16:32–16:47 UTC, with UniLM's development branch after 0.26.0: OpenAI
+    Runs of 25 October 2026, 16:29–16:47 UTC, with UniLM's development branch after 0.26.0: OpenAI
     answered `file_content` of a file uploaded with the purpose `"user_data"` with HTTP 502 or 503 on
-    each of three tries, while files with the purpose `"batch"` downloaded; four of nine `delete_file`
+    each of three tries, while files with the purpose `"batch"` downloaded; four of ten `delete_file`
     calls drew HTTP 503 and succeeded when sent again; one `upload_file` drew HTTP 502, and a listing
     afterwards showed that no file had been made.
 
@@ -107,10 +113,11 @@ The Uploads API takes a large file in parts: "an Upload can accept at most 8 GB 
 expires after an hour after you create it", "Each Part can be at most 64 MB", and "The number of
 bytes uploaded upon completion must match the number of bytes initially specified when creating
 the Upload object" ([Uploads](https://developers.openai.com/api/reference/resources/uploads)).
-[`create_upload`](@ref) takes the Files purposes, `"evals"` refused as above;
+[`create_upload`](@ref) takes the Files purposes, `"evals"` refused as above
+([Limits and refusals](@ref openai_platform_limits));
 [`add_upload_part`](@ref) sends one part, the bytes you give it; [`complete_upload`](@ref) joins the
-parts in the order of their ids, checking an `md5` of the whole file when given one, and returns
-the upload with its `file`; [`cancel_upload`](@ref) ends one. UniLM does not split a file: a file
+parts in the order the list gives their ids, checking an `md5` of the whole file when given one, and
+returns the upload with its `file`; [`cancel_upload`](@ref) ends one. UniLM does not split a file: a file
 larger than a part is sent a slice at a time, as the second block below does.
 
 ```julia
@@ -324,11 +331,13 @@ batch.response.status, get(batch.response.raw, "completion_window", nothing)
 # ("validating", "24h")
 
 seen = retrieve_batch(batch.response.id)   # one read
-seen isa BatchSuccess && seen.response.status
+seen isa BatchSuccess || error("the read failed: $seen")
+seen.response.status
 # "validating"
 
 stopped = cancel_batch(batch.response.id)
-stopped isa BatchSuccess && stopped.response.status
+stopped isa BatchSuccess || error("the cancel failed: $stopped")
+stopped.response.status
 # "cancelling"
 ```
 
@@ -391,7 +400,8 @@ job = create_fine_tuning_job(model=base_model, training_file=train.response.id,
                                          "supervised" => Dict("hyperparameters" => Dict("n_epochs" => 2))))
 job isa FineTuningSuccess || error("the job was not created: $job")
 r = retrieve_fine_tuning_job(job.response.id)
-r isa FineTuningSuccess && (r.response.status, r.response.fine_tuned_model)
+r isa FineTuningSuccess || error("the read failed: $r")
+r.response.status, r.response.fine_tuned_model
 ```
 
 `base_model` is a model your organization may still fine-tune. [`create_fine_tuning_job`](@ref) sends
@@ -510,9 +520,10 @@ doesn't respond within a few seconds, the webhook request will be retried. OpenA
 attempt delivery for up to 72 hours with exponential backoff", and it "may deliver duplicate copies
 of the same webhook event. You can use the `webhook-id` header as an idempotency key to
 deduplicate" ([webhooks](https://developers.openai.com/api/docs/guides/webhooks#handling-webhook-requests-on-a-server)).
-A secret that is not base64, and a negative or `NaN` tolerance, are refused
-([Limits and refusals](@ref openai_platform_limits)), so a `false` always means the delivery failed
-the check.
+A negative or `NaN` tolerance is refused, and so is a secret that `base64decode` cannot decode
+([Limits and refusals](@ref openai_platform_limits)). `base64decode` skips characters outside the
+base64 alphabet, so a secret with stray characters, such as `whsec_***`, decodes to another key, and
+every delivery then returns `false`.
 
 ## [Long-running jobs](@id openai_long_jobs)
 
@@ -562,9 +573,10 @@ simply return the final `Response` object"
 ([background mode](https://developers.openai.com/api/docs/guides/background)). A background response
 that failed comes back from `get_response` and `cancel_response` as a `ResponseSuccess` whose
 [`response_status`](@ref) is `"failed"`, while `respond` returns a failed response as a
-`ResponseFailure`. `background=true` with `store=false` is refused, a rule of UniLM's: "Background
-requests can use `store=false`" ([background mode](https://developers.openai.com/api/docs/guides/background),
-[Limits and refusals](@ref openai_limits)).
+`ResponseFailure`. `background=true` with `store=false` is refused, a rule of UniLM's, not OpenAI's,
+whose guide says "Background requests can use `store=false`"
+([background mode](https://developers.openai.com/api/docs/guides/background)); the row is in
+[Limits and refusals](@ref openai_limits).
 
 ## [Limits and refusals](@id openai_platform_limits)
 
@@ -583,4 +595,4 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |
 | `verify_webhook` with a negative or `NaN` `tolerance_seconds` | `tolerance_seconds must be nonnegative`: only `Inf` turns the replay check off | a number of seconds, or `Inf` |
-| `verify_webhook` with a secret that is not base64 | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide | the signing secret OpenAI gave the endpoint |
+| `verify_webhook` with a secret that `base64decode` cannot decode, such as `whsec_A` | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide; a secret with characters outside the base64 alphabet, such as `whsec_***`, decodes, to another key, and is not refused: every delivery then returns `false` | the signing secret OpenAI gave the endpoint |

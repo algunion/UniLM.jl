@@ -77,12 +77,14 @@
   `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
   (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
   or beside a container `Dict` that names `file_ids`, is an `ArgumentError`.
-- **`prefix_complete` on `DeepSeekEndpoint` keeps the reply's `reasoning_content`.** The
+- **`prefix_complete` on `DeepSeekEndpoint` keeps and sends back `reasoning_content`.** The
   prefix completion was read with the generic Chat Completions decoder, which drops it, so
   `reasoning_text` was `nothing` and a later request with `tools` on that chat sent the
-  turn without it, which DeepSeek answers with HTTP 400. The reply is now read with the
-  endpoint's own decoder: the turn keeps its reasoning, as a `chatrequest!` turn does, and
-  a later request with `tools` sends it back.
+  turn without it, which DeepSeek answers with HTTP 400; and its own request, built
+  without the endpoint's encoder, sent no earlier turn's reasoning even when it carried
+  `tools`. It now goes through the endpoint's encoder and decoder: the turn keeps its
+  reasoning, as a `chatrequest!` turn does, and every request with `tools`, a prefix
+  completion included, sends it back.
 - **Anthropic's monthly spend cap is returned at once.** At the spend cap Anthropic answers
   HTTP 429 with the `rate_limit_error` type of a rate limit and
   `error.details.error_code` `enforced_spend_limit_reached`, and says retrying "fails until

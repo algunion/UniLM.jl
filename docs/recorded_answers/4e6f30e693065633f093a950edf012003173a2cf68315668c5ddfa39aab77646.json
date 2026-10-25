@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "The app crashes every time I open my order history. iPhone 15, latest version.",
+      "model": "tev1:0.8b",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "the app or the website does not work as expected",
+          "probabilities": {
+            "payments, charges, invoices or refunds": 0.0008781050029333571,
+            "the app or the website does not work as expected": 0.8828371074737875,
+            "a parcel that is late, lost or arrived damaged": 8.150406020868789e-5,
+            "anything else": 0.11620328346307073
+          },
+          "confidence": 0.73520833611956
+        }
+      },
+      "usage": {
+        "input_tokens": 209,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 44
+    }
+  },
+  "recorded_at": "2026-10-25T19:34:40Z"
+}

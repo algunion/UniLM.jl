@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "Your update deleted my saved addresses and now I can't check out. Third time this month!",
+      "model": "tev1:0.8b",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "the app or the website does not work as expected",
+          "probabilities": {
+            "payments, charges, invoices or refunds": 0.0027267997197856393,
+            "the app or the website does not work as expected": 0.7176087654792265,
+            "a parcel that is late, lost or arrived damaged": 0.00020824625726150099,
+            "anything else": 0.27945618854372634
+          },
+          "confidence": 0.5583390604529486
+        }
+      },
+      "usage": {
+        "input_tokens": 209,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 44
+    }
+  },
+  "recorded_at": "2026-10-25T19:34:41Z"
+}

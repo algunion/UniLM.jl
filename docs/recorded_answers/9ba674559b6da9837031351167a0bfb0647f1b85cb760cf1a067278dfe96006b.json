@@ -1,0 +1,85 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/openai-decisions/v1/decisions",
+    "body": {
+      "model": "gpt-6-luna",
+      "input": "I was charged twice for order #4471. Please refund the duplicate payment.",
+      "questions": [
+        {
+          "type": "choice",
+          "name": "team",
+          "instructions": "Which team should handle this message?",
+          "choices": [
+            {
+              "value": "billing",
+              "description": "payments, charges, invoices or refunds"
+            },
+            {
+              "value": "technical",
+              "description": "the app or the website does not work as expected"
+            },
+            {
+              "value": "shipping",
+              "description": "a parcel that is late, lost or arrived damaged"
+            },
+            {
+              "value": "other",
+              "description": "anything else"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_d8e5ec09f6274781894d8420a6d5e4bb",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_d8e5ec09f6274781894d8420a6d5e4bb"
+    },
+    "body": {
+      "model": "gpt-6-luna",
+      "answers": [
+        {
+          "type": "choice",
+          "name": "team",
+          "choice": "billing",
+          "probabilities": [
+            {
+              "value": "billing",
+              "probability": 1.0
+            },
+            {
+              "value": "technical",
+              "probability": 0.0
+            },
+            {
+              "value": "shipping",
+              "probability": 0.0
+            },
+            {
+              "value": "other",
+              "probability": 0.0
+            }
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "usage": {
+        "input_tokens": 165,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 165
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T19:32:03Z"
+}

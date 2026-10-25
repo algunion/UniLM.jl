@@ -586,18 +586,20 @@ end
 
     @testset "positional constructor back-compat" begin
         # 35 positional arguments through v0.18; prompt_cache_options and moderation
-        # extend the full form to 37. Omitted trailing fields are nothing.
+        # extend the full form to 37, prompt_cache_retention to 38. Omitted trailing fields are nothing.
         ref = Chat(model="gpt-5.4-mini", temperature=0.5, safety_identifier="u1",
                    prompt_cache_options=PromptCacheOptions(mode="implicit"),
-                   moderation=ModerationConfig(model="omni-moderation-latest"))
+                   moderation=ModerationConfig(model="omni-moderation-latest"), prompt_cache_retention="24h")
         vals = Any[getfield(ref, f) for f in fieldnames(Chat)]
-        @test length(vals) == 37
+        @test length(vals) == 38
         old = Chat(vals[1:35]...)
         @test (old.model, old.temperature, old.safety_identifier) == ("gpt-5.4-mini", 0.5, "u1")
-        @test isnothing(old.prompt_cache_options) && isnothing(old.moderation)
+        @test isnothing(old.prompt_cache_options) && isnothing(old.moderation) && isnothing(old.prompt_cache_retention)
         @test Chat(vals[1:36]...).prompt_cache_options == ref.prompt_cache_options
+        @test isnothing(Chat(vals[1:37]...).prompt_cache_retention)
         full = Chat(vals...)
-        @test full.prompt_cache_options == ref.prompt_cache_options && full.moderation == ref.moderation
+        @test full.prompt_cache_options == ref.prompt_cache_options && full.moderation == ref.moderation &&
+              full.prompt_cache_retention == "24h"
     end
 
     @testset "temperature and top_p mutual exclusion" begin

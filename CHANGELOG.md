@@ -70,6 +70,13 @@
   server's `/v1/audio/transcriptions`, where vLLM serves OpenAI's Transcriptions API; it
   refused the endpoint before. As for its chat, the endpoint has no default model: a call that
   names none is an `ArgumentError` before any request. `speak` and `translate` still refuse it.
+- **`Chat` takes `prompt_cache_retention`.** OpenAI's Chat Completions reference still lists
+  the field, deprecated ("Use `prompt_cache_options.ttl` instead"), and a `Chat` could not set
+  it, while a `Respond` could. `OPENAIServiceEndpoint` sends it, and refuses it with an
+  `ArgumentError` on the GPT-6 and GPT-5.6 models, whose cache lifetime `prompt_cache_options`
+  sets, as on a `Respond`; Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic
+  endpoints send it as given; native Gemini, Anthropic and Ollama refuse it, having no such
+  field. Built positionally, a `Chat` takes it as the 38th argument.
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's

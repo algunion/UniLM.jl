@@ -21,7 +21,7 @@ breaks one is refused ([Limits and refusals](@ref openai_limits)).
 | `max_completion_tokens`, else `max_tokens` | `max_completion_tokens` | [Request options](@ref openai_chat_options) |
 | `modalities`, `audio` | the same fields | [Audio replies](@ref chat_audio_output__next) |
 | `stream`, `stream_options` | the same fields; `{"include_usage": true}` when unset | [Streaming](@ref openai_streaming) |
-| `prompt_cache_options`, `prompt_cache_key` | the same fields | [Prompt caching](@ref openai_caching) |
+| `prompt_cache_options`, `prompt_cache_key`, `prompt_cache_retention` | the same fields | [Prompt caching](@ref openai_caching) |
 | `service_tier`, `web_search_options`, `moderation`, `safety_identifier`, `metadata`, `store`, `seed`, `stop`, `verbosity`, `prediction`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `n` | the same fields | [Request options](@ref openai_chat_options) |
 | `user` | refused | [Limits and refusals](@ref openai_limits) |
 

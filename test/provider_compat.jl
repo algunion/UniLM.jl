@@ -476,6 +476,43 @@ end
     @test (body["prompt_cache_retention"], body["prompt_cache_options"]) == ("24h", Dict("ttl" => "30m"))
 end
 
+@testset "prompt_cache_retention on a Chat: sent on the OpenAI wire, refused where a request has no such field" begin
+    msgs = [Message(Val(:user), "hi")]
+    chat(service, model; kw...) = Chat(; service, model, messages=msgs, kw...)
+    sent(service, model; kw...) = JSON.parse(UniLM.encode_request(service, chat(service, model; kw...)))
+    refused(service, model; kw...) =
+        try UniLM.encode_request(service, chat(service, model; kw...)); nothing catch e; e end
+    # OpenAI's Chat Completions reference still lists it: "Deprecated. Use `prompt_cache_options.ttl` instead."
+    @test sent(OPENAIServiceEndpoint, "gpt-5.5"; prompt_cache_retention="24h")["prompt_cache_retention"] == "24h"
+    @test sent(OPENAIServiceEndpoint, "gpt-4.1"; prompt_cache_retention="in_memory")["prompt_cache_retention"] == "in_memory"
+    @test !haskey(sent(OPENAIServiceEndpoint, "gpt-5.5"), "prompt_cache_retention")
+    # The GPT-6 and GPT-5.6 rows take their cache lifetime from prompt_cache_options, as on a Respond; Chat
+    # Completions takes ttl "30m" alone, so the fix names that one.
+    for model in ("gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-6-sol-2026-09-14")
+        err = refused(OPENAIServiceEndpoint, model; prompt_cache_retention="24h")
+        @test err isa ArgumentError && err.msg == "$model takes its cache lifetime from prompt_cache_options, and " *
+              "OpenAI deprecates prompt_cache_retention (\"Use prompt_cache_options.ttl instead\"): set " *
+              "prompt_cache_options=PromptCacheOptions(ttl=\"30m\")"
+    end
+    # The other OpenAI-wire encoders send it as given, as every other OpenAI field: the server's answer is the check.
+    for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint(api_key="k"),
+                    GenericOpenAIEndpoint("http://localhost:9999", ""), MistralEndpoint(api_key="k"))
+        @test sent(service, "m"; prompt_cache_retention="24h")["prompt_cache_retention"] == "24h"
+    end
+    # Native Gemini, Anthropic and Ollama have no such field: refused before any request, never dropped.
+    for (service, model) in ((GEMINIServiceEndpoint, "gemini-3.8-flash"), (ANTHROPICServiceEndpoint(), "claude-haiku-5-5"),
+                             (OllamaEndpoint(), "gemma4:e4b"))
+        err = refused(service, model; prompt_cache_retention="24h")
+        @test err isa ArgumentError && occursin("prompt_cache_retention", err.msg)
+    end
+    # A Respond to Gemini Interactions refuses it too (its own field there, unmapped).
+    @test :prompt_cache_retention in UniLM._INTERACTIONS_UNMAPPED_FIELDS
+    # fork copies it, and the positional constructor of 37 arguments still builds a Chat.
+    @test fork(chat(OPENAIServiceEndpoint, "gpt-5.5"; prompt_cache_retention="24h")).prompt_cache_retention == "24h"
+    c = chat(OPENAIServiceEndpoint, "gpt-5.5")
+    @test Chat((getfield(c, f) for f in fieldnames(Chat)[1:37])...).prompt_cache_retention === nothing
+end
+
 @testset "PromptCacheOptions prewarm and diagnostics; Chat prompt_cache_options wire key" begin
     @test isempty(JSON.lower(PromptCacheOptions()))
     @test JSON.parse(JSON.json(PromptCacheOptions(mode="explicit", ttl="30m"))) ==

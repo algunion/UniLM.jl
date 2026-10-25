@@ -1402,6 +1402,17 @@ OpenAI options, omitted from the request when unset:
   2026-09-22). A `Chat` sets no cache breakpoints (the API's `prompt_cache_breakpoint` on
   a message content part), so `mode="explicit"` means the request does not use prompt
   caching.
+- `prompt_cache_retention::Union{String,Nothing}`: `"in_memory"` or `"24h"`, the prompt
+  cache's retention policy, which OpenAI's Chat Completions reference still lists and
+  deprecates ("Use `prompt_cache_options.ttl` instead"); "for `gpt-5.5`, `gpt-5.5-pro`, and
+  future models, only `24h` is supported". `OPENAIServiceEndpoint` sends it, and throws
+  `ArgumentError` for any value on the models whose cache lifetime `prompt_cache_options`
+  sets — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) — as a [`Respond`](@ref) does.
+  Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic endpoints (Mistral
+  among them) send it as given, the server's answer the check; native Gemini,
+  `ANTHROPICServiceEndpoint` and [`OllamaEndpoint`](@ref), whose requests have no such
+  field, throw `ArgumentError` for it before any request.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
 - `stream_options::Union{AbstractDict,Nothing}`: streaming options; when unset, an
@@ -1452,6 +1463,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     _cumulative_cost::Ref{Float64} = Ref(0.0)
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
     moderation::Union{ModerationConfig,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # OpenAI, deprecated: "in_memory" or "24h"
     function Chat(
         service,
         model,
@@ -1489,7 +1501,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         safety_identifier,
         _cumulative_cost,
         prompt_cache_options=nothing,
-        moderation=nothing
+        moderation=nothing,
+        prompt_cache_retention=nothing
     )
         model = _resolve_model(service, model)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
@@ -1546,7 +1559,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
             safety_identifier,
             _cumulative_cost,
             prompt_cache_options,
-            moderation
+            moderation,
+            prompt_cache_retention
         )
     end
 end
@@ -1558,7 +1572,7 @@ function JSON.lower(chat::Chat)
         :frequency_penalty, :logit_bias, :user, :seed,
         :reasoning_effort, :stream_options, :verbosity, :store, :metadata, :service_tier,
         :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
-        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation)
+        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end

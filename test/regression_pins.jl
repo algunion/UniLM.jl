@@ -252,6 +252,7 @@ end
             :prompt_cache_key => "pck", :safety_identifier => "sid",
             :prompt_cache_options => PromptCacheOptions(mode="explicit", ttl="30m"),
             :moderation => ModerationConfig(model="omni-moderation-latest", input_mode="block"),
+            :prompt_cache_retention => "24h",
         )
         chat = Chat(; kwargs...)
         forked = fork(chat)

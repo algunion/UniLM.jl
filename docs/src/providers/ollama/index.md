@@ -273,7 +273,7 @@ JSON.parse(text(chatrequest!(chat)))
 ```
 
 With a `response_format`, the request turns thinking off (`think: false`), and a `response_format`
-together with a thinking effort (`"low"`, `"medium"`, `"high"`) is refused before the request is sent
+together with a thinking effort (any effort but `"none"`) is refused before the request is sent
 ([Limits and refusals](@ref ollama_limits)). UniLM's reason, which its message gives: Ollama applies a
 format only once the model's thinking ends, so a reply that skips thinking is not constrained at all —
 in the measurements below, every reply that was not valid JSON came from a run with thinking on in
@@ -296,22 +296,25 @@ cloud model's format all the same. The formats every provider shares are on
 
 ## [Reasoning](@id ollama_thinking__next)
 
-`reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and `"low"`, `"medium"` and
-`"high"` go as they are; a request without one sends none, so the model's default applies, and Gemma 4
-thinks by default. Ollama's thinking levels are the model's own: `/api/show` lists the values a model
-takes and its default, and a model whose values are `true` and `false` thinks or does not; "If the model
-resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported
-names use the model default." ([thinking](https://docs.ollama.com/capabilities/thinking)).
-[`model_info`](@ref) reads them as `thinking_levels` and `thinking_default`: `[false, true]` and `true`
-for Gemma 4 E4B, which names no levels. No page says what such a model does with a named level; on
-Ollama 0.40.11, `think` `"low"`, `"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the
-same answer to the bat-and-ball prompt below at temperature 0 (observed on 25 October 2026). UniLM takes
-no other effort:
-`"minimal"`, `"xhigh"` and `"max"` are refused before the request
-([Limits and refusals](@ref ollama_limits)), though Ollama's API reference lists `"max"` among the
-levels of `think`, and Ollama 0.40.11 answered a `think: "max"` request to `gemma4:e4b` with HTTP 200, an
-answer without thinking, in the one request sent on 25 October 2026. The thinking comes back beside the
-answer, and [`reasoning_text`](@ref) reads it:
+`reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and every other effort goes as it
+is, `"max"` among them, a level of `think` in Ollama's
+[API reference](https://github.com/ollama/ollama/blob/v0.40.11/docs/api.md#generate-a-chat-completion); a
+request without one sends none, so the model's default applies, and Gemma 4 thinks by default. Ollama's
+thinking levels are the model's own: `/api/show` lists the values a model takes and its default, and a
+model whose values are `true` and `false` thinks or does not; "If the model resolves named levels from
+`/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default."
+([thinking](https://docs.ollama.com/capabilities/thinking)). [`model_info`](@ref) reads them as
+`thinking_levels` and `thinking_default`: `[false, true]` and `true` for Gemma 4 E4B, which names no
+levels. No page says what such a model does with a named level; on Ollama 0.40.11, `think` `"low"`,
+`"medium"` and `"high"` gave `gemma4:e4b` the same thinking and the same answer to the bat-and-ball
+prompt below at temperature 0 (observed on 25 October 2026), and a `think: "max"` request to
+`gemma4:e4b` was answered with HTTP 200, an answer without thinking, in the one request sent that day.
+To a model without thinking metadata, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
+and `"max"`, such as `"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11:
+`qwen2.5-coder:1.5b-base`, whose `/api/show` reports no thinking, on 25 October 2026), while `respond`'s
+`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"` for such a model
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)).
+The thinking comes back beside the answer, and [`reasoning_text`](@ref) reads it:
 
 ```@example ollama
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
@@ -491,7 +494,6 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` or `moderation` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request (`/api/chat` takes `logprobs` and `top_logprobs`, but a result has no field for them) | remove it |
 | a `tool_choice` other than `"auto"`, on a `Chat` or a `Respond` | `Ollama has no tool_choice`: the model decides whether to call a tool | leave it unset, or send no tools to rule calls out |
 | a tool with `strict=true`, on a `Chat` or a `Respond` | `Ollama does not enforce strict tool schemas`: its tool definition has no `strict` flag | leave `strict` unset |
-| a `reasoning_effort` other than `"none"`, `"low"`, `"medium"` and `"high"`, or such a `Reasoning` effort | `Ollama takes reasoning_effort`: UniLM sends those four only | one of them |
 | a `response_format`, or a `json_schema` text format, with a thinking effort | `Ollama applies a response_format only after the model's thinking ends`: a reply that skips thinking would be unconstrained | `reasoning_effort="none"` or unset, or no format |
 | a `response_format` of another type, or a JSON Schema format without a schema object | `Ollama supports response_format text, json_object or json_schema`, `needs a schema object` | a JSON Schema format holding its schema, or `UniLM.json_object()` |
 | a [`DocumentAttachment`](@ref) | `takes images and sound clips, not documents`: the `images` entry holds images and clips | the document's text in the message |

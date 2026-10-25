@@ -63,19 +63,21 @@ const _OLLAMA_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tool
     :reasoning_effort, :_cumulative_cost)
 const _OLLAMA_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _OLLAMA_CHAT_MAPPED_FIELDS))
 
-# reasoning_effort → `think`: "none" turns thinking off; the effort levels pass
-# through (models with a single thinking mode treat any level as on). Unset, the
+# reasoning_effort → `think`: "none" turns thinking off; any other effort goes by name,
+# since thinking levels are the model's own (https://docs.ollama.com/capabilities/thinking):
+# a model with thinking metadata applies a level it names and uses its default for any other
+# name, and one without takes "low", "medium", "high" and "max" — the levels of Ollama's API
+# reference — and answers another name with HTTP 400 on /api/chat (Ollama 0.40.11,
+# api.ValidateLegacyThinking), while /v1/responses reads "minimal" as "low" and "xhigh" as
+# "max" (https://docs.ollama.com/api/openai-compatibility). Unset, the
 # model's default applies (Gemma 4 thinks) — except with a response_format: Ollama
 # constrains a reply to the format only after a thinking block ends, so a thinking
 # model that answers without thinking is not constrained at all (gemma4:e4b answered
 # plain text to 10 of 10 schema requests with thinking at its default, and valid JSON
 # to 10 of 10 with it off, on Ollama 0.34.4). A format therefore turns thinking off, and a format
 # with a thinking effort is refused rather than sent to fail at random.
-const _OLLAMA_EFFORTS = ("none", "low", "medium", "high")
 function _ollama_think(effort::Union{String,Nothing}, constrained::Bool)
     isnothing(effort) && return constrained ? false : nothing
-    effort in _OLLAMA_EFFORTS || throw(ArgumentError(
-        "Ollama takes reasoning_effort $(join(repr.(_OLLAMA_EFFORTS), ", ")) (got $(repr(effort)))"))
     effort == "none" && return false
     constrained && throw(ArgumentError(
         "Ollama applies a response_format only after the model's thinking ends, so a reply that " *

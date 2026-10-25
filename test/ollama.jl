@@ -175,12 +175,10 @@ end
 @testset "request: thinking, format, tools" begin
     e = OllamaEndpoint()
     @test _wire(_ochat(e; reasoning_effort="none"))["think"] === false
-    for lvl in ("low", "medium", "high")
+    # Every other effort goes by name: Ollama resolves a level against the model, which applies one it
+    # defines and uses its default for another; "max" is among the levels of Ollama's API reference.
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
         @test _wire(_ochat(e; reasoning_effort=lvl))["think"] == lvl
-    end
-    for bad in ("minimal", "xhigh", "max")
-        err = try _wire(_ochat(e; reasoning_effort=bad)); nothing catch x; x end
-        @test err isa ArgumentError && occursin(bad, err.msg)
     end
     schema = Dict("type" => "object", "properties" => Dict("name" => Dict("type" => "string")), "required" => ["name"])
     w = _wire(_ochat(e; response_format=UniLM.json_schema("person", "p", schema)))
@@ -191,7 +189,7 @@ end
     wo = _wire(_ochat(e; response_format=UniLM.json_object()))
     @test wo["format"] == Dict("type" => "object") && wo["think"] === false
     @test _wire(_ochat(e; response_format=UniLM.json_object(), reasoning_effort="none"))["think"] === false
-    for lvl in ("low", "medium", "high")                    # a thinking model may skip thinking: unconstrained
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")   # a thinking model may skip thinking: unconstrained
         err = try _wire(_ochat(e; response_format=UniLM.json_object(), reasoning_effort=lvl)); nothing catch x; x end
         @test err isa ArgumentError && occursin("response_format", err.msg)
     end
@@ -454,7 +452,11 @@ end
     @test said(store=true, service_tier="auto") == said(store=true)      # the state field is named first
     @test_throws ArgumentError enc(tool_choice="required")
     @test haskey(enc(tool_choice="auto"), "model")
-    @test_throws ArgumentError enc(reasoning=Reasoning(effort="xhigh"))
+    # Every effort goes as reasoning.effort: /v1/responses reads model-defined names and maps "minimal" to
+    # "low" and "xhigh" to "max" for a model without thinking metadata.
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
+        @test enc(reasoning=Reasoning(effort=lvl))["reasoning"] == Dict("effort" => lvl)
+    end
     @test_throws ArgumentError enc(reasoning=Reasoning(effort="low", summary="auto"))
     @test_throws ArgumentError enc(text=TextConfig(format=TextFormatSpec(type="json_object")))
     @test_throws ArgumentError enc(text=TextConfig(verbosity="low"))
@@ -519,7 +521,7 @@ end
     @test enc(text=fmt, reasoning=Reasoning(effort="none"))["reasoning"]["effort"] == "none"
     @test !haskey(enc(), "reasoning")                                   # no format: the model's default
     @test enc(reasoning=Reasoning(effort="high"))["reasoning"]["effort"] == "high"
-    for lvl in ("low", "medium", "high")
+    for lvl in ("minimal", "low", "medium", "high", "xhigh", "max")
         err = try enc(text=fmt, reasoning=Reasoning(effort=lvl)); nothing catch x; x end
         @test err isa ArgumentError && occursin("response_format", err.msg)
     end

@@ -121,6 +121,15 @@
   a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
   as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
   had reported, as for any other exception a callback throws.
+- **Ollama takes every reasoning effort, `"max"` among them.** A `reasoning_effort` on an
+  `OllamaEndpoint` `Chat`, or a `Reasoning` effort on its `respond`, other than `"none"`,
+  `"low"`, `"medium"` and `"high"` threw an `ArgumentError`, though Ollama's API reference
+  lists `"max"` among the levels of `think` and a model's thinking levels are its own. Every
+  effort is now sent by name (`"none"` still as `think: false`) for Ollama to resolve against
+  the model: one with thinking metadata applies a level it names and uses its default for any
+  other; to one without, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
+  and `"max"` with HTTP 400, and `/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"`
+  as `"max"`.
 
 ## 0.26.0
 

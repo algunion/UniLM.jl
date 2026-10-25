@@ -1124,6 +1124,16 @@ which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `run
   either: at Ollama's default batch the llama.cpp builds measured refuse long inputs —
   `embeddinggemma-2:740m-q8_0` anything past about 2,037 tokens (Ollama 0.40.6).
 
+A `Chat`'s `reasoning_effort`, and a `Respond`'s [`Reasoning`](@ref) effort, go to Ollama by
+name: `"none"` turns thinking off (`think: false`), and every other effort is sent as it is,
+for Ollama to resolve against the model, whose thinking levels are its own
+([thinking](https://docs.ollama.com/capabilities/thinking)). A model with thinking metadata
+applies a level it names and uses its default for any other name; a model without takes
+`"low"`, `"medium"`, `"high"` and `"max"`, and on `/api/chat` answers another name, such as
+`"minimal"` or `"xhigh"`, with HTTP 400 `invalid think value` (Ollama 0.40.11), while
+`/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"` as `"max"`. [`model_info`](@ref)
+reports a model's `thinking_levels` and `thinking_default`.
+
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in

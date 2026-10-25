@@ -353,6 +353,29 @@ end
     @test !has_capability(NoAudioProbe, :transcription)
 end
 
+@testset "a GenericOpenAIEndpoint transcribes at its server's /v1/audio/transcriptions" begin
+    # vLLM serves OpenAI's Transcriptions API there, `model` "required"; the endpoint has no default
+    # model, for transcription as for chat, so a request that names none is refused before it is sent.
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    r, seen = _with_scripted((_, _) -> _json(200, "{\"text\":\"The secret word is banana.\"}")) do
+        transcribe(wav; service=GenericOpenAIEndpoint(_url_probe_base[], ""), model="openai/whisper-large-v3-turbo",
+                   language="en", prompt="a fruit")
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana."
+    req = only(seen)
+    @test req.method == "POST" && req.target == "/v1/audio/transcriptions"
+    for (name, value) in ("model" => "openai/whisper-large-v3-turbo", "language" => "en", "prompt" => "a fruit")
+        @test occursin("name=\"$name\"\r\n\r\n$value\r\n", req.body)
+    end
+    @test occursin("name=\"file\"; filename=\"secret_word.wav\"", req.body)
+    e, seen2 = _with_scripted((_, _) -> _json(200, "{}")) do
+        try transcribe(wav; service=GenericOpenAIEndpoint(_url_probe_base[], "")); nothing catch x; x end
+    end
+    @test e isa ArgumentError && occursin("model", e.msg) && isempty(seen2)
+    @test has_capability(GenericOpenAIEndpoint("http://x", ""), :transcription)
+    @test !has_capability(GenericOpenAIEndpoint("http://x", ""), :audio)        # speech and translation stay refused
+end
+
 @testset "speak and translate never call the retiring Audio API speech and translation routes" begin
     src = normpath(joinpath(@__DIR__, "..", "src"))
     hits = [(basename(f), i) for f in readdir(src; join=true) if endswith(f, ".jl")

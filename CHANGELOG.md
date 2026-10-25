@@ -65,6 +65,11 @@
   negative value is an `ArgumentError`. `penalize_newline` and `numa`, which Ollama's API
   reference also lists, are still refused as unknown keywords: Ollama 0.40.11 does not read
   them (it logs "invalid option provided" and goes on without them).
+- **`transcribe` reaches a `GenericOpenAIEndpoint`.** The endpoint declares `:transcription`,
+  as it declares the other OpenAI-compatible routes, so `transcribe` sends the request to its
+  server's `/v1/audio/transcriptions`, where vLLM serves OpenAI's Transcriptions API; it
+  refused the endpoint before. As for its chat, the endpoint has no default model: a call that
+  names none is an `ArgumentError` before any request. `speak` and `translate` still refuse it.
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's

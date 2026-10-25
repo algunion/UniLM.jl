@@ -2491,9 +2491,12 @@ make a single bounded attempt (`total_deadline` the whole call, `connect_timeout
 once with `cause = UniLMCancelled`. Speech is not priced: `token_usage` and `estimated_cost` throw for
 a `SpeechSuccess`.
 
-**Transcription.** The default model is `"gpt-transcribe"` on OpenAI (and OpenAI-compatible services); an
-`OllamaEndpoint` has none, so a request to it names an installed model that hears audio
-(`model = "gemma4:e4b"`) or throws `ArgumentError` before any request. On Ollama the request
+**Transcription.** The default model is `"gpt-transcribe"` on OpenAI (and on an endpoint of your own
+that declares the audio API); an `OllamaEndpoint` has none, so a request to it names an installed model
+that hears audio (`model = "gemma4:e4b"`) or throws `ArgumentError` before any request. A
+`GenericOpenAIEndpoint` has none either: its request names the model its server serves, or throws the
+same way, and goes to the server's `/v1/audio/transcriptions` with every field it sets, as given (vLLM
+serves OpenAI's Transcriptions API there). On Ollama the request
 goes to `/v1/audio/transcriptions` and asks for JSON only; `temperature`, `languages`,
 `keywords` and a `response_format` other than `"json"` throw before I/O — `"text"` with the
 fix, since Ollama reports a failure that arrives after its reply has begun only as JSON and
@@ -2548,7 +2551,7 @@ has_capability(service, cap::Symbol) -> Bool
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
-| Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses` |
+| Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:transcription` |
 | Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:models`, `:system_one`, `:transcription` |
 
 Validation comes in two strengths, and the difference matters if you write your

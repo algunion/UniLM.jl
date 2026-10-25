@@ -391,7 +391,8 @@ const _TRANSCRIPTION_FORMATS = ("json", "text", "srt", "verbose_json", "vtt", "d
 An audio transcription request. `file` is a path on disk. `model` left
 `nothing` is the service's default: `gpt-transcribe` for OpenAI; Ollama has none, so a
 request to it names an installed model that hears audio (e.g. `model="gemma4:e4b"`) or
-throws `ArgumentError` before any request. Optional
+throws `ArgumentError` before any request, and so does a [`GenericOpenAIEndpoint`](@ref),
+whose request names the model its server serves. Optional
 `languages`, `keywords`, `prompt`, `response_format`, and `temperature` refine decoding.
 For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
 Other models retain their singular `language` field. Never set both forms.
@@ -434,12 +435,16 @@ Pass to [`transcribe`](@ref).
     end
 end
 
-# The model a transcription names, else the service's default: `gpt-transcribe` for OpenAI and the
-# OpenAI-compatible services; none for Ollama, whose models are the caller's to name.
+# The model a transcription names, else the service's default: `gpt-transcribe` for OpenAI and an
+# endpoint of the caller's own; none for Ollama or a generic endpoint, whose models are the caller's
+# to name, as for their chat (vLLM's Transcriptions API lists `model` as "required").
 _default_transcription_model(_) = "gpt-transcribe"
 _default_transcription_model(::OllamaEndpoint) = throw(ArgumentError(
     "Ollama has no default transcription model: name an installed model that hears audio, e.g. " *
     "model = \"gemma4:e4b\""))
+_default_transcription_model(::GenericOpenAIEndpoint) = throw(ArgumentError(
+    "GenericOpenAIEndpoint has no default transcription model: name the model the server serves, e.g. " *
+    "model = \"openai/whisper-large-v3-turbo\""))
 # `@something` evaluates the default only when no model is named.
 _transcription_model(t::TranscriptionRequest)::String = @something(t.model, _default_transcription_model(t.service))
 
@@ -524,6 +529,10 @@ empty transcript) — throws `ArgumentError` before any request:
 r = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", language="en")
 r isa TranscriptionSuccess && println(transcript_text(r))
 ```
+
+A [`GenericOpenAIEndpoint`](@ref) sends the request to its server's
+`/v1/audio/transcriptions` with every field it sets, as given — vLLM serves OpenAI's
+Transcriptions API there — and has no default model either.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """

@@ -24,7 +24,7 @@ provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, 
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])
-provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses])  # permissive default
+provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :transcription])  # permissive default
 
 """
     has_capability(service, cap::Symbol) -> Bool

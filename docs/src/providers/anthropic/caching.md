@@ -14,10 +14,16 @@ cache breakpoint on the request's last cacheable block
 for an hour. The options a `Chat` cannot send to Anthropic are refused before the request
 ([Limits and refusals](@ref anthropic_limits)).
 
-The breakpoint is where the cache is written: one entry, holding everything up to and including that
-block. A later request reads the entry when it starts with the same blocks up to that breakpoint, and
-writes what follows them; the API looks back at most 20 blocks for such an entry. A `Chat` sends the
-whole conversation each time, so the next turn starts with those blocks as long as the prompt and the
+Anthropic's cache "references the entire prompt: `tools`, `system`, and `messages` (in that order)",
+and the breakpoint is where it is written: one entry, holding everything up to and including that
+block. A later request that starts with the same blocks up to that breakpoint reads the entry, unless a
+change has invalidated it, and writes what follows them; the API looks back at most 20 blocks for such
+an entry. Changed tools invalidate the entire cache, and a changed `system` prompt that prompt and the
+messages; a changed `tool_choice`, an image added or removed anywhere in the prompt and changed
+thinking parameters invalidate at least the messages, as do other changes Anthropic lists
+([what invalidates the cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#what-invalidates-the-cache)).
+A `Chat` builds each request from its fields as they are then, the whole conversation and tools included,
+so the next turn starts with the previous one's blocks as long as the tools, the `system` prompt and the
 earlier turns go out as they did before. A system message pushed mid-conversation can change that: it
 may join the top-level `system` prompt, and the request then reads none of what the earlier requests
 wrote and writes it all again, or move within the messages ([Conversations](@ref anthropic_conversations)

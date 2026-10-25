@@ -20,7 +20,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 > Template: Keep the H2 of each feature `REGISTRY` lists for `<entry>`, with the id the README's Ids give it, and delete the others (At a glance lists what the provider lacks). A feature section holds <Provider>'s rules for it, an example and a link to its concept page.
 
-> Template: A refusal before the request is sent is stated once, as a row of Limits and refusals: every other section that meets it names what is refused and links Limits and refusals, since a table row has no anchor. A check the endpoint's constructor runs is stated once too, in Options, which the other sections link.
+> Template: A refusal of a request by <Provider>'s endpoint, an `ArgumentError` thrown before it is sent (a missing capability aside: At a glance), is stated once, as a row of Limits and refusals: every other section that meets it names what is refused and links Limits and refusals, since a table row has no anchor. A check the endpoint's constructor runs is stated once too, in Options, which a section that meets it links.
 
 > Template: A sentence about behaviour says what the code does and the condition under which it does it, no broader: "returns an `LLMCallError`" where nothing is thrown, "once every block arrived whole" where a stream cut short keeps no blocks. A rule UniLM applies per model is a generated table's (README, Generated facts).
 

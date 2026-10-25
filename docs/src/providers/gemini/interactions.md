@@ -309,7 +309,7 @@ cancel_response(id; service=GEMINIServiceEndpoint)
 
 A background request needs a stored interaction — "Passing `background=True` with `store=False`
 returns a `400` error" ([background execution](https://ai.google.dev/gemini-api/docs/background-execution))
-— so `Respond` refuses the pair ([Limits and refusals](@ref gemini_limits)). Gemini 4 Argon writes
+— so `respond` refuses the pair before sending it ([Limits and refusals](@ref gemini_limits)). Gemini 4 Argon writes
 more than 65,536 output tokens only in the background: Google's limit with `background: false` is
 "65,536 tokens. Values greater than 65,536 return a 400 error", and a background request takes "Your
 `max_output_tokens`, up to 1,048,576 minus your input"

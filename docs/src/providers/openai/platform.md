@@ -573,10 +573,12 @@ simply return the final `Response` object"
 ([background mode](https://developers.openai.com/api/docs/guides/background)). A background response
 that failed comes back from `get_response` and `cancel_response` as a `ResponseSuccess` whose
 [`response_status`](@ref) is `"failed"`, while `respond` returns a failed response as a
-`ResponseFailure`. `background=true` with `store=false` is refused, a rule of UniLM's, not OpenAI's,
-whose guide says "Background requests can use `store=false`"
-([background mode](https://developers.openai.com/api/docs/guides/background)); the row is in
-[Limits and refusals](@ref openai_limits).
+`ResponseFailure`. A background request may set `store=false`: "Background requests can use
+`store=false`, but response data is temporarily stored to support asynchronous execution and
+polling", "for roughly 10 minutes" in a Zero Data Retention project
+([background mode](https://developers.openai.com/api/docs/guides/background)), and `get_response`
+reads such a response while OpenAI holds it; a stored one (`store=true`, the default) is kept "for at
+least 30 days" ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)).
 
 ## [Limits and refusals](@id openai_platform_limits)
 

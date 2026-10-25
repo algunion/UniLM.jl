@@ -192,6 +192,14 @@
   of audio OpenAI no longer keeps. From `expires_at` on, the turn goes as its content alone — its
   transcript unless it holds other text — as every other endpoint gets it; before `expires_at`,
   or with no expiry known, it still goes by its id.
+- **A background `respond` on OpenAI may set `store=false`.** A `Respond` with
+  `background=true` and `store=false` was refused for every endpoint, though OpenAI's
+  background guide says "Background requests can use `store=false`, but response data is
+  temporarily stored to support asynchronous execution and polling". It is now sent to OpenAI,
+  and to a generic server, as set; `get_response` reads the response while OpenAI holds it.
+  Gemini Interactions answers it with HTTP 400, so `respond` still refuses it there, now when
+  the request is encoded rather than when the `Respond` is built; an `OllamaEndpoint`, whose
+  Responses API keeps no response, refuses `background` and `store` as it did.
 
 ## 0.26.0
 

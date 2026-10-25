@@ -1327,7 +1327,13 @@ end
 @testset "Respond construction-time validation" begin
     @test_throws ArgumentError Respond(input="hi", conversation="conv_1", previous_response_id="resp_1")
     @test Respond(input="hi", conversation="conv_1").conversation == "conv_1"
-    @test_throws ArgumentError Respond(input="hi", background=true, store=false)
+    # OpenAI's background guide: "Background requests can use `store=false`, but response data is
+    # temporarily stored to support asynchronous execution and polling." Sent as set.
+    unstored = JSON.parse(UniLM.encode_agentic(OPENAIServiceEndpoint, Respond(input="hi", background=true, store=false)))
+    @test (unstored["background"], unstored["store"]) == (true, false)
+    generic = Respond(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="m", input="hi",
+                      background=true, store=false)
+    @test JSON.parse(UniLM.encode_agentic(generic.service, generic))["store"] == false
     @test Respond(input="hi", background=true, store=true).background == true
     @test isnothing(Respond(input="hi", background=true).store)
     @test Respond(input="hi", background=false, store=false).store == false

@@ -504,8 +504,8 @@ The `Respond` constructor validates parameter ranges at construction time:
 
 Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are
 mutually exclusive, `conversation` cannot be combined with `previous_response_id` (each
-already supplies the prior turns), and `background=true` requires a stored response
-(`store=false` throws). A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
+already supplies the prior turns), and on Gemini Interactions `background=true` requires a
+stored response (`store=false` throws there; OpenAI takes it). A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
 [`FunctionTool`](@ref).
 
 Per-model rules on `OPENAIServiceEndpoint` are checked when the request is encoded, before any

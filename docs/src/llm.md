@@ -620,7 +620,8 @@ build a `Respond` with keywords, which name each field.
     native Chat and `GEMINIOpenAIServiceEndpoint`), `max_output_tokens` (above 65,536 on
     `gemini-4-argon` only with `background=true`), `stream`, `text` (its format becomes
     the top-level `response_format`; `verbosity` is rejected), `store`,
-    `previous_response_id`, `background`, `reasoning` (effort and automatic summaries
+    `previous_response_id`, `background` (with `store=false` it is rejected: Google answers
+    that with HTTP 400), `reasoning` (effort and automatic summaries
     only), `service_tier` (`"standard"`, `"flex"`, `"priority"` or `"deferred"`),
     `safety_identifier` (the request label `safety_identifier`) and `seed`
     (`generation_config.seed`). Every other field — `moderation`,
@@ -862,7 +863,7 @@ respond(callback::Function, input; kwargs...) -> Task
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`; `close[] = true` (or a `cancel!` on the call's token) stops the stream with `ResponseCallError(status=nothing, cause=UniLMCancelled(...))`, unless the provider's completion marker — the terminal event — already arrived: then the outcome it recorded stands (a response with its usage, whose final callback has run; or the reported failure). A callback exception ends the call with it in `.cause`, unless it is or wraps an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`: `fetch` throws that one, inside a `TaskFailedException`.
 - Local validation throws `ArgumentError` before any network I/O: a `callback` passed without `stream=true` ("callback requires stream=true"), a service that declares capabilities with neither `:responses` nor `:agentic`, or an encoder rejection (a field the wire or model cannot express).
 - Retries retryable statuses (408/429/500/502–504/520–524/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; `Retry-After` is a floor under the jitter, and a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response instead of sleeping past it; a 429 that no retry can serve — spent credit, a reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded` (the codes under `chatrequest!`) — is returned at once, streamed or not. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang. Every exception that ends a call (including a cancellation, `cause::UniLMCancelled`) is in `.cause`.
-- **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]; `conversation` cannot be combined with `previous_response_id`, and `background=true` requires `store` not `false`; `Reasoning(effort=…)` must be one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Violations throw `ArgumentError`.
+- **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]; `conversation` cannot be combined with `previous_response_id`; `background=true` with `store=false` is sent on OpenAI and refused on Gemini Interactions; `Reasoning(effort=…)` must be one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Violations throw `ArgumentError`.
 
 ### Response Accessors
 

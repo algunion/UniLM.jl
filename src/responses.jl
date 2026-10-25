@@ -822,8 +822,12 @@ Configuration struct for an OpenAI Responses API request.
   a Chat [`Tool`](@ref) is converted to the equivalent `FunctionTool`
 - `previous_response_id::String`: Chain to a previous response for multi-turn; cannot
   be combined with `conversation`
-- `background::Bool`: Run in the background; requires a stored response (`store=false`
-  throws `ArgumentError`)
+- `background::Bool`: Run in the background: [`get_response`](@ref) reads the response
+  and [`cancel_response`](@ref) stops it. OpenAI takes `store=false` with it: "response
+  data is temporarily stored to support asynchronous execution and polling"
+  ([background mode](https://developers.openai.com/api/docs/guides/background)). Gemini
+  Interactions (`GEMINIServiceEndpoint`) answers `store=false` with HTTP 400, so there it
+  throws `ArgumentError` before any request
 - `reasoning::Reasoning`: Reasoning effort, summary, persisted context and mode ([`Reasoning`](@ref))
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
@@ -941,8 +945,6 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
             "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
-        background === true && store === false && throw(ArgumentError(
-            "background=true requires a stored response: omit store or set store=true"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
@@ -1922,11 +1924,17 @@ end
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Retrieve an existing response by its ID. An endpoint whose Responses API stores no
-responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a
-[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
-scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
-be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
+Retrieve an existing response by its ID. OpenAI keeps a response "for at least 30 days"
+when its request stored it (`store=true`, the default); the data of a background request
+made with `store=false` is "temporarily stored to support asynchronous execution and
+polling" ([background mode](https://developers.openai.com/api/docs/guides/background), which
+gives "roughly 10 minutes" for such requests from Zero Data Retention projects):
+`get_response` reads it while OpenAI holds it, and not once it is deleted. An endpoint
+whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
+before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
+through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
+an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
+of returning a `ResponseCallError`.
 
 # Examples
 ```julia

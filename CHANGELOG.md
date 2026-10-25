@@ -115,6 +115,12 @@
   as a clean stream is. A stream cut before its final event is still not recorded, even
   when the call keeps the turn its finish reason completed, and `with_recorded_answers`
   now says so.
+- **A field-less built-in endpoint, called, is its type.** `OPENAIServiceEndpoint()`,
+  `AZUREServiceEndpoint()`, `GEMINIServiceEndpoint()` and `GEMINIOpenAIServiceEndpoint()`
+  built an instance that `service` accepted but that none of the endpoint's methods, all
+  defined on the type, served: it got no default model, skipped the type's encoding rules
+  and failed at request time with a `MethodError`. Each now returns its type
+  (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it behaves as the type does.
 
 ## 0.26.0
 

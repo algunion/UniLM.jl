@@ -96,6 +96,8 @@ ANTHROPICServiceEndpoint(; betas=String[], user_profile_id=nothing, workspace_id
 # Type alias for service fields — accepts both marker types and instances:
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
 # Built-in types: Chat(service=OPENAIServiceEndpoint)      — passed as the type
+#   (OPENAIServiceEndpoint(), AZUREServiceEndpoint(), GEMINIServiceEndpoint() and
+#   GEMINIOpenAIServiceEndpoint() return the type)
 # Instance types: Chat(service=DeepSeekEndpoint())          — passed as a constructed value
 ```
 

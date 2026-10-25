@@ -1,0 +1,130 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "How many integers from 1 to 1000 are divisible by 3 or by 5 but not by 7? Answer with the number only.",
+      "model": "gpt-6-sol",
+      "reasoning": {
+        "effort": "high",
+        "summary": "auto"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_ed5a844841e94a5bbea56044a80f3ff3",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_ed5a844841e94a5bbea56044a80f3ff3"
+    },
+    "body": {
+      "id": "resp_03fbc3258d6ea603006ade0643342087d2ae5a62f70333b4c6",
+      "object": "response",
+      "created_at": 1792935491,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1792935493,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "rs_03fbc3258d6ea603006ade0643acdc87d2af90e5c457954214",
+          "type": "reasoning",
+          "content": [],
+          "encrypted_content": "gAAAAABq3gZGFW9Jgva85izuoQCBh0ClmXZ4ZFPTwDaIGJhLHO28Iu_iz465S-jSQY5woCgJWupM4-zFhp4BJNOEAKgZMF7YsdPZ-_nEIOhWmuRIQpCX8zTgUs6N8kU6fHbvuTsxmyYRm3OnL7Lcz_YED1LwpN1jCvej97HuqlsHqPv4XH75Sg3VgRdlLADyrfEFqgWgoNYX3KcbZaE-le6EODY99Z058GI2U7ilezDbrO_fbZC-Eq7fhYqxhGVJix6OjH966ieKiWTdZSKfPv0Kl9wFHYxGQ9uFa-rOYWBfTuJXYX35fqOcTKEHEshZ7rdJToqU_IUMmOZ30we6PNbppoxNCOBMxMCHobYWhdCrLxytxsFTTe-WxMpynAF3_sm10la1ZOa_5GAF0wFMT6N-jTvxH9MDDINihzlh7EftTE1IeLkDu0ECk8a_E7TOtoVWJyl9XB1HQnS_CFWh2MLInJJE2Ek4wZAv_5dIawpgp4npZ86ghgKIV9mX1heHGfSXFY83BgTgqgkHKn8TWEnIQFPf4CeeH4kgbNv7XkbJtxmzMgiURzCpyzhW1uaLW-8d49Mspm_xvC-x670YtWvulIehFYM0WqWjQb78JdqbhRNxKcPgS-SjDXXXNd7cf_VHlugq8j5JAlEea7mDylCEfs4gtxJmfbyHGJIywvIQtVa3bkXBGcGf8Iw9VLQu1r4aRT0y6afIQfbaFY4CivBXLaD2jnZ8bePu--6ixKqOLhgqQPvKAmekn3QCJ70fyP3QeFaPnCBYDYY34VcGfOCpWxqxA0lTi-XNbGzQUpr0-kmJOhGca7rZnXw7vsl-15RJSju21xufO2rXd6vg9DVZUtwkOzWEhm8LG9Y45g7fdflPkauSN03S43DFoI9E5T2CWv0ZVSboyXuMAy1sZys174HrjTVWoGCwayahrJ6knf6BVRge9V3mmzVJhaNNzByXTd7xKXAxB34k_8vcO4jjO2kfnEN6wNbHUnjfvgBmlrtle_jQBdD3EqSwtQdlvQow3U8Bp7qQ6bs8KjhTstEenROBHicSImauIqgQ1ozcmNQ6GuPdzhL5NqRK1j_rMiC4VW6lCicPVwu4W54CN61JkmoHkcRjKrq-XU0VRxaAil6w0GGq0g5pOz9XZFfMsnLSCeNOXtVppxtRoMOF2LViXd5Qe1HV9gKPpeFpihTLUT9IlEQNaRmuHZKGOocAZhvt6kII3skr6aZ9zem8T98Z4w1MczMuuoYAQhUh8NiZY4jdEyE1kY3jqETWRI0ha5jqds4EBS87yvzcLa-16kE9c8TK5Bfxy5ehynigmvMfm8-lEMZCSBhLpoyY66xygTt3AT_0pS5d64Y1N6fr8LHBCF7gQmoLuwuMolEGFxjRT5NczbbJCSO_nMjzbnC_xiV5CzizSFBeZkOhjjHuOg2Tn2AAuhg1VpWLHAhy2F2vJLy9_nA5aBy8UjogU3ThBuOXh6RweTHt7C_yqv5TB96jBvr07Aby-eS8gzEKTm6-ZJfUl5mW9-KQYThPyhC_LgANNcAgT4bLhGJM9NOBJrDvdrFCUxRthKs8fW-XaeESY8LPu6QdroFW9hICIorwQrOP49rt8HYk-sjx-KATSbw61WhH9PCWonhK9dsHoFPZi6s9wryOSzuCgKNnY6efZgfPLUp3Yig00kjCrhZKk3S-IPgu9j-5lFGME5J8liBPN1JqYw1yoFLtBPehs2J-4u34eOdz1JCojFAcwvYjzG2iGv58LgG-sdzSRfGRjaANNnQOVp1m0Lx9ENa0igxCODIeSFj05_IKpGjp5Uk4DqntcGr8iEDvzj9NB-OZQwdVpTADIK6YBIvZ7OAMv_uixpKh-rgr7EFmaL5MJ_Wojjv5HQc21Y-Pg_9XD7PjpW4xaX0gHTOUvPpRxccAgsxtKJFEghXJgVHPYHWnmUll4TrTK4dAsF4-0leJ12GXl3NN8ghxJ48j2aCUXtALT4FtMjCM3JUJO9t0xvBxnErr1kQ-G9Aqf-psmujcG4Yq9FqPE5TEjulljAP14VNmO9v_yuyDSk_tro0JGfGs_9ZAXKpnf0Uv1V8GrtdOKQMeNenmMCOy_6h37iDAON6QE-WBSjJc3q7ptY7o",
+          "summary": [
+            {
+              "type": "summary_text",
+              "text": "**Calculating inclusion-exclusion**\n\nI need to compute the inclusion-exclusion count for numbers divisible by 3 or 5 while subtracting those divisible by 7. For the calculations, I find the floors: 1000 divided by 3 gives 333, by 5 gives 200, and by 15 gives 66, totaling 467. Then, I check the numbers divisible by 21, 35, and 105, which are 47, 28, and 9, respectively, and verify that 47 plus 28 minus 9 equals 66. Everything checks out!"
+            }
+          ]
+        },
+        {
+          "id": "msg_03fbc3258d6ea603006ade06458cf087d287d239f0b401fbe8",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "401"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "high",
+        "mode": "standard",
+        "summary": "detailed"
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 37,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 83,
+        "output_tokens_details": {
+          "reasoning_tokens": 76
+        },
+        "total_tokens": 120
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-10-25T13:38:14Z"
+}

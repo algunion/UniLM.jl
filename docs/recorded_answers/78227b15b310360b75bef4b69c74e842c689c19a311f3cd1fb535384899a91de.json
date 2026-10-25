@@ -1,0 +1,116 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Oslo and in Lima?",
+          "role": "user"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Oslo\"}",
+                "name": "get_weather"
+              },
+              "id": "call_jRDkWXVWA7fYnD6FYl6sxMe0",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "content": "18 °C and sunny in Oslo",
+          "role": "tool",
+          "tool_call_id": "call_jRDkWXVWA7fYnD6FYl6sxMe0"
+        }
+      ],
+      "model": "gpt-6-sol",
+      "parallel_tool_calls": false,
+      "reasoning_effort": "none",
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            },
+            "strict": true
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_c5d2f60d89eb49e18fbfc0db0b0c5a98",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_c5d2f60d89eb49e18fbfc0db0b0c5a98"
+    },
+    "body": {
+      "id": "chatcmpl-EcsffrrOwB0c215u8GcxPlDI5kszd",
+      "object": "chat.completion",
+      "created": 1792935327,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_CucSl3pt44JGda0k0P5dIMTy",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Lima\"}"
+                }
+              }
+            ],
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 180,
+        "completion_tokens": 18,
+        "total_tokens": 198,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:28Z"
+}

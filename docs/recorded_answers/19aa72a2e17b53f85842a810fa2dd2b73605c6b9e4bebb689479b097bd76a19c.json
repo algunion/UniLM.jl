@@ -1,0 +1,157 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "What is the latest stable release of the Julia programming language? Answer in one plain-text sentence.",
+      "model": "gpt-6-sol",
+      "tools": [
+        {
+          "search_context_size": "medium",
+          "type": "web_search"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_2e1c933b72e445db9eb1b7c0b3e8f99e",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_2e1c933b72e445db9eb1b7c0b3e8f99e"
+    },
+    "body": {
+      "id": "resp_036990bc2fc3c11a006ade05bfce6487d29c3f6c168d17ce44",
+      "object": "response",
+      "created_at": 1792935359,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1792935362,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "ws_036990bc2fc3c11a006ade05c04ea887d28996745e61bb629b",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "queries": [
+              "site:julialang.org downloads current stable release Julia version",
+              "site:github.com/JuliaLang/julia/releases latest stable Julia October 2026"
+            ],
+            "query": "site:julialang.org downloads current stable release Julia version"
+          }
+        },
+        {
+          "id": "msg_036990bc2fc3c11a006ade05c26ca887d2b6e522a5a097e2ea",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [
+                {
+                  "type": "url_citation",
+                  "end_index": 150,
+                  "start_index": 77,
+                  "title": "Installing Julia",
+                  "url": "https://www.julialang.org/downloads/?utm_source=openai"
+                }
+              ],
+              "logprobs": [],
+              "text": "The latest stable release of the Julia programming language is Julia 1.13.2. ([julialang.org](https://www.julialang.org/downloads/?utm_source=openai))"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "medium",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 1
+        }
+      },
+      "tools": [
+        {
+          "type": "web_search",
+          "return_token_budget": "default",
+          "search_content_types": [
+            "text"
+          ],
+          "search_context_size": "medium",
+          "user_location": {
+            "type": "approximate",
+            "city": null,
+            "country": "US",
+            "region": null,
+            "timezone": null
+          }
+        }
+      ],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 8594,
+        "input_tokens_details": {
+          "cache_write_tokens": 4458,
+          "cached_tokens": 0
+        },
+        "output_tokens": 91,
+        "output_tokens_details": {
+          "reasoning_tokens": 55
+        },
+        "total_tokens": 8685
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-10-25T13:36:03Z"
+}

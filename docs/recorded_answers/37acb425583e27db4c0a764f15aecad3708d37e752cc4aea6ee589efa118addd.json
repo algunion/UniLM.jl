@@ -1,0 +1,76 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": [
+            {
+              "text": "What does the report conclude? Answer in one sentence.",
+              "type": "text"
+            },
+            {
+              "file": {
+                "file_data": "data:application/pdf;sha256,c8faa8381315968f1ef53c6847f613ffecee6563993b6c67f6ba8e07e34e377d",
+                "filename": "bridge_report.pdf"
+              },
+              "type": "file"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "gpt-6-sol"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_32b4a6ce66334c1ea260c4e8720a7af0",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_32b4a6ce66334c1ea260c4e8720a7af0"
+    },
+    "body": {
+      "id": "chatcmpl-EcsfkXQpSJG1h63J676lQApI4z0q3",
+      "object": "chat.completion",
+      "created": 1792935332,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "The report concludes that the old bridge is safe to reopen in March (page 1).",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 255,
+        "completion_tokens": 55,
+        "total_tokens": 310,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 28,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:33Z"
+}

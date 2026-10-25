@@ -1,0 +1,98 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Oslo and in Lima?",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-6-sol",
+      "parallel_tool_calls": false,
+      "reasoning_effort": "none",
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "The current weather in a city",
+            "parameters": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            },
+            "strict": true
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_9777b8b6bace4eb5859bca0311578d0b",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_9777b8b6bace4eb5859bca0311578d0b"
+    },
+    "body": {
+      "id": "chatcmpl-EcsfeCeZLyXZrZQFo9LDr59VcJZCY",
+      "object": "chat.completion",
+      "created": 1792935326,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_jRDkWXVWA7fYnD6FYl6sxMe0",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Oslo\"}"
+                }
+              }
+            ],
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 144,
+        "completion_tokens": 18,
+        "total_tokens": 162,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:27Z"
+}

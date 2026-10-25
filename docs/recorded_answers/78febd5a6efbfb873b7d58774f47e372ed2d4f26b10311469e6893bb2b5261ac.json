@@ -1,0 +1,74 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": [
+            {
+              "text": "What colour is the shape? One word.",
+              "type": "text"
+            },
+            {
+              "image_url": {
+                "url": "data:image/png;sha256,1fc94bcf05f63a163b0b16ab018a310299cf3d9c14eb2e6429259c9e5b71787f"
+              },
+              "type": "image_url"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "gpt-6-sol"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_25d710367b9144f290a750cfa59aa26c",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_25d710367b9144f290a750cfa59aa26c"
+    },
+    "body": {
+      "id": "chatcmpl-Ecsfj88tqZ43G5IWTxosl2lq459SN",
+      "object": "chat.completion",
+      "created": 1792935331,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Red",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:32Z"
+}

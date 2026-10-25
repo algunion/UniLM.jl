@@ -1,0 +1,74 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "Answer questions about this parts list in one short sentence.\n\nPart 2001: 4 mm washer, 11 in stock.\nPart 2002: 5 mm washer, 22 in stock.\nPart 2003: 6 mm washer, 33 in stock.\nPart 2004: 7 mm washer, 44 in stock.\nPart 2005: 8 mm washer, 55 in stock.\nPart 2006: 9 mm washer, 6 in stock.\nPart 2007: 3 mm washer, 17 in stock.\nPart 2008: 4 mm washer, 28 in stock.\nPart 2009: 5 mm washer, 39 in stock.\nPart 2010: 6 mm washer, 50 in stock.\nPart 2011: 7 mm washer, 1 in stock.\nPart 2012: 8 mm washer, 12 in stock.\nPart 2013: 9 mm washer, 23 in stock.\nPart 2014: 3 mm washer, 34 in stock.\nPart 2015: 4 mm washer, 45 in stock.\nPart 2016: 5 mm washer, 56 in stock.\nPart 2017: 6 mm washer, 7 in stock.\nPart 2018: 7 mm washer, 18 in stock.\nPart 2019: 8 mm washer, 29 in stock.\nPart 2020: 9 mm washer, 40 in stock.\nPart 2021: 3 mm washer, 51 in stock.\nPart 2022: 4 mm washer, 2 in stock.\nPart 2023: 5 mm washer, 13 in stock.\nPart 2024: 6 mm washer, 24 in stock.\nPart 2025: 7 mm washer, 35 in stock.\nPart 2026: 8 mm washer, 46 in stock.\nPart 2027: 9 mm washer, 57 in stock.\nPart 2028: 3 mm washer, 8 in stock.\nPart 2029: 4 mm washer, 19 in stock.\nPart 2030: 5 mm washer, 30 in stock.\nPart 2031: 6 mm washer, 41 in stock.\nPart 2032: 7 mm washer, 52 in stock.\nPart 2033: 8 mm washer, 3 in stock.\nPart 2034: 9 mm washer, 14 in stock.\nPart 2035: 3 mm washer, 25 in stock.\nPart 2036: 4 mm washer, 36 in stock.\nPart 2037: 5 mm washer, 47 in stock.\nPart 2038: 6 mm washer, 58 in stock.\nPart 2039: 7 mm washer, 9 in stock.\nPart 2040: 8 mm washer, 20 in stock.\nPart 2041: 9 mm washer, 31 in stock.\nPart 2042: 3 mm washer, 42 in stock.\nPart 2043: 4 mm washer, 53 in stock.\nPart 2044: 5 mm washer, 4 in stock.\nPart 2045: 6 mm washer, 15 in stock.\nPart 2046: 7 mm washer, 26 in stock.\nPart 2047: 8 mm washer, 37 in stock.\nPart 2048: 9 mm washer, 48 in stock.\nPart 2049: 3 mm washer, 59 in stock.\nPart 2050: 4 mm washer, 10 in stock.\nPart 2051: 5 mm washer, 21 in stock.\nPart 2052: 6 mm washer, 32 in stock.\nPart 2053: 7 mm washer, 43 in stock.\nPart 2054: 8 mm washer, 54 in stock.\nPart 2055: 9 mm washer, 5 in stock.\nPart 2056: 3 mm washer, 16 in stock.\nPart 2057: 4 mm washer, 27 in stock.\nPart 2058: 5 mm washer, 38 in stock.\nPart 2059: 6 mm washer, 49 in stock.\nPart 2060: 7 mm washer, 0 in stock.\nPart 2061: 8 mm washer, 11 in stock.\nPart 2062: 9 mm washer, 22 in stock.\nPart 2063: 3 mm washer, 33 in stock.\nPart 2064: 4 mm washer, 44 in stock.\nPart 2065: 5 mm washer, 55 in stock.\nPart 2066: 6 mm washer, 6 in stock.\nPart 2067: 7 mm washer, 17 in stock.\nPart 2068: 8 mm washer, 28 in stock.\nPart 2069: 9 mm washer, 39 in stock.\nPart 2070: 3 mm washer, 50 in stock.\nPart 2071: 4 mm washer, 1 in stock.\nPart 2072: 5 mm washer, 12 in stock.\nPart 2073: 6 mm washer, 23 in stock.\nPart 2074: 7 mm washer, 34 in stock.\nPart 2075: 8 mm washer, 45 in stock.\nPart 2076: 9 mm washer, 56 in stock.\nPart 2077: 3 mm washer, 7 in stock.\nPart 2078: 4 mm washer, 18 in stock.\nPart 2079: 5 mm washer, 29 in stock.\nPart 2080: 6 mm washer, 40 in stock.\nPart 2081: 7 mm washer, 51 in stock.\nPart 2082: 8 mm washer, 2 in stock.\nPart 2083: 9 mm washer, 13 in stock.\nPart 2084: 3 mm washer, 24 in stock.\nPart 2085: 4 mm washer, 35 in stock.\nPart 2086: 5 mm washer, 46 in stock.\nPart 2087: 6 mm washer, 57 in stock.\nPart 2088: 7 mm washer, 8 in stock.\nPart 2089: 8 mm washer, 19 in stock.\nPart 2090: 9 mm washer, 30 in stock.\nPart 2091: 3 mm washer, 41 in stock.\nPart 2092: 4 mm washer, 52 in stock.\nPart 2093: 5 mm washer, 3 in stock.\nPart 2094: 6 mm washer, 14 in stock.\nPart 2095: 7 mm washer, 25 in stock.\nPart 2096: 8 mm washer, 36 in stock.\nPart 2097: 9 mm washer, 47 in stock.\nPart 2098: 3 mm washer, 58 in stock.\nPart 2099: 4 mm washer, 9 in stock.\nPart 2100: 5 mm washer, 20 in stock.\nPart 2101: 6 mm washer, 31 in stock.\nPart 2102: 7 mm washer, 42 in stock.\nPart 2103: 8 mm washer, 53 in stock.\nPart 2104: 9 mm washer, 4 in stock.\nPart 2105: 3 mm washer, 15 in stock.\nPart 2106: 4 mm washer, 26 in stock.\nPart 2107: 5 mm washer, 37 in stock.\nPart 2108: 6 mm washer, 48 in stock.\nPart 2109: 7 mm washer, 59 in stock.\nPart 2110: 8 mm washer, 10 in stock.\nPart 2111: 9 mm washer, 21 in stock.\nPart 2112: 3 mm washer, 32 in stock.\nPart 2113: 4 mm washer, 43 in stock.\nPart 2114: 5 mm washer, 54 in stock.\nPart 2115: 6 mm washer, 5 in stock.\nPart 2116: 7 mm washer, 16 in stock.\nPart 2117: 8 mm washer, 27 in stock.\nPart 2118: 9 mm washer, 38 in stock.\nPart 2119: 3 mm washer, 49 in stock.\nPart 2120: 4 mm washer, 0 in stock.",
+          "role": "system"
+        },
+        {
+          "content": "How many of part 2042 are in stock?",
+          "role": "user"
+        },
+        {
+          "content": "Part 2042 has 42 in stock.",
+          "role": "assistant"
+        },
+        {
+          "content": "And part 2077?",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-6-sol",
+      "prompt_cache_key": "parts-list",
+      "prompt_cache_options": {}
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_a8f7efbf4dd147a389a53bac271abbd3",
+    "request_id_header": "x-request-id",
+    "headers": {
+      "x-request-id": "req_a8f7efbf4dd147a389a53bac271abbd3"
+    },
+    "body": {
+      "id": "chatcmpl-Ecsg89j39m8oGuFgvg50zhwvhL8rv",
+      "object": "chat.completion",
+      "created": 1792935356,
+      "model": "gpt-6-sol",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Part 2077 has 7 in stock.",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 1858,
+        "completion_tokens": 13,
+        "total_tokens": 1871,
+        "prompt_tokens_details": {
+          "cached_tokens": 1829,
+          "cache_write_tokens": 26,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-10-25T13:35:56Z"
+}

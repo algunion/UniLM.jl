@@ -91,6 +91,8 @@ as `Main.ProviderFacts.llm` or `Main.ProviderFacts.decisions`, and returns a `Ma
 | `openai_model_rules()`, `claude_family_table()`, `gemini_thinking_table()` | the request rules of OpenAI's models; Claude's families; Gemini's thinking levels | in that entry's section whose rules it shows, or, where several sections need its columns, in one of them |
 | `price_table(table)` | the prices of `:openai`, `:anthropic`, `:gemini`, `:deepseek` or `:jev` | in that entry's cost section |
 | `claude_price_rules()` | the Claude models `estimated_cost` does not price at their row's rates alone: a long-prompt multiplier, or `0.0` for a model of the family table without a price row | in the Anthropic entry's cost section |
+| `openai_price_terms()` | the OpenAI models `estimated_cost` bills beyond their row's rates: the cache-write multiples, the long-context multiples read from the estimate, and the Flex, Fast and Ultrafast multiples | in the OpenAI entry's cost section |
+| `openai_audio_rates()` | the audio-token rates `estimated_cost` bills an OpenAI model's audio input and output at | in the OpenAI entry's cost section |
 
 A per-model fact that UniLM's code holds reaches a page through a tested generator in `docs/ProviderFacts.jl`,
 never through an inline `@eval` that reads UniLM internals. A generated table has no title: prose names it by

@@ -1,0 +1,65 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/beta/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a coding assistant.",
+          "role": "system"
+        },
+        {
+          "content": "Write a quicksort function in Python.",
+          "role": "user"
+        },
+        {
+          "content": "```python\n",
+          "role": "assistant",
+          "prefix": true
+        }
+      ],
+      "model": "deepseek-flash",
+      "stop": [
+        "```"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "3ea7ce10-c870-4330-8c1a-50f57b19de45",
+      "object": "chat.completion",
+      "created": 1792965833,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "def quicksort(arr):\n    \"\"\"\n    Sort a list in ascending order using the quicksort algorithm.\n\n    Parameters:\n        arr (list): The list of comparable elements to sort.\n\n    Returns:\n        list: A new sorted list (the input list is not modified).\n    \"\"\"\n    if len(arr) <= 1:\n        return arr[:]\n\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x < pivot]\n    middle = [x for x in arr if x == pivot]\n    right = [x for x in arr if x > pivot]\n\n    return quicksort(left) + middle + quicksort(right)\n\n\n# Example usage\nif __name__ == \"__main__\":\n    sample = [3, 6, 8, 10, 1, 2, 1]\n    print(quicksort(sample))  # [1, 1, 2, 3, 6, 8, 10]\n",
+            "reasoning_content": null
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 49,
+        "completion_tokens": 209,
+        "total_tokens": 258,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 49
+      },
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:54Z"
+}

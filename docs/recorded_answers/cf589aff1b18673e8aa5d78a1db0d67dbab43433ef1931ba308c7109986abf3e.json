@@ -1,0 +1,54 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "In one sentence: what is a prime number?",
+          "role": "user"
+        }
+      ],
+      "model": "deepseek-flash",
+      "reasoning_effort": "none"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "609b2045-3564-427a-bbaf-5c493a0a3923",
+      "object": "chat.completion",
+      "created": 1792965831,
+      "model": "deepseek-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "A prime number is a whole number greater than 1 that has exactly two divisors: 1 and itself."
+          },
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 21,
+        "completion_tokens": 22,
+        "total_tokens": 43,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 21
+      },
+      "system_fingerprint": "e72d3c7f663d3e1383b00b3884cb4501"
+    }
+  },
+  "recorded_at": "2026-10-25T22:03:51Z"
+}

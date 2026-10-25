@@ -62,6 +62,16 @@
   `request_id` is the reply's; `response_status` still reads `"failed"`. Every other status is
   still a `ResponseSuccess`. Upgrading: code that read a failed response's fields from
   `result.response` parses `result.response` (a `String`) instead, or branches on `issuccess`.
+- **`verify_webhook` refuses a signing secret that is not base64.** It promised an
+  `ArgumentError` for such a secret, but `base64decode` skips characters outside the base64
+  alphabet, so a secret holding one — a placeholder such as `whsec_***`, a stray character —
+  decoded to another key and every delivery verified `false`. The secret after its `whsec_`
+  prefix is now checked before it is decoded: `A-Z`, `a-z`, `0-9`, `+` and `/` only, then at most
+  the `=` padding its last group lacks (a last group of two or three characters may come
+  unpadded), as RFC 4648 reads base64: "Implementations MUST reject the encoded data if it
+  contains characters outside the base alphabet". Whitespace counts as such a character, so a
+  secret with a trailing line break, which decoded to the right key before, is refused too.
+  Upgrading: pass the secret without surrounding whitespace (`strip` one read from a file).
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

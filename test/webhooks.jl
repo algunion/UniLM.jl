@@ -48,6 +48,25 @@
         # A well-formed secret with a wrong signature is still a plain `false`: only
         # genuine verification failures return, so `false` keeps one meaning.
         @test verify_webhook(payload, bad_headers, secret) == false
+        # `base64decode` skips characters outside the alphabet, so these decoded to another key
+        # (`whsec_***` to the empty one) and every delivery verified `false`. RFC 4648 §3.3:
+        # "Implementations MUST reject the encoded data if it contains characters outside the
+        # base alphabet"; a line break or a space counts as one.
+        body = "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+        for bad in ("whsec_***", "whsec_" * body * "*", "whsec_MfKQ 9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+                    "whsec_" * body * "\n", "whsec_MfKQ9r8G-YqrTwjUPD8ILPZIo2LaLaSw", body * "_")
+            @test_throws ArgumentError("webhook signing secret is not valid base64: after its whsec_ prefix, a " *
+                "secret holds only A-Z, a-z, 0-9, + and /, with = padding at its end only") verify_webhook(payload, bad_headers, bad)
+        end
+        # Padding goes at the end only, and only as much as the last group lacks.
+        for bad in ("whsec_YQ=", "whsec_YWJj=", "whsec_YQ===", "whsec_=YWJj", "whsec_YW=j", "whsec_Y", "whsec_YWJjZ")
+            @test_throws ArgumentError verify_webhook(payload, bad_headers, bad)
+        end
+        # A last group of two or three characters may come without its padding, as the Standard
+        # Webhooks reference library pads an unpadded secret before decoding it.
+        for good in ("whsec_YQ", "whsec_YQ==", "whsec_YWI", "whsec_YWI=", "whsec_YWJj", "YWJj")
+            @test verify_webhook(payload, bad_headers, good) == false
+        end
     end
 
     @testset "non-finite timestamps do not slip past the replay window" begin

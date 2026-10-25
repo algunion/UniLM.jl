@@ -238,9 +238,8 @@ the rounding above — is a `SystemOneCallError` too: no success is built from a
 of a failed call (`r["name"]`, [`answer`](@ref), [`answers`](@ref)) throws a [`SystemOneError`](@ref).
 
 UniLM sends a request again after a 408, 429, 500, 502, 503, 504, 520 to 524 or 529, up to `max_attempts` times
-within `total_deadline`, waiting at least what the reply's `Retry-After` header asks for; a single call reads no
-`retry-after-ms`, which the shared backoff of [`ask_each`](@ref) reads first
-([Many requests at once](@ref jev_items_each)). Each retry carries `X-TypeSafe-Retry-Count`, `1` on the second
+within `total_deadline`, waiting at least what the reply's `retry-after-ms` header asks for, else its
+`Retry-After`, as the shared backoff of [`ask_each`](@ref) does ([Many requests at once](@ref jev_items_each)). Each retry carries `X-TypeSafe-Retry-Count`, `1` on the second
 attempt. Any other status comes back as it is, since an identical
 request cannot fix it. With no [`RequestConfig`](@ref) of your own, a call to Jev is bounded by 60 s per attempt
 and 150 s in all; one of your own replaces both, per call or for a scope:

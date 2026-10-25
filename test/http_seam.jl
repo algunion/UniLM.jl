@@ -382,6 +382,38 @@ end
     @test action === :budget && delay >= 20.0
 end
 
+@testset "retry budget: retry-after-ms is the floor when sent, else Retry-After" begin
+    # Azure OpenAI's 429 carries `retry-after-ms`, "The recommended wait time (in milliseconds) before
+    # retrying"; OpenAI's and Anthropic's SDKs read it before `retry-after`, and so do TypeSafe's, whose
+    # service sent both on a live 429. At retry 0 the jitter adds at most 1 s above the floor.
+    floors(resp) = [UniLM._retry_delay(0, resp) for _ in 1:50]
+    @test all(d -> 2.5 <= d <= 3.5, floors(HTTP.Response(429, ["retry-after-ms" => "2500"])))
+    @test all(d -> 1.5 <= d <= 2.5, floors(HTTP.Response(429, ["retry-after-ms" => "1500", "Retry-After" => "7"])))
+    @test all(d -> 3.0 <= d <= 4.0, floors(HTTP.Response(429, ["retry-after-ms" => "soon", "Retry-After" => "3"])))
+    @test all(d -> 0.0 <= d <= 1.0, floors(HTTP.Response(429, ["retry-after-ms" => "-5"])))
+    # A wait beyond the remaining budget is reported, not slept, as for Retry-After.
+    action, delay = UniLM._retry_pause(RequestConfig(total_deadline=5.0), time_ns(), 1,
+                                       HTTP.Response(429, ["retry-after-ms" => "20000"]))
+    @test action === :budget && delay >= 20.0
+
+    # Between the attempts of one call: the second request starts at least the asked 1.2 s after
+    # the first was answered, where the jitter alone waits at most 1 s.
+    times = Float64[]
+    guard = ReentrantLock()
+    server, base = _seam_server(req -> begin
+        n = @lock guard (push!(times, time()); length(times))
+        n == 1 ? HTTP.Response(429, ["retry-after-ms" => "1200"], Vector{UInt8}("{}")) :
+                 HTTP.Response(200, [], Vector{UInt8}("{}"))
+    end)
+    try
+        resp = UniLM._http_with_retries(RequestConfig(max_attempts=2, total_deadline=30.0), time_ns(), "GET", base * "/")
+        @test resp.status == 200 && length(times) == 2
+        @test times[2] - times[1] >= 1.2
+    finally
+        close(server)
+    end
+end
+
 @testset "retry budget: the jitter above a Retry-After floor leaves the next attempt half of what remains" begin
     # 10 s left, a 9 s floor and attempt 4's 8 s backoff. Spread over the WHOLE 1 s
     # left after the floor, a pause could end just short of the deadline, and the next

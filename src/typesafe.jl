@@ -521,36 +521,11 @@ _typesafe_request_id(resp::HTTP.Response)::Union{Nothing,String} =
     (v = HTTP.header(resp, "x-typesafe-request-id", ""); isempty(v) ? nothing : String(v))
 _typesafe_request_id(::Nothing) = nothing
 
-"""
-    _typesafe_retry_after(resp) -> Union{Nothing,Float64}
-
-The wait a rate-limited or overloaded response asked for, in seconds.
-
-`retry-after-ms` is read first and `retry-after` second: a server that sends both
-means the millisecond form, and reading only the coarse one rounds a sub-second
-hint up to a whole second of idle client. `retry-after` itself takes either
-delta-seconds or an HTTP-date, both left to `_retry_after_seconds` — the seam's
-own reader, so the two forms are not parsed twice by two rules that could drift
-apart. `nothing` when neither header arrived or neither parsed: a value
-that is absent, malformed or not a finite number must leave the client's own
-backoff in charge, never make it throw or sleep forever.
-"""
-function _typesafe_retry_after(resp::HTTP.Response)::Union{Nothing,Float64}
-    ms = strip(HTTP.header(resp, "retry-after-ms", ""))
-    if !isempty(ms)
-        v = tryparse(Float64, ms)
-        if !isnothing(v) && isfinite(v)
-            return max(0.0, v / 1000)
-        end
-    end
-    return _retry_after_seconds(resp)
-end
-
 _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
     body = String(resp.body)
     SystemOneFailure(response=body, status=resp.status, request_id=_typesafe_request_id(resp),
                      error_type=_typesafe_error_type(body), message=_typesafe_error_message(body),
-                     retry_after=_typesafe_retry_after(resp))
+                     retry_after=_retry_after(resp))
 end
 
 # Two failures say less than the request they answer explains: a request over its context

@@ -229,6 +229,13 @@
   Gemini Interactions answers it with HTTP 400, so `respond` still refuses it there, now when
   the request is encoded rather than when the `Respond` is built; an `OllamaEndpoint`, whose
   Responses API keeps no response, refuses `background` and `store` as it did.
+- **Between the attempts of a call, UniLM waits what `retry-after-ms` asks for.** The retry
+  backoff read only `Retry-After`, so a reply that named its wait in `retry-after-ms` alone — the
+  header Azure OpenAI's 429 carries, "The recommended wait time (in milliseconds) before
+  retrying", and which the OpenAI, Anthropic and TypeSafe SDKs read first — got the jittered
+  backoff without it, which can be shorter, while `ask_each` and a `SystemOneFailure`'s
+  `retry_after` already read it. Every verb, streamed or not, now waits at least what
+  `retry-after-ms` asks for, else `Retry-After`.
 
 ## 0.26.0
 

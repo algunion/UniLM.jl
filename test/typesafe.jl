@@ -749,8 +749,7 @@ end
     # Header forms, one per case. Milliseconds are read first and keep sub-second
     # precision — rounding 250 ms up to a whole second is a quarter of a second of
     # throughput given away on every rate limit. These pin the REPORTED field; the
-    # seam's own backoff between attempts reads `Retry-After` alone, so a response
-    # sending only the millisecond header hands the caller the finer of the two.
+    # seam's own backoff between attempts reads the same headers the same way.
     function hint(hdrs::Vector{Pair{String,String}})
         r, _ = _ts_mock(; status=429, body=rl_body, headers=hdrs) do
             ask(_ts_request_02(); config=_TS_MOCK_CFG)

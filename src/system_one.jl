@@ -839,9 +839,8 @@ success with.
   wait, in seconds, read off the **final** response — the one being returned,
   once the retry seam has spent `max_attempts`. `retry-after-ms` wins over
   `retry-after` when both arrive, and an HTTP-date becomes a delay from now
-  floored at `0.0`. The seam's own backoff between attempts reads `Retry-After`
-  alone, so on a response that sends only the millisecond header this field is the
-  finer figure of the two. `nothing` when no usable hint was sent, which is every
+  floored at `0.0`; the seam's own backoff between attempts reads the two headers
+  the same way. `nothing` when no usable hint was sent, which is every
   status that is not rate-limiting and, as the service documents the header as
   optional, some that are.
 """
@@ -1550,7 +1549,7 @@ retry carries its number in `X-TypeSafe-Retry-Count`, as the official SDKs send
 it. The request rides the package's shared retry seam, so
 `max_attempts` applies: a retryable status (408, 429, 500, 502–504, 520–524, 529)
 or a transport failure is retried within `total_deadline`, honouring
-`Retry-After`. Other statuses — 400, 401, 403, 404, 413, 415, 422 — are returned
+`retry-after-ms`, else `Retry-After`. Other statuses — 400, 401, 403, 404, 413, 415, 422 — are returned
 as they came, because a second identical request cannot fix them.
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref)

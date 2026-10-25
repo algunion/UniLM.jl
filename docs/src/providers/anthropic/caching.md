@@ -18,13 +18,13 @@ The breakpoint is where the cache is written: one entry, holding everything up t
 block. A later request reads the entry when it starts with the same blocks up to that breakpoint, and
 writes what follows them; the API looks back at most 20 blocks for such an entry. The next turn of a
 conversation starts with them, since a `Chat` sends the whole conversation each time, unless a system
-message pushed after a reply joins the top-level `system` prompt, which can happen only on the models
-whose Thinking prefix check cell in the [family table](@ref anthropic_reasoning) is "—"
-([Conversations](@ref anthropic_conversations)): that request then starts with another prompt, so it
-reads nothing and writes it all again. Two requests that share only a long system prompt, each with its own
-question, write two entries and read none: a `Chat` marks no breakpoint of its own. A prefix shorter than
-the model's minimum cacheable prompt, which Anthropic sets per model between 512 and 4,096 tokens, is not
-cached, and the API returns no error: the usage then shows neither a write nor a read.
+message pushed after the last reply has joined the top-level `system` prompt
+([Conversations](@ref anthropic_conversations) says when one does): that request then starts with
+another prompt, so it reads nothing and writes it all again. Two requests that share only a long system
+prompt, each with its own question, write two entries and read none: a `Chat` marks no breakpoint of its
+own. A prefix shorter than the model's minimum cacheable prompt, which Anthropic sets per model between
+512 and 4,096 tokens, is not cached, and the API returns no error: the usage then shows neither a write
+nor a read.
 
 The usage counts the reads and the writes ([First call](@ref anthropic_first_call)), and
 `cache_write_extended_tokens` the writes kept for an hour; what each costs is in
@@ -131,7 +131,7 @@ its callbacks has run.
 | `LLMCallError` with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)) | a longer bound, or a stream for a long reply |
 | `LLMCallError` whose `cause` is the connection's exception, such as an `HTTP.ConnectError` for a refused connection | the network failed, on each attempt the call's `RequestConfig` allows, or on a stream once a callback had run | the connection, then the request again |
 | `LLMCallError` whose `cause` is a `UniLMCancelled` | a stop before the turn's stop reason arrived: the stream's `close[] = true` (`:callback`) or a cancelled `CancelToken` (`:token`); nothing is appended ([Streaming](@ref anthropic_streaming)) | nothing, if the stop was yours |
-| `LLMCallError` whose `cause` is what your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended | the callback |
+| `LLMCallError` whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; a thrown value that is no `Exception` leaves `cause` `nothing`, its text in `error` | the callback |
 | `LLMCallError`: "Anthropic response is not a message …" | a 200 that is not a message ([First call](@ref anthropic_first_call)) | report it to Anthropic with its `request_id` |
 | `finish_reason == "length"` | the reply reached `max_tokens` or the context window ([First call](@ref anthropic_first_call)) | a higher `max_tokens` ([Setup](@ref anthropic_setup)), or a shorter conversation |
 | `finish_reason == "content_filter"` | Claude refused: the turn has no content, and `refusal_message` the explanation | another request; the refused turn is left out of the next one ([Conversations](@ref anthropic_conversations)) |

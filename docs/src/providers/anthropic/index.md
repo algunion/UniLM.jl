@@ -162,9 +162,9 @@ blank line. Where a system message pushed later goes depends on two columns of t
   ([preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)).
   The models with the check accept an earlier turn's thinking blocks only while everything before
   them is unchanged — the top-level `system` prompt, the tools and the earlier messages. So once an
-  assistant turn is in the conversation, UniLM never edits the top-level `system` prompt of an
-  append-only model: a later system message that cannot stay in place is sent right after the next
-  user turn, and each request extends the one before. Push your own messages and send the replies
+  assistant turn is sent, UniLM never edits the top-level `system` prompt of an append-only model: a
+  later system message that cannot stay in place is sent right after the next user turn, and each
+  request extends the one before. Push your own messages and send the replies
   back as they came: an edit to an earlier turn, or to the tools, invalidates the thinking blocks
   after it, and the API answers HTTP 400.
 

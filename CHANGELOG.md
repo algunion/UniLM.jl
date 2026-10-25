@@ -59,12 +59,14 @@
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
   `TaskFailedException` around it. Every earlier recording replays unchanged; what this
   changes for code that ran these calls inside a scope is under Breaking.
-- **`OllamaOptions` takes `draft_num_predict`.** Ollama's runner option for speculative
-  decoding — the most draft tokens predicted per step when a model has a draft model, `0`
-  turning drafting off — is sent in the request's `options` like the other options; a
-  negative value is an `ArgumentError`. `penalize_newline` and `numa`, which Ollama's API
-  reference also lists, are still refused as unknown keywords: Ollama 0.40.11 does not read
-  them (it logs "invalid option provided" and goes on without them).
+- **`OllamaOptions` takes `draft_num_predict` and `typical_p`.** Ollama's runner option for
+  speculative decoding — the most draft tokens predicted per step when a model has a draft
+  model, `0` turning drafting off — and `typical_p`, the sampling option Ollama deprecates
+  and still reads per request (it logs "deprecated option provided"), are sent in the
+  request's `options` like the other options; a negative `draft_num_predict`, or a
+  `typical_p` outside [0, 1], is an `ArgumentError`. `penalize_newline` and `numa`, which
+  Ollama's API reference also lists, are still refused as unknown keywords: Ollama 0.40.11
+  does not read them (it logs "invalid option provided" and goes on without them).
 - **`transcribe` reaches a `GenericOpenAIEndpoint`.** The endpoint declares `:transcription`,
   as it declares the other OpenAI-compatible routes, so `transcribe` sends the request to its
   server's `/v1/audio/transcriptions`, where vLLM serves OpenAI's Transcriptions API; it

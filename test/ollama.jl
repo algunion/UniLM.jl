@@ -113,6 +113,10 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test _wire(_ochat(OllamaEndpoint(draft_num_predict=4)))["options"] == Dict("draft_num_predict" => 4)
     @test sprint(show, OllamaEndpoint(base_url="http://b:1", draft_num_predict=4)) ==
           "OllamaEndpoint(\"http://b:1\"; draft_num_predict=4)"
+    # typical_p: Ollama deprecates it and still reads it per request (Ollama 0.40.11 logs "deprecated option
+    # provided" and applies it).
+    @test OllamaOptions(typical_p=0.9).typical_p == 0.9
+    @test _wire(_ochat(OllamaEndpoint(typical_p=0.9)))["options"] == Dict("typical_p" => 0.9)
     # Ollama 0.40.11 reads no penalize_newline or numa ("invalid option provided"): refused, not sent.
     for k in (:penalize_newline, :numa)
         err = try OllamaEndpoint(; k => true); nothing catch x; x end
@@ -122,7 +126,7 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test err isa ArgumentError && occursin("num_ctxx", err.msg) && occursin("num_ctx", err.msg)
     for (k, v) in (:num_ctx => 0, :num_batch => 0, :num_thread => 0, :num_gpu => -2, :main_gpu => -1,
                    :num_keep => -2, :top_k => -1, :min_p => 1.5, :repeat_last_n => -2,
-                   :repeat_penalty => -0.1, :draft_num_predict => -1)
+                   :repeat_penalty => -0.1, :draft_num_predict => -1, :typical_p => 1.5, :typical_p => -0.1)
         @test_throws ArgumentError OllamaOptions(; k => v)
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value

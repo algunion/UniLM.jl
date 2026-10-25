@@ -966,7 +966,7 @@ const OpenAIWireEndpointSpec = Union{Type{<:OpenAIWireEndpoint}, OpenAIWireEndpo
                   main_gpu=nothing, num_thread=nothing, use_mmap=nothing,
                   num_keep=nothing, top_k=nothing, min_p=nothing,
                   repeat_last_n=nothing, repeat_penalty=nothing,
-                  draft_num_predict=nothing)
+                  draft_num_predict=nothing, typical_p=nothing)
 
 The Ollama runtime and sampling options that [`Chat`](@ref) has no field for, sent as
 the `options` object of an [`OllamaEndpoint`](@ref) request; unset options are
@@ -990,6 +990,10 @@ omitted, so the model's own defaults apply. Options `Chat` already names
   has a draft model: "Separate draft models default to 4; embedded MTP tensors require
   setting this parameter. Set to 0 to disable speculative drafting."
   ([Modelfile](https://docs.ollama.com/modelfile)).
+- `typical_p`: locally typical sampling. Ollama deprecates it — "`typical_p` is deprecated and
+  may be removed in a future release" (its
+  [API reference](https://github.com/ollama/ollama/blob/v0.40.11/docs/api.md#generate-request-with-options))
+  — and still reads it per request, logging "deprecated option provided" (Ollama 0.40.11).
 
 Every option is passed through unchanged; the effect of those other than `num_ctx` on the
 MLX runner is not verified. Ollama's API reference also lists `penalize_newline` and `numa`,
@@ -998,8 +1002,8 @@ goes on without them), so `OllamaOptions` has neither.
 
 The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
 `num_batch` and `num_thread` must be positive, `top_k` non-negative (0 turns top-k off), `min_p` in
-[0, 1], `repeat_penalty` and `draft_num_predict` non-negative, `repeat_last_n` and `num_keep` at
-least -1, `num_gpu` at least -1 and `main_gpu` non-negative.
+[0, 1], `typical_p` in [0, 1], `repeat_penalty` and `draft_num_predict` non-negative, `repeat_last_n`
+and `num_keep` at least -1, `num_gpu` at least -1 and `main_gpu` non-negative.
 """
 @kwdef struct OllamaOptions
     num_ctx::Union{Int,Nothing} = nothing
@@ -1014,8 +1018,9 @@ least -1, `num_gpu` at least -1 and `main_gpu` non-negative.
     repeat_last_n::Union{Int,Nothing} = nothing
     repeat_penalty::Union{Float64,Nothing} = nothing
     draft_num_predict::Union{Int,Nothing} = nothing
+    typical_p::Union{Float64,Nothing} = nothing
     function OllamaOptions(num_ctx, num_batch, num_gpu, main_gpu, num_thread, use_mmap, num_keep,
-                           top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict=nothing)
+                           top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict=nothing, typical_p=nothing)
         _check(ok, what) = ok || throw(ArgumentError("Ollama option $what"))
         isnothing(num_ctx)        || _check(num_ctx > 0, "num_ctx must be positive (got $num_ctx)")
         isnothing(num_batch)      || _check(num_batch > 0, "num_batch must be positive (got $num_batch)")
@@ -1028,8 +1033,9 @@ least -1, `num_gpu` at least -1 and `main_gpu` non-negative.
         isnothing(repeat_last_n)  || _check(repeat_last_n >= -1, "repeat_last_n must be at least -1 (got $repeat_last_n)")
         isnothing(repeat_penalty) || _check(repeat_penalty >= 0.0, "repeat_penalty must be non-negative (got $repeat_penalty)")
         isnothing(draft_num_predict) || _check(draft_num_predict >= 0, "draft_num_predict must be non-negative (got $draft_num_predict)")
+        isnothing(typical_p)      || _check(0.0 <= typical_p <= 1.0, "typical_p must be in [0, 1] (got $typical_p)")
         new(num_ctx, num_batch, num_gpu, main_gpu, num_thread, use_mmap, num_keep,
-            top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict)
+            top_k, min_p, repeat_last_n, repeat_penalty, draft_num_predict, typical_p)
     end
 end
 

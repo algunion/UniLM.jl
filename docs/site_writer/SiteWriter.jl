@@ -64,7 +64,7 @@ struct Text <: Inline; text::String end
 struct Code <: Inline; code::String end
 struct Emph <: Inline; content::Vector{Inline} end
 struct Strong <: Inline; content::Vector{Inline} end
-"`href`: `/route/`, `/route/#anchor`, `#anchor` on the same page, or an external URL."
+"`href`: `/route/`, `/route/#anchor`, `#anchor` on the same page, `/assets/…` for a file of the manual's own assets, or an external URL."
 struct Link <: Inline; href::String; content::Vector{Inline} end
 "`src`: `/assets/…` for the manual's own images, else the external URL."
 struct Image <: Inline; src::String; alt::String end
@@ -236,6 +236,11 @@ inline(w::Walk, ::MarkdownAST.Strong, n) = Strong(inlines(w, n))
 inline(w::Walk, e::MarkdownAST.Link, n) =
     isexternal(e.destination) ? Link(e.destination, inlines(w, n)) : fail(w, "an unresolved link to $(repr(e.destination))")
 inline(w::Walk, e::Documenter.PageLink, n) = Link(href(w, e), inlines(w, n))
+# A link to a file that is no page (Documenter checked that it exists): one under assets/ goes to the
+# site's copy, as an image there does.
+inline(w::Walk, e::Documenter.LocalLink, n) =
+    startswith(e.path, "assets/") ? Link("/" * e.path * (isempty(e.fragment) ? "" : "#" * e.fragment), inlines(w, n)) :
+    fail(w, "a local link outside assets/ ($(e.path)); the site serves only the copied assets")
 inline(w::Walk, e::MarkdownAST.Image, n) =
     isexternal(e.destination) ? Image(e.destination, alt(n)) : fail(w, "an image at $(repr(e.destination))")
 inline(w::Walk, e::Documenter.LocalImage, n) =

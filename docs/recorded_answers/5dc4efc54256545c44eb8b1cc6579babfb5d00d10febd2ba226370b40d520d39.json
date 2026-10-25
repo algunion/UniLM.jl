@@ -1,0 +1,100 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "What is the weather in Lyon? Use the tool, then answer in one sentence.",
+          "role": "user"
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"city\":\"Lyon\"}",
+                "name": "get_weather"
+              },
+              "id": "ictDlq7RTzQwImnGftC5JaZ29FEmSaTH",
+              "type": "function"
+            }
+          ]
+        },
+        {
+          "content": "18°C and sunny in Lyon",
+          "role": "tool",
+          "tool_call_id": "ictDlq7RTzQwImnGftC5JaZ29FEmSaTH"
+        }
+      ],
+      "model": "d1-3b",
+      "parallel_tool_calls": false,
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "Current weather in a city",
+            "parameters": {
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "The weather in Lyon is 18°C and sunny."
+          }
+        }
+      ],
+      "created": 1792945378,
+      "model": "d1-3b",
+      "system_fingerprint": "b9730-e475fa2b5",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 12,
+        "prompt_tokens": 122,
+        "total_tokens": 134,
+        "prompt_tokens_details": {
+          "cached_tokens": 106
+        }
+      },
+      "id": "chatcmpl-BKhH6aCwaKKk0Ogt4jJtxBVTV6otvv4W",
+      "timings": {
+        "cache_n": 106,
+        "prompt_n": 16,
+        "prompt_ms": 95.673,
+        "prompt_per_token_ms": 5.9795625,
+        "prompt_per_second": 167.2363153658817,
+        "predicted_n": 12,
+        "predicted_ms": 89.596,
+        "predicted_per_token_ms": 7.466333333333334,
+        "predicted_per_second": 133.93455064958258
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T16:22:58Z"
+}

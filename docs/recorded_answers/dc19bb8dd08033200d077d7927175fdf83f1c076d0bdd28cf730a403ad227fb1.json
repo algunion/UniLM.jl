@@ -1,0 +1,61 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "In one sentence: what is a prime number?",
+          "role": "user"
+        }
+      ],
+      "model": "d1-3b"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself."
+          }
+        }
+      ],
+      "created": 1792945377,
+      "model": "d1-3b",
+      "system_fingerprint": "b9730-e475fa2b5",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 24,
+        "prompt_tokens": 30,
+        "total_tokens": 54,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "id": "chatcmpl-4sdU4EWJPAXJgnaNpoC9KS2UMLxsZwUv",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 30,
+        "prompt_ms": 52.948,
+        "prompt_per_token_ms": 1.7649333333333332,
+        "prompt_per_second": 566.593639042079,
+        "predicted_n": 24,
+        "predicted_ms": 181.343,
+        "predicted_per_token_ms": 7.555958333333333,
+        "predicted_per_second": 132.34588597299043
+      }
+    }
+  },
+  "recorded_at": "2026-10-25T16:22:57Z"
+}

@@ -1216,6 +1216,24 @@ end
         @test _RL_HITS[] == hits + 2                                     # nothing sent again
         ispath(dir) && rm(dir; recursive=true)
     end
+    # The reply being read was billed as far as its provider reported it (Anthropic reports the input
+    # in message_start, before the first text delta): the call's total counts it whether the callback's
+    # own exception or its recorded call's miss ends the call.
+    usage_src = _ra_dir("llm-stream-callback-usage")
+    anthropic_stream() = _rl_stream_chat(_RLHere(ANTHROPICServiceEndpoint), "claude-haiku-4-5")
+    _rl_online(() -> with_recorded_answers(anthropic_stream, usage_src; mode=:record))
+    function ended_by(callback)
+        chat = _rl_chat(_RLHere(ANTHROPICServiceEndpoint); model="claude-haiku-4-5", stream=true)
+        r = _rl_offline(() -> with_recorded_answers(usage_src) do
+            try fetch(chatrequest!(chat; config=_RL_CFG, callback)) catch e; e end
+        end)
+        (r, cumulative_cost(chat))
+    end
+    boom, boom_cost = ended_by((d, close) -> d isa String && error("boom"))
+    miss, miss_cost = ended_by((d, close) -> d isa String && inner())
+    @test boom isa LLMCallError && miss isa TaskFailedException && _rl_unwrap(miss) isa ReplayMissError
+    @test boom_cost > 0
+    @test miss_cost == boom_cost
 end
 
 # A raw peer that answers every request with `bytes` as one chunk of a chunked body cut before its

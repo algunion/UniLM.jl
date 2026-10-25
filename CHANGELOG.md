@@ -108,7 +108,8 @@
   tool loop's dispatcher: `fetch` throws a `TaskFailedException` around it — around the
   wrapper too when the callback threw it inside one, such as the `TaskFailedException` of
   a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
-  as a bare one already did.
+  as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
+  had reported, as for any other exception a callback throws.
 - **A recorded stream whose connection fails after its final event is kept.** With the
   stream recording added above, a streamed `chatrequest!` or `respond` in a `:record` or
   `:record_missing` scope whose reply was whole — its final event (`[DONE]`,

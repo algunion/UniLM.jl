@@ -1840,12 +1840,15 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         # (`_escapes_tool`) — and as there the replies the turn received before that request
         # are first added to the chat's total — they were billed. Not classified, so
         # `_settled` does not run: an unstreamed call does not add the reply whose recording
-        # was lost either.
+        # was lost either. One that a callback threw (`_UserCallbackError`) ended a reply that
+        # was being read, and billed as far as its provider reported it: that reply is added
+        # too, as the call-error path adds it (`_billed_turn`).
         u = _unwrap_exception(e)
-        thrown = u isa _UserCallbackError && _escapes_tool(u.thrown) ? u.thrown : e
+        user = u isa _UserCallbackError && _escapes_tool(u.thrown)
+        thrown = user ? u.thrown : e
         if _escapes_tool(thrown)
-            _accrue_turn!(chat, turn)
-            thrown === e ? rethrow() : throw(thrown)
+            _accrue_turn!(chat, user ? _billed_turn(turn, ctl.live) : turn)
+            user ? throw(thrown) : rethrow()
         end
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
         failure = if u isa _UserCallbackError

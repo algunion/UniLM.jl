@@ -69,7 +69,8 @@ keeps its links when its title changes or it moves.
   in `docs/test_provider_facts.jl` asks for each id once, on one of the entry's pages.
 - A section that is no feature (`<entry>_options`, `ollama_options`, `jev_box`) arrives with its content: a new one
   with the change that writes it, an inherited one as `<id>__next` with the change that moves it. It comes empty,
-  ahead of its content, only where a later change of the same plan writes it; none ships empty.
+  ahead of its content, only where a later commit on the same branch writes it, before the branch merges; none
+  ships empty.
 - A page being dissolved stays in the sidebar, right after the page that replaces it, until the commit that
   deletes it adds its redirect to `docs/redirects.toml`.
 - A fact a generated table shows is not restated in prose: restated, it goes stale when the code changes, while
@@ -91,13 +92,13 @@ as `Main.ProviderFacts.llm` or `Main.ProviderFacts.decisions`, and returns a `Ma
 | `price_table(table)` | the prices of `:openai`, `:anthropic`, `:gemini`, `:deepseek` or `:jev` | in that entry's cost section |
 | `claude_price_rules()` | the Claude models `estimated_cost` does not price at their row's rates alone: a long-prompt multiplier, or `0.0` for a model of the family table without a price row | in the Anthropic entry's cost section |
 
-A per-model fact a page needs comes from a tested generator in `docs/ProviderFacts.jl`, never from an inline
-`@eval` that reads UniLM internals. A generated table has no title: prose names it by what it holds or where it
-stands ("the price table", "the table at the top of this page") and a column by its header, and another section
-links the section the table is placed in. That section explains each column of a model table once: in a clause,
-linking the section that holds the column's rule where that is another one; or, where a column's cell texts each
-stand for a different request, in a table keyed on those texts as the generator writes them (the Thinking cells on
-`providers/anthropic/requests.md`).
+A per-model fact that UniLM's code holds reaches a page through a tested generator in `docs/ProviderFacts.jl`,
+never through an inline `@eval` that reads UniLM internals. A generated table has no title: prose names it by
+what it holds or where it stands ("the price table", "the table at the top of this page") and a column by its
+header, and another section links the section the table is placed in. That section explains each column of a
+model table once: in a clause, linking the section that holds the column's rule where that is another one; or,
+where a column's cell texts each stand for a different request, in a table keyed on those texts as the generator
+writes them (the Thinking cells on `providers/anthropic/requests.md`).
 
 ## Executed or quoted
 
@@ -119,9 +120,10 @@ and fails on an executed call to any other verb that reaches a service.
   records the missing ones (the top of `docs/make.jl`). A recording is never edited: delete it and record again.
 - New recordings are checked against the page before they are committed: each field its prose relies on is in
   them (a cached call's cache tokens, a thinking example's thinking text, a stream's several deltas), and two calls
-  whose difference the page shows, such as a cache write and then a read, are two recording files: in a recording
-  run, once a request is recorded, a call that repeats it byte for byte replays the recording and never reaches
-  the service.
+  whose difference the page shows, such as a cache write and then a read, are two recording files. A recording is
+  filed under its request's key, the method, path and body as `with_recorded_answers` keys them (credentials
+  redacted; on a System One backend, without the options that change only how a request is served): in a
+  recording run, a later call with the key of a recorded request replays it and never reaches the service.
 - A chain that passes a stored id on (a `store=true` response read back by `get_response`, …): changing any of
   its calls deletes the chain's first recording, found by its request text in `docs/recorded_answers`, in the
   same commit, so the next recording run makes the chain again from a new id.

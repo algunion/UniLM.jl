@@ -765,17 +765,34 @@ OpenAI-wire Responses and completions routes.
 """
 abstract type OpenAIWireEndpoint <: ServiceEndpoint end
 
-"""OpenAI API service endpoint (default). Requires `OPENAI_API_KEY` env variable."""
-struct OPENAIServiceEndpoint <: OpenAIWireEndpoint end
+# The field-less built-in endpoints — these four and `TYPESAFEServiceEndpoint` (typesafe.jl) —
+# are passed as their types, on which their methods are defined; an instance would hold nothing
+# more and match none of them. So each one, called, returns its type: `OPENAIServiceEndpoint()`
+# is `OPENAIServiceEndpoint` wherever a `service` is taken.
 
-"""Azure OpenAI Service endpoint. Requires `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` env variables."""
-struct AZUREServiceEndpoint <: OpenAIWireEndpoint end
+"""OpenAI API service endpoint (default). Requires `OPENAI_API_KEY` env variable.
+`OPENAIServiceEndpoint()` returns the type."""
+struct OPENAIServiceEndpoint <: OpenAIWireEndpoint
+    OPENAIServiceEndpoint() = OPENAIServiceEndpoint
+end
 
-"""Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
-struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint end
+"""Azure OpenAI Service endpoint. Requires `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` env variables.
+`AZUREServiceEndpoint()` returns the type."""
+struct AZUREServiceEndpoint <: OpenAIWireEndpoint
+    AZUREServiceEndpoint() = AZUREServiceEndpoint
+end
 
-"""Native Google Gemini `generateContent` API (`x-goog-api-key`; model in URL). Requires `GEMINI_API_KEY`."""
-struct GEMINIServiceEndpoint <: ServiceEndpoint end
+"""Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable.
+`GEMINIOpenAIServiceEndpoint()` returns the type."""
+struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint
+    GEMINIOpenAIServiceEndpoint() = GEMINIOpenAIServiceEndpoint
+end
+
+"""Native Google Gemini `generateContent` API (`x-goog-api-key`; model in URL). Requires `GEMINI_API_KEY`.
+`GEMINIServiceEndpoint()` returns the type."""
+struct GEMINIServiceEndpoint <: ServiceEndpoint
+    GEMINIServiceEndpoint() = GEMINIServiceEndpoint
+end
 
 # The inference regions of a Messages API request
 # (https://platform.claude.com/docs/en/manage-claude/data-residency).
@@ -930,7 +947,10 @@ GenericOpenAIEndpoint(base_url, api_key) = GenericOpenAIEndpoint(base_url, api_k
     ServiceEndpointSpec
 
 Type alias accepting both marker types (`OPENAIServiceEndpoint`) and instances
-(`GenericOpenAIEndpoint(...)`). Used as the type of `service` fields.
+(`GenericOpenAIEndpoint(...)`). Used as the type of `service` fields. The field-less
+built-in endpoints — `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`,
+`GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `TYPESAFEServiceEndpoint` — are
+passed as types: calling one, `OPENAIServiceEndpoint()`, returns the type.
 """
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
 

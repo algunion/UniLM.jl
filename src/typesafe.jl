@@ -27,8 +27,13 @@ up front with an `ArgumentError` rather than posting a request no server here
 would answer. A `Chat` or an `Embeddings` that names this endpoint can be built
 only with an explicit `model=` (without one the constructor throws `ArgumentError`,
 since there is no default model to resolve); sending it is refused.
+`TYPESAFEServiceEndpoint()` returns the type.
 """
-struct TYPESAFEServiceEndpoint <: ServiceEndpoint end
+struct TYPESAFEServiceEndpoint <: ServiceEndpoint
+    # Field-less, with its methods on the type: called, it returns the type, as the
+    # field-less endpoints in api.jl do.
+    TYPESAFEServiceEndpoint() = TYPESAFEServiceEndpoint
+end
 
 provider_capabilities(::Type{TYPESAFEServiceEndpoint}) = Set([:system_one, :models])
 

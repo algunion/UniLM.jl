@@ -270,6 +270,16 @@ _prefix_complete_url(s::DeepSeekEndpoint) = DEEPSEEK_BETA_BASE_URL * CHAT_COMPLE
 _prefix_complete_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
 _prefix_complete_url(s) = get_url(s, Chat())  # fallback for other endpoints
 
+# A prefix completion is a Chat Completions exchange, so it goes through the endpoint's own encoder
+# and decoder: DeepSeek's send back the earlier turns' `reasoning_content` on a request that carries
+# tools, and keep the reply's, which a later request with tools must send back or DeepSeek answers
+# HTTP 400 (https://api-docs.deepseek.com/guides/thinking_mode). An endpoint off the OpenAI wire is
+# sent the OpenAI wire's body here, and its reply is read as that wire's.
+_prefix_encode(service::OpenAIWireEndpointSpec, chat::Chat)::String = encode_request(service, chat)
+_prefix_encode(_, chat::Chat)::String = JSON.json(chat)
+_prefix_decode(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = decode_response(service, resp)
+_prefix_decode(_, resp::HTTP.Response) = extract_message(resp)
+
 """
     prefix_complete(chat::Chat; config=nothing, cancel=nothing) -> LLMRequestResponse
 
@@ -307,13 +317,10 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
-    body_dict = JSON.lower(chat)
-    # The messages' own wire form (attachments included), as mutable dicts so the
-    # prefix flag can be set on the last one.
-    msgs = Dict{Symbol,Any}[JSON.lower(m) for m in chat.messages]
-    msgs[end][:prefix] = true
-    body_dict[:messages] = msgs
-    body = JSON.json(body_dict)
+    # The body the endpoint's encoder builds, with the prefix flag on the last message.
+    wire = JSON.parse(_prefix_encode(chat.service, chat))
+    wire["messages"][end]["prefix"] = true
+    body = JSON.json(wire)
     url = _prefix_complete_url(chat.service)
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
@@ -323,12 +330,12 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
         end
 
         if resp.status == 200
-            extracted = extract_message(resp)
+            extracted = _prefix_decode(chat.service, resp)
             continuation = extracted.message
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=extracted.model)
+            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.

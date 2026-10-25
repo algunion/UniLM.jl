@@ -319,6 +319,67 @@ end
     end
 end
 
+# DeepSeek's own endpoint, encoder and decoder included, behind the local URL.
+struct _DSPrefixHere <: UniLM.OpenAIWireEndpoint
+    real::DeepSeekEndpoint
+end
+UniLM.provider_capabilities(s::_DSPrefixHere) = UniLM.provider_capabilities(s.real)
+UniLM.auth_header(::_DSPrefixHere) = ["Content-Type" => "application/json"]
+UniLM._prefix_complete_url(::_DSPrefixHere) = _COMPL_URL[]
+UniLM.encode_request(s::_DSPrefixHere, chat::Chat) = UniLM.encode_request(s.real, chat)
+UniLM.decode_response(s::_DSPrefixHere, resp::HTTP.Response) = UniLM.decode_response(s.real, resp)
+
+@testset "prefix_complete keeps DeepSeek's reasoning_content: read back, and sent with tools" begin
+    # DeepSeek: with tools, "the reasoning_content must be fully passed back … If your code does not
+    # correctly pass back reasoning_content, the API will return a 400 error"
+    # (https://api-docs.deepseek.com/guides/thinking_mode).
+    server, url = _compl_canned_server(200, JSON.json(Dict("model" => "deepseek-flash",
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "message" => Dict("role" => "assistant",
+                           "content" => "print('hi')\n```", "reasoning_content" => "because"))],
+        "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 3, "total_tokens" => 11))),
+        ["Content-Type" => "application/json"])
+    _COMPL_URL[] = url
+    try
+        chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+                    messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Python hello world"),
+                              Message(role=UniLM.RoleAssistant, content="```python\n")])
+        r = prefix_complete(chat)
+        @test r isa LLMSuccess && reasoning_text(r) == "because"
+        @test reasoning_text(last(chat)) == "because"               # the committed whole turn keeps it
+        next = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
+                    messages=[chat.messages; Message(Val(:user), "Now run it.")],
+                    tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))])
+        turn = JSON.parse(UniLM.encode_request(DeepSeekEndpoint("sk-test"), next))["messages"][3]
+        @test turn["content"] == "```python\nprint('hi')\n```" && turn["reasoning_content"] == "because"
+    finally
+        close(server)
+    end
+end
+
+@testset "prefix_complete with tools sends DeepSeek's reasoning_content back, as chatrequest! does" begin
+    # The same rule binds a prefix completion: it "follows the Chat Completion API"
+    # (https://api-docs.deepseek.com/guides/chat_prefix_completion), and a request carrying tools
+    # must pass back the reasoning_content of the earlier assistant turns.
+    reply = JSON.json(Dict("model" => "deepseek-flash", "usage" => Dict("prompt_tokens" => 8,
+        "completion_tokens" => 3, "total_tokens" => 11), "choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
+    thought = UniLM.ProviderContent(:deepseek, Any[Dict{String,Any}("reasoning_content" => "r1")])
+    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+                tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))],
+                messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Hi."),
+                          Message(role=UniLM.RoleAssistant, content="Hello.", provider_content=thought),
+                          Message(Val(:user), "Now write it."), Message(role=UniLM.RoleAssistant, content="```python\n")])
+    r, seen = _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat)
+    end
+    @test r isa LLMSuccess
+    sent = JSON.parse(only(seen).body)["messages"]
+    @test get(sent[3], "reasoning_content", nothing) == "r1"          # the earlier reasoning turn
+    @test sent[end]["prefix"] === true && sent[end]["content"] == "```python\n"
+    @test !haskey(sent[end], "reasoning_content")
+end
+
 @testset "fim_complete and prefix_complete: a cancelled token sends nothing" begin
     tok = cancel!(CancelToken())
     cfg = RequestConfig(max_attempts=3, total_deadline=60.0)

@@ -128,7 +128,7 @@ with it: the body of a status other than 200; the event of an in-band `overloade
 there is one. UniLM sends a request again after a transient status, 429 and 529 among them and
 Anthropic's 500 and 504, as often as the call's [`RequestConfig`](@ref) allows, and then returns the last
 answer ([Timeouts & Retries](@ref timeouts_guide)); a streamed request is sent again only while none of
-its callbacks has run.
+its callbacks has run. A 429 of the monthly spend cap is not transient: UniLM returns it at once.
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
@@ -136,7 +136,7 @@ its callbacks has run.
 | `InvalidConversationError` from `chatrequest!`, nothing sent | with `history=true`, the conversation ends with an assistant message, so the reply could not be appended | a user message after it, or `history=false` to send it as a prefill ([Request options](@ref anthropic_request_options)) |
 | `LLMCallError` whose `cause` is a `KeyError` | `ANTHROPIC_API_KEY` is not set ([Setup](@ref anthropic_setup)) | set it |
 | `LLMFailure` with `status` 400, 401, 402, 403, 404, 409 or 413 | Anthropic refused the request, and UniLM does not send it again: `response` holds Anthropic's error, whose `type` names the kind (`invalid_request_error`, `authentication_error`, `request_too_large`, …) and whose `message` the reason ([errors](https://platform.claude.com/docs/en/api/errors)) | what the message says; a 400 that names a spend limit you set lasts until the time its message names, or until you raise or remove the limit |
-| `LLMFailure` with `status` 429 | a rate limit (`rate_limit_error`); UniLM sends every Anthropic 429 again, the one of the monthly spend cap too, whose error names `enforced_spend_limit_reached` and which goes on failing until access resumes ([rate limits](https://platform.claude.com/docs/en/api/rate-limits)) | fewer requests or tokens per minute, or more `max_attempts` or a longer `total_deadline`; at the spend cap, a higher usage tier |
+| `LLMFailure` with `status` 429 | a rate limit (`rate_limit_error`), which UniLM sends again; or the monthly spend cap, whose error's `details.error_code` is `enforced_spend_limit_reached` and which goes on failing until access resumes, so UniLM returns it at once ([rate limits](https://platform.claude.com/docs/en/api/rate-limits)) | fewer requests or tokens per minute, or more `max_attempts` or a longer `total_deadline`; at the spend cap, a higher usage tier |
 | `LLMFailure` with `status` 529 | Anthropic is overloaded (`overloaded_error`) by traffic across all its users; sent again as a 429 is | the request again, later |
 | `LLMFailure` with `status` 529 from a stream | an `overloaded_error` event in an HTTP 200 stream, which UniLM retries as a 529 until the request's first `callback` or `on_tool_call` runs, and returns from then on: the text already passed on stays passed, and nothing is appended to the `Chat` | the turn again |
 | `LLMCallError` with `status` `nothing` from a stream, the event in `error` | an error event of another type, such as `api_error`; not sent again | the turn again |
@@ -144,7 +144,7 @@ its callbacks has run.
 | `LLMCallError` with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)) | a longer bound, or a stream for a long reply |
 | `LLMCallError` whose `cause` is the connection's exception, such as an `HTTP.ConnectError` for a refused connection | the network failed, on each attempt the call's `RequestConfig` allows, or on a stream once a callback had run | the connection, then the request again |
 | `LLMCallError` whose `cause` is a `UniLMCancelled` | a stop before the turn's stop reason arrived: the stream's `close[] = true` (`:callback`) or a cancelled `CancelToken` (`:token`); nothing is appended ([Streaming](@ref anthropic_streaming)) | nothing, if the stop was yours |
-| `LLMCallError` whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; a thrown value that is no `Exception` leaves `cause` `nothing`, its text in `error` | the callback |
+| `LLMCallError` whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; a thrown value that is no `Exception` leaves `cause` `nothing`, its text in `error`; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |
 | `LLMCallError`: "Anthropic response is not a message …" | a 200 that is not a message ([First call](@ref anthropic_first_call)) | report it to Anthropic with its `request_id` |
 | `finish_reason == "length"` | the reply reached `max_tokens` or the context window ([First call](@ref anthropic_first_call)) | a higher `max_tokens` ([Setup](@ref anthropic_setup)), or a shorter conversation |
 | `finish_reason == "content_filter"` | Claude refused: the turn has no content, and `refusal_message` the explanation | another request; the refused turn is left out of the next one ([Conversations](@ref anthropic_conversations)) |

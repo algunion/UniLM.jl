@@ -371,21 +371,38 @@ function JSON.lower(t::ImageGenerationTool)
 end
 
 """
-    CodeInterpreterTool(; container=nothing, file_ids=nothing)
+    CodeInterpreterTool(; container=Dict("type" => "auto"), file_ids=nothing)
 
 A code interpreter tool for the Responses API. Allows the model to execute
-code in a sandboxed environment.
+code in a sandboxed environment: the container OpenAI's tool requires. By default it
+is an auto container (`{"type": "auto"}`), which OpenAI creates or reuses; a `Dict` is
+sent as given (e.g. `Dict("type" => "auto", "memory_limit" => "4g")`), and a `String`
+is the id of a container created beforehand ([`create_container`](@ref)). `file_ids`
+are sent inside the auto container; with a container id, or beside a container `Dict`
+that names `file_ids` already, they are an `ArgumentError`.
 """
 @kwdef struct CodeInterpreterTool <: ResponseTool
-    container::Union{AbstractDict, Nothing} = nothing
+    container::Union{String, AbstractDict} = Dict("type" => "auto")
     file_ids::Union{Vector{String}, Nothing} = nothing
+    function CodeInterpreterTool(container, file_ids=nothing)
+        if !isnothing(file_ids)
+            container isa AbstractString && throw(ArgumentError(
+                "code_interpreter file_ids go inside an auto container; a container id ($(repr(container))) " *
+                "names a container created with its own files (create_container, add_container_file)"))
+            any(k -> string(k) == "file_ids", keys(container)) && throw(ArgumentError(
+                "code_interpreter file_ids given twice: in the container and as file_ids"))
+        end
+        new(container, file_ids)
+    end
 end
 
+# OpenAI's auto container carries the files: `"container": {"type": "auto", "file_ids": [...]}`
+# (https://developers.openai.com/api/docs/guides/tools-code-interpreter).
 function JSON.lower(t::CodeInterpreterTool)
-    d = Dict{Symbol,Any}(:type => "code_interpreter")
-    !isnothing(t.container) && (d[:container] = t.container)
-    !isnothing(t.file_ids) && (d[:file_ids] = t.file_ids)
-    return d
+    c = t.container
+    container = isnothing(t.file_ids) ? c :
+        push!(Dict{String,Any}(string(k) => v for (k, v) in c), "file_ids" => t.file_ids)
+    Dict{Symbol,Any}(:type => "code_interpreter", :container => container)
 end
 
 # ─── Newer hosted tools (GA computer, shell, apply_patch, custom) ──
@@ -496,11 +513,11 @@ Shorthand constructor for [`ImageGenerationTool`](@ref).
 image_generation_tool(; kwargs...) = ImageGenerationTool(; kwargs...)
 
 """
-    code_interpreter(; container=nothing, file_ids=nothing)
+    code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing)
 
 Shorthand constructor for [`CodeInterpreterTool`](@ref).
 """
-code_interpreter(; container::Union{AbstractDict, Nothing}=nothing,
+code_interpreter(; container::Union{String, AbstractDict}=Dict("type" => "auto"),
     file_ids::Union{Vector{String}, Nothing}=nothing) =
     CodeInterpreterTool(container=container, file_ids=file_ids)
 
@@ -1349,7 +1366,8 @@ end
 # before that — `token`, or the callback's close flag — ends the call with
 # `UniLMCancelled` in `cause`, never retried; an exception from the callback ends it
 # with that exception in `cause`. InterruptException always rethrows first (surfaces
-# as a TaskFailedException at fetch). Inside a `with_recorded_answers` scope each attempt
+# as a TaskFailedException at fetch), and so does a recorded call's miss or lost write
+# the callback throws, bare or wrapped. Inside a `with_recorded_answers` scope each attempt
 # is answered as the scopes decide — `first`, the first attempt's source, was looked up
 # before the spawn (`_first_stream_source`) — and a whole response read with no stop is
 # recorded; a miss or a lost recording rethrows unclassified, as an interrupt does.
@@ -1534,6 +1552,10 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # never retried, whatever HTTP.jl surfaced while the exchange unwound.
             failure = ctl.failure
             if !isnothing(failure)
+                # A recorded call's miss or lost write, or an interrupt, bare or inside the
+                # wrapper the callback threw it in, reaches the caller as thrown, as from a tool
+                # loop's dispatcher (`_escapes_tool`).
+                _escapes_tool(failure.thrown) && throw(failure.thrown)
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : nothing
                 thrown = failure.thrown
                 return ResponseCallError(error=_error_text(thrown), status=nothing, request_id=req_id,
@@ -1735,7 +1757,9 @@ already run; or the failure the event reported). An exception thrown by the call
 ends the call with that exception in `cause`, never retried. Time spent in the callback
 does not count toward `stream_idle_timeout`. A user `InterruptException` during a stream
 is not swallowed — it rethrows inside the task and surfaces as a `TaskFailedException`
-at `fetch`.
+at `fetch` — and neither is the [`ReplayMissError`](@ref) or [`RecordingWriteError`](@ref)
+of a recorded call made in the callback, nor either of them or an interrupt that the
+callback throws inside a wrapper (`task.exception` is what the callback threw).
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before

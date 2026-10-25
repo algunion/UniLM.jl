@@ -195,6 +195,26 @@ end
     @test_throws ArgumentError UniLM._interactions_tool_choice("bogus")
 end
 
+@testset "Interactions encode — a strict function tool asks for validated; a forced or disabled call keeps its mode" begin
+    # Interactions function tools have no strict field; its tool_choice modes include `validated`,
+    # "Model ensures function schema adherence" (https://ai.google.dev/gemini-api/docs/function-calling).
+    params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
+                  "required" => ["city"], "additionalProperties" => false)
+    strict = function_tool("get_weather", "Get weather"; parameters=params, strict=true)
+    loose = function_tool("get_time", "Get time")
+    gen(tools, tc=nothing) = get(JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tools=tools, tool_choice=tc))), "generation_config", nothing)
+    mode(tools, tc=nothing) = gen(tools, tc)["tool_choice"]["allowed_tools"]
+    @test gen([strict]) == Dict("tool_choice" => Dict("allowed_tools" => Dict("mode" => "validated")))
+    @test mode([loose, strict], "auto") == Dict("mode" => "validated")       # one strict tool is enough
+    @test mode([UniLM.CallableTool(strict, (n, a) -> "x")]) == Dict("mode" => "validated")   # a tool loop's
+    @test mode([strict], "required") == Dict("mode" => "any")
+    @test mode([strict], UniLM.tool_choice_function("get_weather")) == Dict("mode" => "any", "tools" => ["get_weather"])
+    @test mode([strict], "none") == Dict("mode" => "none")
+    # Without a strict tool the request is as before.
+    @test isnothing(gen([loose])) && mode([loose], "auto") == Dict("mode" => "auto")
+end
+
 @testset "Interactions decode — usage normalized for cost accounting" begin
     # Tool-use prompt tokens are input the model read, billed at the input rate as on
     # generateContent; thoughts bill at the output rate.
@@ -685,7 +705,7 @@ end
     # false is still a value the request would lose; every set field is named.
     err = try encode(FunctionTool(name="noop", async=false, defer_loading=false)); nothing catch e; e end
     @test err isa ArgumentError && err.msg == "Gemini Interactions function tools do not support async, defer_loading"
-    # strict is not sent.
+    # strict has no field on the tool: it sets the request's tool_choice mode (tested above).
     @test JSON.parse(encode(FunctionTool(name="noop", description="d", parameters=params, strict=true)))["tools"] ==
           [Dict("type" => "function", "name" => "noop", "description" => "d", "parameters" => params)]
 end

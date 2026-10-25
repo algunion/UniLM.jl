@@ -520,6 +520,37 @@ end
     end
 end
 
+@testset "a field-less built-in endpoint, called, is its type" begin
+    # These endpoints hold nothing, and their methods are defined on the type: an instance got no
+    # default model, skipped the type's encoding rules and failed at request time (MethodError).
+    @test Chat(service=UniLM.OPENAIServiceEndpoint()).model == "gpt-6-sol"
+    azure = ("AZURE_OPENAI_BASE_URL" => "https://example.openai.azure.com",
+             "AZURE_OPENAI_API_VERSION" => "2024-10-21", "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2" => "dep-5-2")
+    withenv(azure...) do
+        for T in (UniLM.OPENAIServiceEndpoint, UniLM.AZUREServiceEndpoint, UniLM.GEMINIServiceEndpoint,
+                  UniLM.GEMINIOpenAIServiceEndpoint)
+            chat(service) = Chat(; service, max_tokens=64,
+                                 messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+            @test chat(T()).model == chat(T).model
+            @test UniLM.encode_request(T(), chat(T())) == UniLM.encode_request(T, chat(T))
+            @test UniLM.get_url(chat(T())) == UniLM.get_url(chat(T))
+            @test UniLM.provider_capabilities(T()) == UniLM.provider_capabilities(T)
+        end
+    end
+    # TypeSafe's System One verbs reach the same request from the type and the called type: in a
+    # replay scope over an empty directory, the same miss.
+    T = TYPESAFEServiceEndpoint
+    @test UniLM.provider_capabilities(T()) == UniLM.provider_capabilities(T)
+    miss(f) = try f(); nothing catch e; e end
+    with_recorded_answers(mktempdir()) do
+        request = SystemOneRequest("The parcel is late.", ["late" => noul("Is the parcel late?")]; model="jev-latest")
+        for call in (s -> ask(request; service=s), s -> list_models(; service=s))
+            typed, called = miss(() -> call(T)), miss(() -> call(T()))
+            @test typed isa ReplayMissError && called isa ReplayMissError && called.key == typed.key
+        end
+    end
+end
+
 @testset "Chat" begin
     @testset "default creation" begin
         chat = Chat()

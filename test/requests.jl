@@ -964,6 +964,27 @@ end
     @test UniLM._is_retryable(429, JSON.json([exhausted])) == true        # the compatible endpoint's array body
 end
 
+# Anthropic's rate limits page (https://platform.claude.com/docs/en/api/rate-limits): at the monthly
+# spend cap "API requests return HTTP 429" whose `error.details.error_code` is
+# `enforced_spend_limit_reached` — "Retrying, including the SDK's automatic retries, fails until
+# access resumes" — while a rate limit has the same `rate_limit_error` type and no such details.
+const _ANTHROPIC_SPEND_CAP_429 = """{"type": "error", "error": {"type": "rate_limit_error", "message": "You have \
+    reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on \
+    your organization's API tier. You will regain access on 2026-09-01 at 00:00 UTC.", "details": {"error_code": \
+    "enforced_spend_limit_reached"}}, "request_id": "req_018EeWyXxfu5pfWkrYcMdjWG"}"""
+
+@testset "_is_retryable: Anthropic's monthly spend cap is final, its rate limit is retried" begin
+    @test UniLM._is_retryable(429, _ANTHROPIC_SPEND_CAP_429) == false
+    @test UniLM._is_retryable(HTTP.Response(429, [], Vector{UInt8}(_ANTHROPIC_SPEND_CAP_429))) == false
+    @test UniLM._is_retryable(503, _ANTHROPIC_SPEND_CAP_429) == true      # only a 429 reads its code
+    limited(details...) = JSON.json(Dict("type" => "error", "error" => Dict("type" => "rate_limit_error",
+        "message" => "Number of request tokens has exceeded your per-minute rate limit", details...)))
+    @test UniLM._is_retryable(429, limited()) == true
+    for details in (nothing, "enforced_spend_limit_reached", Dict("error_code" => nothing), Dict("other" => "x"))
+        @test UniLM._is_retryable(429, limited("details" => details)) == true   # no details.error_code string
+    end
+end
+
 # A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
 # Retry-After; `hits` counts the requests that reached it.
 function _status_429_server(body::String)
@@ -993,7 +1014,8 @@ end
         end
     end
     for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"),
-                 JSON.json(Dict("error" => Dict("code" => "quota_exceeded", "message" => "daily quota"))))
+                 JSON.json(Dict("error" => Dict("code" => "quota_exceeded", "message" => "daily quota"))),
+                 _ANTHROPIC_SPEND_CAP_429)
         srv = _status_429_server(body)
         try
             r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))

@@ -256,7 +256,7 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     body[:contents] = contents
     isnothing(chat.tools) ||
         (body[:tools] = [Dict(:functionDeclarations => [_gemini_tool(t) for t in chat.tools])])
-    isnothing(chat.tool_choice) || (body[:toolConfig] = _gemini_tool_config(chat.tool_choice))
+    (tc = _gemini_tool_config(chat)) === nothing || (body[:toolConfig] = tc)
     gen = Dict{Symbol,Any}()
     # Gemini does NOT require maxOutputTokens; omit when unset (a low cap truncates
     # Gemini-3 thinking before any answer). No default_max_tokens override.
@@ -417,6 +417,19 @@ function _gemini_tool(t::Tool)
     d
 end
 
+# A tool marked strict asks for arguments that conform to its schema. A declaration has no such
+# flag; the request's function-calling mode has: VALIDATED "ensures function schema adherence"
+# while the model may still answer in text, as under AUTO, and ANY, which requires a call, "ensures
+# function schema adherence" too
+# (https://ai.google.dev/gemini-api/docs/generate-content/function-calling). So a strict tool
+# makes an unset or "auto" tool_choice VALIDATED (gemini-3.8-flash answered a strict tool under it
+# with a function call on 2026-10-25); "required", a named function and "none" keep their modes.
+function _gemini_tool_config(chat::Chat)
+    tc = chat.tool_choice
+    any(t -> t.func.strict === true, something(chat.tools, Tool[])) && (isnothing(tc) || tc == "auto") &&
+        return Dict(:functionCallingConfig => Dict(:mode => "VALIDATED"))
+    isnothing(tc) ? nothing : _gemini_tool_config(tc)
+end
 _gemini_tool_config(tc::String) = Dict(:functionCallingConfig => Dict(:mode =>
     tc == "auto"     ? "AUTO" :
     tc == "none"     ? "NONE" :

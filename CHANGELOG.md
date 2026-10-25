@@ -25,6 +25,24 @@
   `:record_missing` gets its first status back on every later poll. Upgrading: record what a
   `:replay` scope now needs (`mode = :record_missing`), and record a polling loop with
   `:record`, which keeps the last status.
+- **`code_interpreter()` sends the container OpenAI requires.** OpenAI's code interpreter
+  tool "requires a container object"; `CodeInterpreterTool` sent none unless one was
+  given, and sent `file_ids` beside the tool. It now sends `{"type": "auto"}` unless
+  given another container, sends `file_ids` inside that auto container, and takes a
+  container id (`code_interpreter(container="cntr_…")`), which it refused before.
+  `container` is a `Union{String,AbstractDict}` defaulting to `Dict("type" => "auto")`
+  (was `Union{AbstractDict,Nothing}`, default `nothing`); `file_ids` with a container id,
+  or beside a container `Dict` that names `file_ids`, is an `ArgumentError`. Upgrading:
+  drop `container=nothing`; the auto container is the default.
+- **A field-less built-in endpoint, called, is its type.** `OPENAIServiceEndpoint()`,
+  `AZUREServiceEndpoint()`, `GEMINIServiceEndpoint()`, `GEMINIOpenAIServiceEndpoint()` and
+  `TYPESAFEServiceEndpoint()` built an instance that `service` accepted but that none of
+  the endpoint's methods, all defined on the type, served: it got no default model,
+  skipped the type's encoding rules and failed at request time with a `MethodError` (on
+  TypeSafe, `ask` refused it with an `ArgumentError` saying it declares no capabilities).
+  Each now returns its type (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it
+  behaves as the type does. Upgrading: a value tested with `x isa T` is now tested with
+  `x === T`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -33,8 +51,9 @@
   sent and, once its reply is whole and read with no stop, recorded as the lines of its
   body (`response.stream`); so are `get_response`, `delete_response`, `list_input_items`
   (keyed with its `limit`, `order` and `after`), `cancel_response`, `compact_response`,
-  `count_input_tokens`, `fim_complete` and `prefix_complete`. A recording also keeps the
-  response headers a replay gives back (`response.headers`: the request-id header and
+  `count_input_tokens`, `fim_complete` and `prefix_complete`. A stream is recorded once it
+  is whole, also when its connection fails after the final event, and never when it was
+  cut before that event. A recording also keeps the response headers a replay gives back (`response.headers`: the request-id header and
   `x-gemini-service-tier`). A miss on a stream's first request is thrown by the verb; its
   lost recording, or a miss on a later request of a turn the provider continues, is
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
@@ -69,6 +88,39 @@
   an `InterruptException` ended a streamed turn the provider continued over several requests
   (a long Gemini generation), `cumulative_cost` left out the replies already received; they
   are now added before the interrupt propagates, as an unstreamed turn adds them.
+- **`prefix_complete` on `DeepSeekEndpoint` keeps and sends back `reasoning_content`.** The
+  prefix completion was read with the generic Chat Completions decoder, which drops it, so
+  `reasoning_text` was `nothing` and a later request with `tools` on that chat sent the
+  turn without it, which DeepSeek answers with HTTP 400; and its own request, built
+  without the endpoint's encoder, sent no earlier turn's reasoning even when it carried
+  `tools`. It now goes through the endpoint's encoder and decoder: the turn keeps its
+  reasoning, as a `chatrequest!` turn does, and every request with `tools`, a prefix
+  completion included, sends it back.
+- **Anthropic's monthly spend cap is returned at once.** At the spend cap Anthropic answers
+  HTTP 429 with the `rate_limit_error` type of a rate limit and
+  `error.details.error_code` `enforced_spend_limit_reached`, and says retrying "fails until
+  access resumes". UniLM read only `error.code` and `error.type`, so it sent the request
+  again, up to `max_attempts` attempts in all, each after its backoff. That 429 is now
+  final, as OpenAI's spend and quota codes are; a `rate_limit_error` without it is still
+  retried.
+- **A tool marked `strict=true` asks native Gemini for schema adherence.** A Gemini function
+  declaration has no `strict` flag, so `GEMINIServiceEndpoint` sent a strict tool — on a
+  `Chat`, and on `respond` (Gemini Interactions) — as a plain one, and the caller silently
+  got no adherence. A strict tool now sets the request's function-calling mode: with
+  `tool_choice` unset or `"auto"`, `VALIDATED` (`validated` on `respond`), in which Gemini
+  "ensures function schema adherence" and the model may still answer in text. The mode
+  covers every function the request declares. `"required"` and a named function are still
+  sent as `ANY` (`any`), and `"none"` as `NONE`.
+- **A recorded call's miss or lost write in a stream callback reaches the caller.** A
+  `ReplayMissError` or `RecordingWriteError` that a recorded call made in a streamed
+  `chatrequest!`'s `callback` or `on_tool_call`, or a streamed `respond`'s `callback`,
+  threw was returned as the stream's `LLMCallError` (`ResponseCallError`) `cause`, a call
+  error a fallback would take for a service failure. Now it propagates, as it does from a
+  tool loop's dispatcher: `fetch` throws a `TaskFailedException` around it — around the
+  wrapper too when the callback threw it inside one, such as the `TaskFailedException` of
+  a fetched task. So does an `InterruptException` a callback throws inside such a wrapper,
+  as a bare one already did. The chat's `cumulative_cost` still adds the usage the stream
+  had reported, as for any other exception a callback throws.
 
 ## 0.26.0
 

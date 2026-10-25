@@ -144,7 +144,7 @@ through a directory of recordings:
 | `mode` | Behaviour |
 | :--- | :--- |
 | `:replay` (default) | Answers come from `dir`, which must exist. No recorded verb reaches the network or needs an API key. A request with no recording throws [`ReplayMissError`](@ref). |
-| `:record` | Every request goes to the service; each HTTP 200 is written to `dir`, replacing an earlier recording of the same request. A failure is returned as usual and never recorded. |
+| `:record` | Every request goes to the service; each HTTP 200 is written to `dir`, replacing an earlier recording of the same request — a stream once its final event has arrived with no stop, even if its connection then fails, and never one cut before that event. A failure is returned as usual and never recorded. |
 | `:record_missing` | What `dir` holds is replayed; the rest goes to the service, and its 200s are recorded. |
 
 - **One file per request.** A recording is `<dir>/<key>.json`. The file holds
@@ -191,8 +191,9 @@ through a directory of recordings:
   `input_audio` clip, is written as sent.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
-  tool loops (a later request of a streamed turn misses inside the call's task,
-  so `fetch` throws a `TaskFailedException` around it) — never a silent call to
+  tool loops (a later request of a streamed turn, or a request a stream's
+  callback makes, misses inside the call's task, so `fetch` throws a
+  `TaskFailedException` around it) — never a silent call to
   the service, and never a call error
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names

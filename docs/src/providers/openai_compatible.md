@@ -10,11 +10,12 @@ Mistral's host, `https://api.mistral.ai`: UniLM speaks Mistral's chat, embedding
 transcription routes as OpenAI-compatible ones, and a hosted service of another vendor with an
 OpenAI-compatible API is reached the same way, with `GenericOpenAIEndpoint(base_url, key)`. The rules
 on this page are that endpoint's; the facts marked as Mistral's are Mistral's alone. UniLM holds no
-rule of Mistral's or of any other service: it sends every field a request sets as it is, sends the
-requests of the capabilities the table below lists without knowing whether the service serves them,
-and refuses those it lists as not available, `ask` among them. Of Mistral's API, UniLM does not use the
-Agents and Conversations APIs, OCR, the classifiers, batch processing, files, speech generation or the
-model listing. Servers of your own have their entry: [vLLM, LM Studio & llama.cpp](@ref local_servers_start).
+rule of Mistral's or of any other service: it sends every field a request sets as it is, and sends the
+requests of the capabilities the table below lists without knowing whether the service serves them. A
+verb that needs a capability the table lists as not available refuses the endpoint, and so does `ask`;
+`respond`, which takes `responses` or `agentic`, and `transcribe`, which takes `transcription` or
+`audio`, are sent. Of Mistral's API, UniLM does not use the Agents and Conversations APIs, OCR or the
+classifiers either. Servers of your own have their entry: [vLLM, LM Studio & llama.cpp](@ref local_servers_start).
 No Mistral key was at hand for this page: its examples are not run, and their code stands without
 output.
 
@@ -63,9 +64,10 @@ Under the root, without `/v1`, UniLM sends a `Chat` to `/v1/chat/completions`, a
 to `/v1/embeddings`, `transcribe` to `/v1/audio/transcriptions` and `respond` to `/v1/responses`, and
 drops a trailing `/`; `fim_complete` goes to Mistral's `/v1/fim/completions` on Mistral's host, and to
 `/v1/completions` on any other. A service whose routes are not those cannot be reached through this
-endpoint. A key given as `""`, or a variable holding `""`, sends no `Authorization` header. The endpoint
-has no default model: every request names the model the service serves under that name
-([Models](@ref openai_compatible_models)).
+endpoint; a backend of your own can reach it ([Write your own backend](@ref custom_backends_guide)). A key
+given as `""`, or a variable holding `""`, sends no `Authorization` header. The endpoint has no default
+model: every request names the model the service serves under that name
+([Models](@ref openai_compatible_models)), or is refused ([Limits and refusals](@ref openai_compatible_limits)).
 
 ## [First call](@id openai_compatible_first_call)
 
@@ -84,10 +86,7 @@ result.model, result.message.finish_reason, result.usage
 The reply is read as a Chat Completions reply: `result.model` is the model the service reports, and
 `finish_reason` and `usage` are read as the OpenAI-compatible API defines them. No Mistral model has a
 price row, so the first `chatrequest!` logs a warning and the call costs `0.0`
-([Cost and usage](@ref openai_compatible_cost)). Each reply is appended to the `Chat`, the next
-`chatrequest!` sends the conversation again, and a system message pushed later is sent in place. A
-user message's attachments go out as content parts — an image as `image_url`, a sound clip as
-`input_audio`, a document as a `file` part — and the service decides what it reads.
+([Cost and usage](@ref openai_compatible_cost)).
 
 A reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's reasoning
 models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text` chunks
@@ -101,6 +100,17 @@ Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `C
 reference does not list, such as `seed`, is untested.
 
 ## [Conversations](@id openai_compatible_conversations)
+
+A `Chat` keeps the conversation: each reply is appended to it, and the next `chatrequest!` sends the
+whole conversation again; a system message pushed after the conversation started is sent in place.
+
+```julia
+push!(chat, Message(Val(:user), "And a composite number?"))
+text(chatrequest!(chat))
+```
+
+A reply's reasoning is not kept ([First call](@ref openai_compatible_first_call)), so none goes back
+with a later turn. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
 
 ## [Streaming](@id openai_compatible_streaming)
 
@@ -120,8 +130,14 @@ reference does not list; whether Mistral's stream reports its usage unasked is u
 without usage adds `0.0` to `cumulative_cost`. The stream is the Chat Completions one: the turn is final
 at `data: [DONE]`, or, without one, when the HTTP body ends after the finish reason; `on_tool_call(tc)`
 runs once per call whose arguments decode, as the next call begins or at the end of the stream; and
-setting `close[] = true` stops it ([Stopping a Stream Early](@ref streaming_stop)). The concepts every
-provider shares are on [Streaming](@ref streaming_guide).
+setting `close[] = true` stops it ([Stopping a Stream Early](@ref streaming_stop)).
+
+A delta whose `content` is a list is dropped whole: UniLM reads a streamed delta's content only when it
+is a string. Mistral streams a reasoning reply's thinking in such lists, then "a single list containing
+both a closing `ThinkChunk` and the first `TextChunk`"
+([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)), so a streamed reasoning reply
+loses the answer's first chunk, in the callback and in the final `Message`; unstreamed, the reply keeps
+it. The concepts every provider shares are on [Streaming](@ref streaming_guide).
 
 ## [Tools](@id openai_compatible_tools)
 
@@ -170,6 +186,11 @@ The formats every provider shares are on [Structured Output](@ref structured_gui
 
 ## [Attachments](@id openai_compatible_media)
 
+A user message's attachments go out as content parts: an image as an `image_url` part, with its
+`detail` when one is set, a sound clip as an `input_audio` part, and a document as a `file` part
+holding its name and a data URL. The service decides what it reads, and UniLM checks none of it before
+sending. The attachments every provider shares are on [Attachments](@ref attachments_guide).
+
 ## [Embeddings](@id openai_compatible_embeddings)
 
 An `Embeddings` request goes to `/v1/embeddings` with the texts, the model and the fields it sets:
@@ -201,8 +222,9 @@ Mistral's route takes the `file`, a `model` it marks required, a `language` ("Pr
 can boost accuracy"), `temperature`, `timestamp_granularities`, `context_bias` and `diarize`
 ([transcriptions](https://docs.mistral.ai/api/endpoint/audio/transcriptions)); a request's `prompt`
 and `response_format`, which that reference does not list, go out as set, untested. The endpoint has no
-default transcription model, so a call names one. `speak` and `translate` refuse the endpoint, and
-Mistral's speech generation is not used.
+default transcription model, so a call names one ([Limits and refusals](@ref openai_compatible_limits)).
+`transcribe` is sent once: a transient status is not sent again, and `max_attempts` does not apply
+([When something fails](@ref openai_compatible_failures)).
 
 ## [FIM completion](@id openai_compatible_completions)
 
@@ -220,9 +242,9 @@ fim_text(fim)
 Mistral's FIM route takes `model`, `prompt`, `suffix`, `max_tokens`, `min_tokens`, `stop`,
 `temperature`, `top_p`, `random_seed`, `stream`, `prompt_cache_key` and `metadata`
 ([FIM](https://docs.mistral.ai/api/endpoint/fim)). A `FIMCompletion` sends `max_tokens` 128 unless it
-sets another value, has no streaming path, and sends its `echo`, `logprobs`, `frequency_penalty` and
-`presence_penalty` only when it sets them, fields that reference does not list. `prefix_complete`
-refuses the endpoint. The concepts every provider shares are on
+sets another value, has no streaming path ([Limits and refusals](@ref openai_compatible_limits)), and
+sends its `echo`, `logprobs`, `frequency_penalty` and `presence_penalty` only when it sets them, fields
+that reference does not list. The concepts every provider shares are on
 [FIM & Prefix Completion](@ref completions_guide).
 
 ## [Limits and refusals](@id openai_compatible_limits)
@@ -241,20 +263,24 @@ the top of this page lists as not available refuse the endpoint too.
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the model's name ([Models](@ref openai_compatible_models)) |
 | a `transcribe` call without a `model` | `has no default transcription model` | the model's name, such as `voxtral-mini-latest` |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
-| an `Embeddings` request with a `title` | `has no task prompts, so a title has nowhere to go` | no title |
-| an `Embeddings` request with a `task` other than `:none` | `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | `task = :none`, with the model's own prefix in the text |
+| an `Embeddings` request with a `title`, for a model other than EmbeddingGemma and gemini-embedding-2 | `has no task prompts, so a title has nowhere to go` | no title |
+| an `Embeddings` request with a `task` other than `:none`, for a model other than EmbeddingGemma and gemini-embedding-2 | `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | `task = :none`, with the model's own prefix in the text |
 | a `FIMCompletion` with `stream=true` | `does not support stream=true`: `fim_complete` has no streaming path | leave `stream` unset |
 
 ## [Cost and usage](@id openai_compatible_cost)
 
-No Mistral model, and no model of another service, has a row in [`DEFAULT_PRICING`](@ref): its
-[`estimated_cost`](@ref) is `0.0`, with one warning per model id, its embeddings' too, and
-[`cumulative_cost`](@ref) adds `0.0`. Give the model's rates, USD per token, as `pricing`, or add the row
+A result is priced by the model id it reports, whatever the service. No Mistral model has a row in
+[`DEFAULT_PRICING`](@ref): its [`estimated_cost`](@ref) is `0.0`, with one warning per model id, its
+embeddings' too, and [`cumulative_cost`](@ref) adds `0.0`. A model another service reports is priced at
+its id's row where `DEFAULT_PRICING` has one, as a priced provider's model served through another
+service is, and at `0.0` otherwise. Give the model's rates, USD per token, as `pricing`, or add the row
 to `DEFAULT_PRICING`; Mistral lists Mistral Large 3, `mistral-large-2512`, at "Input \$0.5 /M Tokens"
-and "Output \$1.5 /M Tokens" ([API pricing](https://docs.mistral.ai/inference/pricing)):
+and "Output \$1.5 /M Tokens" ([API pricing](https://docs.mistral.ai/inference/pricing)), and "Cached
+tokens are billed at 10% of the standard input token price"
+([chat completions](https://docs.mistral.ai/api/endpoint/chat)):
 
 ```julia
-large = (input=0.5e-6, cached_input=0.5e-6, output=1.5e-6)
+large = (input=0.5e-6, cached_input=0.05e-6, output=1.5e-6)
 estimated_cost(result; pricing=Dict(result.model => large))
 DEFAULT_PRICING[result.model] = large                  # cumulative_cost prices with it from now on
 ```
@@ -272,34 +298,35 @@ service's HTTP `status` and, as `response`, the body that came with it; a call e
 an exception as `error` and the exception as `cause`. UniLM sends a request again after a transient
 status — 408, 429, 500, 502 to 504, 520 to 524 and 529 — or a failed connection, as often as the call's
 [`RequestConfig`](@ref) allows, and then returns the last answer ([Timeouts & Retries](@ref timeouts_guide));
-a streamed request is sent again only while none of its callbacks has run. The statuses below are
-Mistral's ([error glossary](https://docs.mistral.ai/resources/error-glossary)):
+a streamed request is sent again only while none of its callbacks has run, and a transcription is sent
+once. The statuses below are Mistral's ([error glossary](https://docs.mistral.ai/resources/error-glossary)):
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
 | `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref openai_compatible_limits)) | what its row says |
-| an `LLMCallError` whose `cause` is a `KeyError` | `MISTRAL_API_KEY`, or the variable the endpoint reads, is not set | set it ([Setup](@ref openai_compatible_setup)) |
+| a call error — an `LLMCallError`, `EmbeddingCallError`, `FIMCallError` or `AudioCallError` — whose `cause` is a `KeyError` | `MISTRAL_API_KEY`, or the variable the endpoint reads, is not set | set it ([Setup](@ref openai_compatible_setup)) |
 | a failure with `status` 401 | "The API key is missing, invalid, or expired" | the key |
 | a failure with `status` 402 | "A billing condition on your Organization blocks the request" | what the message's link says |
 | a failure with `status` 403 or 404 | a model your subscription does not include, or "Invalid model ID or endpoint path"; not sent again | the model's name, or the route |
 | a failure with `status` 400 or 422 | "The request body is malformed or missing required fields", or it "contains invalid parameter values"; not sent again | what the message says |
-| a failure with `status` 429 | "You have exceeded the rate limit for your subscription tier"; sent again until the attempts or the deadline run out | fewer requests, or a higher tier |
-| a failure with `status` 500 or another transient status | a fault on the service, sent again until the attempts or the deadline run out | the request again, later |
+| a failure with `status` 429 | "You have exceeded the rate limit for your subscription tier"; sent again, a transcription aside, until the attempts or the deadline run out | fewer requests, or a higher tier |
+| a failure with `status` 500 or another transient status | a fault on the service, sent again, a transcription aside, until the attempts or the deadline run out | the request again, later |
 | an `LLMFailure` with `status` 200 from a stream | the stream ended before a finish reason; `response` holds what arrived, and nothing is appended | the turn again |
 | a call error with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out | a longer bound, or a stream for a long reply ([Timeouts & Retries](@ref timeouts_guide)) |
 | a call error whose `cause` is a `UniLMCancelled` | a stop: the stream's `close[] = true` or a cancelled `CancelToken` | nothing, if the stop was yours |
 | a call error whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; a thrown value that is no `Exception` leaves `cause` `nothing`, its text in `error`; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |
-| `LLMResultError` from `text`, `embedding_vectors` or `fim_text` | the result is a failure, which holds no reply | check `issuccess(result)` first |
+| `LLMResultError` from `text`, `embedding_vectors` or `fim_text`, or a `MethodError` from `transcript_text` | the result is a failure, which holds no reply | check `issuccess(result)` first |
 
 ## [Models](@id openai_compatible_models)
 
 The endpoint has no default model: a request names one by the name the service serves it under. On
-Mistral, a model's API name is dated, such as `mistral-large-2512` (Mistral Large 3), `codestral-2508`
-or `mistral-embed-2312`, and "A deprecated model still answers requests until its retirement date. A
-retired model no longer does: use its replacement" ([models](https://docs.mistral.ai/models)); the
-examples of Mistral's API reference name aliases, such as `mistral-large-latest`, `codestral-latest`,
-`mistral-embed` and `voxtral-mini-latest`. `list_models` refuses this endpoint; Mistral lists its models
-at `GET /v1/models` ([models API](https://docs.mistral.ai/api/endpoint/models)).
+Mistral, many API names are dated, such as `mistral-large-2512` (Mistral Large 3), `codestral-2508` or
+`mistral-embed-2312`, while some of the newest are not, such as `mistral-medium-3-5` and
+`mistral-large-4`, and "A deprecated model still answers requests until its retirement date. A retired
+model no longer does: use its replacement" ([models](https://docs.mistral.ai/models)); the examples of
+Mistral's API reference name aliases, such as `mistral-large-latest`, `codestral-latest`,
+`mistral-embed` and `voxtral-mini-latest`. Mistral lists its models at `GET /v1/models`
+([models API](https://docs.mistral.ai/api/endpoint/models)).
 
 Checked against Mistral's API documentation of 25 October 2026 with UniLM's development branch after
 0.26.0; nothing on this page was run.

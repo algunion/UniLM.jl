@@ -47,7 +47,11 @@ loads. A `Chat` goes to
 `$AZURE_OPENAI_BASE_URL/openai/deployments/<deployment>/chat/completions?api-version=$AZURE_OPENAI_API_VERSION`
 with the key in the `api-key` header, the form of Azure's dated API versions; `2024-10-21` is the
 dated GA release Azure's REST reference documents
-([REST API reference](https://learn.microsoft.com/en-us/azure/foundry/openai/reference)). A call
+([REST API reference](https://learn.microsoft.com/en-us/azure/foundry/openai/reference)). A field
+Azure added later needs a later version: `reasoning_effort` came in `2024-12-01-preview`
+([API versions](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)), and
+audio replies in `2025-01-01-preview`
+([audio generation](https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart)). A call
 without one of the first three variables returns a call-error result whose `cause` is the `KeyError`
 naming it. UniLM sends the key only: Azure's other way in, a Microsoft Entra ID token in an
 `Authorization: Bearer` header, is not this endpoint's.
@@ -112,12 +116,11 @@ request" ([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/ope
 and UniLM sends no developer message. What `push!` refuses is the same on every provider
 ([Chat Completions](@ref chat_guide)).
 
-A user message's attachments go out as content parts: an image as an `image_url` part, with its
-`detail` when one is set, a sound clip as an `input_audio` part, and a document as a `file` part
-holding its name and a data URL; the deployment's model decides what it reads, and UniLM checks none of
-it before sending. A reply that holds audio (`audio_output`) goes back to Azure as the turn's content
-alone, its transcript, not as the audio's id, which only one other endpoint takes back
-([Audio replies](@ref chat_audio_output)).
+A reply that holds audio (`audio_output`) goes back to Azure as the turn's content alone, its
+transcript, not as the audio's id: UniLM sends the id back on one other endpoint only
+([Audio replies](@ref chat_audio_output)), though Azure takes it back too, its quickstart adding "a
+history message referencing the previous turn's audio by ID"
+([audio generation](https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart)).
 
 ## [Streaming](@id azure_streaming)
 
@@ -137,8 +140,10 @@ result.usage
 
 Azure added `stream_options` and `include_usage` in the API version `2024-09-01-preview`
 ([API versions](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle)). The
-stream is the Chat Completions one: a chunk whose `choices` list is empty, such as the content-filter
-results Azure may send ahead of the reply, is skipped; the turn is final at `data: [DONE]`, or, without
+stream is the Chat Completions one: a chunk whose `choices` list is empty, such as the usage chunk,
+whose "`choices` field will always be an empty array"
+([chat REST reference](https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/chat?view=rest-microsoft-foundry-2024-10-21&preserve-view=true)),
+gives its usage and nothing else; the turn is final at `data: [DONE]`, or, without
 one, when the HTTP body ends after the finish reason; `on_tool_call(tc)` runs once per call whose
 arguments decode, as the next call begins or at the end of the stream; and setting `close[] = true`
 stops it ([Stopping a Stream Early](@ref streaming_stop)). The concepts every provider shares are on
@@ -159,18 +164,18 @@ weather = UniLM.CallableTool(
         parameters=Dict("type" => "object", "required" => ["city"],
                         "properties" => Dict("city" => Dict("type" => "string"))))),
     (name, args) -> "18°C and sunny in $(args["city"])")
-chat = Chat(service=AZUREServiceEndpoint, tools=[weather], reasoning_effort="none")
+chat = Chat(service=AZUREServiceEndpoint, tools=[weather])
 push!(chat, Message(Val(:system), "You are concise."))
 push!(chat, Message(Val(:user), "What is the weather in Lyon? Use the tool, then answer in one sentence."))
 loop = tool_loop!(chat; tools=[weather])
 text(loop.response)
 ```
 
-On the models that reason by default, Azure's Chat Completions API refuses function tools at any
-other effort: "Function tools with reasoning_effort are not supported for gpt-5.6-sol in
-/v1/chat/completions", and "The request fails even when you don't send `reasoning_effort`, because
-these models default to `medium`"; "If you must stay on Chat Completions, set `reasoning_effort` to
-`none` on every request that sends `tools`"
+On the GPT-5.6 models, Azure's Chat Completions API refuses function tools at any effort but `none`:
+"The `gpt-5.6` models support the Chat Completions API and tools, but can't combine reasoning with
+tools on Chat Completions", and "The request fails even when you don't send `reasoning_effort`,
+because these models default to `medium`"; "If you must stay on Chat Completions, set
+`reasoning_effort` to `none` on every request that sends `tools`"
 ([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)). UniLM
 does not check this on Azure: the refusal is Azure's HTTP 400. The loop every provider shares is on
 [Tool Calling](@ref tools_guide).
@@ -200,8 +205,11 @@ The formats every provider shares are on [Structured Output](@ref structured_gui
 ## [Reasoning](@id azure_reasoning)
 
 A `Chat`'s `reasoning_effort` goes out as it is set; Azure's values "vary by model and include `none`,
-`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Defaults vary by model as well"
-([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)). Cap a
+`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Defaults vary by model as well", and "`max`
+works only with GPT-6 or GPT-5.6 models and the Responses API"
+([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)), which
+this endpoint does not speak. The field needs an `api-version` from `2024-12-01-preview` on
+([Setup](@ref azure_setup)). Cap a
 reasoning model's output with `max_completion_tokens`: "Reasoning models will only work with the
 `max_completion_tokens` parameter when using the Chat Completions API", and the cap covers "reasoning
 tokens, visible output tokens, and formatting tokens". On this endpoint `max_tokens` keeps its name, so
@@ -214,6 +222,11 @@ chat = Chat(service=AZUREServiceEndpoint, reasoning_effort="low", max_completion
 ```
 
 ## [Attachments](@id azure_media)
+
+A user message's attachments go out as content parts: an image as an `image_url` part, with its
+`detail` when one is set, a sound clip as an `input_audio` part, and a document as a `file` part
+holding its name and a data URL; the deployment's model decides what it reads, and UniLM checks none of
+it before sending. The attachments every provider shares are on [Attachments](@ref attachments_guide).
 
 ## [Limits and refusals](@id azure_limits)
 
@@ -252,7 +265,7 @@ looked up by the model Azure reports, without its dated suffix, else the model t
 rows hold OpenAI's list prices, and Azure's own are not in UniLM. It bills the standard rates:
 input, cache reads at the cached rate, output, and a reported cache write at the input rate. No
 service-tier, long-context or cache-write multiple applies to an Azure result, though Azure bills
-GPT-6 models in "separate pricing categories for short-context and long-context requests"
+GPT-6 and GPT-5.6 models in "separate pricing categories for short-context and long-context requests"
 ([models](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure)).
 A model without a row is estimated at `0.0`, with one warning per model id, and a result whose usage
 counts audio tokens at `0.0`, with one warning per model and endpoint, since a row holds no audio
@@ -290,7 +303,6 @@ only while none of its callbacks has run.
 A `Chat` names a model id, and the model's deployment serves it ([Setup](@ref azure_setup)). Azure's
 catalog lists the GPT-6.1, GPT-6, GPT-5.6, GPT-5.5, GPT-5.4 and GPT-5.2 series among others
 ([models](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure)).
-`list_models` refuses this endpoint.
 
 ```julia
 chat = Chat(service=AZUREServiceEndpoint, model="gpt-6-luna")   # AZURE_OPENAI_DEPLOY_NAME_GPT_6_LUNA

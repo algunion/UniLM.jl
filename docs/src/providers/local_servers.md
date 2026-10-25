@@ -10,8 +10,9 @@ base URL, a `Chat` goes to `/v1/chat/completions`, an `Embeddings` request to `/
 `respond` to `/v1/responses`, `fim_complete` to `/v1/completions` and `transcribe` to
 `/v1/audio/transcriptions`. UniLM is an OpenAI-compatible client there: it holds no rule of any server,
 sends every field a request sets as it is, and refuses what [Limits and refusals](@ref local_servers_limits)
-lists. No verb of a capability the table below lists as not available sends a request through this
-endpoint; `ask` refuses it too, and local decision models have an entry of their own:
+lists. A verb that needs a capability the table below lists as not available refuses this endpoint, and
+so does `ask`; `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes
+`transcription` or `audio`, are sent. Local decision models have an entry of their own:
 [Local decision models](@ref ollama_decisions_start). UniLM does not use the servers' own APIs either,
 such as `llama-server`'s `/completion` and `/infill` or LM Studio's REST API. The examples on this page
 ran on `llama-server`.

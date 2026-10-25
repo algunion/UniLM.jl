@@ -11,10 +11,10 @@ Google makes the Gemini models and serves them through two native APIs, both of 
 `GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint, which UniLM uses for
 embeddings. Of Google's other APIs — the Files, Batch, Live and token-counting APIs, explicit context
 caching, managed agents such as Deep Research, music and video generation — none is available. The
-verbs of the capabilities the table below lists as not available refuse both endpoints, but two kinds:
+verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
-([Background requests](@ref gemini_background)), and no capability names speech, which `speak` reads
-aloud through Gemini TTS, while `transcribe` refuses both endpoints ([Audio](@ref gemini_audio)).
+([Background requests](@ref gemini_background)). `speak` reads aloud through Gemini TTS, and
+`transcribe` refuses both endpoints ([Audio](@ref gemini_audio)).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:gemini)

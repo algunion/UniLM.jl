@@ -10,8 +10,7 @@ chat prefix completion: a `Chat` reaches DeepSeek through `chatrequest!`, `tool_
 `prefix_complete`, and a `FIMCompletion` through `fim_complete`. The agentic verbs — `respond` and the
 `tool_loop` that takes an input or a `Respond` — refuse this endpoint before sending anything, and no
 verb of a capability the table below lists as not available sends a request through it. Of DeepSeek's
-API, UniLM does not use the Responses API, the Anthropic-format API, the Files API, the Search and Fetch
-APIs or the model listing.
+API, UniLM does not use the Anthropic-format API or the Search and Fetch APIs either.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:deepseek)
@@ -103,14 +102,6 @@ pushed after the conversation started is sent in place, which DeepSeek takes: it
 ([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)). What `push!` refuses is the same on
 every provider ([Chat Completions](@ref chat_guide)).
 
-A user message's attachments go out as content parts: an image as an `image_url` part, with its
-`detail` when one is set, a sound clip as an `input_audio` part, and a document as a `file` part
-holding its name and a data URL. DeepSeek's reference takes `text`, `image_url` and `file` parts —
-JPEG, PNG, GIF and WebP images, and a `file_data` that is "A base64-encoded data URL of the image" —
-and lists no audio part, and its pricing page lists vision for `deepseek-flash` only
-([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)). UniLM checks none of this
-before sending: a part DeepSeek does not take is DeepSeek's error.
-
 ## [Streaming](@id deepseek_streaming)
 
 With `stream=true`, `chatrequest!` returns a `Task` at once, and `fetch` gives the same typed result
@@ -188,7 +179,9 @@ sent = JSON.parse(UniLM.encode_request(with_tools.service, with_tools))
 [(i, m["role"]) for (i, m) in enumerate(sent["messages"]) if haskey(m, "reasoning_content")]
 ```
 
-An assistant message you push yourself holds no thinking, so it goes back without any. DeepSeek
+An assistant message you push yourself holds no thinking, so it goes back without any, and DeepSeek's
+Chat Completions API "does not support inserting tool calls mid-conversation"
+([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)). DeepSeek
 refuses two `tool_choice` values while the model thinks: "`required` and named tool choices are not
 supported in thinking mode; the API returns a `400` error. Disable thinking mode first to use them"
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)), which
@@ -253,6 +246,15 @@ DeepSeek's name for the cap: a `Chat`'s `max_completion_tokens` goes out under t
 DeepSeek's reference does not list.
 
 ## [Attachments](@id deepseek_media)
+
+A user message's attachments go out as content parts: an image as an `image_url` part, with its
+`detail` when one is set, a sound clip as an `input_audio` part, and a document as a `file` part
+holding its name and a data URL. DeepSeek's reference takes `text`, `image_url` and `file` parts —
+JPEG, PNG, GIF and WebP images, and a `file_data` that is "A base64-encoded data URL of the image" —
+and lists no audio part, and its pricing page lists vision for `deepseek-flash` only
+([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)). UniLM checks none of this
+before sending: a part DeepSeek does not take is DeepSeek's error. The attachments every provider
+shares are on [Attachments](@ref attachments_guide).
 
 ## [FIM and prefix completion](@id deepseek_completions)
 
@@ -328,7 +330,8 @@ DeepSeek caches prompts without being asked: its context caching "is enabled by 
 users", and a later request whose prompt fully matches a prefix DeepSeek has stored reads that part
 from the cache, on a "best-effort" basis, with no guarantee of a hit
 ([Context Caching](https://api-docs.deepseek.com/guides/kv_cache)). DeepSeek stores a prefix at the
-end of each request's input and of its output, and of long ones at fixed intervals, so a request that
+end of each request's input and of its output, the prefix it detects that several requests share, and
+prefixes of long ones at fixed intervals, so a request that
 continues an earlier one can find part of it stored; the second request of the
 [tool loop](@ref deepseek_tools) read part of its prompt from the cache:
 
@@ -349,9 +352,10 @@ lists none of them.
 
 [`estimated_cost`](@ref) prices a result at its model's row of the table below: input that missed the
 cache at the input rate, cache hits at the cached rate, and `completion_tokens`, thinking included,
-at the output rate; [`cumulative_cost`](@ref) adds up a `Chat`'s turns. The rows are DeepSeek's peak
-rates. "Off-peak rates are half of the peak rates", and peak hours are "01:00 - 04:00 and 06:00 -
-10:00 UTC, Monday through Friday"
+at the output rate. [`cumulative_cost`](@ref) adds up the turns `chatrequest!` and `tool_loop!` sent
+on a `Chat`; a `prefix_complete` turn is appended to the `Chat` and not added. The rows are DeepSeek's
+peak rates. "Off-peak rates are half of the peak rates", and peak hours are "01:00 - 04:00 and 06:00 -
+10:00 UTC, Monday through Friday, excluding Chinese public holidays"
 ([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)), so an estimate of a call made
 off-peak is twice what DeepSeek bills. The legacy names `deepseek-v4-flash` and
 `deepseek-v4-flash-vision-exp` are "billed at the Flash price".
@@ -376,7 +380,7 @@ DeepSeek's ([Error Codes](https://api-docs.deepseek.com/quick_start/error_codes)
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
 | `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref deepseek_limits)) | what its row says |
-| an `LLMCallError` whose `cause` is a `KeyError` | `DEEPSEEK_API_KEY` is not set, and the endpoint was given no key | set it ([Setup](@ref deepseek_setup)) |
+| a call error — an `LLMCallError`, or a `FIMCallError` from `fim_complete` — whose `cause` is a `KeyError` | `DEEPSEEK_API_KEY` is not set, and the endpoint was given no key | set it ([Setup](@ref deepseek_setup)) |
 | a failure with `status` 401 | "Authentication fails due to the wrong API key" | the key |
 | a failure with `status` 402 | "You have run out of balance" | top up the account |
 | a failure with `status` 400 or 422 | an "Invalid request body format" or "invalid parameters": a field or a value DeepSeek does not take, such as a forced tool choice while the model thinks ([Tools](@ref deepseek_tools)); not sent again | what DeepSeek's message says |
@@ -398,8 +402,8 @@ by DeepSeek-V4.1-Flash-1017", and the legacy names `deepseek-v4-flash` and
 Output, chat prefix completion and FIM; only `deepseek-flash` takes images
 ([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)). An account may have at most
 2500 requests to `deepseek-flash` and 500 to `deepseek-v4-pro` in progress at once, and more get HTTP
-429 ([Rate Limit & Isolation](https://api-docs.deepseek.com/quick_start/rate_limit)). `list_models`
-refuses this endpoint; DeepSeek lists its models at `GET https://api.deepseek.com/models`
+429 ([Rate Limit & Isolation](https://api-docs.deepseek.com/quick_start/rate_limit)). DeepSeek lists
+its models at `GET https://api.deepseek.com/models`
 ([Lists Models](https://api-docs.deepseek.com/api/list-models)).
 
 ```julia

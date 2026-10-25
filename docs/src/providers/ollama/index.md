@@ -9,8 +9,9 @@ native API: a `Chat` goes to `/api/chat` and an `Embeddings` request to `/api/em
 take the context window, how long a model stays loaded, thinking and truncation. `respond`,
 `compact_response`, `fim_complete` and `transcribe` reach Ollama's OpenAI-compatible routes instead,
 which carry none of the endpoint's options. No key is sent to a server of your own, and a local model
-costs nothing. No verb of a capability the table below lists as not available sends a request through
-this endpoint: `speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own
+costs nothing. A verb that needs a capability the table below lists as not available refuses this
+endpoint, `speak` among them, though Ollama serves speech at `/v1/audio/speech`; `respond`, which takes
+`responses` or `agentic`, and `transcribe`, which takes `transcription` or `audio`, reach Ollama. Of Ollama's own
 API, UniLM does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web
 search and web fetch. The decision models `ask` reaches through the same endpoint have an entry of their
 own: [Local decision models](@ref ollama_decisions_start).

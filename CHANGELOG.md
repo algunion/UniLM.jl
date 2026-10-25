@@ -59,6 +59,12 @@
   thrown inside the call's task, so `fetch` (and `tool_loop!` on a streamed chat) throws a
   `TaskFailedException` around it. Every earlier recording replays unchanged; what this
   changes for code that ran these calls inside a scope is under Breaking.
+- **`OllamaOptions` takes `draft_num_predict`.** Ollama's runner option for speculative
+  decoding — the most draft tokens predicted per step when a model has a draft model, `0`
+  turning drafting off — is sent in the request's `options` like the other options; a
+  negative value is an `ArgumentError`. `penalize_newline` and `numa`, which Ollama's API
+  reference also lists, are still refused as unknown keywords: Ollama 0.40.11 does not read
+  them (it logs "invalid option provided" and goes on without them).
 
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's

@@ -16,7 +16,7 @@ What would be a command-line flag or a Modelfile line in Ollama is an argument o
 | `truncate` | `truncate` on every chat and embeddings request, `false` unless set | a `Bool` |
 | `shift` | `shift` on chat requests and a chat model's load: `false` ends a reply that fills the context window at finish reason `"length"`; unset, the server's default | a `Bool`, or `nothing` |
 | `runner` | `runner` on chat, embeddings and decision requests, [`model_info`](@ref), [`load_model`](@ref), [`unload_model`](@ref) and [`pull_model`](@ref) ([Runners](@ref ollama_runners__next)) | `:mlx`, `:llamacpp`, `:ggml` or `nothing` |
-| any field of [`OllamaOptions`](@ref): `num_ctx`, `num_batch`, `num_gpu`, `main_gpu`, `num_thread`, `use_mmap`, `num_keep`, `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty` | the request's `options`, with the `Chat`'s sampling fields, on chat and embeddings requests and on a chat or embedding model's load | each in its range: `OllamaOptions` lists them |
+| any field of [`OllamaOptions`](@ref): `num_ctx`, `num_batch`, `num_gpu`, `main_gpu`, `num_thread`, `use_mmap`, `num_keep`, `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`, `draft_num_predict` | the request's `options`, with the `Chat`'s sampling fields, on chat and embeddings requests and on a chat or embedding model's load | each in its range: `OllamaOptions` lists them |
 
 Any other keyword is refused when the endpoint is built, its `ArgumentError` naming the keywords the
 endpoint takes, and so is a value that breaks a rule above; a value of the wrong type is Julia's own
@@ -40,8 +40,11 @@ none of those names, so no option is set in two places. Unset options keep the m
 Gemma 4's page gives `temperature=1.0`, `top_p=0.95` and `top_k=64`
 ([Gemma 4](https://ollama.com/library/gemma4)). Of the options Ollama's
 [API reference](https://github.com/ollama/ollama/blob/v0.40.11/docs/api.md#generate-request-with-options)
-lists, `OllamaOptions` has no `draft_num_predict`, `penalize_newline` or `numa`, and the endpoint
-refuses them as unknown keywords. `respond`, `compact_response`, FIM and transcription use Ollama's
+lists, `OllamaOptions` has no `penalize_newline` or `numa`, and the endpoint refuses them as unknown
+keywords: Ollama 0.40.11 does not read them, and its log says "invalid option provided" and the request
+goes on without them (observed on 25 October 2026). `draft_num_predict` caps the speculative draft tokens
+per step of a model that has a draft model: "Set to 0 to disable speculative drafting"
+([Modelfile](https://docs.ollama.com/modelfile)). `respond`, `compact_response`, FIM and transcription use Ollama's
 OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runner`. Decision requests
 (`ask`) carry the endpoint's `keep_alive` and `runner` and none of its options
 ([Models](@ref ollama_models__next)).

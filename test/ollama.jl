@@ -108,11 +108,21 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test_throws ArgumentError OllamaEndpoint(keep_alive=1e9 + 1)
     @test_throws ArgumentError OllamaEndpoint(keep_alive=typemax(Int))
     @test OllamaOptions(top_k=0).top_k == 0                           # 0 turns top-k sampling off
+    # draft_num_predict, a runner option of Ollama's: the draft tokens per step; 0 turns drafting off.
+    @test OllamaOptions(draft_num_predict=0).draft_num_predict == 0
+    @test _wire(_ochat(OllamaEndpoint(draft_num_predict=4)))["options"] == Dict("draft_num_predict" => 4)
+    @test sprint(show, OllamaEndpoint(base_url="http://b:1", draft_num_predict=4)) ==
+          "OllamaEndpoint(\"http://b:1\"; draft_num_predict=4)"
+    # Ollama 0.40.11 reads no penalize_newline or numa ("invalid option provided"): refused, not sent.
+    for k in (:penalize_newline, :numa)
+        err = try OllamaEndpoint(; k => true); nothing catch x; x end
+        @test err isa ArgumentError && occursin(String(k), err.msg)
+    end
     err = try OllamaEndpoint(num_ctxx=10); nothing catch x; x end
     @test err isa ArgumentError && occursin("num_ctxx", err.msg) && occursin("num_ctx", err.msg)
     for (k, v) in (:num_ctx => 0, :num_batch => 0, :num_thread => 0, :num_gpu => -2, :main_gpu => -1,
                    :num_keep => -2, :top_k => -1, :min_p => 1.5, :repeat_last_n => -2,
-                   :repeat_penalty => -0.1)
+                   :repeat_penalty => -0.1, :draft_num_predict => -1)
         @test_throws ArgumentError OllamaOptions(; k => v)
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value

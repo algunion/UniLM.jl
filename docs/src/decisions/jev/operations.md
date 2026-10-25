@@ -10,8 +10,9 @@ TypeSafe trains Jev for calibrated decisions: its probabilities are optimized ag
 is measured across groups of answers, so it does not guarantee that any single answer is correct
 ([System One](https://docs.typesafe.ai/concepts/system-one)). TypeSafe computes the `confidence` of every
 Choice and Score answer from its probabilities, 1 when all of it is on one outcome and 0 when it is spread
-evenly, and a Noul answer carries none: its probability is the whole answer
-([Confidence](https://docs.typesafe.ai/confidence)). The formulas are on [Reading answers](@ref Reading-answers).
+evenly, and a Noul answer carries none: its probability is the whole answer. TypeSafe's
+[Confidence](https://docs.typesafe.ai/confidence) page gives the formulas of both; the Choice formula is also on
+[Reading answers](@ref Reading-answers).
 
 In the replies recorded for this manual, TypeSafe rounds every probability to two decimals, so a distribution
 need not sum to exactly 1: `ask` accepts a sum within 0.005 per outcome of 1, and a chosen option at most 0.01
@@ -131,14 +132,16 @@ Recording takes `TYPESAFE_API_KEY`, and replaying takes nothing. In this manual'
 above replays the manual's own recordings, so the example reaches no service either
 ([How this manual runs its examples](@ref jev_testing_manual)).
 
-- **Pin the model.** A request's key holds the model it names. An unpinned request names `jev-latest`, so its
-  recording keeps answering with the version it was recorded on after the alias moves; a pinned one misses once
+- **Pin the model.** A request's key holds the model it names. An unpinned request names the default model, an
+  alias ([at the top of the start page](@ref jev_start__next)), so its recording keeps answering with the version
+  it was recorded on after the alias moves; a pinned one misses once
   you move the pin, until it is recorded again. An unpinned request names `TYPESAFE_DEFAULT_MODEL` instead when
   that is set: record with the environment you replay with, or pin.
 - **What a recording cannot hold.** To test what your code does with an answer the model rarely gives — a
   near-tie, a failed call, an option it was never offered — point `TYPESAFE_BASE_URL` at a local server that
-  answers what you wrote. Run such tests outside `with_recorded_answers`: in a replay scope the request misses
-  before it reaches the server, and a recording scope would file the canned answers as real ones. This block is
+  answers what you wrote. Run such tests outside `with_recorded_answers`: in a replay scope the request is
+  replayed or misses, and never reaches the server, and a recording scope would file the canned answers as real
+  ones. This block is
   not run when the manual is built:
 
 ```julia
@@ -189,7 +192,7 @@ withenv("TYPESAFE_BASE_URL" => "http://127.0.0.1:8123", "TYPESAFE_API_KEY" => "t
         @test_throws SystemOneError nl_dispatch(route, "Hm."; config = RequestConfig(max_attempts = 1))
 
         canned[] = choosing("an automatic out-of-office reply", 0.97)   # never offered for a String
-        @test_throws ArgumentError nl_dispatch(route, "Hm.")
+        @test_throws SystemOneError nl_dispatch(route, "Hm.")
     end
 end
 close(server)
@@ -197,7 +200,8 @@ close(server)
 
 The response shape is the whole contract: a `model`, an `answers` object keyed by the question names the client
 sent, each a Choice with `choice`, `confidence` and `probabilities`, and a `usage` object. An answer outside the
-offered options is refused with an `ArgumentError`, and no method runs.
+offered options makes the call a `SystemOneCallError`, so `nl_dispatch` throws a `SystemOneError`, and no method
+runs.
 
 - **A pipeline with a language model.** A test that also calls a language model records each request with its
   own provider's key and replays with none ([Test a Jev + LLM pipeline offline](@ref jev_testing_pipeline)).
@@ -233,8 +237,10 @@ the rounding above — is a `SystemOneCallError` too: no success is built from a
 of a failed call (`r["name"]`, [`answer`](@ref), [`answers`](@ref)) throws a [`SystemOneError`](@ref).
 
 UniLM sends a request again after a 408, 429, 500, 502, 503, 504, 520 to 524 or 529, up to `max_attempts` times
-within `total_deadline`, waiting at least what `retry-after-ms`, else `Retry-After`, asks for; each retry carries
-`X-TypeSafe-Retry-Count`, `1` on the second attempt. Any other status comes back as it is, since an identical
+within `total_deadline`, waiting at least what the reply's `Retry-After` header asks for; a single call reads no
+`retry-after-ms`, which the shared backoff of [`ask_each`](@ref) reads first
+([Many requests at once](@ref jev_items_each)). Each retry carries `X-TypeSafe-Retry-Count`, `1` on the second
+attempt. Any other status comes back as it is, since an identical
 request cannot fix it. With no [`RequestConfig`](@ref) of your own, a call to Jev is bounded by 60 s per attempt
 and 150 s in all; one of your own replaces both, per call or for a scope:
 
@@ -247,7 +253,7 @@ r = ask(state, questions; config = RequestConfig(request_timeout = 20.0, max_att
 scoped = with_request_config(request_timeout = 20.0, max_attempts = 1) do
     ask(state, questions)
 end
-(r["urgency"].score, scoped["urgency"].score)
+(r["urgency"].score, issuccess(scoped))
 ```
 
 | What you see | Why | What to do |
@@ -255,22 +261,24 @@ end
 | a `SystemOneCallError` whose `error` reads `TYPESAFE_API_KEY is not set` | no key in the environment; nothing was sent | set it ([Setup](@ref jev_setup__next)) |
 | a `SystemOneFailure` with status 401 and `error_type` `"authentication_error"` | the key is not valid | a key from the TypeSafe console |
 | status 400, `"Unknown model: …"` | a model name TypeSafe does not know | a name `list_models` returns, or a versioned id |
-| status 400, `error_type` `"max_tokens_exceeded"`, and a message naming `long_context` and the limits | the request is longer than its context | shorten the state, split the questions, or `long_context = true` |
+| status 400, `error_type` `"max_tokens_exceeded"`, and a message naming the limits, and `long_context` when the request did not set it | the request is longer than its context | shorten the state, split the questions, or `long_context = true` |
 | status 400, `"Invalid request."`, and a hint naming `jev-1.14.0` and `jev-preview` | a Box question to Jev 1.13 | `model = "jev-1.14.0"` |
-| status 413 | over a size limit UniLM cannot check before sending: all images as TypeSafe re-encodes them, or the request with each reference replaced by its picture ([Images](https://docs.typesafe.ai/images)) | fewer or smaller pictures, and a picture several questions need in the state once |
+| status 413 | over a size limit UniLM cannot check before sending: all images as TypeSafe re-encodes them, the request with each reference replaced by its picture, or the references' total length ([Images](https://docs.typesafe.ai/images)) | fewer or smaller pictures, and a picture several questions need in the state once |
 | status 422, a message of `"<field path>: <reason>"` entries | TypeSafe's schema refuses what UniLM's checks let through, such as a `RawQuestion` | the field the message names |
 | status 429 after the retries, with `retry_after`, the wait TypeSafe asked for | over the organization's rate limits | fewer requests in flight (`ntasks`), or higher limits |
-| status 529, or 500, 502 to 504, 520 to 524, after the retries | TypeSafe overloaded, or a failure on its side | a larger `max_attempts` or `total_deadline` |
+| status 529, or 408, 500, 502 to 504, 520 to 524, after the retries | TypeSafe overloaded, or a failure on its side | a larger `max_attempts` or `total_deadline` |
 | status 404, `"Not Found"` | `TYPESAFE_BASE_URL` points at a server without TypeSafe's paths | the API root, with no path |
 | a `SystemOneCallError` whose `cause` is a `UniLMTimeout` or a `UniLMCancelled` | a timeout, or a cancelled token | a `RequestConfig` of your own ([Timeouts & Retries](@ref timeouts_guide)) |
-| a `SystemOneCallError` after a 200 | an answer that does not fit the request | keep `request_id`, the id TypeSafe's support asks for |
+| a `SystemOneCallError` after a 200 | an answer that does not fit the request | keep `request_id` (the reply's `x-typesafe-request-id`) to quote in a support report |
 | a `ReplayMissError`, thrown | in a replay scope, a request with no recording | record it with `TYPESAFE_API_KEY` ([Testing and recordings](@ref jev_testing)) |
 | a `SystemOneError`, thrown | an answer read from a failed call | test `issuccess(r)` first |
 
 !!! details "Evidence"
     The messages and error types in the table were captured from TypeSafe's live API: the 401, the unknown
     model's 400, a 422 and the 404 on 22 September 2026, the Box's 400 from Jev 1.13 in October 2026. TypeSafe's
-    [Request rules and errors](https://docs.typesafe.ai/api/errors) page lists the statuses, not these messages.
+    [Request rules and errors](https://docs.typesafe.ai/api/errors) page lists these statuses but the 404, and none
+    of these messages.
 
-Recorded on 28 September 2026 on `jev-1.13.0` with UniLM's development branch after 0.21.0, and on
-25 October 2026 on `jev-1.14.0` with UniLM's development branch after 0.26.0, through TypeSafe's API at `/v1`.
+Recorded on 28 September 2026 on `jev-1.13.0` with UniLM's development branch after 0.21.0 (after 0.20.1 for the
+`RequestConfig` example), and on 25 October 2026 on `jev-1.14.0` with UniLM's development branch after 0.26.0,
+through TypeSafe's API at `/v1`.

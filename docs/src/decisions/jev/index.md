@@ -5,8 +5,8 @@ using UniLM
 ```
 
 Jev is TypeSafe's System One model: it reads a state — a text or a JSON record — and answers the questions you
-list about it with a probability for each answer you allowed, writing no text, and TypeSafe bills only the
-input tokens it reads. `TYPESAFEServiceEndpoint` speaks TypeSafe's API, `POST /v1/systemone` for decisions and
+list about it with a probability for each answer you allowed (a box's edges, for a Box question), writing no
+text, and TypeSafe bills only the input tokens it reads. `TYPESAFEServiceEndpoint` speaks TypeSafe's API, `POST /v1/systemone` for decisions and
 `GET /v1/models` for the model listing, and UniLM wraps both. The endpoint serves these two alone: the verb of
 every capability the table below does not list, `chatrequest!` and `respond` among them, refuses it before
 sending anything.
@@ -43,14 +43,14 @@ export TYPESAFE_API_KEY="..."
 | :--- | :--- | :--- |
 | `TYPESAFE_API_KEY` | a call sends nothing and returns a `SystemOneCallError` whose `error` reads `TYPESAFE_API_KEY is not set` | the key, sent as `Authorization: Bearer …` |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | the API root: a proxy or a gateway in front of TypeSafe, or a server of your own in tests ([Testing and recordings](@ref jev_testing)) |
-| `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | the model of a call that names none ([Models](@ref jev_models__next)) |
+| `TYPESAFE_DEFAULT_MODEL` | the default model at the top of this page | the model of a call that names none ([Models](@ref jev_models__next)) |
 
 UniLM reads the three when each request is sent, so a value exported after `using UniLM` takes effect, and a
 blank value counts as unset. A call goes to Jev when it names no `service` and no [`with_system_one`](@ref)
 scope around it names another provider; `service = TYPESAFEServiceEndpoint` names Jev explicitly, and
 `TYPESAFEServiceEndpoint()` returns that same type. A call's model is its own `model = …`; else, when it names
-no `service`, the model of the scope around it; else `TYPESAFE_DEFAULT_MODEL`, and `jev-latest` when that is
-unset. The endpoint has no options of its own, and its one request option, `long_context`, has a section of
+no `service`, the model of the scope around it; else `TYPESAFE_DEFAULT_MODEL`, and the default model at the top
+of this page when that is unset. The endpoint has no options of its own, and its one request option, `long_context`, has a section of
 its own ([Long context](@ref jev_long_context__next)).
 
 ## [First decision](@id jev_first_decision)
@@ -79,8 +79,8 @@ says how peaked they are ([Confidence and tuning](@ref jev_confidence)). A faile
 r.response.model, token_usage(r).prompt_tokens
 ```
 
-The call named no model, so it was sent as `jev-latest`, and `r.response.model` is the versioned id that
-answered ([Models](@ref jev_models__next)). [`nl_classify`](@ref) makes the same kind of decision in one call
+The call named no model, so it was sent with the default model at the top of this page, an alias, and
+`r.response.model` is the versioned id that answered ([Models](@ref jev_models__next)). [`nl_classify`](@ref) makes the same kind of decision in one call
 and returns the key whose description fits ([Dispatch on Meaning](@ref nl_dispatch_guide)):
 
 ```@example jev
@@ -92,13 +92,14 @@ nl_classify(message, TEAM)
 TypeSafe serves Jev under aliases and versioned ids, and a call sends either as its `model`
 ([Models](https://docs.typesafe.ai/models)):
 
-- `jev-latest`, the most recent stable release and the default here, and `jev-preview`, the most recent release
-  of any kind, are aliases. An alias moves when a new release ships, so its answers can change with no change to
+- `jev-latest`, the most recent stable release, and `jev-preview`, the most recent release of any kind, are
+  aliases. An alias moves when a new release ships, so its answers can change with no change to
   your code. On 25 October 2026 TypeSafe's Models page points both at `jev-1.14.0` (Jev 1.14, available from
   14 October 2026) and says no preview build is available.
 - A versioned id, `jev-1.14.0` or `jev-1.13.0`, names one release. The service accepts it whether or not the
-  listing shows it. Both releases take pictures, and Box questions need Jev 1.14
-  ([Images](https://docs.typesafe.ai/images)); both take long context.
+  listing shows it. Both releases take pictures and Box questions need Jev 1.14, by TypeSafe's
+  [Images](https://docs.typesafe.ai/images) page, though its Models and System One pages still list text input
+  only; both take long context.
 
 [`list_models`](@ref) returns the names the account may send, each with a description and a release date;
 TypeSafe's listing holds the aliases:
@@ -179,6 +180,7 @@ which of it UniLM checks before sending:
 | Choice options | 1 to 255 per question | yes |
 | Score levels | 1 to 10 per question | yes |
 | Nesting | 64 levels of objects and arrays in each of the state, the instructions and the criteria | yes |
+| Numbers | finite only | yes |
 | Request body | 32 MiB, multipart framing included | yes |
 | Each image | PNG or JPEG, a still image; 16 MiB per file; 280 to 1568 pixels on each side | yes |
 | All images together, as TypeSafe re-encodes them; the request with every picture in place of each reference to it | 32 MiB each | no: the service answers 413 |
@@ -186,8 +188,7 @@ which of it UniLM checks before sending:
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
 A wrapper refuses rather than adapts: a request changed to fit would ask a question you did not write, and its
-answer would carry no sign of the change. What every decision provider refuses alike — a blank or repeated
-question name, criteria that are not valid — is on [Reading answers](@ref Reading-answers).
+answer would carry no sign of the change.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
@@ -201,10 +202,15 @@ question name, criteria that are not valid — is on [Reading answers](@ref Read
 | an image that is not PNG or JPEG | `TypeSafe accepts PNG and JPEG images only` | convert it to PNG or JPEG |
 | an image file over 16 MiB | `TypeSafe accepts image files of at most 16 MiB` | resize it so neither side is over 1568 pixels, or save it compressed |
 | an image under 280 or over 1568 pixels on a side | `TypeSafe accepts images of 280 to 1568 pixels on each side` | resize it, scaling up or padding a side that is too short |
-| an animated PNG, an image whose header cannot be read, a file cut short, or a JPEG that does not end with its end-of-image marker | `TypeSafe cannot take image`, then the reason: `it is an animated PNG`, `cannot be read`, `is cut short`, `does not end with the end-of-image marker` | export it again as a still PNG or JPEG |
+| an animated PNG, an image whose header cannot be read or is missing, a PNG with no image data, a file cut short, or a JPEG that does not end with its end-of-image marker | `TypeSafe cannot take image`, then the reason: `it is an animated PNG`, `cannot be read`, `is missing`, `holds no image data`, `is cut short`, `does not end with the end-of-image marker` | export it again as a still PNG or JPEG |
 | an image that only a struct of your own holds | `not inside a struct of your own`, `inside a value that is not a dictionary, vector, tuple or NamedTuple`: UniLM finds images in those containers alone | put the image in the state, the instructions or the criteria, or in a dictionary, vector, tuple or `NamedTuple` there |
-| a `DocumentAttachment` anywhere in the request | `a System One request carries text and images, not documents` | put the document's text in the state |
-| an `ImageAttachment` with a `detail` level | `images without a detail level`: TypeSafe's assets carry an image's bytes alone | build the `ImageAttachment` without `detail` |
+
+Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question
+name, criteria that are not valid, a state or guidance holding `NaN` or `Inf` (TypeSafe's request rules read
+"Finite numbers only. `NaN`, `Infinity`, and numbers too large to represent, such as `1e400`, are rejected",
+[Request rules and errors](https://docs.typesafe.ai/api/errors)), an `AudioAttachment` or a `DocumentAttachment`
+anywhere in the request, and an `ImageAttachment` with a `detail` level; [Reading answers](@ref Reading-answers)
+covers a malformed request on every provider.
 
 ```@example jev
 try
@@ -215,8 +221,8 @@ end
 ```
 
 Recorded on 25 October 2026 on `jev-1.14.0` and `jev-1.13.0` with UniLM's development branch after 0.26.0, and,
-for the `nl_classify` call (on `jev-1.13.0`) and the model listing, on 28 September 2026 with UniLM's development
-branch after 0.21.0, through TypeSafe's API at `/v1`.
+on 28 September 2026, the `nl_classify` call (on `jev-1.13.0`) with UniLM's development branch after 0.21.0 and
+the model listing with UniLM's development branch after 0.20.1, through TypeSafe's API at `/v1`.
 
 See also: [`TYPESAFEServiceEndpoint`](@ref), [`ask`](@ref), [`SystemOneSuccess`](@ref) and
 [`TypeSafeModelsSuccess`](@ref) in the API reference.

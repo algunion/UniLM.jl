@@ -19,7 +19,8 @@ of a language model's call.
 Main.ProviderFacts.provider_table(Main.ProviderFacts.decisions)
 ```
 
-Every provider answers the same calls with the same typed results. A call names its provider with
+Every provider answers [`ask`](@ref) and the verbs built on it with the same result types, though not every
+provider takes every question kind or option. A call names its provider with
 `service = …`, a [`with_system_one`](@ref) scope names one for every call inside it, and a call that names
 neither goes to Jev. What each provider takes, and why a confidence threshold is tuned for each, is on
 [Choosing a decision provider](@ref system_one_backends__next).

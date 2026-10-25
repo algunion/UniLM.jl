@@ -174,7 +174,7 @@ TypeSafe documents long context as slower and less accurate than the default
 limits ([Models](https://docs.typesafe.ai/models)), and an answer does not say
 which ran. A request over its context comes back as a 400
 [`SystemOneFailure`](@ref) whose `error_type` is `"max_tokens_exceeded"`; its
-`message` names `long_context` and the limits. `long_context` is a TypeSafe
+`message` names the limits, and `long_context` when the request did not set it. `long_context` is a TypeSafe
 option: any other backend refuses it before sending, as it refuses every option
 it does not know. The natural-language verbs take it as
 `options = (long_context = true,)`, and
@@ -200,8 +200,8 @@ for every call inside that names no backend and no options of its own.
 ## [Structured guidance](@id jev_structured)
 
 Wherever guidance appears — a question's `instructions`, a Choice option's description, a Score level, a Noul's
-`yes` and `no` — Jev takes a string, an object (a `NamedTuple` or a `Dict`), an array (a vector or a tuple), or
-an image, nested up to the limit ([Limits and refusals](@ref jev_limits__next);
+`yes` and `no` — Jev takes a string, an object (a `NamedTuple` or a `Dict`), an array (a vector; a tuple only
+inside an object or an array, where it is written as an array), or an image, nested up to the limit ([Limits and refusals](@ref jev_limits__next);
 [Advanced: structure](https://docs.typesafe.ai/primitives/advanced)). Start with strings. When two options keep
 getting confused, give each what it covers, what it does not, and a few examples:
 

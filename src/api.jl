@@ -1416,7 +1416,7 @@ OpenAI options, omitted from the request when unset:
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
 - `stream_options::Union{AbstractDict,Nothing}`: streaming options; when unset, an
-  `OPENAIServiceEndpoint` or `DeepSeekEndpoint` stream requests
+  `OPENAIServiceEndpoint`, `DeepSeekEndpoint` or `GEMINIOpenAIServiceEndpoint` stream requests
   `{"include_usage": true}`, so the streamed result carries token usage.
 
 The constructor validates ranges and throws `ArgumentError` on a violation; among

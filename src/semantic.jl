@@ -329,7 +329,7 @@ Keywords go between the state and the block, written `key = value`:
 
 | Keyword | Meaning |
 | :--- | :--- |
-| `model` | model name; omitted, the client default applies |
+| `model` | model name; when omitted, the [`with_system_one`](@ref) scope's model applies (only when `service` is not given), else the backend's default — TypeSafe's `TYPESAFE_DEFAULT_MODEL` or `jev-latest`, OpenAI's `gpt-6-luna`; Ollama has none, so an omitted model is an `ArgumentError` before the request |
 | `min_confidence` | a finite threshold in `0 … 1` (anything else, NaN included, is an `ArgumentError` before the request); below it, take `_` or throw [`LowConfidenceError`](@ref) |
 | `decide` | a policy called with the [`ChoiceAnswer`](@ref): return an option name — any of them, not only the winner — or `nothing` to take `_` or throw [`DecisionDeclinedError`](@ref) |
 | `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |

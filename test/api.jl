@@ -1473,6 +1473,11 @@ end
 @testset "streamed usage is requested from OpenAI, DeepSeek and Gemini's compatible endpoint" begin
     # Each streams token usage only when asked (`stream_options.include_usage`; Google's compatibility
     # page streams with it), so an unasked stream was costed at zero.
+    # The Chat docstring names the three endpoints that ask, as the encoder does.
+    doc = replace(join((join(string.(d.text)) for d in
+                        values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :Chat)].docs)), " "), r"\s+" => " ")
+    @test occursin("an `OPENAIServiceEndpoint`, `DeepSeekEndpoint` or `GEMINIOpenAIServiceEndpoint` stream requests", doc)
+    @test all(UniLM._asks_stream_usage, (OPENAIServiceEndpoint, DeepSeekEndpoint(api_key="k"), GEMINIOpenAIServiceEndpoint))
     sys_user = [Message(Val(:system), "s"), Message(Val(:user), "u")]
     auto = Dict(:include_usage => true)
     @test JSON.lower(Chat(stream=true, messages=sys_user))[:stream_options] == auto

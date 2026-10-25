@@ -281,8 +281,11 @@ end
 
 A Model Context Protocol (MCP) tool for the Responses API. Connect the model to a remote
 MCP server (`server_url`), an OpenAI connector (`connector_id`, e.g. `"connector_googledrive"`,
-`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Use
-`authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
+`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Connectors
+are OpenAI's legacy connectors: `connector_id` "is deprecated for models released after
+September 1, 2026", which take `server_url` or `tunnel_id`, and "Existing models retain
+connector support" ([connectors and MCP](https://developers.openai.com/api/docs/guides/tools-connectors-mcp#connectors)).
+Use `authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
 string or object forms.
 """
 @kwdef struct MCPTool <: ResponseTool

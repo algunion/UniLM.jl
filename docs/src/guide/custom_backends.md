@@ -70,9 +70,9 @@ custom routing/auth:
   unvalidated by the four primary verbs and rejected by the platform verbs (see
   [Provider Capabilities](@ref capabilities_api)); declaring a set opts into validation
   against it.
-- **Streamed usage** — the built-in OpenAI and DeepSeek endpoints ask a stream to report
-  token usage (`stream_options.include_usage`); other OpenAI-wire endpoints do not, since
-  some servers reject the field. Set `stream_options=Dict("include_usage" => true)` on a
+- **Streamed usage** — the built-in OpenAI, DeepSeek and Gemini OpenAI-compatible endpoints
+  ask a stream to report token usage (`stream_options.include_usage`); other OpenAI-wire
+  endpoints do not, since some servers reject the field. Set `stream_options=Dict("include_usage" => true)` on a
   streamed `Chat` when your server supports it, or streamed turns carry no usage.
 
 Singleton endpoints (no fields) dispatch on the type — `get_url(::Type{MyEndpoint}, ::Chat)`;

@@ -686,9 +686,9 @@ end
 ```
 
 ```julia
-# Reach a remote MCP server (server_url), an OpenAI connector (connector_id, e.g.
-# "connector_googledrive"), or a Secure MCP Tunnel (tunnel_id) — hence no single
-# required target field beyond server_label.
+# Reach a remote MCP server (server_url), an OpenAI legacy connector (connector_id, e.g.
+# "connector_googledrive"; deprecated for models released after September 1, 2026), or a
+# Secure MCP Tunnel (tunnel_id) — hence no single required target field beyond server_label.
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
     server_url::Union{String, Nothing} = nothing
@@ -2234,7 +2234,7 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   so is a miss or lost recording of a call its callback or on_tool_call made (as the callback threw it)
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
-    #   System One backend other than TypeSafe ("/<namespace>/v1/systemone");
+    #   System One backend other than TypeSafe ("/openai-decisions/v1/decisions", "/ollama/v1/systemone");
     #   a request keyed on more (TypeSafe's long_context, list_input_items' limit, order and after,
     #   as sorted name=<JSON> lines; System One image-part digests) appends "\n" * that text to the
     #   body it is keyed on;
@@ -2263,7 +2263,7 @@ struct ReplayMissError <: Exception       # thrown by the recorded verbs (or a s
     dir::String
     key::String
     method::String                        # "POST" | "GET" | "DELETE"
-    path::String                          # as keyed: "/v1/systemone" | "/<namespace>/v1/systemone" | "/v1/models" | …
+    path::String                          # as keyed: "/v1/systemone" | "/openai-decisions/v1/decisions" | "/ollama/v1/systemone" | "/v1/models" | …
     body::String                          # as keyed: credentials "<redacted>", data-URL images as digests ("" when
                                           #   none is sent), then "\n" * key_extra if any
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"

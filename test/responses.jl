@@ -112,6 +112,14 @@ end
     @test JSON.lower(shell())[:type] == "shell" && JSON.lower(computer_tool())[:type] == "computer"
 end
 
+@testset "the MCPTool docstring gives connector_id OpenAI's legacy label" begin
+    # OpenAI's guide, "Legacy connectors": "`connector_id` is deprecated for models released after September 1,
+    # 2026. Use `server_url` ... or `tunnel_id` ... Existing models retain connector support."
+    doc = replace(join((join(string.(d.text)) for d in
+                        values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :MCPTool)].docs)), " "), r"\s+" => " ")
+    @test occursin("OpenAI's legacy connectors", doc) && occursin("deprecated for models released after September 1, 2026", doc)
+end
+
 @testset "MCPTool" begin
     @testset "minimal creation" begin
         t = MCPTool(server_label="my-server", server_url="https://mcp.example.com/sse")

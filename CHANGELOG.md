@@ -170,6 +170,14 @@
   it: a result naming it was priced through the `jev-latest` fallback, at that same rate, and
   the `estimated_cost` docstrings said TypeSafe lists a price for Jev 1.13 alone. The row is in
   the table, and the docstrings name both versions.
+- **Five docstrings say what the code does.** `Chat`'s names `GEMINIOpenAIServiceEndpoint`
+  among the endpoints whose stream asks for usage; `MCPTool`'s gives `connector_id` OpenAI's
+  legacy label (deprecated for models released after September 1, 2026);
+  `ReplayMissError`'s and `with_recorded_answers`' give OpenAI's Decisions API its keyed path,
+  `/openai-decisions/v1/decisions` (they gave every System One backend `/<namespace>/v1/systemone`),
+  and `with_recorded_answers`' lists `prompt_cache_options` among the options never keyed and
+  names each backend's access for recording, not `TYPESAFE_API_KEY` for all; `@branch`'s says
+  which model an omitted `model` means, and that Ollama has none. No behaviour changes.
 
 ## 0.26.0
 

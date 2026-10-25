@@ -591,14 +591,15 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
-    seed::Union{Int64,Nothing} = nothing                    # Gemini Interactions only: generation_config.seed
+    seed::Union{Int64,Nothing} = nothing                    # Gemini Interactions (generation_config.seed) and generic endpoints
 end
 ```
 
-`seed` is sent only by Gemini Interactions, as an int32 (outside that range it throws);
-OpenAI's Responses API has none, so `OPENAIServiceEndpoint`, every other OpenAI-wire endpoint
-(Azure, `GEMINIOpenAIServiceEndpoint`, generic) and `OllamaEndpoint` throw `ArgumentError` for
-it before any request. `service_tier` on `GEMINIServiceEndpoint` is `"standard"`, `"flex"`,
+`seed` is sent by Gemini Interactions, as an int32 (outside that range it throws), and by a
+`GenericOpenAIEndpoint`, as given (vLLM's Responses API forwards it to its engine); OpenAI's
+Responses API has none, so `OPENAIServiceEndpoint`, the other OpenAI-wire endpoints (Azure,
+`GEMINIOpenAIServiceEndpoint`) and `OllamaEndpoint` throw `ArgumentError` for it before any
+request. `service_tier` on `GEMINIServiceEndpoint` is `"standard"`, `"flex"`,
 `"priority"` or `"deferred"`. The positional constructor takes all 32 fields in declaration order;
 build a `Respond` with keywords, which name each field.
 

@@ -143,6 +143,11 @@
   environment variable that way, read each time a request is built; unset or blank, nothing is
   sent, and the call error's `cause` is an `ArgumentError` naming the variable. No other
   server gets the key.
+- **A `GenericOpenAIEndpoint` `respond` sends its `seed`.** A `Respond` with a `seed` was
+  refused on every endpoint of the OpenAI Responses wire, a generic one included, though
+  vLLM's Responses API forwards a seed to its engine and a generic endpoint sends every other
+  field as given. A generic endpoint now sends it as `seed`; `OPENAIServiceEndpoint`, Azure
+  and `GEMINIOpenAIServiceEndpoint` still refuse it, since OpenAI's Responses API has none.
 
 ## 0.26.0
 

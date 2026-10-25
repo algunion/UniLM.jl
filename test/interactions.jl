@@ -1092,31 +1092,41 @@ end
     @test estimated_cost(success("standard")) ≈ (1_000 * 0.75 + 100 * 3.75) / 1e6
 end
 
-@testset "seed — Gemini Interactions sends it; every OpenAI-wire Responses encoder refuses it" begin
+@testset "seed — Gemini Interactions and generic endpoints send it; the other OpenAI-wire Responses encoders refuse it" begin
     # OpenAI's Responses API takes no seed (Chat Completions does): on that wire a set seed would vanish.
     for (svc, model) in ((OPENAIServiceEndpoint, "gpt-6-luna"), (UniLM.AZUREServiceEndpoint, "m"),
-                         (GEMINIOpenAIServiceEndpoint, "gemini-3.8-flash"), (GenericOpenAIEndpoint("http://127.0.0.1:1", ""), "m"))
+                         (GEMINIOpenAIServiceEndpoint, "gemini-3.8-flash"))
         e = _ix_caught(() -> UniLM.encode_agentic(svc, Respond(; service=svc, model, input="x", seed=7)))
         @test e isa ArgumentError && occursin("seed", e.msg) && occursin(string(UniLM._service_name(svc)), e.msg)
         @test UniLM.encode_agentic(svc, Respond(; service=svc, model, input="x")) isa String
     end
+    # A generic endpoint sends it as given, as it sends every other field: vLLM's Responses API forwards a
+    # seed to its engine. A request without one is the OpenAI Responses JSON, byte for byte.
+    generic = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
+    @test JSON.parse(UniLM.encode_agentic(generic, Respond(service=generic, model="m", input="x", seed=7)))["seed"] == 7
+    @test UniLM.encode_agentic(generic, Respond(service=generic, model="m", input="x")) ==
+          JSON.json(Respond(service=generic, model="m", input="x"))
     # Ollama's Responses API reads a fixed set of fields; it refuses every other one, seed among them.
     e = _ix_caught(() -> UniLM.encode_agentic(OllamaEndpoint(), Respond(service=OllamaEndpoint(), model="m", input="x", seed=7)))
     @test e isa ArgumentError && occursin("seed", e.msg) && occursin("Ollama", e.msg)
     # Gemini Interactions sends it as generation_config.seed.
     @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(service=GEMINIServiceEndpoint, input="x",
         seed=7)))["generation_config"] == Dict("seed" => 7)
-    # The OpenAI Responses JSON never carries it, and the refusal comes before any request.
+    # The OpenAI Responses JSON never carries it, and OpenAI's refusal comes before any request.
     @test !haskey(JSON.lower(Respond(input="x", seed=7)), :seed)
-    hits = Threads.Atomic{Int}(0)
+    @test_throws ArgumentError respond(Respond(service=OPENAIServiceEndpoint, model="gpt-6-luna", input="x", seed=7))
+    # A generic endpoint's respond puts it on the wire.
+    bodies = String[]
     srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
-        Threads.atomic_add!(hits, 1); HTTP.Response(500, [], Vector{UInt8}("{}"))
+        push!(bodies, String(copy(req.body))); HTTP.Response(500, [], Vector{UInt8}("{}"))
     end
     try
         url = "http://127.0.0.1:$(HTTP.port(srv))"
-        @test_throws ArgumentError respond(Respond(service=GenericOpenAIEndpoint(url, ""), model="m", input="x", seed=7))
+        r = respond(Respond(service=GenericOpenAIEndpoint(url, ""), model="m", input="x", seed=7);
+                    config=RequestConfig(max_attempts=1))
+        @test r isa ResponseFailure && r.status == 500
     finally
         close(srv)
     end
-    @test hits[] == 0
+    @test length(bodies) == 1 && JSON.parse(only(bodies))["seed"] == 7
 end

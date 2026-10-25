@@ -214,8 +214,11 @@ fim = fim_complete("def area(r):\n    "; suffix="\n    return a\n",       # /v1/
   of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
   a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
   ([task prompts](@ref ollama_embeddings__next)).
-- **respond** sends a `Respond`'s fields as they are, except a `seed`, which UniLM refuses
-  ([Limits and refusals](@ref local_servers_limits)). vLLM serves stored responses
+- **respond** sends a `Respond`'s fields as they are, a `seed` among them: vLLM's Responses API
+  "forwards vLLM sampling parameters such as `top_k`, `min_p`, `repetition_penalty`, `seed`, `stop`,
+  and `ignore_eos` to the engine"
+  ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)).
+  vLLM serves stored responses
   (`/v1/responses/{response_id}`), LM Studio takes a `previous_response_id`, and `llama-server`'s route
   "works by converting Responses request into Chat Completions request".
 - **FIM** sends the `suffix` to `/v1/completions`, where vLLM's Completions API notes "`suffix` parameter
@@ -232,7 +235,6 @@ capabilities the table at the top of this page lists as not available refuse the
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the name the server serves the model under |
-| a `Respond` with a `seed` | `takes no seed`: the Responses request UniLM writes has no `seed` field | a `Chat`, which sends its `seed` |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
 | an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings__next), or `task = :none` where the server writes the prompts |
 | an EmbeddingGemma request with a `dimensions` other than 768, 512, 256 and 128 | `returns 768, 512, 256, 128 dimensions`: the sizes the model was trained for | one of them |

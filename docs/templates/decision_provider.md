@@ -20,7 +20,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 > Template: Keep the H2 of each feature `REGISTRY` lists for `<entry>`, with the id the README's Ids give it, and delete the others. A feature section holds <Provider>'s rules for it, an example and a link to its concept page.
 
-> Template: A refusal of a request by <Provider>'s endpoint, an `ArgumentError` thrown before it is sent (a missing capability aside: At a glance), is stated once, as a row of Limits and refusals: every other section that meets it names what is refused and links Limits and refusals, since a table row has no anchor. A check the endpoint's constructor runs is stated once too, in Options, which a section that meets it links. A refusal every decision provider makes (no question, a blank or repeated question name) stays on its concept page, which Limits and refusals links.
+> Template: A refusal of a request by <Provider>'s endpoint, an `ArgumentError` thrown before it is sent (a missing capability aside: At a glance), is stated once, as a row of Limits and refusals: every other section that meets it names what is refused and links Limits and refusals, since a table row has no anchor. A check the endpoint's constructor runs is stated once too, in Options, which a section that meets it links. The table holds what the endpoint refuses on its own account; the refusals every decision provider shares — a blank or repeated question name, criteria that are not valid, a state or guidance holding `NaN` or `Inf`, an `AudioAttachment` or a `DocumentAttachment` anywhere in the request, an image with a `detail` level — are not rows: one sentence after the table names each of them and links their concept page, as `decisions/jev/index.md` does.
 
 > Template: A sentence about behaviour says what the code does and the condition under which it does it, no broader: "returns a `SystemOneCallError`" where nothing is thrown, "before anything is sent" only where no byte reaches the provider. A rule UniLM applies per model is a generated table's (README, Generated facts).
 
@@ -28,7 +28,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [Setup](@id <entry>_setup)
 
-> Template: What the reader does once before the first decision: set the key (a `bash` block), start a server or pull a model; then how a call reaches the provider (`service = …`, or `with_system_one` around the code) and the model it gets when it names none.
+> Template: What the reader does once before the first decision: set the key (a `bash` block), start a server or pull a model; then how a call reaches the provider (`service = …`, or `with_system_one` around the code) and the model it gets when it names none, by reference to the default model the table at the top of the page shows, which no sentence restates (README, Placement).
 
 > Template: The endpoint's options, the arguments of its constructor that the requests made through an instance carry, and the provider options `ask` takes as keywords (`options = (…)` on the natural-language verbs, keywords of `with_system_one` for a scope) that no other section covers: what each sends and what is checked, in a section `## [Options](@id <entry>_options)` here.
 
@@ -38,7 +38,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [Models](@id <entry>_models)
 
-> Template: The models to name, the default and what it resolves to, how to list them, what each one takes, and how to pin a version against an alias that moves.
+> Template: The models to name, what the default model at the top of the page resolves to, how to list them, what each one takes, and how to pin a version against an alias that moves.
 
 ## [Questions](@id <entry>_questions)
 
@@ -52,7 +52,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [Limits and refusals](@id <entry>_limits)
 
-> Template: The state, context and request limits a request meets, and which of them UniLM checks (rate limits go to the failures section); then one row per refusal before the request is sent (`ArgumentError`): what is refused; the Why cell opens with words of its message as a code span, without quote marks, so that the message's underscores render as written — a refusal with several messages gives each its own span, comma-separated — and then gives the reason; the fix.
+> Template: The state, context and request limits a request meets, and which of them UniLM checks (rate limits go to the failures section); then one row per refusal before the request is sent (`ArgumentError`) that the endpoint makes on its own account: what is refused; the Why cell opens with words of its message as a code span, without quote marks, so that the message's underscores render as written — a refusal with several messages gives each its own span, comma-separated — and then gives the reason; the fix. After the table, the one sentence that names the refusals every decision provider shares (above).
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
@@ -86,6 +86,6 @@ Main.ProviderFacts.price_table(:<entry>)
 | :--- | :--- | :--- |
 | <failure> | <cause> | <fix> |
 
-> Template: Provenance: the last line of each page with recordings, above See also on the start page, stating how they were made and nothing else, as `decisions/jev/index.md` does: "Recorded on" the date their files' `recorded_at` gives (UTC); each model they were made on; UniLM's version, or, for code not yet released, "UniLM's development branch after" the last release; and the provider's API or server at its version. A page that replays recordings of several dates names each date with the models and the UniLM version of its recordings. An entry that does not record puts its provenance line (README, Executed or quoted) last on its start page, above See also; output quoted from a live run is dated as that section says.
+> Template: Provenance: the last line of each page with recordings, above See also on the start page, stating how they were made and nothing else, as `decisions/jev/index.md` does: "Recorded on" the date their files' `recorded_at` gives (UTC); each model they were made on; UniLM's version, or, for code not yet released, "UniLM's development branch after" the last release, which is the last version tagged before the files' `recorded_at` (compare the UTC times: a release tagged later that day does not count); and the provider's API or server at its version. A page that replays recordings of several dates names each date with the models and the UniLM version of its recordings. An entry that does not record puts its provenance line (README, Executed or quoted) last on its start page, above See also; output quoted from a live run is dated as that section says.
 
 > Template: See also: the start page's last line, linking the API reference of the entry's types and, where the entry has one, its counterpart in the Language models chapter.

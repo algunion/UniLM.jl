@@ -36,6 +36,7 @@ const GEMINI_API_KEY::String = "GEMINI_API_KEY"
 const DEEPSEEK_API_KEY::String = "DEEPSEEK_API_KEY"
 const MISTRAL_API_KEY::String = "MISTRAL_API_KEY"
 const OLLAMA_HOST::String = "OLLAMA_HOST"
+const OLLAMA_API_KEY::String = "OLLAMA_API_KEY"
 
 # The model-id prefixes of each hosted provider: an id that starts with one of them is that
 # provider's; an id with none of them (a local Ollama model such as `gemma4:e4b`, a Jev model)

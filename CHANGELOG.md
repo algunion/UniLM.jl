@@ -136,6 +136,13 @@
   other; to one without, `/api/chat` answers a name other than `"low"`, `"medium"`, `"high"`
   and `"max"` with HTTP 400, and `/v1/responses` reads `"minimal"` as `"low"` and `"xhigh"`
   as `"max"`.
+- **Ollama's cloud gets its API key.** Direct cloud inference at `https://ollama.com`, where
+  `OLLAMA_HOST=ollama.com` points `OllamaEndpoint()`, "requires an API key" in the
+  `Authorization: Bearer` header, and UniLM sent none, so every such request went out without
+  one. An endpoint whose server is `https://ollama.com` now sends the `OLLAMA_API_KEY`
+  environment variable that way, read each time a request is built; unset or blank, nothing is
+  sent, and the call error's `cause` is an `ArgumentError` naming the variable. No other
+  server gets the key.
 
 ## 0.26.0
 

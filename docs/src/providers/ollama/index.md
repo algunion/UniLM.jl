@@ -8,13 +8,12 @@ using UniLM
 native API: a `Chat` goes to `/api/chat` and an `Embeddings` request to `/api/embed`, the routes that
 take the context window, how long a model stays loaded, thinking and truncation. `respond`,
 `compact_response`, `fim_complete` and `transcribe` reach Ollama's OpenAI-compatible routes instead,
-which carry none of the endpoint's options. No key is sent, and a local model costs nothing. No verb
-of a capability the table below lists as not available sends a request through this endpoint:
-`speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own API, UniLM
-does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web search and
-web fetch, and it sends no API key, which a direct request to Ollama's cloud at `ollama.com` needs. The
-decision models `ask` reaches through the same endpoint have an entry of their own:
-[Local decision models](@ref ollama_decisions_start).
+which carry none of the endpoint's options. No key is sent to a server of your own, and a local model
+costs nothing. No verb of a capability the table below lists as not available sends a request through
+this endpoint: `speak` refuses it, though Ollama serves speech at `/v1/audio/speech`. Of Ollama's own
+API, UniLM does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web
+search and web fetch. The decision models `ask` reaches through the same endpoint have an entry of their
+own: [Local decision models](@ref ollama_decisions_start).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:ollama)
@@ -71,10 +70,14 @@ over `https` on port 443; an IPv6 address may be bare or bracketed, and a path i
 cannot read this way, another scheme or a port outside 1–65535, throws `ArgumentError` when the
 endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_options__next).
 
-UniLM sends no key: Ollama's local API "does not require authentication", while direct cloud
-inference at `https://ollama.com/api` "requires an API key"
-([authentication](https://docs.ollama.com/api/authentication)), so an endpoint pointed at `ollama.com`
-reaches the cloud without one. A cloud model runs through the local server once you sign in with
+Ollama's local API "does not require authentication", and UniLM sends a server of your own no key. Direct
+cloud inference at `https://ollama.com/api` and `https://ollama.com/v1` "requires an API key", used "in
+the `Authorization: Bearer` header" ([authentication](https://docs.ollama.com/api/authentication)): an
+endpoint whose server is `https://ollama.com`, as `OLLAMA_HOST=ollama.com` makes it, sends the
+`OLLAMA_API_KEY` environment variable that way, read each time a request is built, and to no other
+host. With the variable unset or blank nothing is sent: the call returns a call error whose `cause` is
+an `ArgumentError` naming `OLLAMA_API_KEY`. No request was sent to the cloud for this page (its
+requests bill). A cloud model runs through the local server once you sign in with
 `ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first__next) says how
 UniLM prices it.
 

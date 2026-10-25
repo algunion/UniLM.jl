@@ -143,6 +143,65 @@ end
     @test UniLM.auth_header(e) == ["Content-Type" => "application/json"]
 end
 
+@testset "Ollama's cloud takes OLLAMA_API_KEY as a Bearer token; without it nothing is sent" begin
+    # "Direct cloud inference at https://ollama.com/api and https://ollama.com/v1 requires an API key", sent in
+    # the Authorization: Bearer header (https://docs.ollama.com/api/authentication). No request reaches the
+    # cloud here: the header is what auth_header gives the transport, and every call below runs under a
+    # deadline that ends it at the transport, before any connection.
+    cloud = withenv(OllamaEndpoint, "OLLAMA_HOST" => "ollama.com")
+    @test cloud.base_url == "https://ollama.com:443"
+    json = "Content-Type" => "application/json"
+    withenv("OLLAMA_API_KEY" => "test-key") do
+        for ep in (cloud, OllamaEndpoint(base_url="https://ollama.com"), OllamaEndpoint(base_url="https://Ollama.COM/"))
+            @test UniLM.auth_header(ep) == ["Authorization" => "Bearer test-key", json]
+        end
+        @test UniLM.auth_header_multipart(cloud) == ["Authorization" => "Bearer test-key"]   # transcription
+        @test UniLM._stream_headers(cloud) == ["Authorization" => "Bearer test-key", json,  # a streamed chat
+                                               "Accept-Encoding" => "identity"]
+        # Any other server gets no key, the variable set or not: it is the cloud's credential.
+        for url in ("http://127.0.0.1:11434", "https://gpu-box:11434", "https://ollama.com.example.net",
+                    "https://api.ollama.com", "http://ollama.com")
+            @test UniLM.auth_header(OllamaEndpoint(base_url=url)) == [json]
+        end
+    end
+    # The key is read when a request is built: unset or blank, the request is refused, naming the variable.
+    for unset in (nothing, "", "  ")
+        withenv("OLLAMA_API_KEY" => unset) do
+            for headers in (UniLM.auth_header, UniLM.auth_header_multipart, UniLM._stream_headers)
+                e = try headers(cloud); nothing catch x; x end
+                @test e isa ArgumentError && occursin("OLLAMA_API_KEY", e.msg)
+            end
+        end
+    end
+    # Through the verbs: without the key the call error's cause is that ArgumentError, before the transport is
+    # reached; with it the request gets as far as the transport, where the deadline ends it unsent.
+    tiny = RequestConfig(total_deadline=1e-300)
+    calls = (() -> chatrequest!(Chat(service=cloud, model="gemma4:31b", messages=[Message(Val(:user), "hi")]); config=tiny),
+             () -> respond(Respond(service=cloud, model="gemma4:31b", input="hi"); config=tiny),
+             () -> embeddingrequest!(Embeddings("hi"; service=cloud, model="embeddinggemma", task=:none); config=tiny),
+             () -> list_models(service=cloud, config=tiny))
+    for call in calls
+        r = withenv(call, "OLLAMA_API_KEY" => nothing)
+        @test !issuccess(r) && r.cause isa ArgumentError && occursin("OLLAMA_API_KEY", r.cause.msg)
+        r = withenv(call, "OLLAMA_API_KEY" => "test-key")
+        @test !issuccess(r) && r.cause isa UniLMTimeout && r.cause.phase === :deadline
+    end
+    # A server of the caller's own sees no Authorization header, the variable set or not.
+    auth = String[]
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        push!(auth, HTTP.header(req, "Authorization", "<none>"))
+        HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(_reply(content="ok")))
+    end
+    try
+        mine = OllamaEndpoint(base_url="http://127.0.0.1:$(HTTP.port(srv))")
+        r = withenv(() -> chatrequest!(_ochat(mine)), "OLLAMA_API_KEY" => "test-key")
+        @test r isa LLMSuccess && text(r) == "ok"
+    finally
+        close(srv)
+    end
+    @test auth == ["<none>"]
+end
+
 @testset "request: fields map or are refused" begin
     e = OllamaEndpoint(num_ctx=8192, keep_alive=Inf, top_k=64)
     w = _wire(_ochat(e; temperature=0.3, top_p=nothing, seed=7, max_completion_tokens=99, stop="END",

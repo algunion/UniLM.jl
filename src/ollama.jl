@@ -14,8 +14,19 @@ get_url(s::OllamaEndpoint, ::Embeddings)::String = s.base_url * OLLAMA_EMBED_PAT
 get_url(s::OllamaEndpoint, ::FIMCompletion)::String = s.base_url * COMPLETIONS_PATH
 _resolve_base_url(s::OllamaEndpoint) = s.base_url
 
-# A local server takes no credentials.
-auth_header(::OllamaEndpoint)::Vector{Pair{String,String}} = ["Content-Type" => "application/json"]
+# A local server takes no credentials. Ollama's cloud does: "Direct cloud inference at
+# https://ollama.com/api and https://ollama.com/v1 requires an API key. … Use the API key in the
+# `Authorization: Bearer` header" (https://docs.ollama.com/api/authentication). The key is read
+# from OLLAMA_API_KEY, the variable that page exports, each time a request is built, and goes to
+# that host alone; without it the request is refused before it is sent.
+_ollama_cloud(s::OllamaEndpoint)::Bool = occursin(r"^https://ollama\.com(?::\d+)?(?:/|$)"i, s.base_url)
+function auth_header(s::OllamaEndpoint)::Vector{Pair{String,String}}
+    _ollama_cloud(s) || return ["Content-Type" => "application/json"]
+    key = strip(get(ENV, OLLAMA_API_KEY, ""))
+    isempty(key) && throw(ArgumentError("$OLLAMA_API_KEY is not set: Ollama's cloud ($(s.base_url)) takes an API key " *
+        "as a Bearer token (https://ollama.com/settings/keys)"))
+    ["Authorization" => "Bearer $key", "Content-Type" => "application/json"]
+end
 
 provider_capabilities(::OllamaEndpoint) =
     Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models, :system_one, :transcription])

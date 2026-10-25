@@ -168,9 +168,12 @@ blank line. Where a system message pushed later goes depends on two columns of t
   later system message that cannot stay in place is held back, then sent right after a later user
   turn, and the turns before each sent reply stay as they were in the request that got it. Push your
   own messages and send the replies back as they came: an edit to an earlier turn, or to the tools,
-  invalidates the thinking blocks after it. UniLM sends no `thinking.block_binding`, so the API
-  applies its default: on an account created on or after 31 August 2026 (00:00 UTC) it answers HTTP
-  400, and on an older account it lets the invalid blocks through to the model.
+  invalidates the thinking blocks after it, except the edits Anthropic lists as valid, such as removing
+  the oldest thinking blocks
+  ([what counts as an edit](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#what-counts-as-an-edit)).
+  UniLM sends no `thinking.block_binding`, so the API applies its default: on an account created on or
+  after 31 August 2026 (00:00 UTC) it answers HTTP 400, and on an older account it lets the invalid
+  blocks through to the model.
 
 A system message pushed after a reply needs a user turn after it — a user message, or the results
 of the reply's tool calls — except in a response prefill on a model whose Prefill cell is "yes".
@@ -226,7 +229,9 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   ([what goes back otherwise](@ref anthropic_reasoning)).
 - **Tool calls.** `on_tool_call(tc)` runs once per call whose arguments decode, as soon as its block
   closes (`content_block_stop`), before the turn ends, and for a call whose arguments do not decode
-  UniLM logs a warning instead; the final `Message` holds the calls too.
+  UniLM logs a warning instead. The final `Message` holds the calls that decode; one that does not
+  makes the result an `LLMCallError` or is dropped, by how the turn stopped
+  ([Reasoning](@ref anthropic_reasoning)).
 - **Refusals.** A refusal ends the turn with no content, as an unstreamed refusal does; the text and
   the tool calls already passed to the callbacks cannot be recalled.
 - **Pings.** Anthropic's `ping` events are bytes on the wire, so they reset the idle clock:

@@ -1,0 +1,118 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": "What is the weather in the capital of the country that hosted the 2016 Summer Olympics?",
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "signature": "CAQSkgUKEAgTGAI4AUIIdGhpbmtpbmcSDGsYYaeyEXYqqCZU6hoM+Wj75tYhFfPC4ac6IjCQ9yRNUS/vOP5Ty5OzYNDi2NEMnG5+0FvQGrw/Jy5hhkUPcyTv+ZdalhfMNZXihVUqrwRwNjOwMVJegXNqNw/fZM18qFG5xqcoWFo3sNJWrWb2x7UYFzKoV7KDVOAsOtaHf5ZPZgtcbIt+XujZlTTuzk/IYpAxhkzNhpfxVPrrvAf0wjXH8WknzRSHDXAhYa6ctHIQBD69/T7UabCe0Oiggs63AMTXvLjFKpqfNoGcpSVNaq8HAp+po8qZLz6sQRo4GX3SBD8WnWGNxT6QAfLqGBDBCXfkZEiTc5kfb8/7LirwhYGKaN6sPfxM0jSrMtZmGwuuYrqvgE5HUIHg9S9BJJRNhPXCnjTXOX+HwhkDgWzhzSy01aZpRSPw2m6sH+SAyq5bxUR3UeRGkcvbRi8SJZD4Iu0rzCGk2dZqOASR8HE3ry0M68fhiwjYPje7mIOzDaS4hCKfwA93RcAze0Hvo60Ht62/7RfKs5oSzP5USRS40BzOYaLPtIZwgLrE4Qlka85EAtium5f7kCozg3XE7ewVmDiD/EJU9tyTQLkCpSgJg65uwMPfWZ/pdrJx4pobbY21uK+bOPHEQ97E2Hen5YqRbd1bas8GVPY+HjzQF/QEMjJG5ijqGIwtSTkr9FdBqNr611ugIaGLT/z1cN/+FHmuNbPYO9bXa2ksI6mLOWBLxECiMrAGo09UKsX/qRG7kODv5zcY8APMcvkr2ISjVy6JgOtcFihL0DcRqx6VwA+jpDR9cEODgvG4DJWoLM5Lyiz/jqHXOa2xeiHVXjFbLsI6Em9c0YxiHLaoqgCPyJvwGAE=",
+              "thinking": "The 2016 Summer Olympics were hosted in Rio de Janeiro, though Brazil's capital is actually Brasília.\n\n",
+              "type": "thinking"
+            },
+            {
+              "caller": {
+                "type": "direct"
+              },
+              "id": "toolu_01WvYkLwbhuBerPFNC7waWgz",
+              "input": {
+                "city": "Brasília"
+              },
+              "name": "get_weather",
+              "type": "tool_use"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "content": "18 °C and sunny in Brasília",
+              "tool_use_id": "toolu_01WvYkLwbhuBerPFNC7waWgz",
+              "type": "tool_result"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "claude-opus-5-5",
+      "output_config": {
+        "effort": "high"
+      },
+      "system": "You are a concise assistant.",
+      "thinking": {
+        "display": "summarized",
+        "type": "adaptive"
+      },
+      "tool_choice": {
+        "disable_parallel_tool_use": true,
+        "type": "auto"
+      },
+      "tools": [
+        {
+          "description": "The current weather in a city",
+          "input_schema": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          },
+          "name": "get_weather"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgMqypGRzJCaSkA4Gx7LQ",
+    "request_id_header": "request-id",
+    "headers": {
+      "request-id": "req_011CgMqypGRzJCaSkA4Gx7LQ"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "id": "msg_011CgMqypdGYHpPb5Xx4v6mg",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "In Brasília, it's currently 18 °C and sunny. Brazil hosted the 2016 Summer Olympics in Rio de Janeiro, and Brasília is its capital."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 509,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 62,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-24T22:24:05Z"
+}

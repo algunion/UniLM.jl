@@ -1,0 +1,85 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": "How many of part 1042 are in stock?",
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "signature": "CAQS9AQKEAgTGAI4AUIIdGhpbmtpbmcSDNUVvD5qNABnnMnn0BoMoPJSNF4nDeusfLNPIjDlilxqMwCSxO+5JzbrZCE7kJLTVoayPkFlnISqx3E/NGOUnmaWdTinvoN8PtairTAqkQSzBHG1dhKyKLJkaPZ9jm/iRLMI/kouOZYapwGJkrzaIPjXsugSGOqUoFygErjKIKEzu/9nlIdIydymL8dQlsMRcGbyiNO9Ru7iOk9yLINbO5zg+5hKf1R4tYgllw4lJO9+N0LkgTfpUcSDULjqlEispGh7SUNMbVfDoUND92gH80lJLFopXxmiC9g1DzyrcnbJp3cAMl7kLbXArcKP9GIjR+/5yP+77hkimIIdNmxNU2dQT5UONpRGV3p/2TDF4VNA+AeNyVuWqmG1Zrqo3CtESW1DmFm477eyiD+qJNUK7q5y0Gd6cQOIyynjD1oS6QbHiUicP7QQaY6vnJtDSUEdqFqOrDbOLEYSCPiM36ZqwtDBiwyGXm8a3shFwGo6RvAWZvHgdfmSlKYHL+/+HJxlGUftcdJ67ZPRZWYVGbltxbjyKCQ1kMycdfnGL/dhdS40RqVSOGY1SbKryKO39G8TJElO20G4D86kZGS2EIEQ2EgjNRtHwMDiF8cs1Drp2cQi6NrVvzPqQufxkuHbFU/DD5aPdwdGfUXt3dy0DkzCSD40VzZHvqit0oKPRy5gDZQOmVFC6QVBo5VTdioUyPPHeg+NQvJHA3R+BW42tbMLYWtADPK5vwtr+cVILPlLW/UzqvOIRouCTKmHNKKwnZe2af+qbrpMh3wnSDxEIfzV4V0xVQ1T/kvNxrKYBvg/bOjaGAE=",
+              "thinking": "",
+              "type": "thinking"
+            },
+            {
+              "text": "Part 1042, a 10 mm bolt, has **44** in stock.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": "And part 1077?",
+          "role": "user"
+        }
+      ],
+      "model": "claude-opus-5-5",
+      "system": "Answer questions about this parts list in one short sentence.\n\nPart 1001: 5 mm bolt, 7 in stock.\nPart 1002: 6 mm bolt, 14 in stock.\nPart 1003: 7 mm bolt, 21 in stock.\nPart 1004: 8 mm bolt, 28 in stock.\nPart 1005: 9 mm bolt, 35 in stock.\nPart 1006: 10 mm bolt, 42 in stock.\nPart 1007: 11 mm bolt, 49 in stock.\nPart 1008: 12 mm bolt, 6 in stock.\nPart 1009: 4 mm bolt, 13 in stock.\nPart 1010: 5 mm bolt, 20 in stock.\nPart 1011: 6 mm bolt, 27 in stock.\nPart 1012: 7 mm bolt, 34 in stock.\nPart 1013: 8 mm bolt, 41 in stock.\nPart 1014: 9 mm bolt, 48 in stock.\nPart 1015: 10 mm bolt, 5 in stock.\nPart 1016: 11 mm bolt, 12 in stock.\nPart 1017: 12 mm bolt, 19 in stock.\nPart 1018: 4 mm bolt, 26 in stock.\nPart 1019: 5 mm bolt, 33 in stock.\nPart 1020: 6 mm bolt, 40 in stock.\nPart 1021: 7 mm bolt, 47 in stock.\nPart 1022: 8 mm bolt, 4 in stock.\nPart 1023: 9 mm bolt, 11 in stock.\nPart 1024: 10 mm bolt, 18 in stock.\nPart 1025: 11 mm bolt, 25 in stock.\nPart 1026: 12 mm bolt, 32 in stock.\nPart 1027: 4 mm bolt, 39 in stock.\nPart 1028: 5 mm bolt, 46 in stock.\nPart 1029: 6 mm bolt, 3 in stock.\nPart 1030: 7 mm bolt, 10 in stock.\nPart 1031: 8 mm bolt, 17 in stock.\nPart 1032: 9 mm bolt, 24 in stock.\nPart 1033: 10 mm bolt, 31 in stock.\nPart 1034: 11 mm bolt, 38 in stock.\nPart 1035: 12 mm bolt, 45 in stock.\nPart 1036: 4 mm bolt, 2 in stock.\nPart 1037: 5 mm bolt, 9 in stock.\nPart 1038: 6 mm bolt, 16 in stock.\nPart 1039: 7 mm bolt, 23 in stock.\nPart 1040: 8 mm bolt, 30 in stock.\nPart 1041: 9 mm bolt, 37 in stock.\nPart 1042: 10 mm bolt, 44 in stock.\nPart 1043: 11 mm bolt, 1 in stock.\nPart 1044: 12 mm bolt, 8 in stock.\nPart 1045: 4 mm bolt, 15 in stock.\nPart 1046: 5 mm bolt, 22 in stock.\nPart 1047: 6 mm bolt, 29 in stock.\nPart 1048: 7 mm bolt, 36 in stock.\nPart 1049: 8 mm bolt, 43 in stock.\nPart 1050: 9 mm bolt, 0 in stock.\nPart 1051: 10 mm bolt, 7 in stock.\nPart 1052: 11 mm bolt, 14 in stock.\nPart 1053: 12 mm bolt, 21 in stock.\nPart 1054: 4 mm bolt, 28 in stock.\nPart 1055: 5 mm bolt, 35 in stock.\nPart 1056: 6 mm bolt, 42 in stock.\nPart 1057: 7 mm bolt, 49 in stock.\nPart 1058: 8 mm bolt, 6 in stock.\nPart 1059: 9 mm bolt, 13 in stock.\nPart 1060: 10 mm bolt, 20 in stock.\nPart 1061: 11 mm bolt, 27 in stock.\nPart 1062: 12 mm bolt, 34 in stock.\nPart 1063: 4 mm bolt, 41 in stock.\nPart 1064: 5 mm bolt, 48 in stock.\nPart 1065: 6 mm bolt, 5 in stock.\nPart 1066: 7 mm bolt, 12 in stock.\nPart 1067: 8 mm bolt, 19 in stock.\nPart 1068: 9 mm bolt, 26 in stock.\nPart 1069: 10 mm bolt, 33 in stock.\nPart 1070: 11 mm bolt, 40 in stock.\nPart 1071: 12 mm bolt, 47 in stock.\nPart 1072: 4 mm bolt, 4 in stock.\nPart 1073: 5 mm bolt, 11 in stock.\nPart 1074: 6 mm bolt, 18 in stock.\nPart 1075: 7 mm bolt, 25 in stock.\nPart 1076: 8 mm bolt, 32 in stock.\nPart 1077: 9 mm bolt, 39 in stock.\nPart 1078: 10 mm bolt, 46 in stock.\nPart 1079: 11 mm bolt, 3 in stock.\nPart 1080: 12 mm bolt, 10 in stock."
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgMwehjgpHA3KZwifqoB1",
+    "request_id_header": "request-id",
+    "headers": {
+      "request-id": "req_011CgMwehjgpHA3KZwifqoB1"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "id": "msg_011CgMwei4J7amq4xtYFtnUj",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAQSvwUKEAgTGAI4AUIIdGhpbmtpbmcSDJgHz8LziQczmxfSvBoMLFZLHzLinCt40Sk1IjDg2yFlYxsGJDKN6pMC6ru5zIIQZ6uLyTjGNNjZcp7L9MMkf8KeNCg03A9eiAgos2Eq3ARMksdvbmssPIXCVcayQfkY0QkhkwAWe4y4s2RC69n4KI7umQBc75qTu+jIs9wvATfd4Qk6B4KiN7E68AYzuUZJjJvYMqQKYFHOyo3u7a2jj8CfqdFp3CyOIGdpvYS6ldZ6VYY4nkXnJMYmF8dgp7Amt7SwCjsYGtYQ4MgPK9aUI6HQivj1SaV0NTgLOnPXFN8UlI6TBWaVFkUkeqCn+rJ+gBBThLpzBMZ65SN48Cb78FKuBInHjT1JBJWH7ZfdNXswdvO30dnRrTytQCcgr8hgJzN6HNmKGCjFH/eBufR5zYRYe13AylswMHtV7ApMBXk2Kz6kEjUDeoAvBf37A2S0UYBpWcjbZdnXngpgntTrF4GReg+giK3cK0nNwwRr8BSTrPSPrkmIP4Nn0iESJZwzkTaqV/Nzaktamp/0Zl9yJr9qD36359DjiR0Bj++TS4UilVz1m7aLUPhKSn/YohUnyVeheIpOplxyP5wslQbCNd8BW+OwES81+ahzJVcGbyPKCH1lKRdnscGZ/s+bBj4mey+AAUHqDf4TVD8Hu2GRhJsimuc/TmBho0x41CLRZhsMarkXHQYdtRXIH3JQbj5+881QWkNujS9eug+JIsAUe370tz5fM7GxyOWpan/bgmCmoPyOC4ZNyCWSABdWOmTl2FvTH9zlCVCL18Gv6muxMaWkJV0KtfPUiu1uFxFJfVjvEiJRW7dANx9kBO8wNdK55oQhUXyK/KCjHq9kGy0XhhBIErWMRNu5u5yaFlTiLvTtO704u+5CDjgr/TnW8kskqNvJW+y9kAjOarkGGAE="
+        },
+        {
+          "type": "text",
+          "text": "Part 1077, a 9 mm bolt, has **39** in stock."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 4,
+        "cache_creation_input_tokens": 60,
+        "cache_read_input_tokens": 1875,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 60,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 50,
+        "output_tokens_details": {
+          "thinking_tokens": 24
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-24T23:38:27Z"
+}

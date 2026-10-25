@@ -27,7 +27,7 @@ using Main.SiteWriter: route
 
 export Chapter, ProviderEntry, NEUTRAL_TOKENS, REGISTRY, CONCEPT_PAGES, entry, provider_table, at_a_glance,
        capability_matrix, on_your_provider, openai_model_rules, claude_family_table, gemini_thinking_table,
-       price_rows, price_table, region_text, apply_regions, stale_regions
+       price_rows, price_table, claude_price_rules, region_text, apply_regions, stale_regions
 
 # ── Table cells ──────────────────────────────────────────────────────────────
 
@@ -59,9 +59,9 @@ function _codes(xs)::Vector{Any}
     _cell(parts)
 end
 
-# A `Markdown.MD` holding one left-aligned table: the `header` texts, then `rows`, each a
-# `Vector{Any}` of as many cells.
-function _table(header::Vector{String}, rows::Vector{Vector{Any}})::Markdown.MD
+# A `Markdown.MD` holding one left-aligned table: the `header` cells — a text, or inline code
+# where a cell names a request field —, then `rows`, each a `Vector{Any}` of as many cells.
+function _table(header::Vector{<:_Inline}, rows::Vector{Vector{Any}})::Markdown.MD
     n = length(header)
     all(r -> length(r) == n, rows) || throw(ArgumentError("every row of a $n-column table has $n cells"))
     Markdown.MD(Any[Markdown.Table(Vector{Any}[Any[_cell(h) for h in header], rows...], fill(:l, n))])
@@ -337,6 +337,10 @@ end
 # Every capability an endpoint of the registry declares, sorted.
 const _CAPABILITIES = sort!(unique!([c for e in REGISTRY for ep in e.endpoints for c in provider_capabilities(ep)]))
 
+# The capabilities only the Decisions chapter documents — `system_one`: serving decision models
+# through `ask` —, which a language-model entry's tables leave out.
+const _DECISIONS_ONLY = (:system_one,)
+
 """
     DECISION_CAPABILITIES
 
@@ -374,7 +378,9 @@ The entry's facts in one row — Endpoint | Key variables | Default model | Supp
 language-model entry Not available: how code names each endpoint (primary first), the
 variables a reader sets to make a call (`key_vars`), its default model ("—": a call names one), the
 capabilities some endpoint of it has (for a decision entry, those of `DECISION_CAPABILITIES`),
-and the capabilities other registry endpoints declare that none of its endpoints has.
+and the capabilities other registry endpoints declare that none of its endpoints has. A
+language-model entry's two capability cells leave out the capabilities only the Decisions
+chapter documents (`system_one`: serving decision models); that chapter's entries list them.
 """
 function at_a_glance(key::Symbol)::Markdown.MD
     e = entry(key)
@@ -383,7 +389,7 @@ function at_a_glance(key::Symbol)::Markdown.MD
     row = Any[_endpoints(e), _codes(e.key_vars), _model(e.default_model)]
     if e.chapter == llm
         push!(header, "Not available")
-        push!(row, _codes(has), _codes(setdiff(_CAPABILITIES, has)))
+        push!(row, _codes(filter(∉(_DECISIONS_ONLY), has)), _codes(setdiff(_CAPABILITIES, has, _DECISIONS_ONLY)))
     else
         push!(row, _codes(filter(in(DECISION_CAPABILITIES), has)))
     end
@@ -395,12 +401,14 @@ end
 
 One row per capability a registry endpoint declares, sorted, and one column per
 language-model entry, in registry order: "yes" where some endpoint of the entry has the
-capability, else "—".
+capability, else "—". It has no row for a capability only the Decisions chapter documents
+(`system_one`: serving decision models), which no language-model entry lists.
 """
 function capability_matrix()::Markdown.MD
     entries = filter(e -> e.chapter == llm, REGISTRY)
     has = [Set(_capabilities(e)) for e in entries]
-    rows = Vector{Any}[Any[_cell(_code(String(c))), (_yes(c in h) for h in has)...] for c in _CAPABILITIES]
+    rows = Vector{Any}[Any[_cell(_code(String(c))), (_yes(c in h) for h in has)...]
+                       for c in _CAPABILITIES if c ∉ _DECISIONS_ONLY]
     _table(["Capability"; [e.name for e in entries]], rows)
 end
 
@@ -437,8 +445,8 @@ function openai_model_rules()::Markdown.MD
                            _efforts(r.sampling_efforts), _efforts(r.chat_tool_efforts), _yes(r.ultrafast),
                            _yes(r.prompt_cache_retention), _cell(_code(r.default_effort))]
                        for (id, r) in sort!(collect(UniLM._OPENAI_MODEL_RULES); by=first)]
-    _table(["Model", "Efforts on Responses", "Efforts on Chat Completions", "Sampling and log probabilities at",
-            "Chat Completions tools at", "Ultrafast tier", "prompt_cache_retention", "Default effort"], rows)
+    _table(_Inline["Model", "Efforts on Responses", "Efforts on Chat Completions", "Sampling and log probabilities at",
+                   "Chat Completions tools at", "Ultrafast tier", _code("prompt_cache_retention"), "Default effort"], rows)
 end
 
 # A Claude row's thinking mode, as the page reads it.
@@ -472,8 +480,8 @@ function claude_family_table()::Markdown.MD
     rows = Vector{Any}[Any[_cell(_code(id)), _thinking(f.thinking), _codes(f.efforts), _yes(f.forced), _yes(f.prefill),
                            _yes(f.system), _yes(f.prefix_checked), _fast(f.fast), _yes(f.inference_geo)]
                        for (id, f) in sort!(collect(UniLM._CLAUDE_FAMILIES); by=first)]
-    _table(["Model", "Thinking", "Effort levels", "Forced tool choice", "Prefill", "Mid-conversation system messages",
-            "Thinking prefix check", "Fast mode", "inference_geo"], rows)
+    _table(_Inline["Model", "Thinking", "Effort levels", "Forced tool choice", "Prefill",
+                   "Mid-conversation system messages", "Thinking prefix check", "Fast mode", _code("inference_geo")], rows)
 end
 
 # The refusal the generateContent encoder's check gives every thinking level of Gemini 2.5, which
@@ -587,6 +595,30 @@ rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file w
 function price_table(table::Symbol)::Markdown.MD
     _table(["Model", "Input (USD per 1M tokens)", "Cached input (USD per 1M tokens)", "Output (USD per 1M tokens)"],
            Vector{Any}[_price_row(id, _PRICES[id]) for id in price_rows(table)])
+end
+
+# A whole number with a comma between each group of three digits: 100000 → "100,000".
+_thousands(n::Integer)::String = replace(string(n), r"(?<=\d)(?=(\d{3})+$)" => ",")
+# A multiplier as written in prose: 5.0 → "5", 2.5 → "2.5".
+_factor(x::Real)::String = isinteger(x) ? string(Int(x)) : string(x)
+
+"""
+    claude_price_rules() -> Markdown.MD
+
+One row per Claude model that `estimated_cost` does not price at its row's rates alone, sorted
+by id: a model of UniLM's family table (`UniLM._CLAUDE_FAMILIES`) with no row in the prices
+this file loaded, estimated at `0.0` with a warning, and a model with a long-prompt multiplier
+(`UniLM._CLAUDE_LONG_PROMPT_TIERS`), with the prompt length over which every rate is
+multiplied, and by how much.
+"""
+function claude_price_rules()::Markdown.MD
+    tiers = UniLM._CLAUDE_LONG_PROMPT_TIERS
+    unpriced = [id for id in keys(UniLM._CLAUDE_FAMILIES) if !haskey(_PRICES, id)]
+    estimate(id) = haskey(_PRICES, id) ?
+        _cell("every rate × $(_factor(tiers[id].multiplier)) for a prompt over $(_thousands(tiers[id].threshold)) tokens") :
+        _cell(_code("0.0"), ", with a warning: it has no price row")
+    _table(["Model", "Estimated"],
+           Vector{Any}[Any[_cell(_code(id)), estimate(id)] for id in sort!(unique!([collect(keys(tiers)); unpriced]))])
 end
 
 # ── Generated regions ────────────────────────────────────────────────────────

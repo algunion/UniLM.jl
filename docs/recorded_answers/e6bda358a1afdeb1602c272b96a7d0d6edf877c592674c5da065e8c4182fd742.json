@@ -1,0 +1,77 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": [
+            {
+              "source": {
+                "data": "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggMTAwID4+CnN0cmVhbQpCVCAvRjEgMTYgVGYgNzIgNzIwIFRkIChUaGUgcmVwb3J0IGNvbmNsdWRlcyB0aGF0IHRoZSBvbGQgYnJpZGdlIGlzIHNhZmUgdG8gcmVvcGVuIGluIE1hcmNoLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAKMDAwMDAwMDA2NCAwMDAwMCBuIAowMDAwMDAwMTIxIDAwMDAwIG4gCjAwMDAwMDAyNDcgMDAwMDAgbiAKMDAwMDAwMDMxNyAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjQ2NwolJUVPRgo=",
+                "media_type": "application/pdf",
+                "type": "base64"
+              },
+              "type": "document"
+            },
+            {
+              "text": "What does the report conclude? Answer in one sentence.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "claude-opus-5-5",
+      "system": "You are a concise assistant."
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgMqzQ3vz6CjVHvkKBAqZ",
+    "request_id_header": "request-id",
+    "headers": {
+      "request-id": "req_011CgMqzQ3vz6CjVHvkKBAqZ"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "id": "msg_011CgMqzQQmNvPWmXUHS4Y79",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAQSsgUKEAgTGAI4AUIIdGhpbmtpbmcSDKc0DveNPF2ADB0f5hoMzmcze9MKsQDVOiV1IjC9G1RIUKbxQ1wuma+zJaHa7ZniWNisRLjs5ottQ9pZwX5KNtGJFvmiIo6IGXpENHgqzwSEFi7p87LGtNCLcp8cMfEDYMnzsB7sSCMBoiLIbVXNZzQZrSfrkw+rMTQS853z4DM+lHRLBDggNVn/JacvG3GFll1qHOlsiD0j6c4lh04X+JoxCZb2WKOe1zmvYR6Ol9pdQ+w+XpOZ0fLOgpkBNxE0sJdUW84kKMBg62ipgI6n6jDhvXkP/QZ2aOh+06SmuFIvdPvnPCwuvaCGwCJjQoaywHA/dbyi2PG+eEQDQfPLAHY+1j2XH8czMzTZl/icTpkHQkOQRsCpWDeSNiZgq5gkyKsuu6L+BP8XAO0ONe8HuhzZV+kF8tx/vvaQmgcRhncr9pv5N+jVli2XcVnYeKHgx/bV2yNRD90teXGcRH37Yrnk0yWDZmbEYj84UhfPjlEzWNLTYE2+POTnFIy1bREO1hUINdOo4VkIXBMQ4C5GQ3IkJJ6K9KhFTUCJncLpBtP5N6FWyvIqKLWJYtznppWcYVicTw+BKD11yeOgNVxo+jNcXJ2audAXIICwo5K0SYyeYUeIqvjGcBseIpia7YbL6ctkadsG8LW6UcU3Snv6PJ0DgThvHtOa9el6JlEkf9Xc0gH/tr8YgPGqq9n/3iFJMMBqbRKPQz1Iy52Skg3x2PAzw7yJcsW+br/z4EwSNJZ4s8+A9PsQmMOGKNU0JL7+AzUjlUKFzJhMLJPRbKnCLqcUjo4bKE1h4lSXSNmoeGLZJjgEIG1X3qiH/QgoaJX9grFm1DwSmjS44uN0wiW0dUHM6vCQThfTiGafWMQoXZg2+PnvzEPan6iAui8PtxsYAQ=="
+        },
+        {
+          "type": "text",
+          "text": "The report concludes that the old bridge is safe to reopen in March."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 1634,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 52,
+        "output_tokens_details": {
+          "thinking_tokens": 29
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-24T22:24:14Z"
+}

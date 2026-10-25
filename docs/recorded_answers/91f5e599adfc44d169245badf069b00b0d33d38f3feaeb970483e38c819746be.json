@@ -1,0 +1,64 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": "In one sentence: what is a prime number?",
+          "role": "user"
+        }
+      ],
+      "model": "claude-opus-5-5",
+      "system": "You are a concise assistant."
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgMjzTeXQrBvKyGQ5e6qb",
+    "request_id_header": "request-id",
+    "headers": {
+      "request-id": "req_011CgMjzTeXQrBvKyGQ5e6qb"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "id": "msg_011CgMjzUtwgrMf9W2tuJ4ha",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAQStwcKEAgTGAI4AUIIdGhpbmtpbmcSDEvV58YZGUqc0+oO/xoMGk3Go5w8Iruj/mJNIjAXJcQmjZ3jLGXiqaTmgPHPXcERyYfKZlEWmJ4/OCWxrU3idcnHmL2GLclBRHKll9gq1AZi1x1dRYPFptqv0w0UuOYf0wKnoAlp2V9vBIukNLezuWsxYNjyexCfQ2RqhMnggkCvfOmGVxBxverJklEyAsKUEh6bvGbx+UCMg446VfMWvcLmhEEwIEGni3TAROdh+hh8iQuPaDVzaId89haTrgKgFXqfjaI/bwzfI1h9kXNoCHJwuK9xXkVzhE6JguFEOUTJp8Z1sZDJk8nBXkI/rB2WJbscBk8ennRCc+d1DuUDC+B4rIF6YLUEWYI33n+6As4bbXTNb+NwEiJfimEKTedMp+lS8q8wZOYK0w45dQraHg2TI+FyUZZwLs3DWOO4UY5vqW7ee8QyhNxfB5AO2S9m2bmcuAls5EZoZwBvDfVgnPfA4Tqw73uKYw7Rh8NdMYWru1XtPWdgA4kyfqWXSJNp9dwONkYmMwcq/TOqyPZ96lqW2z/LdrIYD1Gw1FcMrqdh3ThjFJkSjuAm+xhTeBJ2OVGgkZZdAZ/eCisGdYxQm0W11T0oTGuGVEE6BwBJ9moGBCvVkv/fhj1gG6T+ha97l8AVXyNp+s3eAuVjs/TkGRjclAYLr9AStqihvSGlPmiEH++ztJgBNsLtpewaFb63xfZNMwIy8XhuuBUL8xZIZM1BY0ZBWSDcHv6vK+cGAIc6a3y34NtQQV70cr7KNCqmt/RkbPPMy1T1mokYJsp8w9fG8ALYieK4wl5q120oi5on1oaINQnamEQrXR+THGE5sWYdiBZLzyqbmMbRKCFqpawO21BvaXeldxk8ugCgQTGYGCr8ng7r9aMD22YQoaW3WDIRBZ3izgcnubPeIWYVDWnqs4W7ca8vZvHGpyjzTdD2EDaI9AnhEc8i9aDbIPX5G7yyjLI8670hfj3U5OYL9VWbdIHbkoK071mLHNkV8EqGU6XG2lqNBPE4VYefYlg7S/mzRVqy326JD/huaQWP/zt2tIqCfXHeKR2uSD8HcKdd7f7+G1HFiSIaUgThaRDrxkv/YmE1DUdfz+KPMQgjzId1Sc9TqOH+vGWdazS7+DKcGq0gwHVoZ+vSM0pbHrdPxlmq073KuBdO9ncCpo8+njB7cP6cMGh3doJuPeqrBfaFRH1ilL1DAjtAdrfhGepfgn/Ir/3S3FQg4/7Q/Xhz693SIzYYAQ=="
+        },
+        {
+          "type": "text",
+          "text": "A prime number is a whole number greater than 1 whose only positive divisors are 1 and itself, such as 2, 3, 5, or 7."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 31,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 166,
+        "output_tokens_details": {
+          "thinking_tokens": 118
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-24T21:05:34Z"
+}

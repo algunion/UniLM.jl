@@ -1,0 +1,71 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": "What is the smallest positive integer that leaves a remainder of 1 when divided by 2, 3, 4, 5 or 6, and is divisible by 7? Answer with the number only.",
+          "role": "user"
+        }
+      ],
+      "model": "claude-opus-5-5",
+      "output_config": {
+        "effort": "low"
+      },
+      "system": "You are a concise assistant.",
+      "thinking": {
+        "display": "summarized",
+        "type": "adaptive"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgMqz8iwuhoWpF1LbmtmU",
+    "request_id_header": "request-id",
+    "headers": {
+      "request-id": "req_011CgMqz8iwuhoWpF1LbmtmU"
+    },
+    "body": {
+      "model": "claude-opus-5-5",
+      "id": "msg_011CgMqz95Gmjd8aFDsPJHS5",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "I need N ≡ 1 mod 60 and divisible by 7, so I'm checking successive values 61, 121, 181, 241, 301 mod 7, and 301 works since it's 7×43.\n\n",
+          "signature": "CAQSsAUKEAgTGAI4AUIIdGhpbmtpbmcSDO3i6wEXEL0XnBtOshoMx5/px1JhsCtDQwQnIjDH5r86Dd/Y1qomNlxGBcYi8AQ1dQSQvNDIfoLS4EyWWVT1q6rQ+SE20+ip7+9UfCgqzQRAt5fN5BTOPjfUCmdjUXtyPf+i0a7wFulQT7ZQ3wtp9ImkYzGuVct8HiVMzcHzyDNUjaLsYfSj7H9LY/2q33PMt1dEBd7gV/Jpr6Al1YB029hPJBK+qXPbU1S4Xdw/pTJkxvu8YqIuJkOKL1wDOwYjn3PYBEn/gNc8nM0uHIOdh/LS0CgVysnIb7OE4fjyzhQvs7qBbfB2zV7xZeWOdW5fWAkckC6r2ke7djQjYGRPYVUEvIkvxpIpB4tRiD7Cb+vikte/72r23h1wgJaROf/7H+cNujv6AlH5tzMFTI/100/7OZmpsAT8X+bhaOmMxuSICSnLgx9uV9e8FvZU+MnuCq48Hl3Dj5K1oT3Ejm3Opfml+sKX4p0yV+XDD2I0f97snbIiqhufKEuKeULZuu+TSWsN6G0AUD9odieRzpkbiSW5kmiYxhq+NjDuWDlXvn20i8YjWhAd1582DkzTu2WwsMOK7STONx6jIl9OF0NvSSBtuvl2AQxKkKRiv8m3mtU6B8u1mSWeKXxUqY2YMxJCM3ZDg9m1HUg8yZ5XLL+5dN/rSVX7xuixxofePtqihEEzYS6gRIaAmjfbWHOZbAj27e1XouUfa2uaWvsTDkr2qtFxypBcAGYJHe6k6fJg295popcNndp7WnVKNtFzdB+nX5Dt7zduQcIkRZm7HS+uDoBszhFMNW7VESTCqiUgLYvax6f2o7c6uP7Y0ERofJHIAs7pT7T7BuPWJdi9vkXFQSjMZyTLUnUqar/m6WX6uIMctGH2sUyLaE/NCpg2GAE="
+        },
+        {
+          "type": "text",
+          "text": "301"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 77,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 72,
+        "output_tokens_details": {
+          "thinking_tokens": 69
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-24T22:24:10Z"
+}

@@ -40,7 +40,7 @@ an ordinary HTTP verb that returns typed results: a `200` without a non-empty se
 a `RealtimeCallError`, and a `RealtimeCallError` carries its exception in `cause` and
 the provider's `request_id` when one was sent. A minted client secret is a live
 credential, so [`RealtimeSecretSuccess`](@ref) redacts it when displayed — read
-`.value` programmatically. See [Timeouts & Retries](@ref timeout_realtime).
+`.value` programmatically. See [Realtime sessions](@ref timeout_realtime).
 
 ## Session and Result Types
 

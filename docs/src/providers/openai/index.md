@@ -37,7 +37,7 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [know what a call cost](@ref openai_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
 | [generate or edit images](@ref openai_images) | `generate_image`, `edit_image` | images from OpenAI's Images API |
 | [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, audio from text |
-| [hold a Realtime session](@ref timeout_realtime__next) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
+| [hold a Realtime session](@ref timeout_realtime) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
 | [answer from my own files](@ref retrieval_guide__next) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
 | [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |
 | [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)` | each model's id, creation time and shutdown date |

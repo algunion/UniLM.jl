@@ -1,16 +1,25 @@
 # [Concurrency, Tasks and Cancellation](@id concurrency_guide)
 
+```@setup concurrency
+using UniLM
+```
+
 UniLM calls are ordinary blocking Julia calls: run many at once by putting them on
 tasks. This guide covers which objects a concurrent call may share, the fan-out
 patterns, streaming into a `Channel`, cooperative cancellation, the thread layout
 the package assumes, and what the HTTP, tool-loop and MCP layers do under load.
 The time bounds themselves are in [Timeouts & Retries](@ref timeouts_guide).
 
-```@setup concurrency
-using UniLM
+```@example concurrency
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
 ```
 
-## What a concurrent call may share
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref concurrency_providers) links each provider's start
+page.
+
+## [What a concurrent call may share](@id concurrency_sharing)
 
 | Object | Mutated by its verb? | Rule |
 |---|---|---|
@@ -28,7 +37,7 @@ the same. [`fork`](@ref) is the fan-out: `fork(chat)` deep-copies every field ex
 `service` (the endpoint is shared), so forks share nothing mutable:
 
 ```@example concurrency
-base = Chat(model="gpt-5.4-mini", stop=["END"])
+base = Chat(service=service, model=model, stop=["END"])
 push!(base, Message(Val(:system), "You are terse."))
 forks = fork(base, 3)
 push!(forks[1], Message(Val(:user), "first branch"))
@@ -46,22 +55,22 @@ time from `cumulative_cost(fork)`, or sum `estimated_cost` over the fork's own r
 first returned. Build one `Embeddings` per concurrent call, and `copy` the vectors
 before reusing a request.
 
-## Fan-out patterns
+## [Fan-out patterns](@id concurrency_fan_out)
 
 The request verbs return failures as values (`*Failure`, `*CallError`). What they
 *throw* is a local validation error raised before any I/O (`ArgumentError`,
 `InvalidConversationError`) or an `InterruptException`, so `fetch` on a task running
 one returns its typed result and raises `TaskFailedException` only for those. The
 `Task` a streaming call returns throws only for an interrupt: its validation ran
-before the task was spawned. The MCP client, the Realtime WebSocket, `nl_dispatch`
-and `@branch` are throw-based instead; their exceptions reach `fetch` the same way.
+before the task was spawned. The MCP client, `nl_dispatch` and `@branch` are
+throw-based instead; their exceptions reach `fetch` the same way.
 
 `Threads.@spawn` + `fetch` — one task per call, on the default thread pool:
 
 ```julia
 prompts = ["Summarize A", "Summarize B", "Summarize C"]
 tasks = map(prompts) do p
-    Threads.@spawn respond(p; model="gpt-5.4-mini")
+    Threads.@spawn respond(p; service, model)
 end
 results = fetch.(tasks)                 # typed results, in submission order
 ok = filter(r -> r isa ResponseSuccess, results)
@@ -73,7 +82,7 @@ them (see [Thread layout](@ref concurrency_threads)):
 
 ```julia
 results = asyncmap(prompts; ntasks=8) do p
-    respond(p; model="gpt-5.4-mini")
+    respond(p; service, model)
 end
 ```
 
@@ -97,7 +106,7 @@ A streaming callback runs on the stream's own task. Hand each delta to a consume
 through a `Channel` so the callback stays short:
 
 ```julia
-chat = Chat(model="gpt-5.4-mini", stream=true)
+chat = Chat(service=service, model=model, stream=true)
 push!(chat, Message(Val(:system), "You are a storyteller."))
 push!(chat, Message(Val(:user), "Tell a long story."))
 
@@ -134,7 +143,7 @@ from any task, and every operation that observes it stops.
 ```@example concurrency
 tok = CancelToken()
 cancel!(tok)                            # stays cancelled: level-triggered
-chat = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:9", ""), model="any")
+chat = Chat(service=service, model=model)
 push!(chat, Message(Val(:system), "You are terse."))
 push!(chat, Message(Val(:user), "Hello"))
 r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already cancelled
@@ -160,7 +169,7 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   wait, mid-stream, or during a retry backoff — unless the provider's completion
   marker already arrived: then the turn is committed, the final-message callback
   runs, and usage may be missing. On a Chat stream that marker is the chunk carrying
-  the finish reason, which on the OpenAI wire precedes the usage chunk and `[DONE]`;
+  the finish reason, and each entry's streaming section says whether usage follows it;
   on a Responses stream it is the terminal event, whose response (usage included)
   is the result. `nl_dispatch` and `@branch`
   throw `SystemOneError` wrapping the `SystemOneCallError`, as for any failed call. A
@@ -173,14 +182,15 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
 - **Limits.** A TCP connect or TLS handshake already in progress cannot be
   interrupted (HTTP.jl 2.7.1): a cancel during one takes effect when the connect
   completes or reaches `connect_timeout`. A callback that is running finishes
-  first. The Realtime WebSocket does not observe the token, and neither does an MCP
-  stdio exchange (bounded by `mcp_request_timeout`); an MCP call over HTTP does
-  (see [MCP](@ref concurrency_mcp)).
+  first. An MCP stdio exchange does not observe the token (it is bounded by
+  `mcp_request_timeout`); an MCP call over HTTP does (see [MCP](@ref concurrency_mcp)).
+  Whether a verb that runs over a WebSocket observes the token is on the entry of the
+  provider that serves it.
 
 ```julia
 tok = CancelToken()
 batch = Threads.@spawn with_cancel(tok) do
-    asyncmap(p -> respond(p; model="gpt-5.4-mini"), prompts; ntasks=8)
+    asyncmap(p -> respond(p; service, model), prompts; ntasks=8)
 end
 # … the user pressed "stop":
 cancel!(tok)
@@ -219,7 +229,7 @@ shares thread 1 with the main task.
   timeouts and cancellation are cooperative, so concurrency comes from tasks
   yielding on I/O. Parallel CPU work does not.
 
-## HTTP under fan-out
+## [HTTP under fan-out](@id concurrency_http)
 
 - **Each stream has its own HTTP/1.1 connection.** Streams pin HTTP/1.1, so a
   consumer applying backpressure to one stream cannot starve its siblings through a
@@ -235,7 +245,7 @@ shares thread 1 with the main task.
   wait that does not fit the remaining `total_deadline` returns the last real
   response (the 429) at once.
 
-## Tool loops
+## [Tool loops](@id concurrency_tool_loops)
 
 A tool loop runs one turn's tool calls one at a time in the calling task by
 default. `tool_concurrency = n` runs up to `n` of a turn's calls at once on
@@ -269,19 +279,25 @@ result = tool_loop!(chat; tools=my_callable_tools, tool_concurrency=4)
   busy). Over stdio, handlers run one at a time. Registering tools, resources or
   prompts while the server is serving is synchronized.
 
-## Known limits
+## [Known limits](@id concurrency_limits)
 
 - A process that blocks thread 1 without yielding delays every timer in the
   process, UniLM's timeouts and backoffs included, until it yields.
 - Streaming callbacks run on the stream's task: a callback that blocks holds that
   stream (and nothing else) until it returns, and no bound covers it.
 - A cancel cannot interrupt a TCP connect or TLS handshake in progress (it waits
-  for the connect or for `connect_timeout`), a running callback, a Realtime
-  WebSocket, or an MCP stdio exchange.
+  for the connect or for `connect_timeout`), a running callback, or an MCP stdio
+  exchange.
 
-## See also
+## [See also](@id concurrency_see_also)
 
 - [Timeouts & Retries](@ref timeouts_guide) — every bound, and the typed failures.
 - [Streaming](@ref streaming_guide) — callbacks, stopping a stream, streamed tool calls.
 - [Tool Calling](@ref tools_guide) — the tool-loop contract.
 - [MCP](@ref mcp_guide) — sessions, transports and serving.
+
+## [On your provider](@id concurrency_providers)
+
+```@eval
+Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)
+```

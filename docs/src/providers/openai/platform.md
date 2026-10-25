@@ -51,7 +51,7 @@ These calls are not recorded, so their output on this page is quoted from dated 
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
   `:fine_tuning`, `:moderation`, `:transcription` (which `:audio` implies) or `:realtime` —, all
   of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
-  a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime__next)),
+  a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime)),
   and refuses an endpoint that declares its capabilities without it
   ([Limits and refusals](@ref openai_platform_limits)); an endpoint that declares none is not
   dispatched to, a `MethodError` ([Capabilities by provider](@ref capabilities_guide)).

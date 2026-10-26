@@ -220,9 +220,10 @@
   `OPENAIServiceEndpoint` sent an earlier audio reply back by its id whatever the reply's
   `expires_at`, the time from which OpenAI says the audio "will no longer be accessible on the
   server for use in multi-turn conversations", so a conversation continued after it sent the id
-  of audio OpenAI no longer keeps. From `expires_at` on, the turn goes as its content alone — its
-  transcript unless it holds other text — as every other endpoint gets it; before `expires_at`,
-  or with no expiry known, it still goes by its id.
+  of audio OpenAI no longer keeps. From a minute before `expires_at` on — a request built later
+  could reach OpenAI after the expiry — the turn goes as its content alone, its transcript unless
+  it holds other text, as every other endpoint gets it; before then, or with no expiry known, it
+  still goes by its id.
 - **A background `respond` on OpenAI may set `store=false`.** A `Respond` with
   `background=true` and `store=false` was refused for every endpoint, though OpenAI's
   background guide says "Background requests can use `store=false`, but response data is

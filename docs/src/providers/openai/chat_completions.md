@@ -160,11 +160,12 @@ spoken = chatrequest!(chat).message.audio_output
 ```
 
 The next request sends the audio turn back as its text and `"audio": {"id": …}`, "Data about a previous
-audio response from the model", until the turn's `expires_at`, the Unix time "for when this audio
-response will no longer be accessible on the server for use in multi-turn conversations"
+audio response from the model", until a minute before the turn's `expires_at`, the Unix time "for when
+this audio response will no longer be accessible on the server for use in multi-turn conversations"
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), the assistant
-message's `audio` and the reply's `audio`). From that time on it sends the turn as its text alone; a turn
-whose `expires_at` is `nothing` goes by its id. This page replays recorded replies, and the first one's
+message's `audio` and the reply's `audio`). From then on it sends the turn as its text alone, so that a
+request built just before the expiry does not arrive after it; a turn whose `expires_at` is `nothing`
+goes by its id. This page replays recorded replies, and the first one's
 `expires_at` had passed when the request below was recorded, so it sends that reply as its transcript:
 
 ```@example openai

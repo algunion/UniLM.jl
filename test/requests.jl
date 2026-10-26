@@ -681,7 +681,7 @@ end
             model="claude-haiku-5-5", messages=emptied)))["messages"][2] == Dict("role" => "assistant", "content" => "Hi there!")
     end
 
-    @testset "OpenAI gets the turn by id until its expires_at, and as its transcript from then on" begin
+    @testset "OpenAI gets the turn by id until a minute before its expires_at, and as its transcript from then on" begin
         # expires_at is "when this audio response will no longer be accessible on the server for use in
         # multi-turn conversations" (the Chat Completions reference): from then on the id names no audio.
         turn(expires_at; content=nothing) = Message(role=RoleAssistant, content=content,
@@ -693,6 +693,10 @@ end
         now = floor(Int, time())
         @test sent(turn(978307200)) == [as_text]          # 2001-01-01, long past
         @test sent(turn(now)) == [as_text]                # the expiry itself is past it: no longer accessible
+        # A request built in the last minute could reach OpenAI after the expiry, or meet a clock ahead
+        # of this one: from a minute before `expires_at` the turn goes as text.
+        @test sent(turn(now + 30)) == [as_text]
+        @test sent(turn(now + 90)) == [by_id]
         @test sent(turn(now + 3600)) == [by_id]           # an hour left
         @test sent(turn(4102444800)) == [by_id]           # 2100-01-01
         # An expiry the reply never gave (a stream cut before its last update) is no expiry: by id, as before.

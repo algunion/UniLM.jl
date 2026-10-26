@@ -41,7 +41,7 @@ has_capability(service, :tools), has_capability(service, :fim)
 ```
 
 ```@example capabilities
-sort!(collect(provider_capabilities(service)))
+join(sort!(collect(provider_capabilities(service))), ", ")
 ```
 
 An endpoint of your own declares a set by adding a method to `provider_capabilities`; one that declares

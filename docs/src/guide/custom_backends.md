@@ -79,18 +79,20 @@ custom routing/auth:
   `Chat(service=AcmeEndpoint(key))` throws `ArgumentError: model must be specified when
   using AcmeEndpoint` at construction. `UniLM.default_model(::AcmeEndpoint) = "acme-large"`
   makes it optional.
-- **`provider_capabilities`** — an endpoint that defines no method is dispatched
-  unvalidated by the four primary verbs and rejected by the platform verbs (see
-  [Provider Capabilities](@ref capabilities_api)); declaring a set opts into validation
-  against it.
+- **`provider_capabilities`** — an endpoint that defines no method is not checked by
+  `chatrequest!`, `respond`, `embeddingrequest!`, `generate_image` and `edit_image`, and every
+  other verb refuses it: most with a `MethodError` for `provider_capabilities`, the decision
+  verbs with an `ArgumentError` (see [Provider Capabilities](@ref capabilities_api));
+  declaring a set opts into validation against it.
 - **Streamed usage** — an endpoint of your own does not ask a stream to report its token usage
-  (`stream_options.include_usage`), since some servers reject the field. Set
-  `stream_options=Dict("include_usage" => true)` on a streamed `Chat` when your server supports
-  it, or streamed turns carry no usage. Which built-in endpoints ask is on their entries, in the
+  (`stream_options.include_usage`). Set `stream_options=Dict("include_usage" => true)` on a
+  streamed `Chat` when your server supports it; otherwise a streamed turn carries usage only when
+  your server sends it unasked. Which built-in endpoints ask is on their entries, in the
   streaming section or the section of the endpoint it concerns.
 
-Singleton endpoints (no fields) dispatch on the type — `get_url(::Type{MyEndpoint}, ::Chat)`;
-field-bearing endpoints dispatch on the instance, as above.
+An endpoint passed as its type (`service=MyEndpoint`, as the built-in singletons are) dispatches
+on the type — `get_url(::Type{MyEndpoint}, ::Chat)`; one passed as an instance dispatches on the
+instance, as above.
 
 ## [Case 2 — a provider with a different wire](@id custom_backends_native)
 
@@ -127,8 +129,12 @@ underscore name outside the public extension API); `src/interactions.jl` is the 
 Both seams split validation from failure the same way. An encoder runs before any network
 I/O and what it throws propagates from the verb, so throw `ArgumentError` for an option your
 wire cannot express. An exception thrown by a decoder becomes the verb's typed call-error
-result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`, and one thrown
-by a stream handler drops that payload, counted in the result's `sse_dropped`.
+result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`. Their stream
+handlers differ. `handle_sse_event!` is called once per payload, and an exception it throws
+drops that payload, counted in the result's `sse_dropped`. `decode_agentic_stream` is called once
+per raw read, which can hold several payloads, and an exception it throws ends the streamed
+`respond` as a `ResponseCallError` with the exception in `cause`: to drop an undecodable payload,
+skip it in the handler and count it in `state.sse_dropped`, as `src/interactions.jl` does.
 
 ## [Fail-loud contract](@id custom_backends_fail_loud)
 

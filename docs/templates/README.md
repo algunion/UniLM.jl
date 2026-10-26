@@ -50,9 +50,9 @@ keeps its links when its title changes or it moves.
 - Inherited ids: a page or section that takes over the content of one moving into the entry inherits its id,
   feature or not, written `<id>__next` while the old one exists and renamed to `<id>`, with the links to it, in
   the commit that deletes the old one; `REGISTRY` stores the final ids (`ollama_first`, `jev_errors`). The
-  inherited page titles: `providers/ollama/index.md` `ollama_guide__next`, `decisions/jev/index.md`
-  `jev_start__next`, `providers/openai/responses.md` `responses_guide__next`, `providers/openai/retrieval.md`
-  `retrieval_guide__next`, `decisions/choosing.md` `system_one_backends__next`.
+  inherited page titles, final since the pages they replace became redirects: `providers/ollama/index.md`
+  `ollama_guide`, `decisions/jev/index.md` `jev_start`, `providers/openai/responses.md` `responses_guide`,
+  `providers/openai/retrieval.md` `retrieval_guide`, `decisions/choosing.md` `system_one_backends`.
 
 ## Placement
 

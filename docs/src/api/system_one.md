@@ -10,7 +10,7 @@ UniLM has one System One surface — [`ask`](@ref), [`ask_each`](@ref), the
 question builders and the typed answers below — over three backends: TypeSafe's
 Jev (the default), OpenAI's Decisions API (a public beta) and local decision
 models served by Ollama. [Route and Decide](@ref system_one_guide) is the how-to
-and [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) compares
+and [Choosing a decision provider](@ref system_one_backends) compares
 the three. This page gives what every backend shares, then each backend's setup,
 rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 [`nl_dispatch`](@ref) and [`@branch`](@ref) have a page of their own,
@@ -55,7 +55,7 @@ a confidence can be trusted is a property of the model, not of the formula.
     of 0.016, and OpenAI's `gpt-6-luna` for 94.6%, with 0.080 — in every bin
     above 0.5 its accuracy was at least its mean top probability: it is
     under-confident. Tune a threshold on the backend, and the model version, it
-    will run on ([Backends: Jev, OpenAI and Local Models](@ref
+    will run on ([Choosing a decision provider](@ref
     system_one_backends)).
 
 While you set no [`RequestConfig`](@ref) of your own — no `config`, no

@@ -15,9 +15,9 @@ nothing # hide
 ```
 
 The examples use only the names bound above. `service` and `model` are the provider and model they run on: bind
-your own there. The table [at the end](@ref backend_providers) links each provider's start page.
+your own there. The table [at the end](@ref multi_backend_providers) links each provider's start page.
 
-## [What every provider shares](@id backend_shared)
+## [What every provider shares](@id multi_backend_shared)
 
 A function written once takes the provider as its argument:
 
@@ -54,13 +54,14 @@ Whatever `service` names:
   [`CancelToken`](@ref) stops it ([Timeouts & Retries](@ref timeouts_guide),
   [Concurrency, Tasks and Cancellation](@ref concurrency_guide)); where a provider's models start from
   other bounds, its entry says so.
-- **Recordings.** [`with_recorded_answers`](@ref) records a call once and replays it with no key and no
-  network ([Testing and recordings](@ref testing_guide)).
+- **Recordings.** [`with_recorded_answers`](@ref) records a call of the verbs it covers — chat, `respond`,
+  embeddings, FIM and prefix completion, the Responses lifecycle — once and replays it with no key and
+  no network ([Testing and recordings](@ref testing_guide)).
 - **Refusals before sending.** A verb refuses an endpoint whose declared capabilities lack it, and the
   request's encoder refuses what the provider's rules name, each with an `ArgumentError` before anything is
   sent ([Capabilities by provider](@ref capabilities_guide)).
 
-## [Switch providers](@id backend_switch)
+## [Switch providers](@id multi_backend_switch)
 
 - **The endpoint and its key.** Bind `service` to the provider's endpoint, and set the variable it reads its
   key or host from: each provider's start page names both, and its default model. A `Chat` or a `Respond`
@@ -83,15 +84,15 @@ Whatever `service` names:
 Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :limits)
 ```
 
-## [Where the providers differ](@id backend_compare)
+## [Where the providers differ](@id multi_backend_compare)
 
 - **What each serves.** [Capabilities by provider](@ref capabilities_guide) shows the capabilities each
   provider's endpoints declare — chat, tools, embeddings, images, the platform APIs —, and which requests
   UniLM sends to a server without knowing whether it serves them.
 - **The API its endpoint speaks.** Some endpoints speak their provider's native API, and others the
-  OpenAI wire that many providers serve; the table below says which, and which APIs UniLM's release gate
-  runs its live tests against before every release. A server with an OpenAI-compatible API is reached with
-  a `GenericOpenAIEndpoint`, and any other with an endpoint of your own
+  OpenAI wire that many providers serve; the table below says which, and what UniLM's release gate tests
+  live before every release. A server with an OpenAI-compatible API is reached with a
+  `GenericOpenAIEndpoint`, and any other with an endpoint of your own
   ([Write your own backend](@ref custom_backends_guide)).
 - **Its models.** Each entry names the models UniLM holds rules and prices for, and the next section says
   how UniLM keeps up with what the providers list.
@@ -101,7 +102,7 @@ Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :limits)
 | OpenAI | its own: Chat Completions and Responses | against the API |
 | Anthropic | its own: Messages | against the API |
 | Google Gemini | its own: generateContent and Interactions; `GEMINIOpenAIServiceEndpoint`, Google's OpenAI-compatible endpoint | against the API |
-| Ollama | its own, and its OpenAI-compatible routes for `respond`, compaction, FIM and transcription | against a local server |
+| Ollama | its own, and its OpenAI-compatible routes for `respond`, compaction, FIM and transcription | decision models, embeddings and model management, against a local server; not chat, `respond`, FIM or transcription |
 | vLLM, LM Studio & llama.cpp | OpenAI-compatible | — |
 | Azure OpenAI | Azure OpenAI's Chat Completions, in the dated `api-version` form | — |
 | DeepSeek | OpenAI-compatible, with its beta FIM and prefix completion | — |
@@ -138,7 +139,7 @@ and listed before its shutdown date where the listing gives one.
 | Anthropic | Claude model of 4.5 or later, and model with a rule row, but Claude Mythos Preview, which Anthropic's model pricing table does not list | model of the same set, its thinking types and effort levels agreeing with the listing's ([Models](@ref anthropic_models)) | left out when older than 4.5; fails the gate when its id gives no generation |
 | Google Gemini | text model of 3.5 or later, and text model with thinking levels, but the `-latest` aliases, which UniLM prices as the models that serve them | model of the same set that thinks: its thinking levels | left out when older than 3.5; logged, not failed, when its id gives no generation |
 
-## [See also](@id backend_see_also)
+## [See also](@id multi_backend_see_also)
 
 - [Capabilities by provider](@ref capabilities_guide) — what each provider serves
 - [Write your own backend](@ref custom_backends_guide) — a provider UniLM does not ship
@@ -146,7 +147,7 @@ and listed before its shutdown date where the listing gives one.
 - [Service Endpoints](@ref endpoints_api) — every built-in endpoint and its constructor
 - [`ServiceEndpoint`](@ref), [`GenericOpenAIEndpoint`](@ref) — the endpoint types
 
-## [On your provider](@id backend_providers)
+## [On your provider](@id multi_backend_providers)
 
 ```@eval
 Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)

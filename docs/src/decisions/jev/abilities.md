@@ -8,12 +8,12 @@ What Jev takes beyond a question about a text, a section each:
 
 | Section | What it holds |
 | :--- | :--- |
-| [Images](@ref jev_images__next) | a picture wherever a string can stand: how it is sent, checked and billed |
-| [Locate with Box](@ref jev_box__next) | where something is in a picture, as fractions of its size |
-| [Long context](@ref jev_long_context__next) | 262k tokens of context, in place of 64k and 32k |
+| [Images](@ref jev_images) | a picture wherever a string can stand: how it is sent, checked and billed |
+| [Locate with Box](@ref jev_box) | where something is in a picture, as fractions of its size |
+| [Long context](@ref jev_long_context) | 262k tokens of context, in place of 64k and 32k |
 | [Structured guidance](@ref jev_structured) | instructions, options, levels and yes/no written as objects and arrays |
 
-## [Images](@id jev_images__next)
+## [Images](@id jev_images)
 
 **The job:** judge what a picture shows — the photo a customer attached, a
 screenshot of an error — with the questions you ask about a text. **Without
@@ -83,7 +83,7 @@ image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits__n
 - Name the image's key in the question, `photo` above, as you would name any
   part of the state.
 
-## [Locate with Box](@id jev_box__next)
+## [Locate with Box](@id jev_box)
 
 **The job:** find where something is in a picture: the dent on a parcel, the
 signature on a form. **Without Jev:** an object detector trained on your
@@ -152,7 +152,7 @@ backends' wrappers refuse them ([Backends](@ref backends_refusals)).
 - Pin `jev-1.14.0` rather than `jev-preview`, which moves to the next preview
   build when one ships.
 
-## [Long context](@id jev_long_context__next)
+## [Long context](@id jev_long_context)
 
 TypeSafe reads at most 64k tokens per request, and 32k for the state with any
 one question. `long_context = true` raises both to 262k tokens, at the same

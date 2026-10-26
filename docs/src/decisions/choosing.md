@@ -140,7 +140,7 @@ instructions, one of the additions its guide lists since the public beta
 which UniLM refuses. Ollama takes a request's pictures as one list, `images`, shared by every question
 ([System One](https://docs.ollama.com/api/systemone)), apart from the state's text, and by Ollama's source Clef reads
 them before that text ([decision/clef.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/clef.go)); UniLM
-refuses a picture after a text on every model. Each entry has the rest: [Jev's Images](@ref jev_images__next),
+refuses a picture after a text on every model. Each entry has the rest: [Jev's Images](@ref jev_images),
 [OpenAI's Questions](@ref openai_decisions_questions) and [Ollama's Images](@ref ollama_decisions_images).
 
 - **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at `https://api.openai.com`; Ollama at the

@@ -209,9 +209,10 @@ length(embedding_vectors(r)), length(first(embedding_vectors(r)))
 ```
 
 Mistral's embeddings route takes `input`, `model`, `output_dimension`, `output_dtype`,
-`encoding_format` and `metadata` ([embeddings](https://docs.mistral.ai/api/endpoint/embeddings)). An
-`Embeddings` request's `dimensions` goes out under that name, not as `output_dimension`, and its effect
-on Mistral is untested. Each item is text: an image or a sound clip is refused before the request
+`encoding_format` and `metadata` ([embeddings](https://docs.mistral.ai/api/endpoint/embeddings)). On
+Mistral's host an `Embeddings` request's `dimensions` goes out as `output_dimension`, "The dimension of
+the output embeddings when feature available", and on any other service as `dimensions`; its effect on
+Mistral is untested. Each item is text: an image or a sound clip is refused before the request
 ([Limits and refusals](@ref openai_compatible_limits)). The concepts every provider shares are on
 [Embeddings](@ref embeddings_guide).
 

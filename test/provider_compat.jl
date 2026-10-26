@@ -520,6 +520,20 @@ end
     end
 end
 
+@testset "Mistral gets an embedding size as output_dimension; other servers as dimensions" begin
+    # Mistral's embeddings reference names it `output_dimension`, "The dimension of the output embeddings
+    # when feature available", and lists no `dimensions` (https://docs.mistral.ai/api/endpoint/embeddings).
+    mistral = MistralEndpoint(api_key="k")
+    b = JSON.parse(UniLM._encode_embeddings(mistral, Embeddings(["a", "b"]; service=mistral, model="mistral-embed-2312", dimensions=256)))
+    @test b["output_dimension"] == 256 && !haskey(b, "dimensions") && b["input"] == ["a", "b"]
+    e = Embeddings("a"; service=mistral, model="mistral-embed-2312")
+    @test UniLM._encode_embeddings(mistral, e) == JSON.json(e)              # no size: as set
+    other = GenericOpenAIEndpoint("http://localhost:8000", "")
+    e = Embeddings("a"; service=other, model="m", dimensions=256)
+    @test UniLM._encode_embeddings(other, e) == JSON.json(e)                # byte for byte
+    @test JSON.parse(UniLM._encode_embeddings(other, e))["dimensions"] == 256
+end
+
 @testset "prompt_cache_retention: refused as deprecated on GPT-5.6 and later, combinable elsewhere" begin
     # The API still answered gpt-6-luna with prompt_cache_retention="24h" (HTTP 200, 2026-10-22): the refusal
     # follows OpenAI's deprecation ("Use prompt_cache_options.ttl instead"), not an API rejection.

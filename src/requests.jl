@@ -2254,6 +2254,17 @@ _prompt_message(::String, prompt::Message)::Message = prompt
 # `_wire_texts` first: its refusal stays a plain ArgumentError whatever JSON.json does with errors thrown in `lower`.
 _encode_embeddings(_, emb::Embeddings)::String = (_wire_texts(emb); JSON.json(emb))
 _decode_embeddings(_, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
+# Mistral's embeddings reference names the vector size `output_dimension`, "The dimension of the
+# output embeddings when feature available", and lists no `dimensions`
+# (https://docs.mistral.ai/api/endpoint/embeddings): on Mistral's host the size goes out under that
+# name, and every other server gets the request as the OpenAI Embeddings API names it.
+function _encode_embeddings(s::GenericOpenAIEndpoint, emb::Embeddings)::String
+    _mistral_host(s) && !isnothing(emb.dimensions) || return invoke(_encode_embeddings, Tuple{Any,Embeddings}, s, emb)
+    _wire_texts(emb)
+    body = JSON.lower(emb)
+    body[:output_dimension] = pop!(body, :dimensions)
+    JSON.json(body)
+end
 # The body a recording keys and stores: the one sent, unless the endpoint names its media otherwise.
 _record_embeddings_body(_, _, body::String)::String = body
 

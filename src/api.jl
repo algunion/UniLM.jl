@@ -951,8 +951,8 @@ with no auth.
 A request goes out with its fields as set and under their own names, but a `Chat`'s
 `max_completion_tokens` goes out as `max_tokens`, the name DeepSeek's, Mistral's and LM
 Studio's references give the cap (vLLM and llama.cpp take either), and on Mistral's host, as
-`MistralEndpoint()` is, a `Chat`'s `seed` goes out as `random_seed`, the name Mistral's chat
-reference gives it.
+`MistralEndpoint()` is, a `Chat`'s `seed` goes out as `random_seed` and an `Embeddings`
+request's `dimensions` as `output_dimension`, the names Mistral's references give them.
 
 # Example
 ```julia
@@ -1260,7 +1260,8 @@ Pre-configured endpoint for [Mistral AI](https://mistral.ai) API. A given `api_k
 as is; without one the key is read from `MISTRAL_API_KEY` each time a request is built
 (`GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")`), so building the
 endpoint needs no key and a missing variable fails the request, naming it. Requests go out under
-Mistral's names: a `Chat`'s `seed` as `random_seed` ([`GenericOpenAIEndpoint`](@ref)).
+Mistral's names: a `Chat`'s `seed` as `random_seed`, an `Embeddings` request's `dimensions` as
+`output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
 """
 MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
     isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
@@ -2311,7 +2312,8 @@ The result aliases this struct, so use one `Embeddings` per concurrent call.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
 - `user::Union{String,Nothing}`: Optional end-user identifier.
 - `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it; a value
-  that is not positive throws `ArgumentError`.
+  that is not positive throws `ArgumentError`. On Mistral's host ([`MistralEndpoint`](@ref)) it
+  goes out as `output_dimension`, Mistral's name for it.
 - `encoding_format::Union{String,Nothing}`: `"float"` or unset; any other format
   (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
 - `task::Union{Symbol,Nothing}`: What the texts are for, as a task prompt (see below); `nothing` for none.

@@ -383,6 +383,10 @@
   sent. A `Chat` on Mistral's host (`MistralEndpoint()`, or a `GenericOpenAIEndpoint` on
   `api.mistral.ai`) now sends its seed as `random_seed`; every other server's request is unchanged,
   byte for byte.
+- **`MistralEndpoint()` sends an embedding size as `output_dimension`.** Mistral's embeddings
+  reference names the vector size `output_dimension` and lists no `dimensions`, which the endpoint
+  sent. An `Embeddings` request on Mistral's host now sends its `dimensions` as `output_dimension`;
+  every other server's request is unchanged, byte for byte.
 
 ## 0.26.0
 

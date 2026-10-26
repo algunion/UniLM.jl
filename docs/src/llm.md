@@ -279,7 +279,7 @@ revise a `retires_at` it lists. A listing is the provider's view for the key tha
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
-    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; native OpenAI sends max_tokens under this name, DeepSeek and generic endpoints send this as max_tokens
+    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; native OpenAI sends max_tokens under this name, DeepSeek and Mistral send this as max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing   # -2.0 to 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing  # -2.0 to 2.0

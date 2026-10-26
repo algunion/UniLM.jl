@@ -480,10 +480,10 @@ end
     @test JSON.parse(UniLM.encode_agentic(r.service, r))["user"] == "u1"
 end
 
-@testset "DeepSeek, Mistral and generic servers get a Chat's token cap as max_tokens, the name their references give" begin
-    # DeepSeek's Chat Completions reference, Mistral's chat reference and LM Studio's list `max_tokens` and
-    # no `max_completion_tokens`; vLLM (deprecating `max_tokens`) and llama.cpp take either name.
-    for service in (DeepSeekEndpoint(api_key="k"), MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("http://localhost:9999", ""))
+@testset "DeepSeek and Mistral get a Chat's token cap as max_tokens, the name their references give; other servers get it as set" begin
+    # DeepSeek's Chat Completions reference and Mistral's chat reference list `max_tokens` and no
+    # `max_completion_tokens`.
+    for service in (DeepSeekEndpoint(api_key="k"), MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("https://api.mistral.ai/", "k"))
         b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
         @test b["max_tokens"] == 32 && !haskey(b, "max_completion_tokens")
         # Set beside max_tokens, max_completion_tokens is taken over it, as the native encoders take it.
@@ -502,6 +502,20 @@ end
     for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
         b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
         @test b["max_completion_tokens"] == 32 && !haskey(b, "max_tokens")
+    end
+    # Every other generic server gets the names the Chat sets, byte for byte: Azure's v1 route, as the
+    # Azure entry builds it, where "Reasoning models will only work with the `max_completion_tokens`
+    # parameter" (Azure's reasoning guide); vLLM, which deprecates `max_tokens` "in favor of the
+    # max_completion_tokens field"; a proxy to OpenAI's reasoning models.
+    azure_v1 = GenericOpenAIEndpoint("https://your-resource.openai.azure.com/openai", "", "AZURE_OPENAI_API_KEY")
+    for service in (azure_v1, GenericOpenAIEndpoint("http://localhost:8000", ""), GenericOpenAIEndpoint("https://proxy.example.com", "k"))
+        c = Chat(; service, model="your-gpt52-deployment", reasoning_effort="low", max_completion_tokens=2000,
+                 messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, c) == JSON.json(c)
+        b = JSON.parse(UniLM.encode_request(service, c))
+        @test b["max_completion_tokens"] == 2000 && !haskey(b, "max_tokens")
+        both = Chat(; service, model="m", max_tokens=64, max_completion_tokens=32, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, both) == JSON.json(both)
     end
 end
 

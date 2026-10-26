@@ -95,12 +95,11 @@ chunks ([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) —
 chunks joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`. A
 streamed reply keeps them ([Streaming](@ref openai_compatible_streaming)).
 
-Fields go out under the names of the `Chat`, but a `max_completion_tokens` goes out as `max_tokens`,
-taken over a `max_tokens` also set, the name Mistral's chat reference gives the cap
-([chat completions](https://docs.mistral.ai/api/endpoint/chat)), on every service this endpoint
-reaches. On Mistral's host a `seed` goes out as `random_seed`, "The seed to use for random sampling",
-the name Mistral's chat reference gives it, and on any other service as `seed`. Mistral's
-`safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `Chat` fields
+Fields go out under the names of the `Chat`, but on Mistral's host a `max_completion_tokens` goes out
+as `max_tokens`, taken over a `max_tokens` also set, the name Mistral's chat reference gives the cap
+([chat completions](https://docs.mistral.ai/api/endpoint/chat)), and a `seed` as `random_seed`, "The
+seed to use for random sampling", the name it gives the seed; any other service gets both as the `Chat`
+names them. Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `Chat` fields
 ([chat completions](https://docs.mistral.ai/api/endpoint/chat)). What Mistral does with a field its
 reference does not list is untested.
 

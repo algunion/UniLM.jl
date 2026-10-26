@@ -55,8 +55,11 @@ function decode_response(service::DeepSeekEndpoint, resp::HTTP.Response)
     (; message=_message_with(decoded.message, :provider_content, pc), usage, decoded.model)
 end
 
+# DeepSeek's Chat Completions reference lists the token cap as `max_tokens` and no
+# `max_completion_tokens` (https://api-docs.deepseek.com/api/create-chat-completion): a Chat's
+# `max_completion_tokens` goes out under that name, taken over a `max_tokens` also set.
 function encode_request(service::DeepSeekEndpoint, chat::Chat)::String
-    body = _renamed_json(chat, :max_completion_tokens => :max_tokens)   # DeepSeek's name for the cap
+    body = _renamed_json(chat, :max_completion_tokens => :max_tokens)
     isnothing(chat.tools) && return body
     echo = Pair{Int,String}[]
     for (i, m) in pairs(chat.messages)

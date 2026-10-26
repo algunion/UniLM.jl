@@ -948,11 +948,10 @@ Embeddings, FIM, transcription and (where the provider implements it) the Respon
 An empty key, given or read, sends no `Authorization` header: use `""` for local servers
 with no auth.
 
-A request goes out with its fields as set and under their own names, but a `Chat`'s
-`max_completion_tokens` goes out as `max_tokens`, the name DeepSeek's, Mistral's and LM
-Studio's references give the cap (vLLM and llama.cpp take either), and on Mistral's host, as
-`MistralEndpoint()` is, a `Chat`'s `seed` goes out as `random_seed` and an `Embeddings`
-request's `dimensions` as `output_dimension`, the names Mistral's references give them.
+A request goes out with its fields as set and under their own names, except on Mistral's host,
+as `MistralEndpoint()` is: there a `Chat`'s `max_completion_tokens` goes out as `max_tokens`
+(taken over a `max_tokens` also set), its `seed` as `random_seed`, and an `Embeddings` request's
+`dimensions` as `output_dimension`, the names Mistral's references give them.
 
 # Example
 ```julia
@@ -1260,8 +1259,8 @@ Pre-configured endpoint for [Mistral AI](https://mistral.ai) API. A given `api_k
 as is; without one the key is read from `MISTRAL_API_KEY` each time a request is built
 (`GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")`), so building the
 endpoint needs no key and a missing variable fails the request, naming it. Requests go out under
-Mistral's names: a `Chat`'s `seed` as `random_seed`, an `Embeddings` request's `dimensions` as
-`output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
+Mistral's names: a `Chat`'s `max_completion_tokens` as `max_tokens`, its `seed` as `random_seed`,
+an `Embeddings` request's `dimensions` as `output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
 """
 MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
     isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
@@ -1433,9 +1432,10 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 
 On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
-both throws `ArgumentError`); `DeepSeekEndpoint` and `GenericOpenAIEndpoint` (`MistralEndpoint()`
-among them) send `max_completion_tokens` as `max_tokens`, the name their references give the
-cap, taken over a `max_tokens` also set. On the native OpenAI endpoint `user` throws (use
+both throws `ArgumentError`); `DeepSeekEndpoint` and `MistralEndpoint()` send
+`max_completion_tokens` as `max_tokens`, the name their references give the cap, taken over a
+`max_tokens` also set, and every other endpoint sends the name the `Chat` sets. On the native
+OpenAI endpoint `user` throws (use
 `safety_identifier` or `prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
 `"scale"`, `"priority"` or `"fast"`. Native Gemini and `GEMINIOpenAIServiceEndpoint` take
 `service_tier` `"standard"`, `"flex"` or `"priority"`, and native Gemini sends `seed` (an

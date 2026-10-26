@@ -1231,16 +1231,15 @@ function _renamed_json(chat::Chat, renames::Pair{Symbol,Symbol}...)::String
     JSON.json(body)
 end
 
-# DeepSeek's Chat Completions reference, Mistral's chat reference and LM Studio's list the token
-# cap as `max_tokens` and no `max_completion_tokens`; vLLM and llama.cpp take either name. These
-# endpoints send `max_completion_tokens` as `max_tokens`, taken over a `max_tokens` also set, as
-# the native encoders take it (https://api-docs.deepseek.com/api/create-chat-completion,
-# https://docs.mistral.ai/api/endpoint/chat, https://lmstudio.ai/docs/developer/openai-compat/chat-completions).
-# Mistral's chat reference also names the seed `random_seed`, "The seed to use for random sampling",
-# and lists no `seed`: on Mistral's host a Chat's seed goes out under that name.
+# Mistral's chat reference lists the token cap as `max_tokens` and no `max_completion_tokens`, and
+# names the seed `random_seed`, "The seed to use for random sampling", listing no `seed`
+# (https://docs.mistral.ai/api/endpoint/chat): on Mistral's host a Chat's `max_completion_tokens`
+# goes out as `max_tokens`, taken over a `max_tokens` also set, as the native encoders take it, and
+# its seed as `random_seed` (DeepSeek's encoder renames the cap the same way). Every other server
+# gets the names the Chat sets: Azure's v1 route takes only `max_completion_tokens` for its reasoning
+# models, and vLLM deprecates `max_tokens` in its favour.
 encode_request(s::GenericOpenAIEndpoint, chat::Chat)::String = _mistral_host(s) ?
-    _renamed_json(chat, :max_completion_tokens => :max_tokens, :seed => :random_seed) :
-    _renamed_json(chat, :max_completion_tokens => :max_tokens)
+    _renamed_json(chat, :max_completion_tokens => :max_tokens, :seed => :random_seed) : JSON.json(chat)
 
 """
     decode_response(service, resp::HTTP.Response)

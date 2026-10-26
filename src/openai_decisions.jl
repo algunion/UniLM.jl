@@ -33,7 +33,7 @@ The request:
   2 to 255 options, each option's name its `value` and a string description its
   `description` (none for `nothing`); a [`ScoreQuestion`](@ref) a `score` of 2
   to 10 levels, each level its `label`; a [`RawQuestion`](@ref) verbatim, with
-  its name added as `"name"` when it has none. At most 200 questions.
+  its name added as `"name"` when it has none. At most 400 questions.
 - provider options are keywords of [`ask`](@ref): `prompt_cache_key`, a `String`
   of at most 64 characters; `safety_identifier`, at most 128; and
   `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and `ttl`, `"30m"` or
@@ -99,7 +99,7 @@ _system_one_concurrency(::OpenAIDecisionsProtocol, service)::Int = 16
 
 # The limits of the published request schema (`DecisionRequest` in OpenAI's OpenAPI
 # description); lengths are in characters, as JSON Schema counts them.
-const _DECISIONS_MAX_QUESTIONS = 200
+const _DECISIONS_MAX_QUESTIONS = 400       # "Ask 1–400 questions about the input"
 const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
 const _DECISIONS_MAX_IMAGES = 128

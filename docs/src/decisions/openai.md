@@ -50,8 +50,8 @@ returns a [`SystemOneCallError`](@ref) ([When something fails](@ref openai_decis
 OpenAI's guide, fetched on 25 October 2026, opens with "The Decisions API is now generally available" and lists
 what the API gained "since the public beta": prompt caching, pictures in question instructions, JSON input, up to
 400 questions per request, image URLs, conversation history, usage reporting, GPT-Live's integration and Private
-Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM still refuses what the
-beta refused: more than 200 questions, and a picture anywhere but the state
+Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM sends up to 400
+questions, and still refuses what the beta refused: a picture anywhere but the state
 ([Limits and refusals](@ref openai_decisions_limits)).
 
 ## [Options](@id openai_decisions_options)
@@ -173,8 +173,8 @@ What reaches the model:
 
 A Choice takes 2 to 255 options
 ([Create a decision](https://developers.openai.com/api/reference/resources/decisions/methods/create)) and a Score 2 to
-10 levels ([Score against a rubric](https://developers.openai.com/api/docs/guides/decisions#score-against-a-rubric)); UniLM
-sends at most 200 questions per request, where OpenAI's guide now takes up to 400
+10 levels ([Score against a rubric](https://developers.openai.com/api/docs/guides/decisions#score-against-a-rubric)), and a
+request 1 to 400 questions
 ([Ask multiple questions](https://developers.openai.com/api/docs/guides/decisions#ask-multiple-questions)); a
 request outside these is refused before it is sent ([Limits and refusals](@ref openai_decisions_limits)). A picture
 goes in the state only, as the table shows; where each provider takes one is on
@@ -224,7 +224,7 @@ sending:
 
 | Limit | Value | Checked before sending |
 | :--- | :--- | :--- |
-| Questions | 1 to 400 per request | yes, at 200: UniLM refuses more |
+| Questions | 1 to 400 per request | yes |
 | Choice options | 2 to 255 per question | yes |
 | Score levels | 2 to 10 per question | yes |
 | Text | 10,485,760 characters for the input, and for each text part of a message | yes |
@@ -238,7 +238,7 @@ answer would carry no sign of the change.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| more than 200 questions | `OpenAI's Decisions API takes at most 200 questions per request`: UniLM's limit, from the public beta; OpenAI's guide takes 400 | split them across requests |
+| more than 400 questions | `OpenAI's Decisions API takes at most 400 questions per request` | split them across requests |
 | a question without instructions, or with instructions that are not a string | `every question needs`, `must be a string, not`: OpenAI requires a question's instructions, and UniLM sends them as a string | write the question as text, as the first argument of `choice`, `score` or `noul` |
 | a Noul with `yes` or `no` | `a predicate has no true/false criteria`: a predicate question has no field for them | fold what they say into its instructions |
 | a Choice of fewer than 2 or more than 255 options | `a choice offers 2 to 255 options, and it has` | add an option such as `"anything else"`, or narrow the options |

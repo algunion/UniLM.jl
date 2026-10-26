@@ -263,7 +263,8 @@ end
     @test length(only(_od_sent(SystemOneRequest("s", "c" => choice("Pick.", ["o$i" for i in 1:255])))["questions"])["choices"]) == 255
     @test length(only(_od_sent(SystemOneRequest("s", "c" => choice("Pick.", ["a", "b"])))["questions"])["choices"]) == 2
     @test length(only(_od_sent(SystemOneRequest("s", "r" => score("Rate.", ["l$i" for i in 1:10])))["questions"])["levels"]) == 10
-    @test length(_od_sent(SystemOneRequest("s", ["q$i" => noul("Is it $i?") for i in 1:200]))["questions"]) == 200
+    # 1 to 400 questions, as OpenAI's reference and guide give them since general availability.
+    @test length(_od_sent(SystemOneRequest("s", ["q$i" => noul("Is it $i?") for i in 1:400]))["questions"]) == 400
 
     refused, seen = _od_serve(_od_valid) do
         one(q) = _od_caught(() -> ask("s", "q" => q; service=_ODMock))
@@ -280,7 +281,7 @@ end
          one(score(["low", "high"])),                                                   # 11
          one(box("the dent")),                                                          # 12
          one(RawQuestion(Dict("type" => "predicate", "name" => "other", "instructions" => "x"))),   # 13
-         _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:201]; service=_ODMock))]  # 14
+         _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:401]; service=_ODMock))]  # 14
     end
     @test isempty(seen)                                                   # nothing was sent
     @test all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
@@ -294,7 +295,7 @@ end
     @test contains(refused[10].msg, "level 1 must be a string") && contains(refused[11].msg, "needs `instructions`")
     @test contains(refused[12].msg, "Box question")
     @test contains(refused[13].msg, "\"name\" field is \"other\"")
-    @test contains(refused[14].msg, "at most 200 questions") && contains(refused[14].msg, "201")
+    @test contains(refused[14].msg, "at most 400 questions") && contains(refused[14].msg, "401")
 end
 
 @testset "OpenAI Decisions — the provider options, written in one order whatever the caller's" begin

@@ -261,6 +261,12 @@
   no status for the rejection. `respond`'s named OpenAI's Responses API as its one target, and
   the keyword `chatrequest!`'s listed `config` and `cancel` among the `Chat` fields. No behaviour
   changes.
+- **OpenAI's Decisions API takes up to 400 questions a request.** `ask` on
+  `OPENAIServiceEndpoint` refused a request of more than 200 questions, the public beta's
+  limit, though the generally available API takes "1–400 questions" (OpenAI's reference), "up
+  to 400 questions per request, up from 200 during the public beta" (its guide); a request of
+  201 questions was answered on 2026-10-26. Up to 400 are now sent, and more is an
+  `ArgumentError` before anything is sent, as more than 200 was.
 
 ## 0.26.0
 

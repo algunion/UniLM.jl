@@ -330,7 +330,7 @@ end
 | [`RawQuestion`](@ref) | sent verbatim, with the question's name added as `name` |
 | keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128), `prompt_cache_options` (a [`PromptCacheOptions`](@ref) of `mode` and `ttl`) |
 
-Every question needs string `instructions`, and at most 200 go in one request.
+Every question needs string `instructions`, and at most 400 go in one request.
 `prompt_cache_options` takes a `ttl` of `"30m"` or `"12h"` — OpenAI's prompt-caching
 guide names `"12h"` for the Responses API, and the Decisions API answered a `"12h"`
 request with HTTP 200 — and a `mode`; with `mode="explicit"` the request marks no

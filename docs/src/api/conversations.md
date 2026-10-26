@@ -1,8 +1,11 @@
 # [Conversations API](@id conversations_api)
 
 Create, retrieve, update, and delete durable, server-side conversations, and
-manage their items. A conversation `id` feeds the Responses API for multi-turn
-exchanges without resending history. OpenAI only.
+manage their items. A conversation's id, read with [`conversation_id`](@ref), is the
+`conversation` of a [`Respond`](@ref) (`respond(input; conversation=id)`): the Responses
+API prepends the conversation's items and adds the response's items to it, so a
+multi-turn exchange resends no history ([Conversations](@ref openai_conversations_api)).
+OpenAI only.
 
 ## Parsed Objects
 

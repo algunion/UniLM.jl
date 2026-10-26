@@ -1,6 +1,6 @@
 # UniLM.jl
 
-*A unified Julia interface for large language models.*
+*One Julia API for language models and decision models.*
 
 [![CI](https://github.com/algunion/UniLM.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/algunion/UniLM.jl/actions/workflows/CI.yml)
 [![codecov](https://codecov.io/gh/algunion/UniLM.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/algunion/UniLM.jl)
@@ -9,172 +9,53 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-## What is UniLM.jl?
+UniLM.jl gives Julia one set of types and verbs for two kinds of model. A language model writes: an answer,
+a call of one of your functions, JSON that fits a schema. A decision model reads a piece of state — a message,
+a record, a picture — and answers the questions you list about it with a probability for each answer you
+allowed, writing no text. Each kind has its chapter, and each provider an entry of its own: its setup, its first
+call, its options, limits and failures, on its own pages.
 
-| I want to… | Use | Start with |
-| :--- | :--- | :--- |
-| generate text, call tools, run agents | an LLM: OpenAI, Anthropic, Gemini or any OpenAI-compatible provider | [Getting Started](@ref getting_started) |
-| decide about a text: route it, check it, classify it | a System One model: TypeSafe's Jev, OpenAI's Decisions API (beta) or a local decision model | [Start Here: Decisions in Five Minutes](@ref jev_start) |
-| both: decide before an LLM call, check its output after | Jev and an LLM together | [Decisions with LLMs](@ref jev_llm_guide) |
+## [Language models](@id home_llm)
 
-UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), Google Gemini (generateContent + agentic Interactions), and local models through Ollama's native API — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
-It also has one **System One** surface, which answers enumerated questions about a piece of state with a typed, calibrated judgment instead of generated text — and can select a Julia method by natural-language meaning — over TypeSafe's **Jev**, OpenAI's **Decisions API** (beta) and local decision models through **Ollama**.
+A [`Chat`](@ref) holds a conversation and [`chatrequest!`](@ref) sends it; [`respond`](@ref) sends one request
+of a provider's agentic API; embeddings, images, speech, transcription and fill-in-the-middle completion have
+verbs of their own, on the providers that serve them. Choose your provider below: its name opens its entry.
+[Language models](@ref llm_start) maps the concepts every provider shares.
 
-### Key Features
+```@eval
+Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)
+```
 
-- 🗣️ **Chat Completions** — stateful conversations with automatic history management
-- 🔮 **Responses API & Agentic Verb** — OpenAI's Responses API plus a cross-provider `respond` verb that also drives Google's Gemini Interactions
-- 🖼️ **Image Generation & Edits** — create and edit images with OpenAI's `gpt-image-2.5-sunburst` or Gemini's Nano Banana (`gemini-nano-banana-2.1`)
-- 📎 **Images, audio and PDF documents** — attach them to a user `Message`: the OpenAI-compatible wire, native Anthropic (images and PDFs) and native Gemini send them, and an endpoint that cannot carry one refuses it before any request
-- 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
-- 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
-- ⚖️ **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama ([Backends](@ref system_one_backends)): `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev, OpenAI and local vision models), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
-- 🔀 **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
-- 🤝 **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the LLM calls, streamed or not, once and replays them, so tests run without keys
-- 📊 **Embeddings** — text embedding generation
-- 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
-- 🌊 **Streaming** — real-time token streaming with `do`-block syntax
-- 📐 **Structured Output** — JSON Schema–constrained generation
-- ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
-- 📋 **Provider model listings** — `list_models` shows the models OpenAI, Anthropic and Gemini serve your key, with token limits, capabilities and lifecycle dates; a live drift check in the release gate holds UniLM's model rules and prices to them
-- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included ([Local decision models](@ref ollama_decisions_start)); model management — at no cost
-- ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
+## [Decisions](@id home_decisions)
 
-### Chat Completions vs Responses (OpenAI)
+[`ask`](@ref) sends the questions — which of these options, where on this scale, whether this statement holds —
+and returns typed answers your code branches on, and [`nl_classify`](@ref) and [`nl_dispatch`](@ref) turn an
+answer into the key or the method that runs. Choose your provider below: its name opens its entry.
+[Decisions](@ref decisions_start) maps the concepts every decision provider shares, and
+[Decisions with LLMs](@ref jev_llm_guide) puts a decision on each side of a language model's call.
 
-For **OpenAI**, use either conversational API — **Chat Completions** (`Chat`; also the path for the native Anthropic/Gemini and OpenAI-compatible backends) or the newer **Responses** (`respond`; basis for the cross-provider agentic verb):
+```@eval
+Main.ProviderFacts.provider_table(Main.ProviderFacts.decisions)
+```
 
-| Feature                |       Chat Completions       |            Responses API            |
-| :--------------------- | :--------------------------: | :---------------------------------: |
-| Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
-| System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
-| Tool calling           |  `Tool` / `ToolCall`   |  `FunctionTool` / `function_tool`   |
-| Web search             |    `web_search_options`      |           `WebSearchTool`           |
-| File search            |              —               |          `FileSearchTool`           |
-| Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
-| Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
-| Reasoning              |     `reasoning_effort`       |             `Reasoning`             |
-| Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
-| MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
+## [One API across providers](@id home_across)
 
-## Installation
+The provider is one argument: `service` names its endpoint and `model` its model, so code written for one
+provider runs on another once those two change, as far as the other provider serves what the code asks: the same
+types and verbs, the same typed results, the same
+cost accounting and the same [`RequestConfig`](@ref). [One API across providers](@ref backend_guide) says what every provider
+shares, how to switch, and where the providers differ — which speak their own API and which the
+OpenAI-compatible one; [Capabilities by provider](@ref capabilities_guide) shows what each provider serves; and
+[Write your own backend](@ref custom_backends_guide) adds a provider UniLM does not ship. For decision models,
+the same choice is [Choosing a decision provider](@ref system_one_backends).
 
-UniLM requires **Julia 1.13+** and is registered in Julia's General registry:
+## [Install](@id home_install)
+
+UniLM requires Julia 1.13 or later and is registered in Julia's General registry:
 
 ```julia
 using Pkg
 Pkg.add("UniLM")
 ```
 
-Or in the Pkg REPL:
-
-```
-pkg> add UniLM
-```
-
-For the latest unreleased changes, install from GitHub instead:
-
-```julia
-Pkg.add(url="https://github.com/algunion/UniLM.jl")
-```
-
-## Quick Example
-
-Building requests — these construct objects locally without calling the API:
-
-```@example quickstart
-using UniLM
-using JSON
-
-# Chat Completions request
-chat = Chat(model="gpt-5.2")
-push!(chat, Message(Val(:system), "You are a Julia expert."))
-push!(chat, Message(Val(:user), "Explain multiple dispatch in one sentence."))
-println("Chat has ", length(chat), " messages, model: ", chat.model)
-println("Request body preview:")
-println(JSON.json(chat))
-```
-
-```@example quickstart
-# Responses API request
-r = Respond(input="What makes Julia special?")
-println("Respond model: ", r.model)
-println(JSON.json(r))
-```
-
-```@example quickstart
-# Image Generation request. `model` is a sentinel that resolves at serialization
-# time, so the field itself stays "" — read the body to see what gets sent.
-ig = ImageGeneration(prompt="A watercolor Julia logo", quality="high")
-println("Image model field: ", repr(ig.model))
-println(JSON.json(ig))
-```
-
-With a valid API key, actual API calls return structured results:
-
-**Responses API** (recommended for new code):
-```@example quickstart
-result = respond("Explain Julia's multiple dispatch in 2-3 sentences.", model="gpt-5.4-mini")
-if result isa ResponseSuccess
-    println(output_text(result))
-else
-    println("Request failed — ", result)
-end
-```
-
-**Chat Completions:**
-```@example quickstart
-chat = Chat(model="gpt-5.4-mini")
-push!(chat, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
-push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
-result = chatrequest!(chat)
-if result isa LLMSuccess
-    println(result.message.content)
-else
-    println("Request failed — see result for details")
-end
-```
-
-**Image Generation:**
-```julia
-result = generate_image(
-    "A watercolor painting of a friendly robot reading a Julia programming book",
-    size="1024x1024", quality="medium"
-)
-println("Success: ", result isa ImageSuccess)
-if result isa ImageSuccess
-    save_image(image_data(result)[1], joinpath(@__DIR__, "assets", "generated_robot.png"))
-    println("Saved to assets/generated_robot.png")
-else
-    println("Image generation failed — see result for details")
-end
-```
-
-![Generated robot reading Julia](assets/generated_robot.png)
-
-## Next Steps
-
-- [Getting Started](@ref getting_started) — setup and first requests
-- [Chat Completions Guide](@ref chat_guide) — deep dive into `Chat` and `chatrequest!`
-- [Responses API Guide](@ref responses_guide) — the newer Responses API
-- [Image Generation Guide](@ref images_guide) — create images from text prompts
-- [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
-- [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry contracts
-- [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out, streaming into a `Channel`, `CancelToken`
-- [Start Here: Decisions in Five Minutes](@ref jev_start) — what Jev decides, a first decision, and which Decisions page answers your question
-- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — one System One surface on TypeSafe's Jev, OpenAI's Decisions API (beta) and Ollama's decision models: choosing one, what each refuses, and why a threshold is tuned per backend
-- [Decisions with LLMs](@ref jev_llm_guide) — route a message before an LLM call and check the draft after it
-- [Route and Decide](@ref system_one_guide) — `ask` with `choice`, `score` and `noul` questions, images and `box` questions, calibrated answers, and decision rules on them
-- [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`, `nl_dispatch` with a table of sentences or `nl"..."` in the signatures, `decide` policies and `@branch`
-- [Many Items at Once](@ref jev_algorithms_guide) — `ask_each` over many texts, many items in one request, ranking, finding an event in a long sequence, matching records, stopping early
-- [Test and Develop](@ref jev_testing_guide) — recorded answers for Jev and LLM calls (`with_recorded_answers`), tests that need no key, an audit trail
-- [API Reference](@ref chat_api) — full type and function reference
-
-### Platform APIs
-
-Beyond chat and generation, UniLM wraps most of the OpenAI platform surface (OpenAI-only, except Audio: OpenAI and Ollama) — each has an API-reference page:
-
-- **Storage & retrieval** — [Files](@ref files_api), [Vector Stores](@ref vector_stores_api), [Conversations](@ref conversations_api), [Uploads](@ref uploads_api), [Containers](@ref containers_api)
-- **Generation & media** — [Audio](@ref audio_api), [Images](@ref images_api)
-- **Jobs & ops** — [Batch](@ref batch_api), [Fine-tuning](@ref fine_tuning_api), [Moderations](@ref moderations_api), [Webhooks](@ref webhooks_api), [Realtime](@ref realtime_api)
-- **Cross-cutting** — [Cost Tracking](@ref cost_guide), [Provider Capabilities](@ref capabilities_api), [Retrieval & File Search](@ref retrieval_guide)
+[Install](@ref getting_started) leads on to your provider's setup and its first call.

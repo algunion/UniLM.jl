@@ -29,7 +29,7 @@ export const metadata: Metadata = {
     template: '%s - UniLM.jl',
     default: 'UniLM.jl',
   },
-  description: 'A unified Julia interface for large language models.',
+  description: 'One Julia API for language models and decision models.',
 }
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? ''

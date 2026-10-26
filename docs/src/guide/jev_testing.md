@@ -1,16 +1,35 @@
 # [Test and Develop](@id jev_testing_guide)
 
-A program built on Jev is ordinary Julia plus answers from a service. Most of it
-can be tested with no service at all. The answers vary from one call to the
-next, so tests record them once and replay them — Jev's answers and an LLM's
-replies alike.
+```@setup jev_testing
+using UniLM, Test
+```
+
+A program built on a decision model is ordinary Julia plus answers from a
+service. Most of it can be tested with no service at all. The answers can vary
+from one call to the next, so tests record them once and replay them — the
+decision model's answers and an LLM's replies alike.
+
+```@example jev_testing
+service, model = TYPESAFEServiceEndpoint, "jev-latest"
+pinned = "jev-1.13.0"
+llm, llm_model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+key, llm_key = "TYPESAFE_API_KEY", "OPENAI_API_KEY"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the
+decision provider and model they run on, `pinned` a version of that model, `llm`
+and `llm_model` the language model a pipeline drafts with, and `key` and
+`llm_key` the variables the two providers' keys are read from: bind your own
+there. The table [at the end](@ref jev_testing_providers) links each provider's
+testing section.
 
 | I want to… | Use | You get | Section |
 | :--- | :--- | :--- | :--- |
 | see what a call will send, before it sends anything | [`meanings`](@ref), [`meaning_gaps`](@ref) | the options each call offers, in the order it sends them, and the combinations no method covers; no network | [Preview a call](@ref jev_testing_preview) |
 | record real answers once and replay them on every run | [`with_recorded_answers`](@ref) | the same answers on every run, with no key and no network | [Recorded answers](@ref jev_testing_recorded) |
 | test the methods, the resolution and the judgment | `@testset`s over `nl"…"()` instances, recorded answers, and Nouls over generated text | tests that run in CI without a key | [Tests](@ref jev_testing_tests) |
-| test a whole Jev + LLM pipeline offline | `with_recorded_answers` around route, draft and check | the routing and the check asserted, with nothing sent | [Test a Jev + LLM pipeline offline](@ref jev_testing_pipeline) |
+| test a whole decision + LLM pipeline offline | `with_recorded_answers` around route, draft and check | the routing and the check asserted, with nothing sent | [Test a decision + LLM pipeline offline](@ref jev_testing_pipeline) |
 | keep an audit trail | `on_response` on [`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref) | the request id, the model and the raw answer behind each decision | [Keep an audit trail](@ref jev_testing_audit) |
 
 !!! details "Evidence"
@@ -18,14 +37,12 @@ replies alike.
     came back with different numbers, by up to 0.11 in a probability, and a
     decision flipped only on inputs that were ambiguous to begin with.
 
-Every example that calls Jev or an LLM runs when this manual is built, from
-recorded answers ([the last section](@ref jev_testing_manual) says how). Most
-share one program, a router whose ordinary argument is a chat message (a
-`String`) or an `Email`:
+Every example that calls a decision provider or an LLM runs when this manual is
+built, from recorded answers ([the last section](@ref jev_testing_manual) says
+how). Most share one program, a router whose ordinary argument is a chat message
+(a `String`) or an `Email`:
 
-```@example jevtest
-using UniLM, Test
-
+```@example jev_testing
 struct Email
     subject::String
     body::String
@@ -42,14 +59,14 @@ nothing # hide
 
 **The job:** see what a call will ask the model — which options, in which order,
 and whether every combination has a method — before anything is sent.
-**Without Jev**, you would render an LLM prompt and read it. **With Jev**, the
-options are the method table: [`meanings`](@ref) lists them in the order a call
-sends them, and [`meaning_gaps`](@ref) lists the combinations no method covers,
-with no network.
+**Without dispatch on meaning**, you would render an LLM prompt and read it.
+**With it**, the options are the method table: [`meanings`](@ref) lists them in
+the order a call sends them, and [`meaning_gaps`](@ref) lists the combinations no
+method covers, with no network.
 
 `meanings(route)` lists the meanings of every method, by slot:
 
-```@example jevtest
+```@example jev_testing
 meanings(route)[1]                     # slot 1: every method's meaning
 ```
 
@@ -58,7 +75,7 @@ them: only the meanings whose method accepts the argument types. A chat message
 is never an automatic out-of-office reply, so a call with an `Email` offers all
 four meanings and a call with a `String` offers three:
 
-```@example jevtest
+```@example jev_testing
 meanings(route, Tuple{String})[1]      # slot 1, for a chat message
 ```
 
@@ -69,7 +86,7 @@ for that branch.
 covers, or covers ambiguously. With several slots the answers combine, and gaps
 are easy to leave:
 
-```@example jevtest
+```@example jev_testing
 reply(::nl"a question", ::nl"a calm tone", msg)   = :answer
 reply(::nl"a question", ::nl"an angry tone", msg) = :answer_and_apologise
 reply(::nl"a complaint", ::nl"a calm tone", msg)  = :apologise
@@ -86,7 +103,7 @@ combination, which two methods match with neither more specific; the error names
 both, and a method for their intersection settles it. Here the missing method
 closes the gap:
 
-```@example jevtest
+```@example jev_testing
 reply(::nl"a complaint", ::nl"an angry tone", msg) = :escalate
 meaning_gaps(reply, Tuple{String})
 ```
@@ -95,7 +112,7 @@ meaning_gaps(reply, Tuple{String})
 [`ChoiceAnswer`](@ref). One that prints the distribution and returns the argmax
 shows the whole answer without changing the decision:
 
-```@example jevtest
+```@example jev_testing
 function argmax_shown(a)
     for (option, p) in sort(collect(a.probabilities); by = last, rev = true)
         println(rpad(p, 6), option)
@@ -104,7 +121,7 @@ function argmax_shown(a)
 end
 
 destination = nl_dispatch(route, "My package arrived crushed and the screen is cracked. I want my money back.";
-                          decide = argmax_shown)
+                          decide = argmax_shown, service, model)
 println("route returned ", repr(destination))
 ```
 
@@ -119,27 +136,26 @@ println("route returned ", repr(destination))
 
 ## [Recorded answers](@id jev_testing_recorded)
 
-**The job:** make tests that call Jev or an LLM give the same answer on every
-run, with no key. **Without recordings**, every run asks again and tests a new
-sample. **With [`with_recorded_answers`](@ref)**, a real answer is recorded
-once and replayed from a directory.
+**The job:** make tests that call a decision provider or an LLM give the same
+answer on every run, with no key. **Without recordings**, every run asks again
+and tests a new sample. **With [`with_recorded_answers`](@ref)**, a real answer
+is recorded once and replayed from a directory.
 
 `with_recorded_answers(f, dir; mode)` runs `f()` with these exchanges passing
 through a directory of recordings:
 
-- **Recorded:** System One on every backend — [`ask`](@ref) and
+- **Recorded:** decisions on every provider — [`ask`](@ref) and
   [`ask_each`](@ref), and so [`nl_dispatch`](@ref), [`nl_classify`](@ref) and
-  [`@branch`](@ref), and TypeSafe's [`list_models`](@ref) — and the LLM verbs
-  [`chatrequest!`](@ref) and [`respond`](@ref), streamed or not, and
-  [`embeddingrequest!`](@ref), and so the tool loops [`tool_loop!`](@ref) and
+  [`@branch`](@ref) — and one model listing, TypeSafe's [`list_models`](@ref);
+  the LLM verbs [`chatrequest!`](@ref) and [`respond`](@ref), streamed or not,
+  and [`embeddingrequest!`](@ref), and so the tool loops [`tool_loop!`](@ref) and
   [`tool_loop`](@ref); the Responses lifecycle calls ([`get_response`](@ref),
   [`delete_response`](@ref), [`list_input_items`](@ref), [`cancel_response`](@ref),
   [`compact_response`](@ref), [`count_input_tokens`](@ref)); and
   [`fim_complete`](@ref) and [`prefix_complete`](@ref).
-- **Not recorded:** image generation, audio, files, batch, moderation, the model
-  listings other than TypeSafe's, Ollama's model pulls, realtime, MCP and every
-  other verb. Inside a scope they behave exactly as outside it: they reach the
-  network, with their key.
+- **Not recorded:** image generation, audio, files, batch, moderation, the other
+  model listings, model pulls, realtime, MCP and every other verb. Inside a scope
+  they behave exactly as outside it: they reach the network, with their key.
 
 | `mode` | Behaviour |
 | :--- | :--- |
@@ -150,10 +166,10 @@ through a directory of recordings:
 - **One file per request.** A recording is `<dir>/<key>.json`. The file holds
   the request, the response body — a streamed call's as the lines of its stream
   (`stream`) — with its request id, the name of the header that carried it and
-  the headers a replay gives back (`headers`: the request-id header and Gemini's
-  `x-gemini-service-tier`, which prices the reply), and the time of recording,
-  pretty-printed so a diff is readable. The API key and every other header are
-  never written.
+  the headers a replay gives back (`headers`: the request-id header, and a header
+  the reply is priced by, which [`with_recorded_answers`](@ref) names), and the
+  time of recording, pretty-printed so a diff is readable. The API key and every
+  other header are never written.
 - **The key is the exact request:** the SHA-256 of the method, the path of the
   URL and the exact request body — except a credential the body carries, such as
   an MCP tool's `authorization`, which reads `"<redacted>"` in the key and the
@@ -165,30 +181,25 @@ through a directory of recordings:
   the key instead). The key is never a canonical form,
   because the order of a Choice's options and of the state's keys moves the
   answer: a reordered request is a different request, with a recording of its
-  own. So is a request with another model — for an unpinned System One request,
-  another `TYPESAFE_DEFAULT_MODEL` ([Setup](@ref jev_setup)) — other
-  instructions, or one changed byte in the state or the prompt.
-- **Each backend apart.** A System One backend other than TypeSafe files its
-  requests under a path of its own — `/ollama/v1/systemone` for an Ollama
-  server, `/openai-decisions/v1/decisions` for OpenAI's Decisions API — so the
-  same question asked of two backends is two recordings, and a replay never
-  answers one backend with another's answer ([Backends](@ref
-  backends_recordings)). TypeSafe's `long_context = true` is part of the key too.
-  The options that change how a request is served but never what it is answered
-  — OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`,
-  Ollama's `keep_alive` —
-  are sent and left out of the key and the file, so the same question replays
-  whatever they are.
-- **Media by digest.** A TypeSafe request with images is keyed on its JSON part
-  and the SHA-256 of each image, and its file holds those digests, never the
-  image's bytes: the image stays where your code reads it from. Every base64
-  `data:` URL a request carries inside its body — an image for OpenAI's
-  Decisions API or the OpenAI chat wire, a PDF in a Responses `input_file`,
-  audio, any media — reads `data:<mime>;sha256,<hex>`, the SHA-256 of its
-  base64 text, in the key and the file alike, and so do the images of an Ollama
-  System One request and the images and sound clips of an Ollama embeddings
-  request. Other media sent as bare base64, such as Ollama's chat `images` or an
-  `input_audio` clip, is written as sent.
+  own. So is a request with another model — for an unpinned request, another
+  default model, which an environment variable may set
+  ([Testing and recordings](@ref jev_testing)) — other instructions, or one
+  changed byte in the state or the prompt.
+- **Each provider apart.** A decision provider files its requests under a path
+  of its own, so the same question asked of two providers is two recordings, and
+  a replay never answers one provider with another's answer. A provider option
+  that changes what a request is answered is part of the key; one that changes
+  only how it is served is sent and left out of the key and the file, so the same
+  question replays whatever it is. Each provider's testing section names its path
+  and those options.
+- **Media by digest.** Every base64 `data:` URL a request's body carries — an
+  image, a PDF, audio, any media — reads `data:<mime>;sha256,<hex>`, the SHA-256
+  of its base64 text, in the key and the file alike: a recording names the media
+  it answered without holding their bytes, and the media stay where your code
+  reads them from. A decision request's pictures are keyed and written by their
+  digests too, as each provider's testing section says; media a wire sends as
+  bare base64 is written as sent, unless [`with_recorded_answers`](@ref) lists it
+  among the digested.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
   tool loops (a later request of a streamed turn, or a request a stream's
@@ -197,24 +208,26 @@ through a directory of recordings:
   the service, and never a call error
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names
-  the directory, the start of the key, and what the request asked for: a System
-  One request's questions, any other request's model. It also says what
-  recording it takes: `TYPESAFE_API_KEY` for TypeSafe, the provider's key or a
-  running Ollama server for the others.
+  the directory, the start of the key, and what the request asked for: a
+  decision request's questions, any other request's model. It also says what
+  recording it takes: the provider's key, or a running local server.
+- **A lost write is loud too.** In a recording mode, an answer whose file cannot
+  be written — the directory removed after the scope checked it, a full disk —
+  throws [`RecordingWriteError`](@ref) out of the verb the same way: the answer
+  was paid for, and no call error absorbs it.
 - **Scopes nest.** An inner scope's service is the enclosing scope, not the
   network. A scope also covers the tasks started inside it (`Threads.@spawn`,
   `asyncmap`).
 - **A replay pins one sample.** A recording is one draw from a service whose
-  answers vary. Replaying it makes a test reproducible; it does not make that draw
-  typical. Before you build a test on an answer near a tie, look at its recorded
-  probabilities.
+  answers can vary. Replaying it makes a test reproducible; it does not make that
+  draw typical. Before you build a test on an answer near a tie, look at its
+  recorded probabilities.
 
 The demo pins the model first, since the model name is part of every request and
 so of its key:
 
-```@example jevtest
-const JEV = "jev-1.13.0"
-triage(msg) = nl_dispatch(route, msg; model = JEV)
+```@example jev_testing
+triage(msg) = nl_dispatch(route, msg; service, model = pinned)
 nothing # hide
 ```
 
@@ -225,7 +238,7 @@ committed recordings in a default build; in a recording build, the committed
 recordings where they exist and the service for the rest; the service itself in
 a live build.
 
-```@example jevtest
+```@example jev_testing
 recordings = mktempdir()     # in a package: a directory committed next to the tests
 msgs = ["My package arrived crushed and the screen is cracked. I want my money back.",
         Email("Automatic reply: Out of office", "I am out of the office until Monday, with no access to email.")]
@@ -237,24 +250,23 @@ println(recorded)
 foreach(println, readdir(recordings))     # one file per request, named by its key
 ```
 
-Replaying needs no key. With `TYPESAFE_API_KEY` removed, no request could be
-sent:
+Replaying needs no key. With `key` removed, no request could be sent:
 
-```@example jevtest
-replayed = withenv("TYPESAFE_API_KEY" => nothing) do
+```@example jev_testing
+replayed = withenv(key => nothing) do
     with_recorded_answers(() -> map(triage, msgs), recordings)
 end
 replayed == recorded
 ```
 
-A request that differs in anything — here one trailing space, or the alias
-instead of the pin — has no recording:
+A request that differs in anything — here one trailing space, or the default
+model instead of the pin — has no recording:
 
-```@example jevtest
+```@example jev_testing
 with_recorded_answers(recordings) do
     @testset showtiming=false "changed requests miss" begin
         @test_throws ReplayMissError triage(msgs[1] * " ")
-        @test_throws ReplayMissError nl_dispatch(route, msgs[1])
+        @test_throws ReplayMissError nl_dispatch(route, msgs[1]; service, model)
     end
 end
 nothing # hide
@@ -262,14 +274,13 @@ nothing # hide
 
 **Tune it**
 
-- **Pin the model.** `jev-latest` is an alias and moves when a new version ships
-  ([Models](https://docs.typesafe.ai/models)). With the version pinned, moving
-  the pin makes every recording miss until you record again, instead of testing
-  the new version against the old one's answers. A request without `model =`
-  names the backend's default — on TypeSafe `jev-latest`, or whatever
-  `TYPESAFE_DEFAULT_MODEL` holds when the request is sent — so in code you
-  record, pin with `model =`, or record with the same environment you replay
-  with.
+- **Pin the model.** An alias moves when a new version ships. With the version
+  pinned, moving the pin makes every recording miss until you record again,
+  instead of testing the new version against the old one's answers. A request
+  without `model =` names the provider's default, which can be an alias, and
+  which an environment variable may change ([Testing and
+  recordings](@ref jev_testing)) — so in code you record, pin with `model =`, or
+  record with the same environment you replay with.
 - **Record from a fresh session**, such as a run of the test suite. Re-evaluating
   a method whose sentence you edited defines a second method beside the first,
   which stays on offer until you restart Julia or delete it
@@ -288,9 +299,9 @@ nothing # hide
 ## [Tests: the methods, the resolution, the judgment](@id jev_testing_tests)
 
 **The job:** check in CI, without a key, that the program still decides the way
-you need. **Without Jev**, a classifier is tested against labelled examples, one
-call each. **With Jev**, a program has three layers, and each is tested on its
-own:
+you need. **Without a decision model**, a classifier is tested against labelled
+examples, one call each. **With one**, a program has three layers, and each is
+tested on its own:
 
 - **The methods** are ordinary Julia. A method with `nl"…"` in its signature runs
   like any other when it is called with a [`Meaning`](@ref) instance.
@@ -301,12 +312,12 @@ own:
 
 Only the judgment needs the service.
 
-### The methods
+### [The methods](@id jev_testing_methods)
 
 Call them with `nl"…"()` instances, or with `Meaning(text)` for a sentence held
 in a variable. No service, no key:
 
-```@example jevtest
+```@example jev_testing
 @testset showtiming=false "route: the methods" begin
     @test route(nl"the customer wants a refund"(), "I want my money back.") === :refunds
     @test route(Meaning("anything else"), Email("Invoice 1042", "Please find it attached.")) === :frontline
@@ -319,9 +330,9 @@ nothing # hide
 The last line is why a `String` is never offered that meaning: no method could
 take it.
 
-### Coverage
+### [Coverage](@id jev_testing_coverage)
 
-```@example jevtest
+```@example jev_testing
 @testset showtiming=false "every offered combination has a method" begin
     @test isempty(meaning_gaps(reply, Tuple{String}))
     for T in (String, Email)
@@ -338,7 +349,7 @@ into CI.
 ### [Keyed dispatch: the table and the methods agree](@id jev_testing_keyed)
 
 With `texts`, the methods dispatch on short keys and a table holds the sentence
-the model reads for each key ([Dispatch on Meaning](@ref nl_dispatch_keyed)).
+the model reads for each key ([Keys and tables](@ref nl_dispatch_keyed)).
 The table and the methods live apart, so test that they agree:
 `meanings(f; texts)` makes the check `nl_dispatch` makes before its request and
 throws when a key has no method, `meanings(f, argtypes; texts)` pins what a call
@@ -346,9 +357,7 @@ offers, in table order, and `meaning_gaps(f, argtypes; texts)` lists the
 combinations no method covers. Here the support desk's teams from [Decisions
 with LLMs](@ref jev_llm_route) each go to a queue:
 
-```@example jevdesk
-using UniLM, Test
-
+```@example jev_testing
 const TEAM = (billing   = "payments, charges, invoices or refunds",
               technical = "the app or the website does not work as expected",
               shipping  = "a parcel that is late, lost or arrived damaged",
@@ -374,7 +383,7 @@ and not to the methods. The error names the method to define,
 `queue(::Val{:returns}, _)`, and `nl_dispatch` raises it before any request. A
 method whose key is not in the table is no error: it is never offered.
 
-### The resolution, on recorded answers
+### [The resolution, on recorded answers](@id jev_testing_resolution)
 
 Replay the calls the program makes and assert on the method they select. The
 test needs no key and sends nothing, and it covers everything that shapes the
@@ -399,7 +408,7 @@ end
 
 Here the directory recorded above plays that part:
 
-```@example jevtest
+```@example jev_testing
 with_recorded_answers(recordings; mode = :replay) do
     @testset showtiming=false "route, on recorded answers" begin
         @test triage(msgs[1]) === :refunds
@@ -409,93 +418,46 @@ end
 nothing # hide
 ```
 
-### Edge cases, from a local server
+### [Edge cases, from a local server](@id jev_testing_edge_cases)
 
 A recording holds an answer the model gave. To test what the program does with an
 answer the model rarely gives — a near-tie, a failed call, an option it was never
-offered — write the answer yourself, and point `TYPESAFE_BASE_URL`
-([Setup](@ref jev_setup)) at a local server that returns it. This one answers
-with whatever `canned[]` holds and keeps every request body it receives, so a
-test can check the wire as well:
+offered — write the answer yourself, and send the call to a local server that
+returns it in the provider's response shape. Each provider's testing section
+shows how, with such a server, and the table [at the end](@ref
+jev_testing_providers) links them. The server can keep every request body it
+receives, so a test can check the wire as well.
 
-```julia
-using UniLM, HTTP, JSON, Test
-
-canned = Ref{Any}()                  # (status, body) the server answers next
-sent = String[]                      # every request body it received
-server = HTTP.serve!("127.0.0.1", 8123; verbose = false) do req
-    push!(sent, String(copy(req.body)))
-    status, body = canned[]
-    HTTP.Response(status, ["Content-Type" => "application/json"], JSON.json(body))
-end
-
-const OPTIONS = meanings(route, Tuple{String})[1]     # what a String message is offered
-
-# A 200 in the service's shape: route's one question is "meaning_1" (its slot is unnamed).
-# `option` gets probability p, the others share the rest, and confidence is (n·p − 1)/(n − 1).
-function choosing(option, p)
-    n = length(OPTIONS)
-    probabilities = Dict(o => o == option ? p : (1 - p) / (n - 1) for o in OPTIONS)
-    (200, (model = "jev-1.13.0", usage = (input_tokens = 96, output_tokens = 3),
-           answers = (meaning_1 = (type = "choice", choice = option, probabilities,
-                                   confidence = clamp((n * p - 1) / (n - 1), 0, 1)),)))
-end
-
-withenv("TYPESAFE_BASE_URL" => "http://127.0.0.1:8123", "TYPESAFE_API_KEY" => "test") do
-    @testset "route: resolution edge cases" begin
-        canned[] = choosing("the customer wants a refund", 0.97)
-        @test nl_dispatch(route, "I want my money back.") === :refunds
-        wire = JSON.parse(last(sent))                     # the request, in wire order
-        @test wire["state"] == Dict("msg" => "I want my money back.")
-        @test collect(keys(wire["questions"]["meaning_1"]["criteria"])) == OPTIONS
-
-        canned[] = choosing("the customer wants a refund", 0.40)        # confidence 0.1
-        @test nl_dispatch(route, "Hm."; min_confidence = 0.7, fallback = m -> :human) === :human
-        @test_throws LowConfidenceError nl_dispatch(route, "Hm."; min_confidence = 0.7)
-
-        canned[] = (503, (detail = "Service overloaded",))
-        @test_throws SystemOneError nl_dispatch(route, "Hm."; config = RequestConfig(max_attempts = 1))
-
-        canned[] = choosing("an automatic out-of-office reply", 0.97)   # never offered for a String
-        @test_throws ArgumentError nl_dispatch(route, "Hm.")
-    end
-end
-close(server)
-```
-
-The response shape is the whole contract: a `model`, an `answers` object keyed by
-the question names the client sent — `meaning_1` here, the slot's argument name
-when it has one — each a Choice with `choice`, `confidence` and `probabilities`,
-and a `usage` object. `RequestConfig(max_attempts = 1)` makes the retryable 503
-fail at once instead of backing off. The last case is one a recording cannot
-produce: an answer outside the offered options is refused with an
-`ArgumentError`, and no method runs. A gap in the method table needs no server
-at all, since `nl_dispatch` refuses it before sending. Run these tests outside
-`with_recorded_answers`: in a replay scope a request with no recording throws
-before it reaches the server, and a recording scope would file the canned
-answers as real ones.
+An answer outside the offered options, which no recording can hold, makes the
+call a [`SystemOneCallError`](@ref), so `nl_dispatch` throws a
+[`SystemOneError`](@ref), and no method runs. A retryable status fails at once
+under `RequestConfig(max_attempts = 1)` instead of backing off. A gap in the
+method table needs no server at all, since `nl_dispatch` refuses it before
+sending. Run these tests outside `with_recorded_answers`: in a replay scope the
+request is replayed or misses, and never reaches the server, and a recording
+scope would file the canned answers as real ones.
 
 ### [The judgment: semantic assertions over LLM output](@id jev_testing_assertions)
 
 A property of generated text — the reply apologises, the reply promises no
-refund — is a judgment, and Jev can make it: one Noul per property, all in one
-request. The reply comes from an LLM call, which is recorded like Jev's answers,
-so every run asserts on the same reply:
+refund — is a judgment, and a decision model can make it: one Noul per property,
+all in one request. The reply comes from an LLM call, which is recorded like the
+decision's answers, so every run asserts on the same reply:
 
-```@example jevtest
+```@example jev_testing
 const RULES = "You are a support agent. At most 3 sentences. Apologise when something went wrong. " *
               "Never promise a refund; say a colleague will review eligibility."
 customer = "My order #58213 arrived two weeks late and the box was soaked. I want my money back."
-draft = output_text(respond(customer; instructions = RULES, model = "gpt-5.4-mini"))
-println(draft)
+written = output_text(respond(customer; instructions = RULES, service = llm, model = llm_model))
+println(written)
 
-verdict = ask((customer_message = customer, reply = draft),
+verdict = ask((customer_message = customer, reply = written),
     "apologises"        => noul("Does `reply` apologise to the customer?"),
     "offers_refund"     => noul("Does `reply` promise or offer a refund?";
                                 yes = "It commits to or offers a refund, even conditionally",
                                 no  = "It only says eligibility will be reviewed, or makes no refund commitment"),
     "asks_order_number" => noul("Does `reply` ask the customer for their order number?");
-    model = JEV)
+    service, model = pinned)
 for property in ("apologises", "offers_refund", "asks_order_number")
     println(rpad(property, 18), verdict[property].noul)
 end
@@ -532,14 +494,14 @@ input.
     and none changed across three identical runs. Regenerating the replies
     changed 12 of 96 verdicts.
 
-### Paraphrase tests
+### [Paraphrase tests](@id jev_testing_paraphrase)
 
 A router can be checked without labels: rewrites of one input that keep its
 meaning must route the same way. Write paraphrases in several styles — formal,
 terse, misspelt, another language, rambling — and assert that each lands where
 the original does:
 
-```@example jevtest
+```@example jev_testing
 seed = "My package arrived crushed and the screen is cracked. I want my money back."
 paraphrases = [
     "The parcel I received was crushed in transit and its screen is cracked. I would like a full refund.",
@@ -569,19 +531,19 @@ input and all its paraphrases to the same wrong place passes.
     same order as labelled accuracy (1.000, 0.990, 0.971). The paraphrases that
     moved all came from a single input (1 of 15).
 
-## [Test a Jev + LLM pipeline offline](@id jev_testing_pipeline)
+## [Test a decision + LLM pipeline offline](@id jev_testing_pipeline)
 
 **The job:** test the whole path a message takes — route, draft, check — in CI,
-with no key and nothing sent. **Without recordings**, the test calls Jev and the
-LLM on every run, pays for both, and asserts on a new draft each time. **With
-[`with_recorded_answers`](@ref)**, the LLM's draft is recorded like Jev's
-answers, and the whole pipeline replays.
+with no key and nothing sent. **Without recordings**, the test calls both
+providers on every run, pays for both, and asserts on a new draft each time.
+**With [`with_recorded_answers`](@ref)**, the LLM's draft is recorded like the
+decisions' answers, and the whole pipeline replays.
 
 The desk from [Decisions with LLMs](@ref jev_llm_desk), cut to three steps: route with
 [`nl_classify`](@ref) over `TEAM` (above), draft with [`respond`](@ref), and
-check the draft against the shop's policy with one Jev question:
+check the draft against the shop's policy with one decision:
 
-```@example jevdesk
+```@example jev_testing
 const MESSAGES = [
     "I was charged twice for order #4471. Please refund the duplicate payment.",
     "The app crashes every time I open my order history. iPhone 15, latest version.",
@@ -597,13 +559,14 @@ Damaged items: report them within 7 days with a photo; we send a replacement or 
 Shipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.
 We refund shipping costs only when the item arrived damaged."""
 
-# Route: the team's key, or :other when Jev is unsure.
-team_for(message; kwargs...) = nl_classify(message, TEAM; min_confidence = 0.6, fallback = _ -> :other, kwargs...)
+# Route: the team's key, or :other when the decision is unsure.
+team_for(message; kwargs...) =
+    nl_classify(message, TEAM; min_confidence = 0.6, fallback = _ -> :other, service, model, kwargs...)
 
 # Draft: the LLM writes with the team's instructions and the shop's policy.
 instructions(team) = "You write replies for the $team team of a small online shop that sells phones and " *
                      "accessories. Follow the shop's policy:\n$POLICY\nAnswer in at most three sentences."
-draft(message, team) = output_text(respond(message; instructions = instructions(team), model = "gpt-5.4-mini"))
+draft(message, team) = output_text(respond(message; instructions = instructions(team), service = llm, model = llm_model))
 
 # Check: does the policy back what the draft says?
 const RELATION = choice("How does `policy` relate to `reply`?", (
@@ -612,7 +575,7 @@ const RELATION = choice("How does `policy` relate to `reply`?", (
     says_nothing = "The policy does not address what the reply asserts, either way"))
 
 function grounded(reply)
-    a = ask((policy = POLICY, reply = reply), "relation" => RELATION)["relation"]
+    a = ask((policy = POLICY, reply = reply), "relation" => RELATION; service, model)["relation"]
     a.confidence >= 0.8 ? Symbol(a.choice) : :unsure
 end
 
@@ -628,14 +591,14 @@ nothing # hide
 The test records once and replays on every run after that. Here the recording
 goes into a temporary directory, and the replay runs with both keys removed:
 
-```@example jevdesk
+```@example jev_testing
 desk_answers = mktempdir()     # in a package: a directory committed next to the tests
 
-# Once, with TYPESAFE_API_KEY and OPENAI_API_KEY set: record every answer the test needs.
+# Once, with both providers' keys set: record every answer the test needs.
 with_recorded_answers(() -> map(desk, MESSAGES[[1, 5]]), desk_answers; mode = :record)
 
 # Every run after that: no key, and nothing is sent.
-withenv("TYPESAFE_API_KEY" => nothing, "OPENAI_API_KEY" => nothing) do
+withenv(key => nothing, llm_key => nothing) do
     with_recorded_answers(desk_answers) do
         @testset showtiming=false "the desk, offline" begin
             @test desk(MESSAGES[5]) == (:shipping, :supports)       # drafted, and the policy backs the draft
@@ -646,17 +609,16 @@ end
 nothing # hide
 ```
 
-Both paths replay: the routes and the checks from Jev, the drafts from the LLM.
-The draft is part of the check's request, so the two stay in step: change
-`instructions` and the draft's request misses, loudly, until it is recorded
-again — and a new draft is a new input for the check, so read it before you
-trust the assertion again.
+Both paths replay: the routes and the checks from the decision provider, the
+drafts from the LLM. The draft is part of the check's request, so the two stay
+in step: change `instructions` and the draft's request misses, loudly, until it
+is recorded again — and a new draft is a new input for the check, so read it
+before you trust the assertion again.
 
 **Tune it**
 
 - **Record with both keys, replay with none.** A recording scope sends each
-  request to its own service: Jev with `TYPESAFE_API_KEY`, the LLM with
-  `OPENAI_API_KEY`.
+  request to its own service, each with its own key (`key` and `llm_key` above).
 - **A streamed call replays too.** It is recorded and replayed through the same
   callbacks; `stream=true` makes it another request, so a call switched to
   streaming misses until it is recorded again.
@@ -672,14 +634,14 @@ answer meant making the decision with [`ask`](@ref) yourself. **With it**,
 whole [`SystemOneSuccess`](@ref) before they decide. Keep three values from its
 `response`:
 
-- `request_id` — the `x-typesafe-request-id` header, the id to quote in a
-  support report (on OpenAI's Decisions API the `x-request-id` header; Ollama
-  sends none, and it is `nothing`).
-- `model` — the versioned id that answered, which the alias you named does not
+- `request_id` — the id the provider's reply carries, to quote in a support
+  report; `nothing` where a provider sends none ([What each provider
+  takes](@ref backends_table) names each header).
+- `model` — the versioned id that answered, which an alias you named does not
   tell you.
 - `raw` — the JSON body the service sent; the typed fields are read from it.
 
-```@example jevdesk
+```@example jev_testing
 audit = SystemOneSuccess[]
 team = team_for(MESSAGES[1]; on_response = r -> push!(audit, r))
 
@@ -705,9 +667,9 @@ result. `nl_dispatch(f, args...; on_response)` takes it the same way, and
 
 `docs/make.jl` runs the build inside one [`with_recorded_answers`](@ref) scope
 over `docs/recorded_answers`, and picks its mode by flag, never by which API
-keys are set. The examples that call a service replay from it: System One on
-each backend ([`ask`](@ref), [`ask_each`](@ref), TypeSafe's
-[`list_models`](@ref)) and the LLM verbs, streamed or not ([`chatrequest!`](@ref),
+keys are set. The examples that call a service replay from it: decisions on
+each provider ([`ask`](@ref), [`ask_each`](@ref), the one model listing that is
+recorded) and the LLM verbs, streamed or not ([`chatrequest!`](@ref),
 [`respond`](@ref), [`embeddingrequest!`](@ref), the tool loops, the Responses
 lifecycle calls, [`fim_complete`](@ref), [`prefix_complete`](@ref)).
 
@@ -729,17 +691,27 @@ build, a fresh one in a live build, and in a recording build the committed
 recording where one exists and a fresh answer otherwise. The numbers in the
 Evidence boxes were measured separately.
 
-## See also
+## [See also](@id jev_testing_see_also)
 
-- [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
+- [Decisions](@ref decisions_start) — the decision providers, each with its entry
 - [Route and Decide](@ref system_one_guide) — `ask`, the three primitives, and
   reading answers
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — meanings in method signatures
   and keyed tables, `nl_dispatch`, `decide` and `@branch`
 - [Decisions with LLMs](@ref jev_llm_guide) — the support desk tested above, step by
   step
-- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
-  calls on other backends, each recorded apart
-- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) — every
-  type and verb, including [`with_recorded_answers`](@ref) and
-  [`ReplayMissError`](@ref)
+- [Testing and recordings](@ref testing_guide) — record and replay for the
+  language-model calls alone
+- [Choosing a decision provider](@ref system_one_backends) — the same calls on
+  each provider, each recorded apart
+- [`with_recorded_answers`](@ref), [`ReplayMissError`](@ref) and
+  [`RecordingWriteError`](@ref) in the API reference
+
+## [On your provider](@id jev_testing_providers)
+
+Where each provider's recordings are filed, what is keyed and what is left out,
+what recording takes, and a server that answers what a recording cannot hold:
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.decisions, :testing)
+```

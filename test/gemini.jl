@@ -360,6 +360,21 @@ end
         streamed = _build_stream_message(state)
         @test streamed.finish_reason == CONTENT_FILTER && streamed.refusal_message == why
     end
+    # The finishMessage is "Optional"; without it the refusal names the stop, in the enum's words: none of the
+    # three is the safety filter, and the stop is recoverable from the result.
+    words = Dict("LANGUAGE" => "flagged for using an unsupported language",
+                 "ESCALATION" => "filtered by an escalation rule",
+                 "PUP_LIMITED_DISABLED" => "limited or disabled due to Prohibited Use Policy (PUP) violations")
+    @testset "$wire without a finishMessage" for wire in sort(collect(keys(words)))
+        reply = JSON.json(Dict("candidates" => [Dict("finishReason" => wire)]))
+        unstreamed = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(reply))).message
+        state = StreamState()
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", reply, state)
+        for msg in (unstreamed, _build_stream_message(state))
+            @test msg.finish_reason == CONTENT_FILTER && startswith(msg.refusal_message, wire) &&
+                  occursin(words[wire], msg.refusal_message) && !occursin("safety filter", msg.refusal_message)
+        end
+    end
 end
 
 @testset "decode — usage: cached is a subset of prompt; thoughts bill as output" begin

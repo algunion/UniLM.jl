@@ -539,9 +539,22 @@ function _gemini_usage_metadata(u::TokenUsage)::Dict{String,Any}
 end
 
 # The refusal of a filtered candidate: its finishMessage, Google's own account of why generation
-# stopped, else the filter named.
-_gemini_refusal(cand)::String = something(cand isa AbstractDict ? _wire_string(cand, "finishMessage") : nothing,
-                                          "Model response blocked by safety filter.")
+# stopped, which is "Optional", else the stop named. A language flag, an escalation rule and a
+# Prohibited Use Policy stop are not the safety filter, so each is named with the FinishReason
+# enum's definition of it (https://ai.google.dev/api/generate-content#FinishReason).
+const _GEMINI_STOP_DEFINITIONS = Dict{String,String}(
+    "LANGUAGE" => "The response candidate content was flagged for using an unsupported language.",
+    "ESCALATION" => "Request was filtered by an escalation rule.",
+    "PUP_LIMITED_DISABLED" => "Token generation stopped because the user account is limited or disabled due to " *
+                              "Prohibited Use Policy (PUP) violations.")
+function _gemini_refusal(cand)::String
+    cand isa AbstractDict || return "Model response blocked by safety filter."
+    message = _wire_string(cand, "finishMessage")
+    isnothing(message) || return message
+    stop = _wire_string(cand, "finishReason")
+    definition = isnothing(stop) ? nothing : get(_GEMINI_STOP_DEFINITIONS, stop, nothing)
+    isnothing(definition) ? "Model response blocked by safety filter." : "$stop: $definition"
+end
 
 # The reply names the model that served it in modelVersion: a deprecated id Google routes to its
 # successor answers as that successor, which is the model priced. A reply that ends at the

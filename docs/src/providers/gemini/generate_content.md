@@ -320,7 +320,9 @@ reason other than `STOP` keep that reason, so `tool_loop!` does not run them. Go
 lists every value ([FinishReason](https://ai.google.dev/api/generate-content#FinishReason)).
 
 A `"content_filter"` turn with no text has no content: its `refusal_message` is the candidate's
-`finishMessage`, Google's account of the stop, else "Model response blocked by safety filter.", and
+`finishMessage`, Google's account of the stop, which is optional. Without it, a `LANGUAGE`, `ESCALATION` or
+`PUP_LIMITED_DISABLED` stop is named, with the enum's definition of it ("ESCALATION: Request was filtered
+by an escalation rule."), and a content filter reads "Model response blocked by safety filter.";
 such a turn, when it holds no part, is left out of the next request. A blocked prompt gets no
 candidate at all — "If set, the prompt was blocked and no candidates are returned"
 ([generateContent reference](https://ai.google.dev/api/generate-content)) — which

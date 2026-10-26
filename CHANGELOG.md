@@ -97,8 +97,8 @@
   case, `"language"`, `"escalation"` or `"pup_limited_disabled"`, and a turn without text had the
   content `""` and no `refusal_message`, so Google's `finishMessage` was lost. Each now gives
   `"content_filter"`, as Gemini's other filter stops do, streamed or not; a turn without text has
-  no content, and its `refusal_message` is the `finishMessage`, else "Model response blocked by
-  safety filter.". Upgrading: code that matched those three values tests
+  no content, and its `refusal_message` is the `finishMessage`, else the stop's name and the enum's
+  definition of it, such as "ESCALATION: Request was filtered by an escalation rule.". Upgrading: code that matched those three values tests
   `finish_reason == "content_filter"` and reads `refusal_message`; `text(result)` of such a turn is
   `nothing`, no longer `""`.
 - **`list_input_items` refuses `GEMINIServiceEndpoint`.** Google's Interactions API gets, cancels

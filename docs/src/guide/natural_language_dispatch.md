@@ -1,9 +1,24 @@
 # [Dispatch on Meaning](@id nl_dispatch_guide)
 
-A Julia method runs by the types of its arguments. With Jev, one argument can be
-chosen by what a text means: write one method per meaning, and one request picks
-the method whose meaning fits the text. The model only ever chooses among the
-sentences you wrote, and every choice comes with its probabilities.
+```@setup natural_language_dispatch
+using UniLM, JSON
+```
+
+A Julia method runs by the types of its arguments. With a decision model, one
+argument can be chosen by what a text means: write one method per meaning, and
+one request picks the method whose meaning fits the text. The model only ever
+chooses among the sentences you wrote, and every choice comes with its
+probabilities.
+
+```@example natural_language_dispatch
+service, model = TYPESAFEServiceEndpoint, "jev-latest"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the
+decision provider and model they run on: bind your own there. The table [at the
+end](@ref natural_language_dispatch_providers) links each provider's rules for
+the questions these calls send.
 
 ## [Pick a pathway](@id nl_dispatch_paths)
 
@@ -25,17 +40,15 @@ in where the sentences live.
 | Typed keys, hierarchies | Symbols, your own types or instances, enum values; keys can form a type hierarchy | none: each sentence is a type of its own |
 | What the model reads | the sentences | the same sentences, byte for byte |
 
-## The sixty-second version
+## [The sixty-second version](@id natural_language_dispatch_sixty)
 
 - **The job:** send each support message to the team that handles it.
-- **Without Jev:** keyword rules that miss rephrasings, a classifier to train and
-  retrain, or an LLM reply to parse and validate.
-- **With Jev:** one table of what each team handles, one method per team, one
+- **Without a decision model:** keyword rules that miss rephrasings, a
+  classifier to train and retrain, or an LLM reply to parse and validate.
+- **With one:** one table of what each team handles, one method per team, one
   request per message.
 
-```@example nldispatch
-using UniLM
-
+```@example natural_language_dispatch
 const TEAM = (billing   = "payments, charges, invoices or refunds",
               technical = "the app or the website does not work as expected",
               shipping  = "a parcel that is late, lost or arrived damaged",
@@ -43,34 +56,35 @@ const TEAM = (billing   = "payments, charges, invoices or refunds",
 
 message = "I was charged twice for order #4471. Please refund the duplicate payment."
 
-nl_classify(message, TEAM)
+nl_classify(message, TEAM; service, model)
 ```
 
 The model read the four sentences, never the keys, and the key of the sentence it
 chose came back. To run code instead, write one method per key:
 
-```@example nldispatch
+```@example natural_language_dispatch
 route(::Val{:billing}, message)   = "opened a payment review"
 route(::Val{:technical}, message) = "filed a bug report"
 route(::Val{:shipping}, message)  = "opened a claim with the carrier"
 route(::Val{:other}, message)     = "forwarded to the front desk"
 
-nl_dispatch(route, message; texts = TEAM)
+nl_dispatch(route, message; texts = TEAM, service, model)
 ```
 
 The same router with each sentence in its signature, and no table:
 
-```@example nldispatch
+```@example natural_language_dispatch
 route_by_sentence(::nl"payments, charges, invoices or refunds", message)           = "opened a payment review"
 route_by_sentence(::nl"the app or the website does not work as expected", message) = "filed a bug report"
 route_by_sentence(::nl"a parcel that is late, lost or arrived damaged", message)    = "opened a claim with the carrier"
 route_by_sentence(::nl"anything else", message)                                    = "forwarded to the front desk"
 
-nl_dispatch(route_by_sentence, message)
+nl_dispatch(route_by_sentence, message; service, model)
 ```
 
-Same answer: both calls put the same request on the wire, byte for byte (How it
-works, below, shows it), so the model was asked the same question.
+Same answer: both calls put the same request on the wire, byte for byte ([How it
+works](@ref natural_language_dispatch_how), below, shows it), so the model was
+asked the same question.
 
 **Tune it**
 
@@ -85,9 +99,9 @@ works, below, shows it), so the model was asked the same question.
 
 - **The job:** keep what the model reads in one table that a reviewer or a
   translator can read at a glance, while the code dispatches on short names.
-- **Without Jev:** a dictionary from label to handler, and a prompt that lists
-  the labels, kept in step by hand.
-- **With Jev:** pass the table as `texts`; the request is built from it, the keys
+- **Without a table:** a dictionary from label to handler, and a prompt that
+  lists the labels, kept in step by hand.
+- **With one:** pass the table as `texts`; the request is built from it, the keys
   never leave your process, and a key with no method is refused before anything
   is sent.
 
@@ -104,16 +118,16 @@ A table is ordered, and its order is the order the model reads the options in:
 
 A `Dict` is refused, because it has no order. A table holds at least one entry,
 with no sentence and no key twice; how many one question may offer is the
-backend's limit (255 on TypeSafe), checked before the request. Enum values make
+provider's limit, which its wrapper checks before the request. Enum values make
 [`nl_classify`](@ref) return one of your own values:
 
-```@example nldispatch
+```@example natural_language_dispatch
 @enum Team billing technical shipping other
 
 nl_classify(message, [billing   => TEAM.billing,
                       technical => TEAM.technical,
                       shipping  => TEAM.shipping,
-                      other     => TEAM.other])
+                      other     => TEAM.other]; service, model)
 ```
 
 `nl_classify` returns the key as the table writes it — `:billing` for a
@@ -125,7 +139,7 @@ pass one, and throws otherwise, as `nl_dispatch` does.
 `meanings(f; texts)` lists every sentence per position, and
 `meanings(f, argtypes; texts)` what a call with arguments of those types offers:
 
-```@example nldispatch
+```@example natural_language_dispatch
 meanings(route, Tuple{String}; texts = TEAM)[1]   # position 1, for a String message
 ```
 
@@ -142,11 +156,11 @@ own.
 for any of the other arguments' types. A key that no method takes is refused
 before any request, with the method to write:
 
-```@example nldispatch
+```@example natural_language_dispatch
 RETURNS = (; TEAM..., returns = "the customer wants to send an item back")   # a new team, no method yet
 
 try
-    nl_dispatch(route, message; texts = RETURNS)
+    nl_dispatch(route, message; texts = RETURNS, service, model)
 catch err
     println(sprint(showerror, err))
 end
@@ -169,9 +183,9 @@ decline ([Confidence and control](@ref nl_dispatch_control)).
 ## [Sentences in signatures](@id nl_dispatch_literal)
 
 - **The job:** keep each sentence right next to the code it triggers.
-- **Without Jev:** a dictionary from sentence to handler, kept in step with the
-  handlers by hand.
-- **With Jev:** `nl"…"` is a Julia type, so the sentence goes into the signature
+- **Without a sentence type:** a dictionary from sentence to handler, kept in
+  step with the handlers by hand.
+- **With one:** `nl"…"` is a Julia type, so the sentence goes into the signature
   itself, and there is nothing else to keep in step.
 
 `nl"the sentence"` is the type [`Meaning`](@ref)`{Symbol("the sentence")}`, a
@@ -179,7 +193,7 @@ singleton with no fields, so it reads as a type anywhere one is expected: in a
 signature, a `const` alias or an `isa` test. Append `()` for the instance, or
 build one from a runtime string with `Meaning(text)`:
 
-```@example nldispatch
+```@example natural_language_dispatch
 const Payments = nl"payments, charges, invoices or refunds"    # a type alias
 
 (Payments, Payments(), Meaning(TEAM.billing) isa Payments)
@@ -215,7 +229,7 @@ Order matters because the model reads it, and on an ambiguous text it moves the
 probabilities. Here one request asks the same question twice about a ticket that
 fits two meanings, once with the options as defined and once reversed:
 
-```@example nldispatch
+```@example natural_language_dispatch
 triage(::nl"the customer wants their money back", ticket)                                     = :refund
 triage(::nl"the customer was charged twice or charged an amount they did not expect", ticket) = :billing_error
 triage(::nl"the customer asks for an invoice, receipt, or billing document", ticket)          = :invoice
@@ -229,7 +243,7 @@ defined = meanings(triage)[1]    # what nl_dispatch(triage, ticket) offers, in t
 question(options) = choice("Select the option that best describes the provided state.", options)
 
 r = ask((ticket = "There is a charge from your company on my card that I don't recognize at all.",),
-        "as defined" => question(defined), "reversed" => question(reverse(defined)))
+        "as defined" => question(defined), "reversed" => question(reverse(defined)); service, model)
 for order in ("as defined", "reversed")
     p = r[order].probabilities
     println(rpad(order, 12), "money back ", p[defined[1]], "   charged twice or unexpectedly ", p[defined[2]])
@@ -259,41 +273,29 @@ declines only the shaky side of it. A table's order moves answers the same way.
 - Read `meanings(f)` after editing a sentence, and restart Julia to drop the old
   method.
 
-## How it works
+## [How it works](@id natural_language_dispatch_how)
 
-Both pathways build the same request. For the sixty-second version it is exactly
-this body, indented here — captured off the wire by pointing both calls at a
-local server instead of `api.typesafe.ai`; the keyed call and the sentence call
-sent the same bytes:
+Both pathways build the same request. A recording scope files each request it
+sees under its exact bytes, so recording the two calls of the sixty-second
+version shows it: they make one file, and that file holds the body they sent
+(in this manual's build, the scope records the answers the build replays: [How
+this manual runs its examples](@ref jev_testing_manual)):
 
-```json
-{
-  "state": {
-    "message": "I was charged twice for order #4471. Please refund the duplicate payment."
-  },
-  "model": "jev-latest",
-  "questions": {
-    "meaning_1": {
-      "type": "choice",
-      "instructions": "Select the option that best describes the provided state.",
-      "criteria": {
-        "payments, charges, invoices or refunds": null,
-        "the app or the website does not work as expected": null,
-        "a parcel that is late, lost or arrived damaged": null,
-        "anything else": null
-      }
-    }
-  }
-}
+```@example natural_language_dispatch
+wire = mktempdir()
+with_recorded_answers(wire; mode = :record) do
+    nl_dispatch(route, message; texts = TEAM, service, model)
+    nl_dispatch(route_by_sentence, message; service, model)
+end
+print(JSON.json(JSON.parsefile(only(readdir(wire; join = true)))["request"]["body"]; pretty = true))
 ```
 
 One [`choice`](@ref) question per keyed or meaning position, all in one
 [`ask`](@ref):
 
 - The **question name** is the position's argument name, or `meaning_<position>`
-  when it is unnamed. Question names key the answers. TypeSafe never sends them
-  to the model; OpenAI's Decisions wire carries each question's `name`, and
-  Ollama's generic decision prompt includes it (tev1's does not).
+  when it is unnamed. Question names key the answers; whether a provider shows
+  one to its model is on its entry's Questions section.
 - The **options** are the sentences, with no description attached: the sentence
   you write is the whole prompt for its option. Only the options the call can
   reach are offered ([Composing with ordinary dispatch](@ref nl_dispatch_composing)),
@@ -305,20 +307,17 @@ One [`choice`](@ref) question per keyed or meaning position, all in one
 - The **instructions** default to *"Select the option that best describes the
   provided state."*; the options carry the meaning. `instructions = ...`
   overrides them.
-- The **backend** is TypeSafe unless `service = ...` names another or a
-  [`with_system_one`](@ref) scope sets one ([Backends](@ref system_one_backends)).
-  The **model** is the backend's default — on TypeSafe `jev-latest`, or whatever
-  `TYPESAFE_DEFAULT_MODEL` names when the request is sent — unless `model = ...`
-  or the scope pins one. The backend's **options**, such as TypeSafe's long
-  context, are none unless `options = (long_context = true,)` or the scope sets
-  some.
+- The **provider** is the call's `service = ...`, else the [`with_system_one`](@ref)
+  scope's, else the chapter's default ([Choose per call or per
+  scope](@ref backends_choose)). The **model** is the call's `model = ...`; else,
+  when the call names no `service`, the scope's; else the provider's default, the
+  model at the top of its entry — and a call to a provider with no default model,
+  naming none, is refused before anything is sent. The provider's **options** are the call's `options = (…)`, else, when the
+  call names no `service`, the scope's.
 
 The model sees the state, the instructions and the sentences. It does **not** see
 the keys, the function's name, the method bodies, or the fact that this is
-dispatch at all — nor, on TypeSafe, the question name: to Jev it is one Choice
-question like any other ([Choice](https://docs.typesafe.ai/primitives/choice)).
-On OpenAI each question carries its name on the wire, and Ollama's generic
-decision prompt includes it (tev1's does not).
+dispatch at all: to the provider it is one Choice question like any other.
 
 **The answer.** Each answer is a [`ChoiceAnswer`](@ref) whose `choice` is one of
 the offered sentences by construction. A decision policy picks the sentence to
@@ -337,14 +336,14 @@ an event, an `IO`, an `Expr`, or a value JSON.jl cannot write, such as an
 than 64 levels deep, is an `ArgumentError` before the request, naming the
 argument and the path to the value:
 
-```@example nldispatch
+```@example natural_language_dispatch
 struct SupportTicket
     text::String
     notify::Function          # how to tell the customer; not something the model should read
 end
 
 try
-    nl_dispatch(route, SupportTicket(message, println); texts = TEAM)
+    nl_dispatch(route, SupportTicket(message, println); texts = TEAM, service, model)
 catch err
     println(sprint(showerror, err))
 end
@@ -354,18 +353,19 @@ A `String` is data, so a secret a struct holds in a field — an API key, a
 customer's address — is sent, and a `:record` scope of
 [`with_recorded_answers`](@ref) writes it to disk with the request. Pass
 `state = ...` with only what the model should read; an explicit state is sent as
-given. An [`ImageAttachment`](@ref) is data too: on TypeSafe it travels as the
-images of any state do ([Images](@ref jev_images)), and a backend that takes no
-image in such a state — OpenAI's Decisions API, Ollama — refuses it before the
-request.
+given. An [`ImageAttachment`](@ref) is data too, but not every provider takes a
+picture inside the object a call sends: one that does not refuses it before the
+request, and its entry names the form it takes instead, such as
+`state = [image, "…"]` ([What each provider takes](@ref backends_table)).
 
 ## [Composing with ordinary dispatch](@id nl_dispatch_composing)
 
 - **The job:** a support chat that, at each step, only considers the replies
   that make sense at that step.
-- **Without Jev:** a state machine whose transitions are keyword rules, or an
-  intent classifier plus a hand-kept list of which intents each state allows.
-- **With Jev:** each state is a type and each transition a method on the state
+- **Without dispatch on meaning:** a state machine whose transitions are keyword
+  rules, or an intent classifier plus a hand-kept list of which intents each
+  state allows.
+- **With it:** each state is a type and each transition a method on the state
   and a key; `nl_dispatch` offers the model only the keys whose method accepts
   the current state.
 
@@ -374,7 +374,7 @@ their types, and their types decide which options are offered at all. Keys suit
 a state machine: each line reads *state, reply → next state*, and the six
 sentences the model reads sit together in one table.
 
-```@example nldispatch
+```@example natural_language_dispatch
 abstract type Conversation end
 struct AwaitingOrderId <: Conversation end
 struct ConfirmingRefund <: Conversation
@@ -413,12 +413,12 @@ foreach(println, meanings(transition, Tuple{ConfirmingRefund, String}; texts = R
 Each turn is one request whose state is what the assistant asked and what the
 customer replied:
 
-```@example nldispatch
+```@example natural_language_dispatch
 context(s, msg) = (assistant_asked = asked(s), customer_replied = msg)
 
 let s = AwaitingOrderId()
     for msg in ("It's 48213.", "thanks, bye", "yes please", "no, that's all")
-        s = nl_dispatch(transition, s, msg; texts = REPLY, state = context(s, msg))
+        s = nl_dispatch(transition, s, msg; texts = REPLY, state = context(s, msg), service, model)
         println(rpad(repr(msg), 18), "→ ", s)
     end
 end
@@ -442,11 +442,11 @@ misreading: a turn the model is unsure about is a job for `min_confidence` and a
 `fallback` ([Confidence and control](@ref nl_dispatch_control)).
 
 !!! details "Evidence"
-    Measured on 30 live turns of a larger version of this machine (nine meanings):
-    offering every meaning in every state ended 7 turns in a `MethodError` — 3 of
-    them at confidence 1.00 — and got 22 transitions right; offering only the
-    meanings valid in the current state removed every `MethodError` and got 29
-    right.
+    Measured on jev-1.13.0 (September 2026), on 30 live turns of a larger
+    version of this machine (nine meanings): offering every meaning in every
+    state ended 7 turns in a `MethodError` — 3 of them at confidence 1.00 — and
+    got 22 transitions right; offering only the meanings valid in the current
+    state removed every `MethodError` and got 29 right.
 
 **Tune it**
 
@@ -462,12 +462,12 @@ misreading: a turn the model is unsure about is a job for `min_confidence` and a
 - **The job:** send each ticket to the most specific desk the model is sure of:
   the refund flow for a clear refund, the billing desk for a billing problem of
   unclear kind, a person when nothing is clear.
-- **Without Jev:** one classifier per level of the tree, or one flat classifier
-  plus a hand-kept map from each case to its desk.
-- **With Jev:** the tree is a Julia type hierarchy, the table names its leaves,
+- **Without dispatch on meaning:** one classifier per level of the tree, or one
+  flat classifier plus a hand-kept map from each case to its desk.
+- **With it:** the tree is a Julia type hierarchy, the table names its leaves,
   and each desk is a method on a node; Julia picks the most specific one.
 
-```@example nldispatch
+```@example natural_language_dispatch
 abstract type Intent end
 abstract type Billing <: Intent end
 abstract type Technical <: Intent end
@@ -490,7 +490,7 @@ desk(::Type{<:Billing}, ticket)   = :billing_desk
 desk(::Type{<:Technical}, ticket) = :tech_desk
 desk(::Type{Refund}, ticket)      = :refund_flow
 
-nl_dispatch(desk, "Please refund my annual plan, I cancelled on day two."; texts = LEAVES)
+nl_dispatch(desk, "Please refund my annual plan, I cancelled on day two."; texts = LEAVES, service, model)
 ```
 
 No table maps leaves to desks. A double charge has no desk of its own, so it
@@ -505,7 +505,7 @@ every node above it, and act on the most specific node that reaches the bar. A
 so this rule reads the answer itself — from [`ask`](@ref), with the options and
 instructions `nl_dispatch` sends — and hands the node to `desk`:
 
-```@example nldispatch
+```@example natural_language_dispatch
 const INTENT = choice("Select the option that best describes the provided state.", last.(LEAVES) .=> nothing)
 
 # The most specific node whose leaves reach the bar together, and their probability.
@@ -521,7 +521,7 @@ for ticket in ("Please refund my annual plan, I cancelled on day two.",
                "Two subscriptions renewed on my card. Please cancel one and return that payment.",
                "Since the update I can't get past the login screen, it just freezes.",
                "There is a charge from your company on my card that I don't recognize at all.")
-    node, p = most_specific(ask((ticket = ticket,), "intent" => INTENT)["intent"])
+    node, p = most_specific(ask((ticket = ticket,), "intent" => INTENT; service, model)["intent"])
     println(rpad(nameof(node), 13), rpad(p, 6), rpad(desk(node, ticket), 14), ticket)
 end
 ```
@@ -531,13 +531,13 @@ went to the tech desk and the billing desk, where a bar on the leaf alone would
 have sent them to a person.
 
 !!! details "Evidence"
-    Measured at threshold 0.7 on 65 labeled tickets, each asked with the leaves in
-    four orders (260 decisions; correct / escalated / wrong): this rule
-    250 / 7 / 3; flat leaf routing with the same threshold 238 / 19 / 3; top-down
-    classification with one request per level 238 / 7 / 15. Summing up the tree
-    turned 12 escalations into coarse routes, all 12 correct, and added no wrong
-    one; asking level by level escalated as rarely but was wrong five times as
-    often.
+    Measured on jev-1.13.0 (September 2026) at threshold 0.7 on 65 labeled
+    tickets, each asked with the leaves in four orders (260 decisions; correct /
+    escalated / wrong): this rule 250 / 7 / 3; flat leaf routing with the same
+    threshold 238 / 19 / 3; top-down classification with one request per level
+    238 / 7 / 15. Summing up the tree turned 12 escalations into coarse routes,
+    all 12 correct, and added no wrong one; asking level by level escalated as
+    rarely but was wrong five times as often.
 
 **Tune it**
 
@@ -549,28 +549,26 @@ have sent them to a person.
 - Add a desk at any level with one method, such as
   `desk(::Type{Login}, ticket) = :password_reset`.
 
-## Several slots, one request
+## [Several slots, one request](@id natural_language_dispatch_slots)
 
 - **The job:** decide two things about one message — what it is and in what
   tone — at once.
-- **Without Jev:** two classifier calls, or one LLM prompt that returns JSON you
-  validate.
-- **With Jev:** a signature with two meaning positions; one request carries one
+- **Without dispatch on meaning:** two classifier calls, or one LLM prompt that
+  returns JSON you validate.
+- **With it:** a signature with two meaning positions; one request carries one
   question per position.
 
-```@example nldispatch
+```@example natural_language_dispatch
 reply(::nl"a complaint", ::nl"a calm tone", msg)  = :apologise
 reply(::nl"a complaint", ::nl"an angry tone", msg) = :escalate
 reply(::nl"a question", ::nl"a calm tone", msg)   = :answer
 reply(::nl"a question", ::nl"an angry tone", msg) = :answer_and_apologise
 
-nl_dispatch(reply, "This is the third time I have written about my broken order.")
+nl_dispatch(reply, "This is the third time I have written about my broken order."; service, model)
 ```
 
 Both positions resolve in **one** request, as independent questions about the
-same state: a second position costs the tokens of its options, not a second read
-of the message ([parallel
-questions](https://docs.typesafe.ai/cookbooks/parallel_questions)). With keys,
+same state: a second position adds a question, not a second request. With keys,
 pass a `Tuple` with one table per keyed position, `texts = (KIND, TONE)`: each
 table goes to the position whose declared type its keys have.
 
@@ -580,12 +578,12 @@ its `MethodError`. So `nl_dispatch` checks every combination first and refuses a
 gap with nothing sent; [`meaning_gaps`](@ref) runs the same check with no call,
 in a unit test for instance. A catch-all added for one tone only opens a gap:
 
-```@example nldispatch
+```@example natural_language_dispatch
 reply(::nl"anything else", ::nl"a calm tone", msg) = :triage   # no method yet for an angry "anything else"
 
 println(meaning_gaps(reply, Tuple{String}))                    # the message is a String
 try
-    nl_dispatch(reply, "This is the third time I have written about my broken order.")
+    nl_dispatch(reply, "This is the third time I have written about my broken order."; service, model)
 catch err
     println(sprint(showerror, err))
 end
@@ -593,7 +591,7 @@ end
 
 Close it with the missing method:
 
-```@example nldispatch
+```@example natural_language_dispatch
 reply(::nl"anything else", ::nl"an angry tone", msg) = :triage
 
 meaning_gaps(reply, Tuple{String})
@@ -619,14 +617,14 @@ backstop.
 
 - **The job:** act on the messages the model is sure about, and hand the rest to
   a person.
-- **Without Jev:** a classifier score you calibrate yourself, or an LLM that
-  sounds just as sure when it is guessing.
-- **With Jev:** every answer carries probabilities; a threshold or a policy of
+- **Without probabilities:** a classifier score you calibrate yourself, or an LLM
+  that sounds just as sure when it is guessing.
+- **With them:** every answer carries probabilities; a threshold or a policy of
   your own decides, and a fallback takes the rest.
 
 A day's inbox, routed with a threshold:
 
-```@example nldispatch
+```@example natural_language_dispatch
 const MESSAGES = [
     "I was charged twice for order #4471. Please refund the duplicate payment.",
     "The app crashes every time I open my order history. iPhone 15, latest version.",
@@ -637,7 +635,8 @@ const MESSAGES = [
 ]
 
 for m in MESSAGES
-    action = nl_dispatch(route, m; texts = TEAM, min_confidence = 0.7, fallback = m -> "held for a person")
+    action = nl_dispatch(route, m; texts = TEAM, min_confidence = 0.7, fallback = m -> "held for a person",
+                         service, model)
     println(rpad(action, 33), m)
 end
 ```
@@ -653,10 +652,10 @@ the gate is `confidence` rather than `choice`. For `n` options, `confidence` is
 that a flat answer scores 0 and a certain one 1. A fixed `min_confidence` is
 therefore a different bar on the top probability for every number of options —
 0.5 means `p_max ≥ 0.75` with 2 options, 0.6 with 5 and 0.55 with 10 — and adding
-a method, or calling with argument types that reach fewer, moves it. The
-probabilities are calibrated across groups of answers, which is what makes a
-threshold worth tuning, but a high confidence says the distribution is peaked,
-not that the winner is correct ([Confidence](https://docs.typesafe.ai/confidence)).
+a method, or calling with argument types that reach fewer, moves it. A
+calibrated model's probabilities hold across groups of answers, which is what
+makes a threshold worth tuning, but a high confidence says the distribution is
+peaked, not that the winner is correct.
 
 !!! details "Evidence"
     The confidence formula fits every answer we measured within 0.02 (jev-1.13.0,
@@ -668,10 +667,11 @@ them, not only the winner — or, with a table, the key of one; or `nothing` to
 decline, which runs `fallback` or throws [`DecisionDeclinedError`](@ref). A bar on
 the top probability itself stays where you put it:
 
-```@example nldispatch
+```@example natural_language_dispatch
 sure(a) = a.probabilities[a.choice] >= 0.8 ? a.choice : nothing
 
-[nl_dispatch(route, m; texts = TEAM, decide = sure, fallback = m -> "held for a person") for m in MESSAGES]
+[nl_dispatch(route, m; texts = TEAM, decide = sure, fallback = m -> "held for a person", service, model)
+ for m in MESSAGES]
 ```
 
 On this inbox both policies hold the same message. With the four teams,
@@ -684,9 +684,9 @@ derives such a policy from what each mistake costs. `decide` together with a non
 anything runs, and a policy that returns anything else is an `ArgumentError`:
 neither the method nor `fallback` runs.
 
-A backend may also decline a question itself: OpenAI's Decisions API answers it
-with a [`RefusalAnswer`](@ref) ([Backends](@ref backends_openai)). That is a
-decline whatever the policy, which never sees it: `fallback` runs, or
+A provider may also decline a question itself, answering it with a
+[`RefusalAnswer`](@ref) ([Declined questions](@ref openai_decisions_refusals)).
+That is a decline whatever the policy, which never sees it: `fallback` runs, or
 [`DecisionDeclinedError`](@ref) is thrown with the refusal as its `answer`.
 
 `on_response` is for audits. It is called once with the
@@ -694,10 +694,10 @@ decline whatever the policy, which never sees it: `fallback` runs, or
 see: the request id to quote in a support report, the model version that
 answered, and the raw body.
 
-```@example nldispatch
+```@example natural_language_dispatch
 audit(result) = println("audit: request ", result.response.request_id, ", answered by ", result.response.model)
 
-println(nl_dispatch(route, message; texts = TEAM, on_response = audit))
+println(nl_dispatch(route, message; texts = TEAM, on_response = audit, service, model))
 ```
 
 A call that failed throws [`SystemOneError`](@ref) instead, and `on_response` is
@@ -713,20 +713,19 @@ keywords of [`nl_dispatch`](@ref):
 | `on_response` | called once with the [`SystemOneSuccess`](@ref) before the policy runs; never for a failed call. Its return value is ignored; an exception from it propagates, and neither the method nor `fallback` runs |
 | `instructions` | a `String` for every position, or a `Vector` with one entry per position; default is the generic instruction above |
 | `state` | send this instead of the object built from the other arguments |
-| `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the backend's default, `jev-latest` on TypeSafe |
-| `service` | endpoint; defaults to the [`with_system_one`](@ref) backend, else [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) |
-| `options` | the backend's provider options, a `NamedTuple` of what [`ask`](@ref) takes as keywords: `(long_context = true,)` on TypeSafe; none given, a call that names no `service` takes the scope's. Checked by the backend's wrapper before the request |
+| `model` | pin a model version instead of the provider's default |
+| `service` | the provider; defaults to the [`with_system_one`](@ref) scope's, else the chapter's default provider ([Decisions](@ref decisions_start)) |
+| `options` | the provider's request options, a `NamedTuple` of what [`ask`](@ref) takes as keywords; none given, a call that names no `service` takes the scope's. Checked by the provider's wrapper before the request |
 | `config` | a [`RequestConfig`](@ref) governing timeouts and the retry budget for this call |
 | `cancel` | a [`CancelToken`](@ref) that can cancel the call from another task; `nothing` (the default) uses the ambient [`with_cancel`](@ref) token. A cancelled call throws `SystemOneError` like any failed call |
 
 **Tune it**
 
 - Pin the model before you tune a threshold: a threshold is a claim about one
-  version, `jev-latest` moves when a new one ships
-  ([Models](https://docs.typesafe.ai/models)), and
-  [`SystemOneResponse`](@ref)`.model` reports the version that answered. It is
-  a claim about one backend too: tune it again on another ([Backends](@ref
-  backends_confidence)).
+  model version — an alias moves when a new version ships — and
+  [`SystemOneResponse`](@ref)`.model` reports the version that answered. It is a
+  claim about one provider too: tune it again on another ([One formula,
+  calibrated per model](@ref backends_confidence)).
 - Read `meanings(f, argtypes; texts)` first: a threshold that keeps tripping is
   usually two overlapping options, not a number that needs lowering.
 - When mistakes cost different amounts, price them in a `decide` policy instead
@@ -736,14 +735,14 @@ keywords of [`nl_dispatch`](@ref):
 
 - **The job:** make one decision at one place in the code, without defining a
   function.
-- **Without Jev:** an `if`/`else` chain over keyword matches.
-- **With Jev:** [`@branch`](@ref) is a `switch` whose cases are sentences: one
+- **Without it:** an `if`/`else` chain over keyword matches.
+- **With it:** [`@branch`](@ref) is a `switch` whose cases are sentences: one
   request, and only the chosen line runs.
 
-```@example nldispatch
+```@example natural_language_dispatch
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."
 
-action = @branch ticket min_confidence=0.6 begin
+action = @branch ticket service = service model = model min_confidence = 0.6 begin
     "the customer wants a refund"                              => :refund
     ("the customer reports a bug", "A defect in the software") => :bug
     "the customer asks a pricing question"                     => :pricing
@@ -756,7 +755,7 @@ the text the model reads: a `String`, or a `Symbol` sent as its `String`, and an
 other value is an `ArgumentError` naming its line, before the request. The form
 `("name", "description")` attaches a description to it. A final
 `_ => expression` runs when the policy declines, so it needs `min_confidence` or
-`decide`; it runs as well when the backend declines the question itself, with a
+`decide`; it runs as well when the provider declines the question itself, with a
 [`RefusalAnswer`](@ref). Keywords go between the state and the block,
 written `key = value`: `model`, `min_confidence`, `decide`, `instructions`,
 `service`, `config`, `cancel`, `on_response` and `options`, as for
@@ -795,23 +794,21 @@ the table entry, or the `nl"…"` in the signature.
   wrong answer: read `meanings(f)` as the model will.
 - **Always include an "anything else".** Without one, a text outside the list has
   nowhere to put its probability except on a sentence that does not fit
-  ([Let Jev say none of these](@ref jev_none_of_these)).
+  ([Let the model say none of these](@ref jev_none_of_these)).
 - **Keep the state to what matters.** Accuracy falls as unrelated material grows
   around the decision, so filter and retrieve in code and pass only the fields
   the decision needs, or pass `state = ...` explicitly.
 - **The model reads literally and does no arithmetic.** Negations, scoping words
   and implied conditions are taken at face value, and counting, numeric
   magnitude and date ordering are unreliable: keep those in Julia and let the
-  sentences carry only the judgment ([Jev 1.13
-  jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13)).
+  sentences carry only the judgment ([Designing good
+  questions](@ref jev_designing_questions)).
 - **Methods are free; requests are not.** Ten methods and three methods cost the
   same single request, and the extra cost of an option is the tokens of its
-  sentence. Only input tokens are billed
-  ([Models](https://docs.typesafe.ai/models)).
-- **255 options per position is the ceiling on TypeSafe.** That is TypeSafe's
-  Choice limit ([Choice](https://docs.typesafe.ai/primitives/choice)), and
-  [`ask`](@ref) refuses more with an `ArgumentError` before the round trip; other
-  backends have their own ([Backends](@ref backends_table)).
+  sentence.
+- **The options per position have a ceiling.** It is the provider's Choice
+  limit, and [`ask`](@ref) refuses more with an `ArgumentError` before the round
+  trip; each provider's entry gives it.
 
 ## [Design note: what the model reads](@id nl_dispatch_design)
 
@@ -833,12 +830,13 @@ sentences are offered once as the option names and once under short keys, with
 each sentence as its key's description (`defined` and `question` come from
 [Definition order is an input](@ref nl_dispatch_order)):
 
-```@example nldispatch
+```@example natural_language_dispatch
 short = ["refund", "double_charge", "invoice", "crash", "login", "late", "damaged", "other"]
 
 r = ask((ticket = "Is your refund policy the same for EU and US customers?",),
         "sentences" => question(defined),             # what nl_dispatch sends
-        "keys"      => question(short .=> defined))   # a key per option, the sentence as its description
+        "keys"      => question(short .=> defined);   # a key per option, the sentence as its description
+        service, model)
 [(form, r[form].choice, r[form].confidence) for form in ("sentences", "keys")]
 ```
 
@@ -848,11 +846,11 @@ because the word in the question matched the key. A `texts` table never sends it
 chosen sentence maps back to its key locally, after the answer.
 
 !!! details "Evidence"
-    When we measured this ticket, the sentences answered "anything else" at
-    confidence 0.97 and the keys answered `refund` at confidence 0.6. On keyword
-    traps, a short key with the sentence attached as its description was
-    confidently wrong: 10% of the short-key answers at confidence 0.8 or more
-    were wrong, against 0% for sentences.
+    When we measured this ticket on jev-1.13.0 (September 2026), the sentences
+    answered "anything else" at confidence 0.97 and the keys answered `refund` at
+    confidence 0.6. On keyword traps, a short key with the sentence attached as
+    its description was confidently wrong: 10% of the short-key answers at
+    confidence 0.8 or more were wrong, against 0% for sentences.
 
 **What a key buys.** An identity that stays put while the wording changes: edit a
 sentence, and the methods, tests and logs that name `:billing` stay as they are.
@@ -891,12 +889,12 @@ sentences in signatures, even the uncached work was a rounding error next to the
 request.
 
 !!! details "Evidence"
-    Measured with sentences in signatures: resolving the options and dispatching
-    took ≈ 39 µs of local work, uncached, against ≈ 300 ms for the request
-    (0.013%), and dispatch on a `Val` and on a `Meaning` cost the same,
-    ≈ 0.12 µs.
+    Measured with sentences in signatures, against requests answered by
+    jev-1.13.0 (September 2026): resolving the options and dispatching took
+    ≈ 39 µs of local work, uncached, against ≈ 300 ms for the request (0.013%),
+    and dispatch on a `Val` and on a `Meaning` cost the same, ≈ 0.12 µs.
 
-## Testing without the API
+## [Testing without the API](@id natural_language_dispatch_testing)
 
 The methods stay ordinary: `route(Val(:billing), message)` or
 `route_by_sentence(nl"anything else"(), message)` runs one with no request.
@@ -908,12 +906,13 @@ and replayed in the test by [`with_recorded_answers`](@ref), which throws
 recording of. [Test and Develop](@ref jev_testing_guide) walks through recording,
 replaying, and crafting edge cases with a local server.
 
-## See also
+## [See also](@id natural_language_dispatch_see_also)
 
-- [Start Here: Decisions in Five Minutes](@ref jev_start) — which pathway, in one table
-- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
-  calls on OpenAI's Decisions API and on local models
-- [Decisions with LLMs](@ref jev_llm_guide) — route before an LLM call, check after it
+- [Decisions](@ref decisions_start) — the decision providers, each with its entry
+- [Choosing a decision provider](@ref system_one_backends) — the same calls on
+  each provider, and what each one takes
+- [Decisions with LLMs](@ref jev_llm_guide) — route before a language model's
+  call, check after it
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref), the three
   primitives, and decision policies built on the answers
 - [Many Items at Once](@ref jev_algorithms_guide) — many judgments per request
@@ -922,9 +921,13 @@ replaying, and crafting edge cases with a local server.
   and mock servers for tests
 - [Natural-Language Dispatch](@ref nl_dispatch_api) — the API reference of
   [`Meaning`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
-  [`@branch`](@ref); the [System One API (Jev, OpenAI Decisions,
-  Ollama)](@ref system_one_api) has the rest
-- [TypeSafe documentation](https://docs.typesafe.ai) — the service's own
-  reference for [Choice](https://docs.typesafe.ai/primitives/choice),
-  [confidence](https://docs.typesafe.ai/confidence) and
-  [models](https://docs.typesafe.ai/models)
+  [`@branch`](@ref)
+
+## [On your provider](@id natural_language_dispatch_providers)
+
+What of a call's question reaches each provider's model, the question kinds it
+answers, and its limits:
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.decisions, :questions)
+```

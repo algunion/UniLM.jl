@@ -52,9 +52,8 @@ These calls are not recorded, so their output on this page is quoted from dated 
   `:fine_tuning`, `:moderation`, `:transcription` (which `:audio` implies) or `:realtime` —, all
   of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
   a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime)),
-  and refuses an endpoint that declares its capabilities without it
-  ([Limits and refusals](@ref openai_platform_limits)); an endpoint that declares none is not
-  dispatched to, a `MethodError` ([Capabilities by provider](@ref capabilities_guide)).
+  and refuses an endpoint that declares its capabilities without it, or declares none
+  ([Limits and refusals](@ref openai_platform_limits); [Capabilities by provider](@ref capabilities_guide)).
 
 ## [Files and uploads](@id openai_files)
 
@@ -597,7 +596,7 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| a platform verb on an endpoint that declares its capabilities without the verb's | `is not supported by`: the endpoint has no such API | `OPENAIServiceEndpoint` |
+| a platform verb on an endpoint that declares its capabilities without the verb's, or declares none | `is not supported by`: the endpoint has no such API, or says nothing of one | `OPENAIServiceEndpoint` |
 | `upload_file` or `add_container_file` with a path that is no file | `file not found:` | the path of the file |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |

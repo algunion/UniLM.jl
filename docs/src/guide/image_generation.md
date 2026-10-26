@@ -156,8 +156,8 @@ end
 
 For full control, build an [`ImageEdit`](@ref) and call `edit_image(e)`. `model` left `""` is the
 provider's default image model, resolved when the edit is sent. An empty vector of images, or an
-image or mask path that is no file, throws `ArgumentError` before any request. Image editing needs the `:image_edits` capability: an endpoint that declares its
-capabilities without it throws `ArgumentError` before any request. The fields of an edit that one provider
+image or mask path that is no file, throws `ArgumentError` before any request. Image editing needs the `:image_edits` capability: an endpoint that does not declare it,
+one that declares no capabilities included, throws `ArgumentError` before any request. The fields of an edit that one provider
 alone takes, such as a mask, are on its entry.
 
 ## [Retry behaviour](@id image_generation_retries)

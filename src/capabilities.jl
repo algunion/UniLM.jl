@@ -43,10 +43,15 @@ _service_name(service) = nameof(typeof(service))
 """
     validate_capability(service, cap::Symbol, feature_name::String)
 
-Throw `ArgumentError` with a clear message if the provider does not support the feature.
-Called at the top of request functions for early validation.
+Throw `ArgumentError` with a clear message if the provider does not support the feature, or
+declares no capabilities at all. Called at the top of request functions for early validation.
 """
 function validate_capability(service, cap::Symbol, feature_name::String)
+    # An endpoint type with no `provider_capabilities` method declares nothing to check against: it
+    # is refused by name, as `ask` and `list_models` refuse it, not with the MethodError of the
+    # declaration it lacks.
+    _capability_declared(service) || throw(ArgumentError(
+        "$feature_name is not supported by $(_service_name(service)): it declares no capabilities"))
     has_capability(service, cap) && return
     caps = join(sort(collect(provider_capabilities(service))), ", ")
     throw(ArgumentError("$feature_name is not supported by $(_service_name(service)). Supported: $caps"))

@@ -80,9 +80,8 @@ custom routing/auth:
   using AcmeEndpoint` at construction. `UniLM.default_model(::AcmeEndpoint) = "acme-large"`
   makes it optional.
 - **`provider_capabilities`** — an endpoint that defines no method is not checked by
-  `chatrequest!`, `respond`, `embeddingrequest!`, `generate_image` and `edit_image`, and every
-  other verb refuses it: most with a `MethodError` for `provider_capabilities`, the decision
-  verbs with an `ArgumentError` (see [Provider Capabilities](@ref capabilities_api));
+  `chatrequest!`, `respond` and `embeddingrequest!`, and every other verb refuses it with an
+  `ArgumentError` saying it declares no capabilities (see [Provider Capabilities](@ref capabilities_api));
   declaring a set opts into validation against it.
 - **Streamed usage** — an endpoint of your own does not ask a stream to report its token usage
   (`stream_options.include_usage`). Set `stream_options=Dict("include_usage" => true)` on a

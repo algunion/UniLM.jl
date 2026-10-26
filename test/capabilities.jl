@@ -270,6 +270,39 @@ end
     end
 end
 
+# An endpoint type that declares no capabilities.
+struct _NoDeclaration <: UniLM.ServiceEndpoint end
+
+@testset "an endpoint that declares no capabilities: every platform verb, transcribe and the image verbs refuse it by name" begin
+    # As `ask` and `list_models` refuse it: an ArgumentError naming the endpoint, not the MethodError of the
+    # `provider_capabilities` method it lacks. Each call throws before any request, so none reaches a network.
+    e = _NoDeclaration
+    path = tempname() * ".png"
+    write(path, UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    try
+        calls = (() -> upload_file(path, "user_data"; service=e), () -> list_files(; service=e),
+                 () -> retrieve_file("f"; service=e), () -> delete_file("f"; service=e), () -> file_content("f"; service=e),
+                 () -> create_upload(; filename="a", purpose="user_data", bytes=1, mime_type="text/plain", service=e),
+                 () -> complete_upload("u", ["p"]; service=e),
+                 () -> create_vector_store(; service=e), () -> list_vector_stores(; service=e),
+                 () -> create_conversation(; service=e), () -> list_conversation_items("c"; service=e),
+                 () -> create_container(; name="c", service=e), () -> add_container_file("c", path; service=e),
+                 () -> create_batch("f", "/v1/chat/completions"; service=e), () -> list_batches(; service=e),
+                 () -> create_fine_tuning_job(; model="m", training_file="f", service=e), () -> moderate("x"; service=e),
+                 () -> mint_realtime_secret(; service=e), () -> realtime_connect(_ -> nothing; service=e),
+                 () -> transcribe(path; service=e), () -> translate(path; service=e), () -> speak("hi"; service=e),
+                 () -> fim_complete(FIMCompletion(service=e, model="m", prompt="x")),
+                 () -> generate_image("p"; service=e), () -> edit_image(path, "p"; service=e, model="m"),
+                 () -> list_models(; service=e), () -> ask("s", noul("q?"); service=e))
+        for call in calls
+            err = try call(); nothing catch x; x end
+            @test err isa ArgumentError && occursin("is not supported by _NoDeclaration: it declares no capabilities", err.msg)
+        end
+    finally
+        rm(path; force=true)
+    end
+end
+
 @testset "capability flags: no Videos API; OpenAI-wire endpoints stream and emit JSON" begin
     # The OpenAI Videos API shut down on 2026-09-24.
     @test !has_capability(OPENAIServiceEndpoint, :video)

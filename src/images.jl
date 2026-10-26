@@ -318,8 +318,8 @@ the text the model sent, if any, as `revised_prompt`; the interim images of the 
 thinking are not among them. A Gemini 200 that holds no image is an `ImageCallError`
 naming Gemini's finish reason (such as `IMAGE_SAFETY` or `NO_IMAGE`).
 
-Throws `ArgumentError` before any network I/O when `ig.service` is an endpoint type
-that declares its capabilities and does not list `:images`, and when the request sets
+Throws `ArgumentError` before any network I/O when `ig.service` does not declare `:images`
+(an endpoint type that declares no capabilities at all included), and when the request sets
 a field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio`
 or `resolution` outside its list, or a `safety_identifier` outside its provider's rule
 (see [`ImageGeneration`](@ref)). Other OpenAI values are sent as given.
@@ -343,7 +343,7 @@ when the token was already cancelled, at once when mid-request (never retried).
 """
 function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing,
                         cancel::Union{Nothing,CancelToken}=nothing)
-    _validate_declared_capability(ig.service, :images, "Image Generation API")
+    validate_capability(ig.service, :images, "Image Generation API")
     _check_image_request(ig.service, ig)
     _image_call(ig.service, ig, config, cancel)
 end
@@ -442,8 +442,9 @@ Edit/extend image(s) under a text prompt — on OpenAI's Images API, or on Gemin
 `ImageSuccess`/`ImageFailure`/`ImageCallError` shapes as [`generate_image`](@ref), and a
 Gemini reply decodes the same way.
 
-Throws `ArgumentError` before any network I/O when `e.service` declares its capabilities
-without `:image_edits`, when `e.image` is an empty vector, when an input image or the mask
+Throws `ArgumentError` before any network I/O when `e.service` does not declare
+`:image_edits` (an endpoint type that declares no capabilities at all included), when `e.image`
+is an empty vector, when an input image or the mask
 is no file (as [`upload_file`](@ref) and [`transcribe`](@ref) refuse one), and when the request sets a
 field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, or a `safety_identifier` outside its provider's rule (see
@@ -456,7 +457,7 @@ call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as
 """
 function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
                     cancel::Union{Nothing,CancelToken}=nothing)
-    _validate_declared_capability(e.service, :image_edits, "Image Edits API")
+    validate_capability(e.service, :image_edits, "Image Edits API")
     # An edit needs an input image: sent without one, Gemini would read the prompt alone as a
     # text-to-image request.
     e.image isa Vector && isempty(e.image) && throw(ArgumentError(

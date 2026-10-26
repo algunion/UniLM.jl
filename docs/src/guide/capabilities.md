@@ -45,8 +45,8 @@ join(sort!(collect(provider_capabilities(service))), ", ")
 ```
 
 An endpoint of your own declares a set by adding a method to `provider_capabilities`; one that declares
-none is not checked by [`chatrequest!`](@ref), [`respond`](@ref), [`embeddingrequest!`](@ref) and the
-image verbs, and the other verbs refuse it ([Write your own backend](@ref custom_backends_guide)).
+none is not checked by [`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref), and
+the other verbs refuse it ([Write your own backend](@ref custom_backends_guide)).
 
 ## [On your provider](@id capabilities_providers)
 

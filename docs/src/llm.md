@@ -1808,7 +1808,7 @@ Unlike `Chat`, `FIMCompletion` does not resolve its model at construction — th
 field stays `""` until serialization, where it becomes `"deepseek-flash"` for
 `DeepSeekEndpoint`. Endpoints without a default FIM model must set `model=`
 explicitly, or `fim_complete` throws `ArgumentError`. Local validation (capability —
-strict, so an endpoint that declares nothing throws `MethodError` — model resolution,
+strict, so an endpoint that declares nothing throws `ArgumentError` — model resolution,
 routing) throws before any request; every later failure, including a 200 body that is
 not a completions response, is a `FIMCallError` whose `cause` holds the exception.
 Retries follow the shared policy; `FIMSuccess` results report usage and cost.
@@ -2596,15 +2596,14 @@ own endpoint:
 
 - **Platform and lifecycle verbs** (files, vector stores, conversations,
   moderations, audio, batch, fine-tuning, containers, uploads, realtime, FIM,
-  prefix completion, System One) validate **strictly**: an endpoint with no
-  declaration at all is not dispatched — the call throws `MethodError` (no
-  `provider_capabilities` method), or for the System One verbs (`ask`,
-  `ask_each`, `with_system_one`, the natural-language verbs) an `ArgumentError`
-  saying to declare `:system_one` — because those surfaces are provider-specific
-  and an undeclared backend would just 404.
-- **The four primary verbs** — `chatrequest!` (`:chat`), `embeddingrequest!`
-  (`:embeddings`), `respond` (`:responses` **or** `:agentic`), and
-  `generate_image` (`:images`) — plus `edit_image` (`:image_edits`) validate only
+  prefix completion, System One, model listing) and the image verbs
+  (`generate_image`, `:images`; `edit_image`, `:image_edits`) validate
+  **strictly**: an endpoint with no declaration at all is not dispatched — the
+  call throws an `ArgumentError` naming the endpoint, "… is not supported by
+  YourEndpoint: it declares no capabilities" — because those surfaces are
+  provider-specific and an undeclared backend would just 404.
+- **The three primary verbs** — `chatrequest!` (`:chat`), `embeddingrequest!`
+  (`:embeddings`) and `respond` (`:responses` **or** `:agentic`) — validate only
   endpoints that **declare** their capabilities. A custom endpoint that defines no `provider_capabilities` method
   passes through unvalidated: the package has no basis for claiming what someone
   else's OpenAI-compatible server cannot do, and refusing to dispatch it would be

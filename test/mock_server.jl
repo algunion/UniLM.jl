@@ -912,6 +912,7 @@ try
         UniLM._api_base_url(::Type{ImageDeadEndpoint}) = "http://127.0.0.1:1"
         UniLM.auth_header(::Type{ImageDeadEndpoint}) = ["Content-Type" => "application/json"]
         UniLM.default_image_model(::Type{ImageDeadEndpoint}) = "dead-image"
+        UniLM.provider_capabilities(::Type{ImageDeadEndpoint}) = Set([:images])   # what it serves, so the request is sent
 
         ig = ImageGeneration(prompt="test", service=ImageDeadEndpoint)
         result = generate_image(ig)

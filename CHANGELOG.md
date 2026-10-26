@@ -19,6 +19,15 @@
   (`file not found:`; `image not found:`, `mask not found:`) before any request, on Gemini's edits too.
   Upgrading: code that checked for that call error checks the path first, or catches the
   `ArgumentError`.
+- **An endpoint that declares no capabilities is refused by name, by every platform verb, `transcribe`
+  and the image verbs.** Such an endpoint, an endpoint type of your own with no `provider_capabilities`
+  method, got a `MethodError` for that method from the files, uploads, vector stores, conversations,
+  containers, batch, fine-tuning, moderation, realtime and audio verbs, `fim_complete` and
+  `prefix_complete`, while `generate_image` and `edit_image` sent it on, unvalidated. Each now throws
+  the `ArgumentError` that `list_models` and `ask` throw for it, "… is not supported by YourEndpoint:
+  it declares no capabilities", before any request. `chatrequest!`, `embeddingrequest!` and `respond`
+  still send it unvalidated. Upgrading: an endpoint type of your own that generates or edits images
+  declares `:images` or `:image_edits` in `provider_capabilities`.
 
 ### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`

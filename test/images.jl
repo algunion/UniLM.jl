@@ -448,7 +448,7 @@ UniLM._resolve_base_url(e::ImagesUndeclaredProbe) = e.base_url
 UniLM.auth_header(::ImagesUndeclaredProbe) =
     ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
 
-@testset "edit_image validates capabilities only where they were declared" begin
+@testset "edit_image validates the capabilities an endpoint declares, and refuses one that declares none" begin
     imgpath = tempname() * ".png"
     write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])
     try
@@ -462,8 +462,7 @@ UniLM.auth_header(::ImagesUndeclaredProbe) =
         @test err isa ArgumentError
         @test occursin("Image Edits API is not supported", err.msg)
 
-        # Undeclared → nothing to check against, so the call must reach the wire. It
-        # used to die on a raw MethodError from provider_capabilities instead.
+        # Undeclared → refused by name before any request, as every platform verb refuses it.
         hits = Ref(0)
         server, base = _images_retry_server(_ -> begin
             hits[] += 1
@@ -472,11 +471,13 @@ UniLM.auth_header(::ImagesUndeclaredProbe) =
                                                        "data" => [Dict("b64_json" => "aGVsbG8=")]))))
         end)
         try
-            r = edit_image(imgpath, "p"; model="m", service=ImagesUndeclaredProbe(base),
-                           config=UniLM.RequestConfig(max_attempts=1, total_deadline=10.0))
-            @test r isa ImageSuccess
-            @test image_data(r)[1] == "aGVsbG8="
-            @test hits[] == 1
+            for call in (() -> edit_image(imgpath, "p"; model="m", service=ImagesUndeclaredProbe(base)),
+                         () -> generate_image("p"; model="m", service=ImagesUndeclaredProbe(base)))
+                err = try call(); nothing catch e; e end
+                @test err isa ArgumentError &&
+                      occursin("is not supported by ImagesUndeclaredProbe: it declares no capabilities", err.msg)
+            end
+            @test hits[] == 0
         finally
             close(server)
         end
@@ -761,6 +762,8 @@ end
 # Gemini's image wire against a local server: GEMINIServiceEndpoint's own checks, request
 # and decoder, with only the host replaced — the redirect recorded_answers.jl uses for chat.
 struct GeminiImagesHere <: UniLM.ServiceEndpoint end
+# It stands in for Gemini, so it declares what Gemini declares: an endpoint that declares nothing is refused.
+UniLM.provider_capabilities(::Type{GeminiImagesHere}) = UniLM.provider_capabilities(GEMINIServiceEndpoint)
 UniLM._check_image_request(::Type{GeminiImagesHere}, r::Union{ImageGeneration,ImageEdit}) =
     UniLM._check_image_request(GEMINIServiceEndpoint, r)
 for T in (ImageGeneration, ImageEdit)

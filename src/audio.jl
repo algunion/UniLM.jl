@@ -534,7 +534,12 @@ A [`GenericOpenAIEndpoint`](@ref) sends the request to its server's
 `/v1/audio/transcriptions` with every field it sets, as given — vLLM serves OpenAI's
 Transcriptions API there — and has no default model either.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+Transient statuses (408/429/500/502–504/520–524/529) and transport failures are retried with
+backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
+`total_deadline`; `retry-after-ms`, else `Retry-After`, honored), as [`chatrequest!`](@ref)
+retries them, and each attempt sends the whole file again; a 429 that no retry can serve is
+returned at once. Pass `config::Union{Nothing,RequestConfig}` to override the timeout and
+retry budget for this call.
 """
 function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing)
     # An endpoint that declares `:audio` transcribes too (`has_capability`), as does one that declares
@@ -545,9 +550,10 @@ function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig
     _transcription_model(t)
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        parts = _transcription_parts(t)
-        resp = _http("POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH, auth_header_multipart(t.service),
-            HTTP.Form(parts); cfg, remaining=_remaining_s(cfg, t0))
+        # Retried as the endpoint's other inference verbs are. The attempt that sends a multipart
+        # Form reads it to its end, so every attempt builds its own from the file (`_BodyFactory`).
+        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
+            auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t))))
         if resp.status == 200
             if _transcription_json(t.service, t, resp)
                 d = JSON.parse(resp.body; dicttype=Dict{String,Any})

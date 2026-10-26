@@ -353,6 +353,29 @@ end
     @test !has_capability(NoAudioProbe, :transcription)
 end
 
+@testset "transcribe retries a transient status, sending the whole file again, within its RequestConfig" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    clip = String(read(wav))
+    cfg = RequestConfig(max_attempts=2, total_deadline=60.0)
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{\"error\":{\"message\":\"overloaded\"}}") :
+                                                _json(200, "{\"text\":\"The secret word is banana.\"}")) do
+        transcribe(wav; service=AudioOnlyProbe, model="stt", config=cfg)
+    end
+    @test r isa TranscriptionSuccess
+    @test transcript_text(r) == "The secret word is banana."
+    @test length(seen) == 2 && all(q -> q.target == "/v1/audio/transcriptions", seen)
+    @test all(q -> occursin(clip, q.body) && occursin("name=\"model\"\r\n\r\nstt\r\n", q.body), seen)
+    # The attempts are the config's: one attempt returns the 503, and a 400 is never sent again.
+    once, seen1 = _with_scripted((_, _) -> _json(503, "{}")) do
+        transcribe(wav; service=AudioOnlyProbe, model="stt", config=RequestConfig(max_attempts=1))
+    end
+    @test once isa UniLM.AudioFailure && once.status == 503 && length(seen1) == 1
+    bad, seen2 = _with_scripted((_, _) -> _json(400, "{}")) do
+        transcribe(wav; service=AudioOnlyProbe, model="stt", config=cfg)
+    end
+    @test bad isa UniLM.AudioFailure && bad.status == 400 && length(seen2) == 1
+end
+
 @testset "a GenericOpenAIEndpoint transcribes at its server's /v1/audio/transcriptions" begin
     # vLLM serves OpenAI's Transcriptions API there, `model` "required"; the endpoint has no default
     # model, for transcription as for chat, so a request that names none is refused before it is sent.

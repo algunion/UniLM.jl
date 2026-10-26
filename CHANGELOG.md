@@ -351,6 +351,12 @@
   to the `Chat` but left its cost out of the `Chat`'s running total, which every `chatrequest!`
   turn adds. A successful prefix completion now adds its result's `estimated_cost`, with or without
   `history`; a failure adds nothing, as it carries no billed usage.
+- **`transcribe` retries a transient status, as the other inference verbs do.** It made one attempt,
+  so a 429, a 503 or a dropped connection returned at once, while `chatrequest!`, `respond`,
+  `embeddingrequest!` and `edit_image` on the same endpoint send the request again. It now retries
+  the same statuses and transport failures under its `RequestConfig` (`max_attempts`,
+  `total_deadline`, the wait a reply asks for), and each attempt sends the whole file again, as an
+  image edit does; a 429 that no retry can serve is returned at once.
 
 ## 0.26.0
 

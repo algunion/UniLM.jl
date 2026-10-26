@@ -2642,11 +2642,11 @@ set_default_config!(total_deadline=120.0)   # process-wide default
 
 `max_attempts` applies to the inference verbs only: `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `ask`, `ask_each` (per request), `list_models`, and the `tool_loop` family
-(streams retry only before the first callback fires). Platform and lifecycle verbs
+`generate_image`, `edit_image`, `transcribe`, `ask`, `ask_each` (per request), `list_models`, and the
+`tool_loop` family (streams retry only before the first callback fires). Platform and lifecycle verbs
 — batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning, moderation, upload, vector-store, audio, realtime, and the
-Responses lifecycle operations — make a **single bounded attempt**, and
+retried), fine-tuning, moderation, upload, vector-store, speech and translation (`speak`,
+`translate`), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
 `max_attempts` has no effect on them. A 429 that no retry can serve — spent credit, a
 reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded`
 (the codes under `chatrequest!`) — is never retried. `poll_batch` /

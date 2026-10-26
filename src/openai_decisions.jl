@@ -34,7 +34,9 @@ The request:
   2 to 255 options, each option's name its `value` and a string description its
   `description` (none for `nothing`); a [`ScoreQuestion`](@ref) a `score` of 2
   to 10 levels, each level its `label`; a [`RawQuestion`](@ref) verbatim, with
-  its name added as `"name"` when it has none. At most 400 questions.
+  its name added as `"name"` when it has none. At most 400 questions; each
+  question's name, instructions, option names and descriptions and level labels,
+  and the model's name, at most 1,048,576 characters.
 - provider options are keywords of [`ask`](@ref): `prompt_cache_key`, a `String`
   of at most 64 characters; `safety_identifier`, at most 128; and
   `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and `ttl`, `"30m"` or
@@ -111,6 +113,8 @@ const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
 const _DECISIONS_MAX_IMAGES = 128
 const _DECISIONS_MAX_INPUT = 10_485_760
+# The model, and each question's name, string instructions, choice value and description and level label.
+const _DECISIONS_MAX_FIELD = 1_048_576
 # The string options, each of at most this many characters; `prompt_cache_options` follows them.
 const _DECISIONS_OPTIONS = (prompt_cache_key = 64, safety_identifier = 128)
 const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (k, n) in pairs(_DECISIONS_OPTIONS)), ", ") *
@@ -118,6 +122,15 @@ const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (
 
 _decisions_refuse(name::String, why::String) = throw(ArgumentError(
     "OpenAI's Decisions API cannot carry the question $(repr(name)): $why"))
+
+# A string the schema caps at `_DECISIONS_MAX_FIELD` characters. The refusal names the field, `what`,
+# and its length, never the text itself.
+function _decisions_field(text::AbstractString, what::String)::String
+    n = length(text)
+    n <= _DECISIONS_MAX_FIELD || throw(ArgumentError(
+        "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_FIELD) characters in $what; it has $n. Shorten it"))
+    String(text)
+end
 
 const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector of strings and ImageAttachments, which is sent as " *
                                "one user message of text and image parts in order"
@@ -128,7 +141,7 @@ _decisions_as_text(x)::String = "Write it as text" *
 
 # Every question carries instructions, as a string (the `instructions` OpenAI requires).
 function _decisions_instructions(name::String, instructions)::String
-    instructions isa AbstractString && return String(instructions)
+    instructions isa AbstractString && return _decisions_field(instructions, "the instructions of $(repr(name))")
     _decisions_refuse(name, isnothing(instructions) ?
         "every question needs `instructions`, a string. Give them as the first argument, as in " *
         "`choice(\"Which team should handle this?\", options)`" :
@@ -165,12 +178,12 @@ end
 
 function _decisions_choice(name::String, value::String, description)::JSON.Object{String,Any}
     c = JSON.Object{String,Any}()
-    c["value"] = value
+    c["value"] = _decisions_field(value, "an option's name in $(repr(name))")
     isnothing(description) && return c
     description isa AbstractString || _decisions_refuse(name,
         "the description of its option $(repr(value)) must be a string or `nothing`, not $(typeof(description)). " *
         _decisions_as_text(description))
-    c["description"] = String(description)
+    c["description"] = _decisions_field(description, "the description of the option $(repr(value)) in $(repr(name))")
     c
 end
 
@@ -188,7 +201,7 @@ function _decisions_level(name::String, index::Int, level)::JSON.Object{String,A
     level isa AbstractString || _decisions_refuse(name,
         "its level $index must be a string, the level's label, not $(typeof(level)). $(_decisions_as_text(level))")
     l = JSON.Object{String,Any}()
-    l["label"] = String(level)
+    l["label"] = _decisions_field(level, "the label of level $index of $(repr(name))")
     l
 end
 
@@ -302,9 +315,12 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_QUESTIONS) questions per request; this one has $n. " *
         "Split it into several requests"))
     options = _decisions_options(request.options)
+    for (name, _) in request.questions
+        _decisions_field(name, "a question's name")
+    end
     questions = Any[_decisions_question(name, q) for (name, q) in request.questions]
     body = JSON.Object{String,Any}()
-    body["model"] = _system_one_model(p, service, request)
+    body["model"] = _decisions_field(_system_one_model(p, service, request), "the model's name")
     body["input"] = _decisions_input(request.state)
     body["questions"] = questions
     url, keyed = _api_base_url(service) * _DECISIONS_PATH, _system_one_body(body)

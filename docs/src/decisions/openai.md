@@ -228,7 +228,7 @@ sending:
 | Choice options | 2 to 255 per question | yes |
 | Score levels | 2 to 10 per question | yes |
 | Text | 10,485,760 characters for the input, and for each text part of a message | yes |
-| Guidance | 1,048,576 characters for a question's instructions and its name, an option's value and description, and a level's label | no |
+| Guidance | 1,048,576 characters for a question's instructions and its name, an option's value and description, a level's label, and the model's name | yes |
 | Images | in the input, or in a question's instructions; no number on OpenAI's pages | in the input only, at most 128: UniLM refuses more |
 | Rate limits | per organization and project, varying by model | no ([When something fails](@ref openai_decisions_failures)) |
 
@@ -251,6 +251,7 @@ answer would carry no sign of the change.
 | a `RawQuestion` whose `"name"` field differs from its name | `and the answer is matched to the question by the name it echoes` | drop the field, or name the question as it does |
 | a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a `Vector` of strings and images |
 | a text over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
+| a name, instructions, an option or a level over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
 | more than 128 pictures | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |
 | an option other than the three of [Options](@ref openai_decisions_options) | `OpenAI's Decisions API accepts the options` | one of the three, or none |
 | a `prompt_cache_key` or `safety_identifier` that is not a string, or longer than 64 or 128 characters | `as a String of at most` | a shorter string |

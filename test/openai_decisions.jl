@@ -323,6 +323,34 @@ end
     @test contains(refused[14].msg, "at most 400 questions") && contains(refused[14].msg, "401")
 end
 
+@testset "OpenAI Decisions — a field over the reference's 1,048,576 characters is refused before sending" begin
+    # The reference caps the model, and each question's name, string instructions, choice value and
+    # description, and level label, at 1,048,576 characters (`maxLength`); JSON Schema counts characters.
+    at, over = "é"^1_048_576, "é"^1_048_577
+    sent = _od_sent(SystemOneRequest("s", [at => choice(at, [at => at, "b" => nothing]), "r" => score("Rate.", [at, "high"])];
+                                     model=at))
+    @test sent["model"] == at && sent["questions"][1]["name"] == at && sent["questions"][1]["instructions"] == at
+    @test sent["questions"][1]["choices"][1] == Dict("value" => at, "description" => at)
+    @test sent["questions"][2]["levels"][1]["label"] == at
+    refused, seen = _od_serve(_od_valid) do
+        [_od_caught(() -> ask("s", over => noul("Is it?"); service=_ODMock)),                                     # name
+         _od_caught(() -> ask("s", over => RawQuestion(Dict("type" => "predicate", "instructions" => "x")); service=_ODMock)),
+         _od_caught(() -> ask("s", "q" => noul(over); service=_ODMock)),                                         # instructions
+         _od_caught(() -> ask("s", "q" => choice("Which?", [over => nothing, "b" => nothing]); service=_ODMock)),  # value
+         _od_caught(() -> ask("s", "q" => choice("Which?", ["a" => over, "b" => nothing]); service=_ODMock)),     # description
+         _od_caught(() -> ask("s", "q" => score("Rate.", ["low", over]); service=_ODMock)),                       # label
+         _od_caught(() -> ask("s", "q" => noul("Is it?"); service=_ODMock, model=over))]                          # model
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError, refused)
+    # Each names the field and its length, never the text itself.
+    @test all(e -> startswith(e.msg, "OpenAI's Decisions API takes at most 1048576 characters in ") &&
+                   contains(e.msg, "it has 1048577") && length(e.msg) < 200, refused)
+    @test contains(refused[1].msg, "a question's name") && contains(refused[2].msg, "a question's name")
+    @test contains(refused[3].msg, "the instructions of \"q\"") && contains(refused[4].msg, "an option's name in \"q\"")
+    @test contains(refused[5].msg, "the description of the option \"a\" in \"q\"")
+    @test contains(refused[6].msg, "the label of level 1 of \"q\"") && contains(refused[7].msg, "the model's name")
+end
+
 @testset "OpenAI Decisions — the provider options, written in one order whatever the caller's" begin
     q = "q" => noul("Is it?")
     a = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options=(safety_identifier = "user-1", prompt_cache_key = "tickets")))

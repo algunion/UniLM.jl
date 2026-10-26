@@ -297,6 +297,12 @@
   recording keys it beside the image's digest. TypeSafe and Ollama still refuse it before
   anything is sent, and now say why: a TypeSafe image asset holds the image's bytes and format
   alone, and Ollama's `images` list each image's base64 bytes alone.
+- **A Decisions field over 1,048,576 characters is refused before it is sent.** OpenAI's reference
+  caps the model's name and each question's name, string instructions, choice value and
+  description and level label at 1,048,576 characters, and `ask` on `OPENAIServiceEndpoint`
+  checked only the 10,485,760 characters of a text input, so a longer field went out though the
+  schema rules it out. Each is now an `ArgumentError` before anything is sent, naming the field
+  and its length, counted in characters as the reference counts them.
 
 ## 0.26.0
 

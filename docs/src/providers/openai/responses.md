@@ -1,4 +1,4 @@
-# [Responses & hosted tools](@id responses_guide__next)
+# [Responses & hosted tools](@id responses_guide)
 
 ```@setup openai
 using UniLM

@@ -176,7 +176,7 @@ A Responses result holds the response as OpenAI sent it: `result.response` is a
 [`ResponseObject`](@ref) with its `id`, `status`, `model`, `output` items, `usage` and the whole body
 as `raw`, and [`token_usage`](@ref) reads its usage into the same [`TokenUsage`](@ref) a `Chat` result
 carries. What else a `Respond` takes is on
-[Responses & hosted tools](@ref responses_guide__next).
+[Responses & hosted tools](@ref responses_guide).
 
 ## [Conversations](@id openai_conversations)
 

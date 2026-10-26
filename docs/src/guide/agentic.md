@@ -56,7 +56,10 @@ content is a string or a vector of parts — [`input_text`](@ref), [`input_image
 guidance. `reasoning=Reasoning(effort=…, summary="auto")` sets how much a reasoning model thinks and asks
 for summaries of its reasoning, where the provider gives them, which [`reasoning_summaries`](@ref) reads.
 Which roles, parts and media a provider takes, the efforts and summaries its models take, and the
-`Respond` fields it refuses before the request, are on its entry. [`UniLM.encode_agentic`](@ref) returns
+`Respond` fields it refuses before the request, are on its entry. The `Respond` constructor itself throws
+`ArgumentError`, whatever the provider, for `temperature` outside 0.0 to 2.0, `top_p` outside 0.0 to 1.0
+or both of them set, `max_output_tokens` below 1, `top_logprobs` outside 0 to 20, `conversation` together
+with `previous_response_id`, and `background=true` with `store=false`. [`UniLM.encode_agentic`](@ref) returns
 the body `respond` sends, with no key and no request:
 
 ```@example agentic

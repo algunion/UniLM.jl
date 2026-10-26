@@ -5,5 +5,6 @@
 #            A stub at the old route forwards its readers there, to the anchor they followed where it still exists.
 # [anchors]  retired anchor id = its successor, an id that a page of the site defines.
 [routes]
+"guide/responses_api" = "providers/openai/responses"
 
 [anchors]

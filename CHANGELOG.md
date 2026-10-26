@@ -326,6 +326,12 @@
 - **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
   called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
   available". No behaviour changes.
+- **`verify_webhook` refuses an empty signing secret.** A secret with nothing after its
+  `whsec_` prefix and the whitespace around it — `""`, as an unset variable read with a default
+  gives, whitespace, or `whsec_` alone — was used as an empty HMAC key, with which anyone can
+  sign: a delivery signed with it verified `true`, and every delivery OpenAI signed `false`. It
+  now throws `ArgumentError` before any check, whatever the delivery, as the Standard Webhooks
+  libraries refuse an empty secret ("webhook secret may not be empty").
 
 ## 0.26.0
 

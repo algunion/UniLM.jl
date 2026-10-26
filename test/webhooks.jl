@@ -77,6 +77,20 @@
         end
     end
 
+    @testset "an empty secret → ArgumentError, whatever the delivery" begin
+        # Anyone can sign with an empty key, so under one a forged delivery verified `true` and a
+        # genuine one `false`; the Standard Webhooks libraries refuse an empty secret when the
+        # verifier is built ("webhook secret may not be empty"). Refused before any check: the
+        # stale, unsigned and forged deliveries below each returned before.
+        fresh = merge(headers, Dict("webhook-timestamp" => string(round(Int, time()))))
+        forged = merge(fresh, Dict("webhook-signature" => "v1," * UniLM.base64encode(UniLM._hmac_sha256(UInt8[],
+            Vector{UInt8}(string(fresh["webhook-id"], ".", fresh["webhook-timestamp"], ".", payload))))))
+        for empty in ("", "   ", "\n", "whsec_", " whsec_ \n"), h in (forged, fresh, headers, Dict{String,String}())
+            err = try verify_webhook(payload, h, empty); nothing catch e; e end
+            @test err isa ArgumentError && startswith(err.msg, "webhook signing secret is empty")
+        end
+    end
+
     @testset "non-finite timestamps do not slip past the replay window" begin
         # `tryparse(Float64, "NaN")` is NaN, and every comparison with NaN is false —
         # `abs(time() - NaN) > tolerance` waved the frame through with the window on.

@@ -1,10 +1,23 @@
-# [Custom Backends](@id custom_backends_guide)
+# [Write your own backend](@id custom_backends_guide)
+
+```@setup custom_backends
+using UniLM
+```
 
 UniLM's provider surface is a typed, open extension point: you add a backend by defining a
 [`ServiceEndpoint`](@ref) subtype and the handful of methods that route and — when the wire
 differs — translate its requests. The request driver, retries, cost accounting, tool loop,
 and streaming are not provider-specific; they call a small **wire seam** through multiple
 dispatch, so a new backend plugs in without touching that machinery.
+
+```@example custom_backends
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above and the endpoint types they define. `service` and `model` are a
+built-in provider and model: bind your own there. The table [at the end](@ref custom_backends_providers) links
+each provider's start page, which says what wire its endpoint speaks.
 
 The functions you add methods to — `get_url`, `auth_header`, `default_model`, the chat
 seam `encode_request` / `decode_response` / `handle_sse_event!` and the agentic seam
@@ -15,11 +28,11 @@ not exported, so qualify them (`UniLM.get_url`). Each is documented in the
 
 There are two cases, depending on whether your provider speaks the OpenAI wire.
 
-## Case 1 — an OpenAI-compatible provider
+## [Case 1 — an OpenAI-compatible provider](@id custom_backends_openai_wire)
 
-If the provider implements OpenAI's `/v1/chat/completions` (and, optionally, the
-`/v1/responses` and `/v1/embeddings` surfaces), subtype [`OpenAIWireEndpoint`](@ref).
-Subtypes inherit the OpenAI request/response encoding and the SSE stream handling for free;
+If the provider speaks the OpenAI wire — `/v1/chat/completions`, and optionally the
+`/v1/responses` and `/v1/embeddings` surfaces —, subtype [`OpenAIWireEndpoint`](@ref).
+Subtypes inherit the OpenAI wire's request and response encoding and its SSE stream handling;
 you define only **routing** (`get_url`) and **authentication** (`auth_header`).
 
 ```julia
@@ -57,7 +70,7 @@ UniLM.get_url(s::MyEndpoint, ::Chat)       = UniLM._api_base_url(s) * "/v1/chat/
 UniLM.get_url(s::MyEndpoint, ::Embeddings) = UniLM._api_base_url(s) * "/v1/embeddings"
 ```
 
-For a provider that is a plain OpenAI endpoint at a custom URL you need no new type at all —
+For a provider that is a plain OpenAI-compatible server at a custom URL you need no new type at all —
 [`GenericOpenAIEndpoint`](@ref)`(base_url, api_key)` already does exactly this. Define a new
 `OpenAIWireEndpoint` subtype when you want a named type, provider-specific defaults, or
 custom routing/auth:
@@ -70,15 +83,16 @@ custom routing/auth:
   unvalidated by the four primary verbs and rejected by the platform verbs (see
   [Provider Capabilities](@ref capabilities_api)); declaring a set opts into validation
   against it.
-- **Streamed usage** — the built-in OpenAI, DeepSeek and Gemini OpenAI-compatible endpoints
-  ask a stream to report token usage (`stream_options.include_usage`); other OpenAI-wire
-  endpoints do not, since some servers reject the field. Set `stream_options=Dict("include_usage" => true)` on a
-  streamed `Chat` when your server supports it, or streamed turns carry no usage.
+- **Streamed usage** — an endpoint of your own does not ask a stream to report its token usage
+  (`stream_options.include_usage`), since some servers reject the field. Set
+  `stream_options=Dict("include_usage" => true)` on a streamed `Chat` when your server supports
+  it, or streamed turns carry no usage. Which built-in endpoints ask is on their entries, in the
+  streaming section or the section of the endpoint it concerns.
 
 Singleton endpoints (no fields) dispatch on the type — `get_url(::Type{MyEndpoint}, ::Chat)`;
 field-bearing endpoints dispatch on the instance, as above.
 
-## Case 2 — a provider with a different wire
+## [Case 2 — a provider with a different wire](@id custom_backends_native)
 
 If the provider speaks a genuinely different wire (its own request shape, response shape, or
 SSE dialect), subtype [`ServiceEndpoint`](@ref) directly and additionally implement the three
@@ -99,19 +113,16 @@ otherwise. The served model becomes the result's `model`, which [`estimated_cost
 prices before the model requested; a decoder that returns only `(; message, usage)` and a
 handler that leaves `state.model` unset report none.
 
-The in-repo reference implementation is the **Anthropic backend** (`src/anthropic.jl`):
-`ANTHROPICServiceEndpoint` subtypes `ServiceEndpoint` and implements all three methods
-against Anthropic's native Messages API — including capturing provider-native content blocks
-for verbatim multi-turn round-trip. Read it as a complete worked example rather than copying
-it here. The native Gemini backend (`src/gemini.jl`) is a second example, with a different
-end-of-stream rule (EOF, not a sentinel).
+The native backends in UniLM's `src/` are complete worked examples. `src/anthropic.jl`
+implements all three methods, and captures the provider's own content blocks for a verbatim
+round-trip on the next turn; `src/gemini.jl` is a second example, whose stream ends at EOF
+rather than at a sentinel. Read them rather than copying them here.
 
 To also serve the agentic [`respond`](@ref) verb on a native wire, override the agentic seam
 the same way — `encode_agentic` / `decode_agentic` / `decode_agentic_stream` (the stream
 handler mutates an `AgenticStreamState`) — and route it with the internal hook
 `UniLM._agentic_url(service)`, which `respond` and the lifecycle operations read (an
-underscore name outside the public extension API); the Gemini Interactions backend
-(`src/interactions.jl`) is the reference.
+underscore name outside the public extension API); `src/interactions.jl` is the reference.
 
 Both seams split validation from failure the same way. An encoder runs before any network
 I/O and what it throws propagates from the verb, so throw `ArgumentError` for an option your
@@ -119,24 +130,52 @@ wire cannot express. An exception thrown by a decoder becomes the verb's typed c
 result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`, and one thrown
 by a stream handler drops that payload, counted in the result's `sse_dropped`.
 
-## Fail-loud contract
+## [Fail-loud contract](@id custom_backends_fail_loud)
 
-The wire seam has **no permissive fallback**. A bare `ServiceEndpoint` subtype that omits a
-seam method fails with a `MethodError` at call time, rather than silently emitting
-OpenAI-shaped requests to a provider that does not speak that wire. Subtyping
-`OpenAIWireEndpoint` is the explicit opt-in to the OpenAI wire; subtyping `ServiceEndpoint`
-is the commitment to implement the seam yourself.
+The wire seam has **no permissive fallback**. Subtyping `OpenAIWireEndpoint` is the explicit
+opt-in to the OpenAI wire; subtyping `ServiceEndpoint` is the commitment to implement the seam
+yourself. A built-in endpoint shows which it chose:
 
 ```@example custom_backends
-using UniLM
-# The OpenAI-wire opt-in is a real supertype relationship:
-println(OPENAIServiceEndpoint  <: OpenAIWireEndpoint)   # true  — inherits the wire
-println(ANTHROPICServiceEndpoint <: OpenAIWireEndpoint) # false — native wire, own seam
+(service isa Type ? service : typeof(service)) <: OpenAIWireEndpoint
 ```
 
-## See Also
+`true` says the bound endpoint opted into the OpenAI wire, and `false` that it implements the seam
+itself. A `ServiceEndpoint` subtype that defines no encoder sends
+nothing: `chatrequest!` throws a `MethodError` for `encode_request` before any request, rather
+than sending OpenAI-wire JSON to a provider that does not speak it.
+
+```@example custom_backends
+struct BareEndpoint <: ServiceEndpoint end
+UniLM.get_url(::BareEndpoint, ::Chat) = "https://llm.example.invalid/v1/chat"
+UniLM.auth_header(::BareEndpoint) = ["Content-Type" => "application/json"]
+
+chat = Chat(service=BareEndpoint(), model=model)
+push!(chat, Message(Val(:system), "You are helpful."))
+push!(chat, Message(Val(:user), "Hi!"))
+err = try
+    chatrequest!(chat)
+catch e
+    e
+end
+err isa MethodError, err.f
+```
+
+A missing decoder fails the call too, once the reply has arrived: the result is an `LLMCallError`
+whose `cause` is the `MethodError` for `decode_response`. A missing stream handler drops every payload
+of the stream, so a streamed call ends as an `LLMFailure` with status 200, and `sse_dropped` counts the
+payloads.
+
+## [See also](@id custom_backends_see_also)
 
 - [`OpenAIWireEndpoint`](@ref), [`ServiceEndpoint`](@ref) — the two extension supertypes
 - [Extension API](@ref extension_api) — the public functions and types a backend implements
-- [Multi-Backend Support](@ref backend_guide) — using the built-in backends
+- [One API across providers](@ref backend_guide) — using the built-in backends
 - [`GenericOpenAIEndpoint`](@ref) — the built-in configurable OpenAI-compatible endpoint
+- [Write your own decision provider](@ref decisions_custom) — the same for decision models
+
+## [On your provider](@id custom_backends_providers)
+
+```@eval
+Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)
+```

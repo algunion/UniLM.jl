@@ -341,6 +341,12 @@
   `decode_agentic_stream` method, a streamed `respond` was sent and returned a `ResponseCallError`
   holding the `MethodError`. Both now throw the missing method's `MethodError` before anything is
   sent, as a missing `encode_request` does.
+- **`prefix_complete` on a streaming `Chat` sends a request it can read.** It sent the `Chat`'s
+  `"stream": true` (and DeepSeek's `stream_options`), so the server answered with a stream that the
+  call, which reads one whole reply, could not decode: a billed request that returned an
+  `LLMCallError`. The request now leaves `stream` and `stream_options` out and is read whole; the
+  `Chat` keeps both for `chatrequest!`. `prefix_complete` takes no callback, so nothing a stream
+  would deliver is lost.
 
 ## 0.26.0
 

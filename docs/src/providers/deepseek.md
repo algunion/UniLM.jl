@@ -299,9 +299,9 @@ conversation keeps the whole assistant turn, the prefix followed by the continua
 a cancellation leaves the `Chat` untouched. The request goes through this endpoint's own encoder and
 decoder, so the reply's thinking, when it has any, is kept, and goes back on a later request with
 tools, as a `chatrequest!` reply's does. DeepSeek also takes a `reasoning_content` of your own on the prefix
-message, the start of its thinking; UniLM sends none. A `Chat` with `stream=true` is sent as it is,
-asking DeepSeek for a stream, which `prefix_complete` does not read: the call returns an
-`LLMCallError`, so leave `stream` unset. The concepts both verbs share are on
+message, the start of its thinking; UniLM sends none. `prefix_complete` reads one whole reply and takes
+no callback, so a `Chat` with `stream=true` is sent unstreamed, without its `stream` and
+`stream_options`; the `Chat` keeps both for `chatrequest!`. The concepts both verbs share are on
 [FIM & Prefix Completion](@ref completions_guide).
 
 ## [Limits and refusals](@id deepseek_limits)

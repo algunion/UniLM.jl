@@ -1825,9 +1825,10 @@ prefix_complete(chat::Chat; config=nothing, cancel=nothing) -> LLMRequestRespons
 ```
 
 The result's `message` is the continuation the API returns; with `chat.history` the
-conversation keeps the whole assistant turn, prefix followed by continuation. A
-cancelled call returns `LLMCallError` (`cause::UniLMCancelled`) and leaves `chat`
-untouched.
+conversation keeps the whole assistant turn, prefix followed by continuation. The request
+is never streamed: a `chat` with `stream=true` is sent without its `stream` and
+`stream_options`. A cancelled call returns `LLMCallError` (`cause::UniLMCancelled`) and
+leaves `chat` untouched.
 
 ### Prefix Example
 

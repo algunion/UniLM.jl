@@ -287,7 +287,8 @@ Chat prefix completion: the model continues from a partial assistant message.
 The last message in `chat` must be `role=assistant` containing the text prefix
 to continue from. The result's `message` is the continuation the API returns; with
 `chat.history` the conversation keeps the whole assistant turn, prefix followed by
-continuation.
+continuation. The request is never streamed: the call reads one whole reply and takes no
+callback, so a `chat` with `stream=true` is sent without its `stream` and `stream_options`.
 
 Supported by [`DeepSeekEndpoint`](@ref) (beta).
 
@@ -317,8 +318,11 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
-    # The body the endpoint's encoder builds, with the prefix flag on the last message.
+    # The body the endpoint's encoder builds, with the prefix flag on the last message. The call reads
+    # one whole reply and takes no callback, so a streaming Chat's `stream` and `stream_options` stay
+    # out of it: a server asked for a stream answers with one, which this call cannot read.
     wire = JSON.parse(_prefix_encode(chat.service, chat))
+    delete!(wire, "stream"); delete!(wire, "stream_options")
     wire["messages"][end]["prefix"] = true
     body = JSON.json(wire)
     url = _prefix_complete_url(chat.service)

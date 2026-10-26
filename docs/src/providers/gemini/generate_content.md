@@ -310,14 +310,16 @@ The concepts every provider shares are on [Streaming](@ref streaming_guide).
 The candidate's `finishReason` becomes the message's `finish_reason`, streamed or not: `STOP` gives
 `"stop"`, or `"tool_calls"` when the turn holds function calls; `MAX_TOKENS` gives `"length"`; the
 filters `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`,
-`IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` give `"content_filter"`; and every other value
-passes through in lower case — `"malformed_function_call"`, `"unexpected_tool_call"`,
-`"continuation"` ([Long generations](@ref gemini_long_decode)), `"language"`, `"escalation"`, … —
-never as `"stop"`. A candidate without a `finishReason` reads `nothing`, and function calls under a
+`IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` give `"content_filter"`, as do the policy stops
+`LANGUAGE` (content "flagged for using an unsupported language"), `ESCALATION` ("filtered by an
+escalation rule") and `PUP_LIMITED_DISABLED` ("the user account is limited or disabled due to
+Prohibited Use Policy (PUP) violations"); and every other value passes through in lower case —
+`"malformed_function_call"`, `"unexpected_tool_call"`, `"continuation"`
+([Long generations](@ref gemini_long_decode)), `"other"`, … — never as `"stop"`. A candidate without a `finishReason` reads `nothing`, and function calls under a
 reason other than `STOP` keep that reason, so `tool_loop!` does not run them. Google's reference
 lists every value ([FinishReason](https://ai.google.dev/api/generate-content#FinishReason)).
 
-A turn the filters stopped with no text has no content: its `refusal_message` is the candidate's
+A `"content_filter"` turn with no text has no content: its `refusal_message` is the candidate's
 `finishMessage`, Google's account of the stop, else "Model response blocked by safety filter.", and
 such a turn, when it holds no part, is left out of the next request. A blocked prompt gets no
 candidate at all — "If set, the prompt was blocked and no candidates are returned"

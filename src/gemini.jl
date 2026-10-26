@@ -461,14 +461,18 @@ _is_synthetic_call_id(id::AbstractString) = startswith(id, "unilm_call_")
 # Gemini finishReason (the FinishReason enum, https://ai.google.dev/api/generate-content)
 # → neutral finish_reason; the decoder and the stream handler share this one rule.
 # STOP is the only normal completion, and a STOP turn that carries function calls is a
-# tool-call turn (Gemini reports STOP for those). MAX_TOKENS → "length"; the content
-# filters, the image ones included (safety, prohibited content, recitation), →
-# "content_filter". Every other value of this open enum (MALFORMED_FUNCTION_CALL,
-# UNEXPECTED_TOOL_CALL, IMAGE_OTHER, NO_IMAGE, values added later) passes through
-# lowercased, never as "stop", and calls under any non-STOP reason keep that reason: a
-# failed or filtered turn reads neither as a completed turn nor as calls to dispatch.
-const _GEMINI_FILTER_REASONS = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
-                                "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION")
+# tool-call turn (Gemini reports STOP for those). MAX_TOKENS → "length"; the stops the enum
+# describes as a filter or a policy refusal → "content_filter": the content filters, the image
+# ones included (safety, prohibited content, recitation), content "flagged for using an
+# unsupported language", a request "filtered by an escalation rule", and a stop "because the
+# user account is limited or disabled due to Prohibited Use Policy (PUP) violations". Every
+# other value of this open enum (MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, IMAGE_OTHER,
+# NO_IMAGE, values added later) passes through lowercased, never as "stop", and calls under any
+# non-STOP reason keep that reason: a failed or filtered turn reads neither as a completed turn
+# nor as calls to dispatch.
+const _GEMINI_FILTER_REASONS = ("SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+                                "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION",
+                                "PUP_LIMITED_DISABLED")
 
 _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
     fr == "STOP"                 ? (has_calls ? TOOL_CALLS : STOP) :

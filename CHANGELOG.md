@@ -75,6 +75,17 @@
   character inside the secret, which `base64decode` skipped too, so that such a secret could
   still decode to the right key, now throws. Upgrading: remove anything but the base64 text from
   inside the secret, such as the line break of a wrapped paste.
+- **Gemini's language, escalation and Prohibited Use Policy stops are refusals.** A native Gemini
+  candidate that ended with `finishReason` `LANGUAGE` (content "flagged for using an unsupported
+  language"), `ESCALATION` ("filtered by an escalation rule") or `PUP_LIMITED_DISABLED` (the account
+  "limited or disabled due to Prohibited Use Policy (PUP) violations") reported that value in lower
+  case, `"language"`, `"escalation"` or `"pup_limited_disabled"`, and a turn without text had the
+  content `""` and no `refusal_message`, so Google's `finishMessage` was lost. Each now gives
+  `"content_filter"`, as Gemini's other filter stops do, streamed or not; a turn without text has
+  no content, and its `refusal_message` is the `finishMessage`, else "Model response blocked by
+  safety filter.". Upgrading: code that matched those three values tests
+  `finish_reason == "content_filter"` and reads `refusal_message`; `text(result)` of such a turn is
+  `nothing`, no longer `""`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

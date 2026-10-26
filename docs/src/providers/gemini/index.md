@@ -332,7 +332,7 @@ sends again, or `quota_exceeded`, "your daily quota", which it returns at once
 | `ResponseFailure` with `status` 200 from `respond` | the interaction's `status` is `"failed"`; `response` holds it | the request again |
 | `ResponseCallError` from a streamed `respond`, its `error` the stream's error event | Google sent an `error` event in the stream, as its error reference describes ([Interactions errors](https://ai.google.dev/gemini-api/docs/api-errors)) | the request again |
 | `finish_reason == "length"` | the reply reached `maxOutputTokens` or the model's output limit, thinking included | a higher `max_tokens`, or a lower thinking level |
-| `finish_reason == "content_filter"` | a safety filter stopped the reply; `refusal_message` holds Google's `finishMessage`, when it sent one | another request ([Finish reasons and safety](@ref gemini_finish_reasons)) |
+| `finish_reason == "content_filter"` | a filter or a policy stopped the reply — a safety filter, an unsupported language, an escalation rule, or an account limited for Prohibited Use Policy violations; `refusal_message` holds Google's `finishMessage`, when it sent one | another request, or what `refusal_message` says ([Finish reasons and safety](@ref gemini_finish_reasons)) |
 | `LLMResultError` from `text` or `reasoning_text` | the result is a failure, which holds no reply | check `issuccess(result)` first |
 
 Recorded on 25 October 2026 on `gemini-3.8-flash` with UniLM's development branch after 0.26.0 and the Gemini

@@ -24,9 +24,10 @@ option description, a Score level, a Noul criterion): a string, a JSON object,
 a JSON array, or an [`ImageAttachment`](@ref) — an image is carried only by a
 backend whose wrapper sends images, and refused before any request by the
 others. Numbers and booleans are not entries: the model reads words, and a bare
-number carries none. No backend sends an image's detail level or a
-[`DocumentAttachment`](@ref): either, anywhere in a request, is an
-`ArgumentError` before any request.
+number carries none. No backend sends a [`DocumentAttachment`](@ref), and only
+OpenAI's Decisions API an image's detail level: a document anywhere in a request,
+or an image with a detail level its backend does not send, is an `ArgumentError`
+before any request.
 """
 const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple, ImageAttachment}
 
@@ -421,9 +422,10 @@ JSON.lower(q::RawQuestion) = q.fields
 What `state` may be: a string, a JSON object, a JSON array (a `Tuple` and a
 `NamedTuple` serialize as those), or an [`ImageAttachment`](@ref) — images,
 here or nested anywhere in the content, are carried only by a backend whose
-wrapper sends them, and never with a detail level. A [`DocumentAttachment`](@ref)
-is no state, and one nested in the content is an `ArgumentError` before any
-request, as is an image with a detail level: no backend sends either. `nothing`
+wrapper sends them, and with a detail level only by OpenAI's Decisions API. A
+[`DocumentAttachment`](@ref) is no state, and one nested in the content is an
+`ArgumentError` before any request, as is an image with a detail level its
+backend does not send. `nothing`
 is deliberately absent: a request about nothing is a type error here instead of
 a wasted round trip.
 """
@@ -1069,6 +1071,9 @@ _probability_slack(::SystemOneProtocol)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
 # Whether a backend may decline single questions (`RefusalAnswer`), and send raw questions.
 _allows_refusal(::SystemOneProtocol)::Bool = false
 _allows_raw(::SystemOneProtocol)::Bool = false
+# Why a backend's wire has no room for an image's detail level, which makes an image that sets
+# one an `ArgumentError`; `nothing` for a wire that sends the level.
+_image_detail_refusal(::SystemOneProtocol)::Union{Nothing,String} = "its wire has no field for one"
 # The models listing of a backend's protocol, for `list_models`.
 _system_one_models(p::SystemOneProtocol, service, ::Union{Nothing,RequestConfig}, ::Union{Nothing,CancelToken}) =
     throw(ArgumentError("listing models is not supported by $(_service_name(service)), whose System One " *
@@ -1110,32 +1115,34 @@ function _check_request(p::SystemOneProtocol, service, r::SystemOneRequest)::Not
             "raw questions are not supported by $(_service_name(service)): $(repr(name)) is a RawQuestion " *
             "of type $(repr(q.fields["type"]))"))
     end
-    _check_media(service, r)
+    _check_media(p, service, r)
 end
 
-# No System One wire carries a document or an image's detail level: TypeSafe's assets, the
-# Decisions API's `input_image` parts and Ollama's `images` list take an image's bytes alone,
-# and none of them a file. Either is refused, naming where it stands, before anything is sent.
-function _check_media(service, r::SystemOneRequest)::Nothing
+# No System One wire carries a document: TypeSafe's assets, the Decisions API's `input_image`
+# parts and Ollama's `images` list take images, and none of them a file. An image's detail
+# level goes only where the backend's wire has a field for it (`_image_detail_refusal`).
+# Either is refused, naming where it stands, before anything is sent.
+function _check_media(p::SystemOneProtocol, service, r::SystemOneRequest)::Nothing
     seen = Base.IdSet{Any}()
-    _each_attachment(a -> _check_medium(service, a, "the state"), r.state, seen)
+    _each_attachment(a -> _check_medium(p, service, a, "the state"), r.state, seen)
     for (name, q) in r.questions
-        _each_attachment(a -> _check_medium(service, a, "the question $(repr(name))"), _question_content(q), seen)
+        _each_attachment(a -> _check_medium(p, service, a, "the question $(repr(name))"), _question_content(q), seen)
     end
     nothing
 end
 
-_check_medium(service, a::DocumentAttachment, place::String) = throw(ArgumentError(
+_check_medium(::SystemOneProtocol, service, a::DocumentAttachment, place::String) = throw(ArgumentError(
     "$(_service_name(service)) cannot send $(a), which $(place) holds: a System One request carries text and " *
     "images, not documents. Put the document's text in the request, or ask about the document in a Chat on " *
     "an OpenAI-compatible endpoint"))
-function _check_medium(service, a::ImageAttachment, place::String)::Nothing
-    isnothing(a.detail) || throw(ArgumentError(
-        "$(_service_name(service)) sends a System One request's images without a detail level, so $(a) in " *
-        "$(place) cannot be sent as asked: build the ImageAttachment without `detail`"))
+function _check_medium(p::SystemOneProtocol, service, a::ImageAttachment, place::String)::Nothing
+    why = _image_detail_refusal(p)
+    isnothing(a.detail) || isnothing(why) || throw(ArgumentError(
+        "$(_service_name(service)) sends a System One request's images without a detail level: $(why). So $(a) " *
+        "in $(place) cannot be sent as asked: build the ImageAttachment without `detail`"))
     nothing
 end
-_check_medium(_, ::Attachment, ::String) = nothing
+_check_medium(::SystemOneProtocol, _, ::Attachment, ::String) = nothing
 
 # A Box question locates something in an image. Asked about a request that carries none, a
 # backend can still answer — TypeSafe returns a box at near-zero confidence — but nothing it

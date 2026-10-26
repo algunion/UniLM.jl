@@ -25,7 +25,8 @@ The request:
 - `state` is the `input`: a string as it is; a JSON value (object, array, tuple,
   `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a `Vector` of
   strings and images, as one user message of `input_text` and `input_image`
-  parts (base64 data URLs), in order. Images go there and nowhere else, at most
+  parts (base64 data URLs, each with its `detail` when the image sets one), in
+  order. Images go there and nowhere else, at most
   128 of them; each text — the input, or each text part of the message — is at
   most 10,485,760 characters.
 - each question is one entry of `questions`, in order, carrying its name: a
@@ -45,8 +46,8 @@ What the wire has no form for is an `ArgumentError` before any I/O, naming
 OpenAI's rule and the fix: a question without string `instructions`; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
 [`BoxQuestion`](@ref); an image outside the state; a [`DocumentAttachment`](@ref)
-(the API takes no files) or an image's detail level anywhere, as on every
-System One backend; a `prompt_cache_options` with another `ttl`, `prewarm` or
+anywhere (the API takes no files), as on every System One backend; a
+`prompt_cache_options` with another `ttl`, `prewarm` or
 `comparison_response_id`; any other option.
 
 The reply: answers are matched to the questions by name and must come in the
@@ -93,6 +94,9 @@ _probability_tolerance(::OpenAIDecisionsProtocol, n::Int)::Float64 = 0.005n + 1e
 _probability_slack(::OpenAIDecisionsProtocol)::Float64 = 0.01 + 1e-9
 _allows_refusal(::OpenAIDecisionsProtocol)::Bool = true
 _allows_raw(::OpenAIDecisionsProtocol)::Bool = true
+# An `input_image` part takes `detail` — low, high, auto or original, "using the selected
+# model's image profile" (DecisionInputImage in OpenAI's OpenAPI description) — sent as set.
+_image_detail_refusal(::OpenAIDecisionsProtocol)::Nothing = nothing
 # Transport: a hosted service like TypeSafe's — the same bounds, and the same batch width
 # for `ask_each` (its rate limits were 30,000 requests a minute for the measured account).
 _system_one_default_config(::OpenAIDecisionsProtocol, service)::Union{Nothing,RequestConfig} = _HOSTED_SYSTEM_ONE_CONFIG
@@ -246,6 +250,7 @@ function _decisions_message(items::AbstractVector)::Vector{Any}
         if x isa ImageAttachment
             part["type"] = "input_image"
             part["image_url"] = string("data:", x.mime, ";base64,", base64encode(x.data))
+            isnothing(x.detail) || (part["detail"] = x.detail)
         else
             part["type"] = "input_text"
             part["text"] = _decisions_text(String(x), "a text part of the state")

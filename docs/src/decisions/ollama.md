@@ -323,6 +323,7 @@ not write.
 | a `box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its System One route answers Choice, Score and Noul questions, and this wrapper sends a RawQuestion verbatim` | build it as a `RawQuestion` |
 | a picture in a question | `Ollama takes images in the state only, shared by all questions` | move it into the state, `[image, "…"]` |
+| a picture with a `detail` level | `sends a System One request's images without a detail level`: Ollama's `images` list holds each picture's base64 bytes alone | build the `ImageAttachment` without `detail` |
 | a picture after a text in the state | `Ollama shows a request's images before its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
 | pictures beside values that are not texts | `Ollama takes a state of images then texts, and this one mixes images with` | write the other values as text, after the pictures |
 | a picture inside a JSON object or array | `not inside a JSON object or array` | the pictures and texts as the state itself, or `state = [image, …texts]` to `nl_dispatch` |
@@ -331,9 +332,8 @@ not write.
 | a `keep_alive` that is not a number of seconds from 0 to 1e9, or `Inf` | `is a number of seconds from 0 to 1e9, or Inf` | seconds, `0`, or `Inf` |
 
 Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question name,
-criteria that are not valid, a state or guidance holding `NaN` or `Inf`, an `AudioAttachment` or a
-`DocumentAttachment` anywhere in the request, and an `ImageAttachment` with a `detail` level, since Ollama's
-`images` list holds a picture's bytes alone; [Reading answers](@ref Reading-answers) covers a malformed request on
+criteria that are not valid, a state or guidance holding `NaN` or `Inf`, and an `AudioAttachment` or a
+`DocumentAttachment` anywhere in the request; [Reading answers](@ref Reading-answers) covers a malformed request on
 every provider.
 
 ```@example ollama_decisions

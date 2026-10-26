@@ -233,9 +233,9 @@ request is an `ArgumentError` before anything is sent, on every provider: a
 `service` that serves no decisions, a blank or repeated question name, criteria
 that are not valid, a state or guidance holding `NaN` or `Inf`, an
 [`AudioAttachment`](@ref) or a [`DocumentAttachment`](@ref) anywhere in the
-request, an [`ImageAttachment`](@ref) with a `detail` level, and what a
-provider's wrapper refuses on its own account, which its entry's Limits and
-refusals section lists.
+request, and what a provider's wrapper refuses on its own account, such as an
+image's `detail` level where its wire has no field for one, which its entry's
+Limits and refusals section lists.
 Inside a [`with_recorded_answers`](@ref) replay scope, a request with no recording
 throws [`ReplayMissError`](@ref): a gap in the recordings is not a service
 failure.

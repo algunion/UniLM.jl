@@ -68,9 +68,9 @@ texts; they become `state` — none: `""`, one: that string, several: an array �
 and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
 images. An image after a text, inside a JSON object or array, or in a question
 could only be moved, never sent where it was put, and is refused before any
-I/O, as is a state of images and anything but texts, and — as on every System
-One backend — a [`DocumentAttachment`](@ref) or an image's detail level
-anywhere: the list holds an image's bytes alone. A model without vision
+I/O, as is a state of images and anything but texts, an image's detail level —
+the list holds an image's bytes alone — and, as on every System One backend, a
+[`DocumentAttachment`](@ref) anywhere. A model without vision
 answers its own 400, in its own words (Ollama 0.40.6: `tev1:0.8b` `image inputs
 are not supported by this decision model`, `kev:0.8b-q8_0`
 `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision`), which comes
@@ -104,6 +104,9 @@ _system_one_default_model(::OllamaSystemOneProtocol, service)::String = throw(Ar
 _system_one_namespace(::OllamaSystemOneProtocol)::String = "ollama"
 _allows_refusal(::OllamaSystemOneProtocol)::Bool = false
 _allows_raw(::OllamaSystemOneProtocol)::Bool = true
+# The route's `images` is an array of base64 strings, "URLs and data URLs are not supported"
+# (https://docs.ollama.com/api/systemone).
+_image_detail_refusal(::OllamaSystemOneProtocol)::String = "Ollama's `images` list holds each image's base64 bytes alone"
 # A local Ollama server's decision runners answer one request at a time, so a queue of
 # local requests only adds timeouts; its config stays the field defaults (the fallback's
 # `nothing`), since loading a model on a CPU can take minutes.

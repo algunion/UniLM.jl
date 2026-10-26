@@ -10,7 +10,7 @@ the input and no output ([Decisions guide](https://developers.openai.com/api/doc
 `OPENAIServiceEndpoint`, the endpoint of the [OpenAI](@ref openai_start) language-model entry, speaks it at
 `POST /v1/decisions` for [`ask`](@ref) and the verbs built on it, with the same key, and no decision verb refuses
 the endpoint. Of the API, UniLM does not wrap a conversation as input (messages, tool calls and their outputs),
-`input_json` parts, image URLs and an image's `detail`, pictures in a question's instructions, a score level's
+`input_json` parts, image URLs, pictures in a question's instructions, a score level's
 description, explicit cache breakpoints, the organization's Decisions usage endpoint or GPT-Live's Decisions
 integration.
 
@@ -147,7 +147,7 @@ The state becomes the request's `input`:
 | :--- | :--- |
 | a string | the string |
 | a JSON value: a dictionary, an array, a tuple, a `NamedTuple` | the value's JSON text, a string |
-| an [`ImageAttachment`](@ref), or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts in their order, each image a base64 data URL |
+| an [`ImageAttachment`](@ref), or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts in their order, each image a base64 data URL, with its `detail` level when it sets one |
 
 ```@example openai_decisions
 q = ask("The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
@@ -258,9 +258,10 @@ answer would carry no sign of the change.
 
 Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question name,
 criteria that are not valid, a state or guidance holding `NaN` or `Inf`, an `AudioAttachment` or a
-`DocumentAttachment` anywhere in the request, and an `ImageAttachment` with a `detail` level, which OpenAI's
-reference accepts on an image; [Reading answers](@ref Reading-answers) covers a malformed request on every
-provider.
+`DocumentAttachment` anywhere in the request; [Reading answers](@ref Reading-answers) covers a malformed request on
+every provider. An image's `detail` level — `"low"`, `"high"`, `"auto"` or `"original"` — goes out on its
+`input_image` part, which takes one
+([Create a decision](https://developers.openai.com/api/reference/resources/decisions/methods/create)).
 
 ```@example openai_decisions
 for refused in (() -> ask(message, "refund" => noul("Does the customer want a refund?";

@@ -397,25 +397,43 @@ UniLM.auth_header(::Type{_AttDecisionsMock}) = ["Content-Type" => "application/j
 UniLM.provider_capabilities(::Type{_AttTypeSafeMock}) = Set([:system_one])
 UniLM.provider_capabilities(::Type{_AttDecisionsMock}) = Set([:system_one])
 
-@testset "System One carries no document and no image detail level, on any backend, before any I/O" begin
+@testset "System One carries no document on any backend, and an image detail level on OpenAI's alone, before any I/O" begin
     doc, img = DocumentAttachment(_PDF_PATH), ImageAttachment(_PNG; detail="high")
     # Nested in the state, as the state, or in a question's guidance.
-    cases = [(Dict("report" => doc), noul("Is it signed?"), "documents"),
-             (["Read this.", doc], noul("Is it signed?"), "documents"),
-             ((note = "see", files = (doc,)), noul("Is it signed?"), "documents"),
-             (img, noul("Is it red?"), "detail"),
-             ([img, "What is it?"], noul("Is it red?"), "detail"),
-             ("a ticket", choice(["a" => img, "b" => "the other one"]), "detail"),
-             ("a ticket", noul(Dict("look" => img)), "detail"),
-             ("a ticket", RawQuestion(Dict("type" => "rank", "items" => [doc])), "documents")]
+    documents = [(Dict("report" => doc), noul("Is it signed?")), (["Read this.", doc], noul("Is it signed?")),
+                 ((note = "see", files = (doc,)), noul("Is it signed?")),
+                 ("a ticket", RawQuestion(Dict("type" => "rank", "items" => [doc])))]
+    details = [(img, noul("Is it red?")), ([img, "What is it?"], noul("Is it red?")),
+               ("a ticket", choice("Which?", ["a" => img, "b" => "the other one"])), ("a ticket", noul(Dict("look" => img)))]
     seen = _att_count() do url
         _ATT_S1_URL[] = url
-        for ep in (_AttTypeSafeMock, _AttDecisionsMock, OllamaEndpoint(base_url=url)), (state, q, word) in cases
-            e = _att_caught(() -> ask(state, "q" => q; service=ep, model="m", config=RequestConfig(max_attempts=1)))
-            @test e isa ArgumentError && occursin(string(UniLM._service_name(ep)), e.msg) && occursin(word, e.msg)
+        ollama = OllamaEndpoint(base_url=url)
+        call(ep, state, q) = _att_caught(() -> ask(state, "q" => q; service=ep, model="m", config=RequestConfig(max_attempts=1)))
+        for ep in (_AttTypeSafeMock, _AttDecisionsMock, ollama), (state, q) in documents
+            e = call(ep, state, q)
+            @test e isa ArgumentError && occursin(string(UniLM._service_name(ep)), e.msg) && occursin("documents", e.msg)
+        end
+        # Why each wire has no room for a level: TypeSafe's image asset, and Ollama's `images` list.
+        for (ep, reason) in ((_AttTypeSafeMock, "an image asset holds the image's bytes and format alone"),
+                             (ollama, "Ollama's `images` list holds each image's base64 bytes alone")), (state, q) in details
+            e = call(ep, state, q)
+            @test e isa ArgumentError && occursin(string(UniLM._service_name(ep)), e.msg) &&
+                  occursin("without a detail level", e.msg) && occursin(reason, e.msg)
         end
     end
     @test seen == 0
+    # OpenAI's Decisions API takes the level on an `input_image` part of the state; in guidance an image
+    # is refused for where it stands, whatever its level.
+    sent(state) = JSON.parse(UniLM.encode_system_one(UniLM.OpenAIDecisionsProtocol(), _AttDecisionsMock,
+                                                     SystemOneRequest(state, "q" => noul("Is it red?"); model="m")).body)
+    @test only(only(sent(img)["input"])["content"])["detail"] == "high"
+    @test only(sent([img, "What is it?"])["input"])["content"][1]["detail"] == "high"
+    for (state, q) in details[3:4]
+        e = _att_caught(() -> UniLM.encode_system_one(UniLM.OpenAIDecisionsProtocol(), _AttDecisionsMock,
+                                                      SystemOneRequest(state, "q" => q; model="m")))
+        @test e isa ArgumentError && occursin("OpenAI's Decisions API cannot carry the question", e.msg) &&
+              !occursin("detail", e.msg)
+    end
     # A state that holds itself is walked once: its document, keyed after the self-reference (keys
     # are walked in sorted order), is still found, on every backend, where an unguarded walk would
     # recurse into the cycle first and never reach it.

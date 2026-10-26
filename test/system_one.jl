@@ -670,6 +670,11 @@ end
     # A backend that does not allow raw questions refuses them before sending.
     e = _s1_caught(() -> UniLM._check_request(_BareProtocol(), _BareEndpoint, SystemOneRequest("s", "r" => raw)))
     @test e isa ArgumentError && contains(e.msg, "raw questions are not supported by _BareEndpoint")
+    # Nor does it send an image's detail level unless its protocol says its wire has a field for one.
+    img = ImageAttachment(read(joinpath(@__DIR__, "fixtures", "typesafe", "images", "red-300.png")); detail="low")
+    e = _s1_caught(() -> UniLM._check_request(_BareProtocol(), _BareEndpoint, SystemOneRequest(img, "q" => noul("Red?"))))
+    @test e isa ArgumentError &&
+          startswith(e.msg, "_BareEndpoint sends a System One request's images without a detail level: its wire has no field")
 end
 
 # ─── Answer checks ───────────────────────────────────────────────────────────

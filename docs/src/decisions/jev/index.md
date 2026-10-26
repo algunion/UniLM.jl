@@ -206,14 +206,15 @@ answer would carry no sign of the change.
 | an image file over 16 MiB | `TypeSafe accepts image files of at most 16 MiB` | resize it so neither side is over 1568 pixels, or save it compressed |
 | an image under 280 or over 1568 pixels on a side | `TypeSafe accepts images of 280 to 1568 pixels on each side` | resize it, scaling up or padding a side that is too short |
 | an animated PNG, an image whose header cannot be read or is missing, a PNG with no image data, a file cut short, or a JPEG that does not end with its end-of-image marker | `TypeSafe cannot take image`, then the reason: `it is an animated PNG`, `cannot be read`, `is missing`, `holds no image data`, `is cut short`, `does not end with the end-of-image marker` | export it again as a still PNG or JPEG |
+| an image with a `detail` level | `sends a System One request's images without a detail level`: a TypeSafe image asset holds the image's bytes and format alone ([Images](https://docs.typesafe.ai/images)) | build the `ImageAttachment` without `detail` |
 | an image that only a struct of your own holds | `not inside a struct of your own`, `inside a value that is not a dictionary, vector, tuple or NamedTuple`: UniLM finds images in those containers alone | put the image in the state, the instructions or the criteria, or in a dictionary, vector, tuple or `NamedTuple` there |
 
 Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question
 name, criteria that are not valid, a state or guidance holding `NaN` or `Inf` (TypeSafe's request rules read
 "Finite numbers only. `NaN`, `Infinity`, and numbers too large to represent, such as `1e400`, are rejected",
-[Request rules and errors](https://docs.typesafe.ai/api/errors)), an `AudioAttachment` or a `DocumentAttachment`
-anywhere in the request, and an `ImageAttachment` with a `detail` level; [Reading answers](@ref Reading-answers)
-covers a malformed request on every provider.
+[Request rules and errors](https://docs.typesafe.ai/api/errors)), and an `AudioAttachment` or a
+`DocumentAttachment` anywhere in the request; [Reading answers](@ref Reading-answers) covers a malformed request on
+every provider.
 
 ```@example jev
 try

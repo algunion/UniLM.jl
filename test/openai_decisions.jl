@@ -243,6 +243,31 @@ end
     @test length(input("x"^10_485_760)) == 10_485_760
 end
 
+@testset "OpenAI Decisions — an image's detail level is sent as the part's `detail`" begin
+    # The reference's `input_image` takes `detail`, "low", "high", "auto" or "original": each is sent
+    # beside the image, and an image that sets none is sent as before, without it.
+    q = "red" => noul("Is the circle red?")
+    for level in ("low", "high", "auto", "original")
+        img = ImageAttachment(_OD_PNG.data; detail=level)
+        part = only(only(_od_sent(SystemOneRequest(img, q))["input"])["content"])
+        @test collect(keys(part)) == ["type", "image_url", "detail"] && part["detail"] == level
+        mixed = only(_od_sent(SystemOneRequest(Any["Inspect this.", img, _OD_JPEG], q))["input"])["content"]
+        @test mixed[2]["detail"] == level && !haskey(mixed[1], "detail") && !haskey(mixed[3], "detail")
+    end
+    @test collect(keys(only(only(_od_sent(SystemOneRequest(_OD_PNG, q))["input"])["content"]))) == ["type", "image_url"]
+    # Sent to the service, and part of a recording's key: another level is another request.
+    low = ImageAttachment(_OD_PNG.data; detail="low")
+    dir = mktempdir()
+    live, seen = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask(low, q; service=_ODMock, config=_OD_CFG), dir; mode=:record)
+    end
+    @test live isa SystemOneSuccess && only(only(_od_body(only(seen))["input"])["content"])["detail"] == "low"
+    @test with_recorded_answers(() -> ask(low, q; service=_ODMock), dir).response.raw == live.response.raw
+    miss = with_recorded_answers(() -> _od_caught(() -> ask(ImageAttachment(_OD_PNG.data; detail="high"), q;
+                                                          service=_ODMock)), dir)
+    @test miss isa ReplayMissError && contains(miss.body, "\"detail\":\"high\"")
+end
+
 @testset "OpenAI Decisions — questions map onto predicate, choice and score; what has no form is refused" begin
     sent = _od_sent(SystemOneRequest("Help! My payouts have been failing for 3 days.", [
         "dept" => choice("Which team?", (billing = "Payments, invoicing, payouts, refunds", technical = nothing)),

@@ -275,6 +275,13 @@
   caching rates: a cache read now costs the cached-input rate (\$0.01 per 1M tokens) and a
   cache write the write rate (\$0.125 per 1M, \$0.25 for a 12-hour lifetime), each twice for a
   request of more than 272K input tokens; output is still not charged.
+- **OpenAI's Decisions API gets an image's detail level.** Every System One backend refused an
+  `ImageAttachment` with a `detail` level, though the Decisions API's `input_image` part takes
+  `detail` — `"low"`, `"high"`, `"auto"` or `"original"`, "using the selected model's image
+  profile". `OPENAIServiceEndpoint` now sends it on the image's part of the state, and a
+  recording keys it beside the image's digest. TypeSafe and Ollama still refuse it before
+  anything is sent, and now say why: a TypeSafe image asset holds the image's bytes and format
+  alone, and Ollama's `images` list each image's base64 bytes alone.
 
 ## 0.26.0
 

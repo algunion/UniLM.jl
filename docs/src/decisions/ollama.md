@@ -8,7 +8,7 @@ Ollama serves decision models on your own machine — Tev1, Nimble, Kev, Clef Fl
 it lists as [decision models](https://ollama.com/search?c=decision) — through its System One route,
 `POST /v1/systemone`, which answers choice, yes/no and scoring questions about a state with probabilities and
 writes no text ([System One](https://docs.ollama.com/api/systemone)); no key is sent to a server of your own, and a
-local model costs nothing. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide) language-model
+local model costs nothing unless you price it. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide) language-model
 entry, sends [`ask`](@ref) and the verbs built on it there, and no decision verb refuses it. Of the route, UniLM does
 not wrap a `keep_alive` given as a duration string; a cloud model reached through your local server takes the same
 requests as a local one, and a request to Ollama's cloud itself, `https://ollama.com`, carries the `OLLAMA_API_KEY`
@@ -103,7 +103,9 @@ r.response.model, token_usage(r).prompt_tokens, r.response.request_id, estimated
 ```
 
 `r.response.model` is the model the request named, Ollama sends no request id, and a local model's answer costs
-`0.0`, with no warning. A cloud model reached through the server — a tag of `cloud`, or one ending in `-cloud` — is
+`0.0`, with no warning, unless you gave the model's exact name a price row, in `pricing=` or added to
+[`DEFAULT_PRICING`](@ref); a row UniLM ships for a hosted model never prices a local model that bears its name. A
+cloud model reached through the server — a tag of `cloud`, or one ending in `-cloud` — is
 priced by the requested name instead, as is every model a request to Ollama's cloud itself names (an endpoint whose
 server is `https://ollama.com`); UniLM's price table holds no row for one, so [`estimated_cost`](@ref) gives `0.0` with
 a warning that the row is missing ([Cost Tracking](@ref cost_guide)). [`nl_classify`](@ref) makes the
@@ -277,8 +279,8 @@ One request asked both questions about the picture: `clef-flash:9b` saw red, at 
   ([Limits and refusals](@ref ollama_decisions_limits)).
 - **A model without vision** answers with its own HTTP 400, a [`SystemOneFailure`](@ref) carrying the model's own
   words ([When something fails](@ref ollama_decisions_failures)): check `status == 400`, not the text.
-- **Cost and usage.** A local model's answer costs nothing; the reply's `input_tokens` counts the pictures' token
-  positions ([System One](https://docs.ollama.com/api/systemone)).
+- **Cost and usage.** A local model's answer costs nothing unless you price the model; the reply's `input_tokens`
+  counts the pictures' token positions ([System One](https://docs.ollama.com/api/systemone)).
 - **Recordings** key and store each picture by its SHA-256, never its bytes
   ([Testing and recordings](@ref ollama_decisions_testing)).
 - **`d1-omni:600m`** takes pictures but read them unreliably: it called a red square "blue" (probability 0.954),

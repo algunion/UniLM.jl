@@ -121,9 +121,9 @@
   while the other providers' results carry the model they report. It now holds the reply's name,
   streamed or not. A cloud model whose reply names it without its cloud tag keeps the requested
   name, as its `respond`, FIM and System One results do, so it is still priced as the cloud model
-  it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
-  Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
-  price is unchanged.
+  it is; a local model's result still costs `0.0` unless you gave the model a price row. Upgrading:
+  code that read `nothing` from an Ollama chat result's `model` reads the reply's model name, or a
+  cloud model's requested name; its price is unchanged.
 - **Bridged MCP tool names fit the provider they go to.** `mcp_tools` and `mcp_tools_respond`
   kept an MCP tool's name up to 128 characters, but OpenAI's Chat Completions takes a function
   name of "a maximum length of 64", so a name of 65 to 128 characters went to OpenAI as it was.

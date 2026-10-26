@@ -43,7 +43,8 @@ _model_hint(::OllamaEndpoint) =
 # Ollama has no default model: a compaction that names none is refused before any request, as a Chat is.
 _compaction_model(s::OllamaEndpoint)::String = _resolve_model(s, "")
 
-# A model on the caller's own machine is free. A cloud model reached through the local server
+# A model on the caller's own machine bills no one (`estimated_cost` prices it only by a row the caller
+# gave it, `_callers_row`). A cloud model reached through the local server
 # (a tag of `cloud`, or one ending in `-cloud`, such as `clef:cloud` or `gpt-oss:120b-cloud`) runs on
 # Ollama's servers and bills its account: it is priced by the name requested, like any other model. As
 # in Ollama's own name parser, surrounding whitespace is trimmed, the tag follows the last ':' only when

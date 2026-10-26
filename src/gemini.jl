@@ -521,7 +521,8 @@ _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
 # totalTokenCount is prompt + tool-use prompt + thoughts + candidates. The tool-use prompt
 # (toolUsePromptTokenCount) is input the model read, so it is billed as prompt; thoughts bill at
 # the output rate → completion = candidates + thoughts. The prompt's audio is the AUDIO count of
-# promptTokensDetails and toolUsePromptTokensDetails. The billed tier is the reply's
+# promptTokensDetails and toolUsePromptTokensDetails, and the audio read from the cache that of
+# cacheTokensDetails ("List of modalities of the cached content"). The billed tier is the reply's
 # x-gemini-service-tier header (`header_tier`), the only place Gemini 4 Argon names it (observed
 # 2026-10-22), else usageMetadata's serviceTier: Google names the header as the sign of a
 # downgraded Priority request, and "Downgraded requests are billed at the standard rate"
@@ -538,6 +539,7 @@ function _gemini_usage(u, header_tier::Union{String,Nothing}=nothing)::Union{Tok
                _modality_tokens(get(u, "toolUsePromptTokensDetails", nothing), "AUDIO", "tokenCount")
     TokenUsage(prompt_tokens = prompt, completion_tokens = cand + thoughts,
         total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts, prompt_audio_tokens = audio,
+        cached_audio_tokens = _modality_tokens(get(u, "cacheTokensDetails", nothing), "AUDIO", "tokenCount"),
         service_tier = something(header_tier, _wire_string(u, "serviceTier"), Some(nothing)))
 end
 
@@ -567,7 +569,9 @@ function _gemini_usage_metadata(u::TokenUsage)::Dict{String,Any}
                          "candidatesTokenCount" => u.completion_tokens - u.reasoning_tokens,
                          "thoughtsTokenCount" => u.reasoning_tokens, "totalTokenCount" => u.total_tokens,
                          "promptTokensDetails" => Any[Dict{String,Any}("modality" => "AUDIO",
-                                                                       "tokenCount" => u.prompt_audio_tokens)])
+                                                                       "tokenCount" => u.prompt_audio_tokens)],
+                         "cacheTokensDetails" => Any[Dict{String,Any}("modality" => "AUDIO",
+                                                                      "tokenCount" => u.cached_audio_tokens)])
     isnothing(u.service_tier) || (d["serviceTier"] = u.service_tier)
     d
 end
@@ -879,17 +883,32 @@ const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Union{Float64,Nothing}}(
 # Whether `model`'s table states an audio rate of its own, which may differ from its text rate.
 _gemini_own_audio_rate(model::AbstractString)::Bool = !isnothing(get(_GEMINI_AUDIO_INPUT_RATES, model, nothing))
 
+# The cached-audio price of each model above with an audio price of its own, whose "Context caching
+# price" lists audio apart too (pricing page, 2026-10-26), in USD per token at the standard tier, scaled
+# on Flex and Priority as the table scales its cache-hit price.
+const _GEMINI_CACHED_AUDIO_RATES = Dict{String,Float64}(
+    "gemini-3.1-flash-lite"  => 0.05 / 1_000_000,   # "$0.025 (text / image / video) $0.05 (audio)"
+    "gemini-3-flash-preview" => 0.10 / 1_000_000,   # "$0.05 (text / image / video) $0.10 (audio)"
+    "gemini-2.5-flash"       => 0.10 / 1_000_000,   # "$0.03 (text / image / video) $0.1 (audio)"
+    "gemini-2.5-flash-lite"  => 0.03 / 1_000_000)   # "$0.01 (text / image / video) $0.03 (audio)"
+
+# The cached tokens that bill at the model's cached-audio price: the audio the usage reports among
+# them on a model whose table prices cached audio apart; none on a one-price model.
+_gemini_cached_audio(model::String, u::TokenUsage)::Int = haskey(_GEMINI_CACHED_AUDIO_RATES, model) ?
+    min(u.cached_audio_tokens, u.cached_tokens, u.prompt_audio_tokens, u.prompt_tokens) : 0
+
 # The audio rate a usage's audio input bills at, `rates` being the model's price row, or `nothing`
 # where none applies: the model has no entry above; the reply also counts audio output, which no
-# table here prices; or the call also read the cache on a model with an audio price of its own,
-# whose cached-audio price the page lists apart from the cached-text one while a usage does not
-# say how many cached tokens are audio. A one-price model's cache price names no modality either,
-# so its cache hits bill at the row's cached rate whatever they hold.
+# table here prices; or, on a model with an audio price of its own, the usage reports more cached
+# tokens than its text tokens and its cached audio together, so how the cache hits split between
+# the cached-text and cached-audio prices is unknown. A one-price model's cache price names no
+# modality either, so its cache hits bill at the row's cached rate whatever they hold.
 function _gemini_audio_rate(model::String, u::TokenUsage, rates::PriceRow)::Union{Float64,Nothing}
     (u.completion_audio_tokens > 0 || !haskey(_GEMINI_AUDIO_INPUT_RATES, model)) && return nothing
     own = _GEMINI_AUDIO_INPUT_RATES[model]
     isnothing(own) && return rates.input
-    u.cached_tokens > 0 ? nothing : own
+    text = u.prompt_tokens - min(u.prompt_audio_tokens, u.prompt_tokens)
+    min(u.cached_tokens, u.prompt_tokens) - _gemini_cached_audio(model, u) <= text ? own : nothing
 end
 
 # The models whose table bills a prompt over 200K tokens at long-context rates, the whole request:
@@ -911,7 +930,8 @@ _gemini_context_multiples(model::String, prompt_tokens::Int)::NTuple{2,Float64} 
 
 # What Gemini bills a call, on the native and the OpenAI-compatible endpoint alike
 # (https://ai.google.dev/gemini-api/docs/pricing): prompts are cached implicitly, so a cache hit
-# bills at the context-caching rate and every other prompt token, a tool-use prompt included, at
+# bills at the context-caching rate — its audio at the model's cached-audio price where the table
+# lists one (`_gemini_cached_audio`) — and every other prompt token, a tool-use prompt included, at
 # the input rate — an audio one at the model's audio rate (`_gemini_audio_rate`), the call
 # unpriced where none applies — with no premium for writing the cache; output, thinking
 # included, bills at the output rate; a long prompt at its long-context multiples
@@ -924,8 +944,11 @@ function _billed_cost(service::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEn
     _counts_audio(u) && isnothing(audio_rate) && return _unpriced_audio(service, model)
     audio = min(u.prompt_audio_tokens, u.prompt_tokens)
     cached = min(u.cached_tokens, u.prompt_tokens)
+    cached_audio = _gemini_cached_audio(model, u)
     rate, cache = _gemini_tier_multiples(model, u.service_tier)
     input, output = _gemini_context_multiples(model, u.prompt_tokens)
-    rate * (input * ((u.prompt_tokens - cached - audio) * rates.input + audio * something(audio_rate, 0.0)) +
-            output * u.completion_tokens * rates.output) + cache * input * cached * rates.cached_input
+    rate * (input * ((u.prompt_tokens - cached - audio + cached_audio) * rates.input +
+                     (audio - cached_audio) * something(audio_rate, 0.0)) + output * u.completion_tokens * rates.output) +
+        cache * input * ((cached - cached_audio) * rates.cached_input +
+                         cached_audio * get(_GEMINI_CACHED_AUDIO_RATES, model, 0.0))
 end

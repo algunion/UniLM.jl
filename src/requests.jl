@@ -908,8 +908,10 @@ when present. Chat Completions and the Responses API name these differently
 (`prompt_tokens`/`input_tokens`, `prompt_tokens_details`/`input_tokens_details`, …), so the
 keys are parameterized. The writes at the 12-hour retention are
 `cache_write_tokens_details.ttl_12h_tokens`, which only the Responses API reports
-([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). The billed
-`service_tier` is reported beside the usage, not in it, so the caller passes it.
+([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)); the cached
+audio is `cached_audio_tokens`, which only a Gemini Interactions usage carries, as UniLM writes it
+(`_interaction_usage`). The billed `service_tier` is reported beside the usage, not in it, so the
+caller passes it.
 """
 function _token_usage_from(u::AbstractDict;
     prompt_key::String="prompt_tokens", completion_key::String="completion_tokens",
@@ -931,6 +933,7 @@ function _token_usage_from(u::AbstractDict;
         service_tier=service_tier,
         prompt_audio_tokens=_n(pd, "audio_tokens"),
         completion_audio_tokens=_n(cd, "audio_tokens"),
+        cached_audio_tokens=_n(pd, "cached_audio_tokens"),
     )
 end
 

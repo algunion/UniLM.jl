@@ -470,10 +470,15 @@ Audio input bills at the input price the page lists for audio, at the same facto
 audio price where its table lists one apart — per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00
 on `gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite` — and
 otherwise the row's input rate, since an input price that names no modality, or names audio among
-others, is every modality's. Three cases are estimated at `0.0`, with one warning per model and
+others, is every modality's. A cache hit bills at the cache-hit rate, and on those four models the
+audio Gemini reports among the cached tokens — `cacheTokensDetails`, read as `cached_audio_tokens` —
+bills at the cached-audio price their tables list apart: per 1M tokens, \$0.05 on
+`gemini-3.1-flash-lite`, \$0.10 on `gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.03 on
+`gemini-2.5-flash-lite`. Three cases are estimated at `0.0`, with one warning per model and
 endpoint: audio on a model the page prices without audio (the image models) or does not list, audio
-in the output, and audio in a call that also hit the cache on one of those four models, whose
-cached-audio price the usage cannot tell apart. On `GEMINIOpenAIServiceEndpoint`, a result's tier and its
+in the output, and a cache hit on one of those four models whose usage reports more cached tokens
+than text tokens and cached audio together, so that how its hits split between the two cache prices
+is unknown. On `GEMINIOpenAIServiceEndpoint`, a result's tier and its
 audio are priced as [The OpenAI-compatible endpoint](@ref gemini_compatible) says.
 
 A reply that names a tier other than standard, flex and priority is estimated at the standard

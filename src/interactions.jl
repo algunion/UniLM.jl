@@ -411,7 +411,8 @@ end
 # output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics). The audio
 # of the input (the "audio" entries of input_tokens_by_modality and tool_use_tokens_by_modality)
 # is input_tokens_details.audio_tokens, which a usage that counts audio carries and token_usage
-# reads as prompt_audio_tokens.
+# reads as prompt_audio_tokens; the audio among the cached tokens (cached_tokens_by_modality) is
+# input_tokens_details.cached_audio_tokens, read as cached_audio_tokens.
 # The raw usage is preserved on ResponseObject.raw. Per-call hosted-tool fees are NOT modeled.
 _interaction_usage(::Nothing) = nothing
 function _interaction_usage(u::AbstractDict)
@@ -420,6 +421,8 @@ function _interaction_usage(u::AbstractDict)
     audio = _modality_tokens(get(u, "input_tokens_by_modality", nothing), "audio", "tokens") +
             _modality_tokens(get(u, "tool_use_tokens_by_modality", nothing), "audio", "tokens")
     audio > 0 && (input["audio_tokens"] = audio)
+    cached_audio = _modality_tokens(get(u, "cached_tokens_by_modality", nothing), "audio", "tokens")
+    cached_audio > 0 && (input["cached_audio_tokens"] = cached_audio)
     Dict{String,Any}(
         "input_tokens"  => _n("total_input_tokens") + _n("total_tool_use_tokens"),
         "output_tokens" => _n("total_output_tokens") + _n("total_thought_tokens"),

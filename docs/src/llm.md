@@ -1230,6 +1230,7 @@ similarity = dot(emb.embeddings[1], emb.embeddings[2]) /
     inference_geo::Union{String,Nothing} = nothing  # the inference region it reports
     prompt_audio_tokens::Int = 0                    # subset of prompt_tokens that is audio input
     completion_audio_tokens::Int = 0                # subset of completion_tokens that is audio output
+    cached_audio_tokens::Int = 0                    # subset of cached_tokens that is audio (Gemini reports it)
 end
 TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens)
     # the 5-count positional form still builds; positionally the fields go in the order above
@@ -1246,7 +1247,9 @@ request asked for); `inference_geo` from Anthropic. The audio counts come from O
 Completions' `prompt_tokens_details.audio_tokens` / `completion_tokens_details.audio_tokens`,
 and `prompt_audio_tokens` also from Gemini's AUDIO counts on the native endpoint
 (`promptTokensDetails` and `toolUsePromptTokensDetails`) and in Interactions
-(`input_tokens_by_modality` and `tool_use_tokens_by_modality`), streamed and not:
+(`input_tokens_by_modality` and `tool_use_tokens_by_modality`), streamed and not;
+`cached_audio_tokens` comes from Gemini alone, the AUDIO count of `cacheTokensDetails` and the audio
+of an interaction's `cached_tokens_by_modality`:
 `estimated_cost` bills them at the model's audio-token rates on `OPENAIServiceEndpoint`
 (`gpt-audio-1.5`: \$32 / \$64 per 1M) and at the audio input rate Gemini's pricing page states
 (below); any other audio tokens — another model or endpoint (Azure, DeepSeek, generic, custom) —
@@ -1337,10 +1340,14 @@ multiples as text: a model's own audio price where the page lists one apart —
 `gemini-3.1-flash-lite` \$0.50, `gemini-3-flash-preview` and `gemini-2.5-flash` \$1.00,
 `gemini-2.5-flash-lite` \$0.30 per 1M — else the row's input rate, since an input price that
 names no modality (or names audio among the others) is every modality's: Gemini 4 Argon, 3.8 and
-3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview. Audio on a model the
-page prices without audio (the image models) or does not list, Gemini audio output, and audio in a
-call that also hit the cache on a model with its own audio price give `0.0` with one warning per
-model and endpoint (a one-price model's cache hits bill at its cached rate). A Gemini result is billed at the tier it reports
+3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview. A cache hit bills at
+the row's cached rate, except the cached audio (`cached_audio_tokens`) on the four models with an
+audio price of their own, which bills at the cached-audio price their tables list —
+`gemini-3.1-flash-lite` \$0.05, `gemini-3-flash-preview` and `gemini-2.5-flash` \$0.10,
+`gemini-2.5-flash-lite` \$0.03 per 1M — scaled by the billed tier as the cache-hit rate is. Audio on a
+model the page prices without audio (the image models) or does not list, Gemini
+audio output, and a cache hit on one of those four models whose usage reports more cached tokens
+than text tokens and cached audio together give `0.0` with one warning per model and endpoint. A Gemini result is billed at the tier it reports
 (`usage.service_tier`: the `x-gemini-service-tier` header, else `usageMetadata.serviceTier`,
 or an interaction's `service_tier`; `GEMINIOpenAIServiceEndpoint` replies name none, so a Chat
 result there records the requested tier — `"priority"` priced at Priority is an upper bound,

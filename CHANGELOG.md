@@ -98,6 +98,16 @@
   Google prices the thinking, "despite only the summary being output from the API". A `Chat` without
   `reasoning_effort` sends no thinking config, as before. A recording of such a request made before keys on
   the old bytes: record it again.
+- **A Gemini call that read audio from the cache is priced.** On the four models whose pricing lists
+  audio apart — `gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash` and
+  `gemini-2.5-flash-lite` — a call with audio that also hit the implicit cache was estimated at `0.0`,
+  with a warning, since its usage did not say how many cached tokens were audio. `TokenUsage` gains
+  `cached_audio_tokens`, the audio among the cached tokens, read from generateContent's
+  `cacheTokensDetails` and an interaction's `cached_tokens_by_modality`, streamed or not (0 for every
+  other provider, none of which reports it). Such a call now bills that audio at the model's
+  cached-audio price — \$0.05, \$0.10, \$0.10 and \$0.03 per 1M tokens, at the billed tier's multiple —
+  and its other cached tokens at the cached rate. A usage that reports more cached tokens than text
+  tokens and cached audio together is still unpriced, with the warning.
 
 ## 0.27.1
 

@@ -46,13 +46,14 @@ Gemini or Interactions result at the input price Google's pricing page states fo
 by the billed tier and a long prompt's multiples as text is: the model's own audio price where
 the page lists one apart (`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash`,
 `gemini-2.5-flash-lite`), else the row's input rate, since the page spells modalities out
-wherever their rates differ and an input price that names none is every modality's; a cache hit
-bills at the row's cached rate, since a one-price model's cache price names no modality either.
-Any other audio — on a model the page prices without audio (the image models) or does not list,
-on another endpoint, Gemini audio output, or audio in a call that also hit the cache on a model
-with its own audio price (a usage does not say how many cached tokens are audio, and the page
-lists that model's cached audio apart) — leaves the estimate at `0.0`, with one warning per
-model and endpoint.
+wherever their rates differ and an input price that names none is every modality's. A cache hit
+bills at the row's cached rate, since a one-price model's cache price names no modality either,
+except the audio a usage reports among its cached tokens (`cached_audio_tokens`) on those four
+models, which bills at the cached-audio price their tables list apart. Any other audio — on a
+model the page prices without audio (the image models) or does not list, on another endpoint,
+Gemini audio output, or a cache hit on one of those four models whose usage reports more cached
+tokens than text tokens and cached audio together, so that its split is unknown — leaves the
+estimate at `0.0`, with one warning per model and endpoint.
 `GEMINIOpenAIServiceEndpoint` reports no audio count, so its audio input is priced at the text
 rate, a lower bound where the model's audio price is its own; such a request warns once per model.
 Off-peak discounts, other multimodal rates and hosted-tool fees are not included.

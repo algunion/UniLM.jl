@@ -864,7 +864,7 @@ end
     # The later fields are appended: the five positional counts keep their order.
     @test fieldnames(TokenUsage) == (:prompt_tokens, :completion_tokens, :total_tokens, :cached_tokens,
         :reasoning_tokens, :cache_write_tokens, :cache_write_extended_tokens, :service_tier, :inference_geo,
-        :prompt_audio_tokens, :completion_audio_tokens)
+        :prompt_audio_tokens, :completion_audio_tokens, :cached_audio_tokens)
     @test TokenUsage(10, 2, 12, 3, 1).cached_tokens == 3
     @test TokenUsage(10, 2, 12, 3, 1) == TokenUsage(prompt_tokens=10, completion_tokens=2, total_tokens=12,
                                                     cached_tokens=3, reasoning_tokens=1)

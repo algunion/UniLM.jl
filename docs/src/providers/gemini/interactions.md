@@ -51,7 +51,8 @@ u = token_usage(result)
 prices; `token_usage` reads the interaction's `usage` in the shape every result shares:
 `prompt_tokens` is its `total_input_tokens` and `total_tool_use_tokens`, `completion_tokens` its
 `total_output_tokens` and `total_thought_tokens`, `reasoning_tokens` the thought tokens,
-`cached_tokens` its `total_cached_tokens`, `prompt_audio_tokens` the audio among the input, and
+`cached_tokens` its `total_cached_tokens`, `prompt_audio_tokens` the audio among the input,
+`cached_audio_tokens` the audio among the cached tokens (`cached_tokens_by_modality`), and
 `service_tier` the interaction's `service_tier`, the tier that billed it. They are priced as on
 generateContent ([Cost and usage](@ref gemini_cost)). `respond` returns an interaction whose `status`
 is `"failed"` as a `ResponseFailure`, and one that is `"completed"`, `"requires_action"`,

@@ -1702,7 +1702,7 @@ abstract type LLMRequestResponse end
 """
     TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0, cached_tokens=0, reasoning_tokens=0,
                cache_write_tokens=0, cache_write_extended_tokens=0, service_tier=nothing, inference_geo=nothing,
-               prompt_audio_tokens=0, completion_audio_tokens=0)
+               prompt_audio_tokens=0, completion_audio_tokens=0, cached_audio_tokens=0)
     TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens)
 
 Token usage statistics returned by the API, in one shape for every provider.
@@ -1715,8 +1715,11 @@ retention (OpenAI `"12h"`, Anthropic `"1h"`). `reasoning_tokens` is the part of
 `prompt_tokens` that is audio input and `completion_audio_tokens` the part of
 `completion_tokens` that is audio output, as OpenAI Chat Completions reports them for a
 model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input on the
-native endpoint and Gemini Interactions. The counts are 0 when the provider omits them, as
-`GEMINIOpenAIServiceEndpoint` does: its audio input is in `prompt_tokens` alone.
+native endpoint and Gemini Interactions. `cached_audio_tokens` is the part of `cached_tokens`
+that is audio, as Gemini reports it on the native endpoint (`cacheTokensDetails`) and Gemini
+Interactions (`cached_tokens_by_modality`); no other provider reports it. The counts are 0 when
+the provider omits them, as `GEMINIOpenAIServiceEndpoint` does: its audio input is in
+`prompt_tokens` alone.
 `service_tier` is the tier the provider reports
 billing the call at (OpenAI's `service_tier`, for example) and `inference_geo` the inference
 region it reports; each is `nothing` when the provider reports none. One exception: on
@@ -1728,8 +1731,8 @@ request at Standard and this endpoint does not report the downgrade.
 [`estimated_cost`](@ref) bills `cached_tokens` at the discounted cached-input rate and the
 rest at the standard rates, unless the provider's own pricing applies (see
 [`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates and
-Gemini audio input at the rate its pricing page states for the model; any other audio leaves
-the estimate at `0.0`. Audio a provider does not count apart (`GEMINIOpenAIServiceEndpoint`'s)
+Gemini audio input, and the audio it reads from the cache, at the rates its pricing page states
+for the model; any other audio leaves the estimate at `0.0`. Audio a provider does not count apart (`GEMINIOpenAIServiceEndpoint`'s)
 is priced with the text in `prompt_tokens`.
 Positionally the fields go in the order listed, the five counts first; the fields left out
 take their defaults.
@@ -1746,12 +1749,14 @@ take their defaults.
     inference_geo::Union{String,Nothing} = nothing
     prompt_audio_tokens::Int = 0
     completion_audio_tokens::Int = 0
+    cached_audio_tokens::Int = 0
     function TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens,
                         cache_write_tokens=0, cache_write_extended_tokens=0, service_tier=nothing,
-                        inference_geo=nothing, prompt_audio_tokens=0, completion_audio_tokens=0)
+                        inference_geo=nothing, prompt_audio_tokens=0, completion_audio_tokens=0,
+                        cached_audio_tokens=0)
         new(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens,
             cache_write_tokens, cache_write_extended_tokens, service_tier, inference_geo,
-            prompt_audio_tokens, completion_audio_tokens)
+            prompt_audio_tokens, completion_audio_tokens, cached_audio_tokens)
     end
 end
 

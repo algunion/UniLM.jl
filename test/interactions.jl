@@ -274,11 +274,19 @@ end
     # 3.6 Flash's one input price names no modality, so it is the audio's too: $0.75 in, $3.75 out per 1M.
     @test (@test_logs estimated_cost(success(usage; model="gemini-3.6-flash"))) ≈ (54 * 0.75 + 1 * 3.75) / 1_000_000
     # A cache hit beside the audio: 3.6 Flash's cache price names no modality either, so the hit bills at
-    # its cached rate ($0.075 per 1M); 3.1 Flash-Lite lists cached audio apart and the usage does not say
-    # how many cached tokens are audio, so that call is unpriced.
+    # its cached rate ($0.075 per 1M). 3.1 Flash-Lite lists cached audio apart ($0.025 text, $0.05 audio),
+    # and cached_tokens_by_modality says how many cached tokens are audio.
     cached = merge(usage, Dict("total_cached_tokens" => 10))
     @test (@test_logs estimated_cost(success(cached; model="gemini-3.6-flash"))) ≈ (44 * 0.75 + 10 * 0.075 + 1 * 3.75) / 1_000_000
-    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(cached))) === 0.0
+    split = merge(usage, Dict("total_cached_tokens" => 30, "cached_tokens_by_modality" =>
+        [Dict("modality" => "text", "tokens" => 10), Dict("modality" => "audio", "tokens" => 20)]))
+    @test (@test_logs estimated_cost(success(split))) ≈ (6 * 0.25 + 18 * 0.50 + 10 * 0.025 + 20 * 0.05 + 1 * 1.50) / 1_000_000
+    @test token_usage(success(split)).cached_audio_tokens == 20
+    # A usage that names no cached audio bills its hit as text, unless it reports more cached tokens than
+    # text tokens: its split is then unknown, and the call unpriced.
+    @test (@test_logs estimated_cost(success(cached))) ≈ (6 * 0.25 + 38 * 0.50 + 10 * 0.025 + 1 * 1.50) / 1_000_000
+    unsplit = merge(usage, Dict("total_cached_tokens" => 30))
+    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(unsplit))) === 0.0
 end
 
 @testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin

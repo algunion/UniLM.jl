@@ -1381,9 +1381,10 @@ end
     @test (@test_logs cost("gemini-2.5-pro", long_cached)) ≈ (200_000 * 2.50 + 50_000 * 0.25 + 1_000 * 15.00) / 1_000_000
     # Unpriced, with one warning per model: an id the table has no entry for, whatever row a caller adds — a
     # near-miss id, or an image model whose input price excludes audio ("$1.50 (text/image/video)") — any
-    # audio output, and a cache hit beside audio on a model with an audio price of its own: the page lists
-    # its cached audio apart (3.1 Flash-Lite "$0.025 (text / image / video) $0.05 (audio)"), and the usage
-    # does not say how many cached tokens are audio.
+    # audio output, and a cache hit beside audio on a model with an audio price of its own whose usage holds
+    # more cached tokens than text tokens and names no cached audio: the page lists its cached audio apart
+    # (3.1 Flash-Lite "$0.025 (text / image / video) $0.05 (audio)"), and that hit's split is unknown (the
+    # next testset prices one that names its cached audio).
     says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
     for model in ("gemini-3.1-flash-lite-preview", "gemini-nano-banana-2.1")
         @test (@test_logs (:warn, says) cost(model, heard(); pricing=Dict(model => UniLM._price(1.50, 0.15, 10.0)))) === 0.0
@@ -1394,6 +1395,43 @@ end
     # Without audio, a cache hit bills as before.
     @test (@test_logs cost("gemini-3.1-flash-lite", TokenUsage(prompt_tokens=1_010, completion_tokens=1, cached_tokens=500))) ≈
           (510 * 0.25 + 500 * 0.025 + 1 * 1.50) / 1_000_000
+end
+
+@testset "cost — a cache hit beside audio bills the cached audio Gemini reports at its cached-audio price" begin
+    # Context caching price per 1M tokens (ai.google.dev/gemini-api/docs/pricing, 2026-10-26): 3.1 Flash-Lite
+    # "$0.025 (text / image / video) $0.05 (audio)", 3 Flash Preview $0.05 / $0.10, 2.5 Flash $0.03 / $0.1,
+    # 2.5 Flash-Lite $0.01 / $0.03. generateContent names the cached modalities in cacheTokensDetails.
+    meta = Dict{String,Any}("promptTokenCount" => 1_010, "candidatesTokenCount" => 1, "totalTokenCount" => 1_011,
+        "cachedContentTokenCount" => 500,
+        "promptTokensDetails" => [Dict("modality" => "TEXT", "tokenCount" => 10), Dict("modality" => "AUDIO", "tokenCount" => 1_000)],
+        "cacheTokensDetails" => [Dict("modality" => "TEXT", "tokenCount" => 10), Dict("modality" => "AUDIO", "tokenCount" => 490)])
+    reply = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "x")]),
+                 "finishReason" => "STOP")], "usageMetadata" => meta, "modelVersion" => "gemini-3.1-flash-lite")
+    u = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply)))).usage
+    cost(model, u; tier=nothing) = estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"),
+        self=Chat(service=GEMINIServiceEndpoint, model=model), usage=TokenUsage(; UniLM._usage_fields(u)..., service_tier=tier)))
+    # 510 audio tokens read fresh, 10 text and 490 audio tokens read from the cache, 1 output token.
+    bill(audio, cached_text, cached_audio, output) = (510 * audio + 10 * cached_text + 490 * cached_audio + output) / 1e6
+    @test (@test_logs cost("gemini-3.1-flash-lite", u)) ≈ bill(0.50, 0.025, 0.05, 1.50)
+    @test (u.cached_tokens, u.cached_audio_tokens, u.prompt_audio_tokens) == (500, 490, 1_000)
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(reply), state)
+    @test state.usage == u
+    @test UniLM._gemini_usage(UniLM._gemini_usage_metadata(u)) == u        # the hops of a turn keep it when joined
+    @test cost("gemini-3-flash-preview", u) ≈ bill(1.00, 0.05, 0.10, 3.00)
+    @test cost("gemini-2.5-flash", u) ≈ bill(1.00, 0.03, 0.10, 2.50)
+    @test cost("gemini-2.5-flash-lite", u) ≈ bill(0.30, 0.01, 0.03, 0.40)
+    # At the billed tier's prices: 3.1 Flash-Lite caches at "$0.0125 (text / image / video) $0.025 (audio)" on
+    # Flex and "$0.045 ... $0.09 (audio)" on Priority; 2.5 Flash's Flex cache price is its standard one.
+    @test cost("gemini-3.1-flash-lite", u; tier="flex") ≈ bill(0.25, 0.0125, 0.025, 0.75)
+    @test cost("gemini-3.1-flash-lite", u; tier="priority") ≈ bill(0.90, 0.045, 0.09, 2.70)
+    @test cost("gemini-2.5-flash", u; tier="flex") ≈ bill(0.50, 0.03, 0.10, 1.25)
+    # A one-price model's cache price names no modality, so its cached audio bills at the row's cached rate.
+    @test (@test_logs cost("gemini-3.6-flash", u)) ≈ (510 * 0.75 + 500 * 0.075 + 3.75) / 1e6
+    # More cached tokens than the prompt's text and the cached audio the usage names: the cache split cannot
+    # be read, so the call is unpriced, with the audio warning.
+    unsplit = TokenUsage(; UniLM._usage_fields(u)..., cached_audio_tokens=0)
+    @test (@test_logs (:warn, r"no audio-token rates") cost("gemini-3.1-flash-lite", unsplit)) === 0.0
 end
 
 @testset "compat — a sound clip sent to a model with its own audio price warns that its estimate is a lower bound" begin

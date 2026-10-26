@@ -755,6 +755,18 @@ _oa_result(model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x
     @test isapprox((@test_logs estimated_cost(_oa_result("gpt-5-search-api", u))),
                    800_000 * 1.25e-6 + 200_000 * 0.125e-6 + 100_000 * 10.0e-6; rtol=1e-12)
 end
+
+@testset "gpt-5.2-pro has its price row" begin
+    # OpenAI's pricing page (2026-10-26), Standard: "| gpt-5.2-pro | $21.00 | $168.00 | - |" per 1M tokens —
+    # input, output, and no cached-input rate, so a cache read bills as input, as on the other pro models.
+    # Without a row its cost read 0.0, with the missing-price warning.
+    @test haskey(DEFAULT_PRICING, "gpt-5.2-pro")
+    @test DEFAULT_PRICING["gpt-5.2-pro"] == UniLM._price(21.0, 21.0, 168.0)
+    u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=200_000, completion_tokens=100_000, total_tokens=1_100_000)
+    for model in ("gpt-5.2-pro", "gpt-5.2-pro-2025-12-11")   # the snapshot OpenAI's models list names
+        @test isapprox((@test_logs estimated_cost(_oa_result(model, u))), 1_000_000 * 21e-6 + 100_000 * 168e-6; rtol=1e-12)
+    end
+end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 
 @testset "OpenAI cost: cache writes by lifetime" begin

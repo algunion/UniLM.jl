@@ -28,8 +28,8 @@ Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 
 Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
-`gpt-5-search-api` on 2026-10-25), TypeSafe rows on 2026-10-25, DeepSeek rows on 2026-09-24 (prices
-drift — re-verify before relying on them).
+`gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26), TypeSafe rows on 2026-10-25,
+DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
@@ -78,6 +78,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-5.4-mini"  => _price(0.75, 0.075, 4.5),
     "gpt-5.4-nano"  => _price(0.20, 0.02, 1.25),   # shuts down 2027-04-01
     "gpt-5.2"       => _price(1.75, 0.175, 14.0),
+    "gpt-5.2-pro"   => _price(21.0, 21.0, 168.0),  # no cached-input rate: a cache read bills as input; page of 2026-10-26
     "chat-latest"   => _price(5.0,  0.50, 30.0),
     "gpt-5-search-api" => _price(1.25, 0.125, 10.0),  # the Chat Completions search model; page of 2026-10-25
     "gpt-audio-1.5" => _price(2.5,  2.5,  10.0),   # text tokens; no cached-input rate: a cache read bills as input

@@ -261,8 +261,9 @@ released since 5 March 2026 ([pricing](https://developers.openai.com/api/docs/pr
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 
-The rows are OpenAI's list prices as checked on 25 October 2026; prices change, so check OpenAI's
-[pricing page](https://developers.openai.com/api/docs/pricing) before relying on an estimate.
+The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October); prices
+change, so check OpenAI's [pricing page](https://developers.openai.com/api/docs/pricing) before relying
+on an estimate.
 
 ```@eval
 Main.ProviderFacts.price_table(:openai)

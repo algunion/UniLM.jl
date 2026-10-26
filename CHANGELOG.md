@@ -344,6 +344,11 @@
   sign: a delivery signed with it verified `true`, and every delivery OpenAI signed `false`. It
   now throws `ArgumentError` before any check, whatever the delivery, as the Standard Webhooks
   libraries refuse an empty secret ("webhook secret may not be empty").
+- **`gpt-5.2-pro` is priced.** It had no row in `DEFAULT_PRICING`, so `estimated_cost` and
+  `cumulative_cost` read its calls, and those of its snapshot `gpt-5.2-pro-2025-12-11`, as `0.0`,
+  with the missing-price warning. Its row holds the rates OpenAI's pricing page lists on
+  2026-10-26: \$21.00 input and \$168.00 output per 1M tokens, and no cached-input rate, so a
+  cache read bills as input, as on the other pro models.
 
 ## 0.26.0
 

@@ -61,7 +61,10 @@ Main.ProviderFacts.on_your_provider(Main.ProviderFacts.decisions, :first_decisio
 ## [Handle the result](@id getting_started_results)
 
 A request to a model returns its outcome as a typed result rather than throwing it: a success holding the
-reply, a failure holding what the provider answered with, or a call error holding what ended the call.
+reply, a failure holding what the provider answered with, or a call error holding what ended the call;
+[`nl_classify`](@ref), [`nl_dispatch`](@ref) and [`@branch`](@ref), which turn a decision into a key or a method,
+throw a [`SystemOneError`](@ref) for a failed call instead, and, with no `fallback` or `_` line, a
+[`LowConfidenceError`](@ref) or [`DecisionDeclinedError`](@ref) for an answer they cannot act on.
 [Results](@ref results_guide) shows the types each verb returns and how to read them; four of the Responses
 lifecycle verbs — `delete_response`, `list_input_items`, `compact_response` and `count_input_tokens` — return
 the provider's answer as a `Dict` on success.

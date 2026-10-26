@@ -41,7 +41,8 @@ Main.ProviderFacts.provider_table(Main.ProviderFacts.decisions)
 ## [One API across providers](@id home_across)
 
 The provider is one argument: `service` names its endpoint and `model` its model, so code written for one
-provider runs on another once those two change: the same types and verbs, the same typed results, the same
+provider runs on another once those two change, as far as the other provider serves what the code asks: the same
+types and verbs, the same typed results, the same
 cost accounting and the same [`RequestConfig`](@ref). [One API across providers](@ref backend_guide) says what every provider
 shares, how to switch, and where the providers differ — which speak their own API and which the
 OpenAI-compatible one; [Capabilities by provider](@ref capabilities_guide) shows what each provider serves; and

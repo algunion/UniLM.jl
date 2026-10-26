@@ -430,7 +430,7 @@ end
 | Choice options | at most 255 (one is sent), each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
-| `state` | a text that is not blank, unless images come with it |
+| `state` | a string, a JSON object or array, or images then texts; a blank string is refused unless images come with it |
 | Images | in the state: an image, or a vector of images then texts; refused after a text, inside a JSON object or array, beside values that are not texts, and in a question |
 | Box questions | refused: the route answers Choice, Score and Noul |
 | Options | `keep_alive` only |

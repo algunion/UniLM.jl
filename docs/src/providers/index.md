@@ -31,7 +31,8 @@ Main.ProviderFacts.provider_table(Main.ProviderFacts.llm)
 - [Image Generation](@ref images_guide) — images made from a prompt, and images edited.
 - [FIM & Prefix Completion](@ref completions_guide) — text written between a prefix and a suffix, and a reply
   continued from the start you give it.
-- [Results](@ref results_guide) — the typed success, failure or call error every call returns.
+- [Results](@ref results_guide) — the typed success, failure or call error a request returns, and the verbs that
+  return something else (a `Dict`, a `ToolLoopResult`).
 - [Cost Tracking](@ref cost_guide) — token usage in one shape on every provider, and its price.
 - [Timeouts & Retries](@ref timeouts_guide) — the bounds every call waits under, the retries they bound, and
   the typed errors a breach gives.

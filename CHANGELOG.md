@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.27.0
 
 ### Breaking
 - **`DeepSeekEndpoint()` and `MistralEndpoint()` read their key when a request is sent.**

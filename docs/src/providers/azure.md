@@ -116,11 +116,12 @@ request" ([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/ope
 and UniLM sends no developer message. What `push!` refuses is the same on every provider
 ([Chat Completions](@ref chat_guide)).
 
-A reply that holds audio (`audio_output`) goes back to Azure as the turn's content alone, its
-transcript, not as the audio's id: UniLM sends the id back on one other endpoint only
-([Audio replies](@ref chat_audio_output)), though Azure takes it back too, its quickstart adding "a
-history message referencing the previous turn's audio by ID"
-([audio generation](https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart)).
+A reply that holds audio (`audio_output`) goes back to Azure by the audio's id, `"audio": {"id": …}`
+beside the turn's transcript, as Azure's quickstart adds "a history message referencing the previous
+turn's audio by ID"
+([audio generation](https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart)),
+until a minute before the reply's `expires_at`, and from then on as the transcript alone, as on OpenAI
+([Audio replies](@ref chat_audio_output)).
 
 ## [Streaming](@id azure_streaming)
 

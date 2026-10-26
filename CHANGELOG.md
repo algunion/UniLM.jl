@@ -387,6 +387,12 @@
   reference names the vector size `output_dimension` and lists no `dimensions`, which the endpoint
   sent. An `Embeddings` request on Mistral's host now sends its `dimensions` as `output_dimension`;
   every other server's request is unchanged, byte for byte.
+- **Azure takes an earlier audio reply back by its id, as OpenAI does.** Azure's audio quickstart adds
+  "a history message referencing the previous turn's audio by ID", but `AZUREServiceEndpoint` sent an
+  audio turn back as its transcript alone, so the model lost the audio it had spoken. It now sends
+  `"audio": {"id": …}` beside the transcript, until a minute before the reply's `expires_at`, and the
+  transcript alone from then on, as `OPENAIServiceEndpoint` does. A recording of such a follow-up made
+  before keys on the old bytes: record it again (after the audio's expiry, as on OpenAI).
 
 ## 0.26.0
 

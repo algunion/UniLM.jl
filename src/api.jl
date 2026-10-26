@@ -481,15 +481,15 @@ The audio an OpenAI model answers a Chat Completions turn with, on the assistant
 that speaks, such as `gpt-audio-1.5`
 ([Audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions)).
 
-- `id::String`: OpenAI's id for the audio, by which a later turn refers to it.
+- `id::String`: the service's id for the audio (OpenAI's or Azure's), by which a later turn refers to it.
 - `data::Vector{UInt8}`: the audio, decoded from base64, in the format the request asked for.
 - `format::Union{String,Nothing}`: that format as the bytes' file signature shows it —
   `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
   bytes that begin with none, such as `"pcm16"`'s raw samples.
-- `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
+- `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which the service keeps the
   audio for later turns; from a minute before then on the turn goes back without its id
-  (below): OpenAI no longer holds the audio when the request arrives, and it answered an id it
-  never issued with HTTP 400 `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
+  (below): the service no longer holds the audio when the request arrives, and OpenAI answered
+  an id it never issued with HTTP 400 `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
   reply's expiry, which comes alone in its last update after the turn's finish, was lost to
   a connection that closed between the two; the turn is kept either way.
 - `transcript::String`: what the audio says; the turn's `content` too, unless the turn
@@ -497,14 +497,14 @@ that speaks, such as `gpt-audio-1.5`
 
 The OpenAI-wire decoders read it from a reply's `message.audio`; a streamed reply
 assembles it from its `delta.audio` chunks, and the transcript reaches the streaming
-callback as text. When the conversation goes on, the OpenAI Chat encoder
-(`OPENAIServiceEndpoint`) sends the turn back as
+callback as text. When the conversation goes on, the OpenAI and Azure Chat encoders
+(`OPENAIServiceEndpoint`, `AZUREServiceEndpoint`) send the turn back as
 `{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
 beside the id, until a minute before `expires_at`, and always when `expires_at` is
-`nothing`; from then on it sends the content alone. Such a follow-up's request bytes
+`nothing`; from then on they send the content alone. Such a follow-up's request bytes
 therefore depend on the clock: one recorded with [`with_recorded_answers`](@ref) while the
 audio was live replays only until a minute before `expires_at`, then throws
-[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — the Gemini OpenAI-compatible endpoint,
 DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
 the turn's content alone, the neutral form it also sends for another provider's
 [`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.
@@ -1648,9 +1648,12 @@ _asks_stream_usage(_) = false
 # every other endpoint, the turn goes as its content alone, the transcript unless the turn
 # holds other text. The minute covers a request built just before the expiry, which could
 # reach OpenAI after it, and a server clock ahead of this one. A turn whose expiry is unknown
-# goes by id. A conversation without an audio reply goes out as it is.
+# goes by id. A conversation without an audio reply goes out as it is. Azure takes the turn
+# back the same way: its audio quickstart adds "a history message referencing the previous
+# turn's audio by ID", and its reply's audio carries the same `expires_at`
+# (https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart).
 _wire_messages(_, messages::Conversation) = messages
-_wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
+_wire_messages(::Union{Type{OPENAIServiceEndpoint},Type{AZUREServiceEndpoint}}, messages::Conversation) =
     any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages
 
 function _audio_turn(m::Message)

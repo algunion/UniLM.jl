@@ -26,6 +26,13 @@
   `logprobs["content"]`. Native Gemini, Anthropic and Gemini Interactions still refuse them, having
   no such field, and Ollama still refuses `moderation`. `LLMSuccess` gains the two fields last; built
   positionally, its five earlier fields still build one.
+- **`temperature` and `top_p` can be set together.** The `Chat` and `Respond` constructors refused
+  the pair on every provider, as "mutually exclusive", though no provider's page refuses it:
+  OpenAI's, DeepSeek's and Mistral's references recommend altering one "but not both", and Azure's,
+  Google's and Ollama's state no rule. Both are now kept, and sent where the endpoint takes sampling
+  parameters. Anthropic still refuses each of them (its API version 2026-10-21 takes neither), and
+  native Gemini and `GEMINIOpenAIServiceEndpoint` still take them only on the models released before
+  Gemini 3.6 Flash.
 
 ## 0.27.1
 

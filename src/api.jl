@@ -1489,8 +1489,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     tools::Union{Vector{Tool},Nothing} = nothing
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |
     parallel_tool_calls::Union{Bool,Nothing} = false
-    temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
-    top_p::Union{Float64,Nothing} = nothing # 0.0 - 1.0 - mutual exclusive with temperature
+    temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0
+    top_p::Union{Float64,Nothing} = nothing # 0.0 - 1.0
     n::Union{Int64,Nothing} = nothing # must be 1: results carry a single choice
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
@@ -1563,7 +1563,6 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         model = _resolve_model(service, model)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
         isnothing(tools) || !isempty(tools) || (tools = nothing)   # no tools is no tool list
-        !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
         # A result carries one choice: extra choices were dropped (non-streaming) or

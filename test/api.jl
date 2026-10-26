@@ -602,8 +602,11 @@ end
               full.prompt_cache_retention == "24h"
     end
 
-    @testset "temperature and top_p mutual exclusion" begin
-        @test_throws ArgumentError Chat(temperature=0.2, top_p=0.5)
+    @testset "temperature with top_p: built, and sent as set" begin
+        # The providers' pages recommend altering one "but not both"; none of them refuses the pair.
+        c = Chat(temperature=0.2, top_p=0.5)
+        @test (c.temperature, c.top_p) == (0.2, 0.5)
+        @test JSON.parse(JSON.json(c))["temperature"] == 0.2 && JSON.parse(JSON.json(c))["top_p"] == 0.5
     end
 
     @testset "parallel_tool_calls nil when no tools" begin

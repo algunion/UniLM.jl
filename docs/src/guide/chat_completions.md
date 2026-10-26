@@ -232,8 +232,8 @@ The `Chat` constructor validates parameter ranges at construction time:
 | `logit_bias` values | -100–100 (any `Real`) |
 | `reasoning_effort`  | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`; on a `DeepSeekEndpoint` also `"ultra"` |
 
-Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually
-exclusive, and an empty `tools` vector is stored as `nothing`. Which fields and values a provider and
+Out-of-range values throw `ArgumentError`, and an empty `tools` vector is stored as `nothing`.
+`temperature` and `top_p` may be set together, and both are sent where the provider takes them. Which fields and values a provider and
 its models take is checked when the request is encoded, before any network I/O, by the rules its
 entry's limits section lists. UniLM refuses only what those rules name: a request they let through goes
 to the provider, whose answer is the check.

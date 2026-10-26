@@ -740,6 +740,29 @@ end
     end
 end
 
+@testset "temperature with top_p: sent wherever the endpoint takes sampling parameters, refused where it takes neither" begin
+    # OpenAI, DeepSeek and Mistral recommend altering one "but not both"; Azure's, Google's and Ollama's
+    # references state no rule on the pair; Anthropic's API version 2026-10-21 refuses each of them.
+    pair = (temperature=0.3, top_p=0.9)
+    top(w) = (w["temperature"], w["top_p"])
+    for (service, model, read) in ((OPENAIServiceEndpoint, "gpt-5.4-mini", top), (AZUREServiceEndpoint, "gpt-5.2", top),
+            (GEMINIOpenAIServiceEndpoint, "gemini-2.5-flash", top), (DeepSeekEndpoint("k"), "deepseek-flash", top),
+            (GenericOpenAIEndpoint("http://x", ""), "m", top), (MistralEndpoint(), "mistral-large-latest", top),
+            (OllamaEndpoint(), "gemma4:e2b", w -> top(w["options"])),
+            (GEMINIServiceEndpoint, "gemini-2.5-flash", w -> (w["generationConfig"]["temperature"], w["generationConfig"]["topP"])))
+        c = Chat(; service, model, messages=[Message(Val(:user), "hi")], pair...)
+        @test read(JSON.parse(UniLM.encode_request(service, c))) == (0.3, 0.9)
+    end
+    for (service, model, read) in ((OPENAIServiceEndpoint, "gpt-5.4-mini", top), (OllamaEndpoint(), "gemma4:e2b", top),
+            (GEMINIServiceEndpoint, "gemini-2.5-flash", w -> top(w["generation_config"])))
+        r = Respond(; service, model, input="hi", pair...)
+        @test read(JSON.parse(UniLM.encode_agentic(service, r))) == (0.3, 0.9)
+    end
+    err = try UniLM.encode_request(ANTHROPICServiceEndpoint, Chat(; service=ANTHROPICServiceEndpoint,
+        model="claude-haiku-5-5", messages=[Message(Val(:user), "hi")], pair...)); nothing catch e; e end
+    @test err isa ArgumentError && occursin("has no temperature", err.msg)
+end
+
 @testset "ImageGeneration no longer carries the edit-only input_fidelity" begin
     @test !hasfield(ImageGeneration, :input_fidelity)
     @test hasfield(ImageEdit, :input_fidelity)

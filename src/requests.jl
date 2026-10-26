@@ -2234,8 +2234,8 @@ Passing neither, only one prompt, or `messages` together with a prompt throws
 - `tools::Union{Vector{Tool},Nothing} = nothing`: A list of tools the model may call.
 - `tool_choice::Union{String,GPTToolChoice,Nothing} = nothing`: Controls which (if any) function is called by the model. e.g. "auto", "none", `GPTToolChoice`.
 - `parallel_tool_calls::Union{Bool,Nothing} = false`: Whether to enable parallel function calling.
-- `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random. Mutually exclusive with `top_p`.
-- `top_p::Union{Float64,Nothing} = nothing`: Nucleus sampling parameter (0.0-1.0). Mutually exclusive with `temperature`.
+- `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random.
+- `top_p::Union{Float64,Nothing} = nothing`: Nucleus sampling parameter (0.0-1.0). Set with `temperature`, both are sent, where the provider takes them (see [`Chat`](@ref)).
 - `n::Union{Int64,Nothing} = nothing`: Number of choices; must be 1 — a result carries a single choice.
 - `stream::Union{Bool,Nothing} = nothing`: If `true`, the call returns a `Task` and streams deltas to `callback` (see `chatrequest!(chat)`).
 - `stop::Union{Vector{String},String,Nothing} = nothing`: Up to 4 sequences where the API will stop generating further tokens.

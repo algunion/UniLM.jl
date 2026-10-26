@@ -273,8 +273,8 @@ revise a `retires_at` it lists. A listing is the provider's view for the key tha
     tools::Union{Vector{Tool},Nothing} = nothing
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing
     parallel_tool_calls::Union{Bool,Nothing} = false
-    temperature::Union{Float64,Nothing} = nothing       # 0.0–2.0, mutually exclusive with top_p
-    top_p::Union{Float64,Nothing} = nothing              # 0.0–1.0, mutually exclusive with temperature
+    temperature::Union{Float64,Nothing} = nothing       # 0.0–2.0
+    top_p::Union{Float64,Nothing} = nothing              # 0.0–1.0
     n::Union{Int64,Nothing} = nothing                    # must be 1: a result carries one choice
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
@@ -312,7 +312,7 @@ through that accessor, never directly.
 
 - **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-6-sol"`. Per provider: `"gpt-6-sol"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.8-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-5-5"` for native Anthropic (whose `max_tokens` defaults to 16000), `"deepseek-flash"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` / `MistralEndpoint` and user-defined endpoints without a `UniLM.default_model` method there is no default — an unset model throws `ArgumentError` at construction.
 - `history=true`: responses are automatically appended to `messages`.
-- `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
+- `temperature` and `top_p` may be set together: OpenAI's, DeepSeek's and Mistral's references recommend altering one "but not both", and none refuses the pair, so both are sent where the endpoint takes sampling parameters (Anthropic takes neither; native Gemini and `GEMINIOpenAIServiceEndpoint` take them on the models released before Gemini 3.6 Flash).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
 - **Parameter validation**: the constructor validates at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` must be `1` (a result carries a single choice), `max_tokens` / `max_completion_tokens` ≥ 1, `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0], `top_logprobs` ∈ [0, 20], every `logit_bias` value ∈ [-100, 100], `reasoning_effort` ∈ {`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`} (on a `DeepSeekEndpoint` also `"ultra"`, which DeepSeek maps to `max`). Violations throw `ArgumentError`. An empty `tools` vector is stored as `nothing`; a `Vector{<:CallableTool}` is accepted and stored as its `Tool`s.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
@@ -579,7 +579,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     tools::Union{Vector,Nothing} = nothing                  # untyped: ResponseTool, CallableTool, Dict; a Chat Tool becomes a FunctionTool
     tool_choice::Union{String,AbstractDict,Nothing} = nothing  # "auto"/"none"/"required", or a tool_choice_* Dict (see below)
     parallel_tool_calls::Union{Bool,Nothing} = nothing
-    temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0, mutually exclusive with top_p
+    temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0
     top_p::Union{Float64,Nothing} = nothing                 # 0.0–1.0
     max_output_tokens::Union{Int64,Nothing} = nothing
     stream::Union{Bool,Nothing} = nothing

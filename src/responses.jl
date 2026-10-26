@@ -831,8 +831,9 @@ Configuration struct for an OpenAI Responses API request.
   throws `ArgumentError` before any request
 - `reasoning::Reasoning`: Reasoning effort, summary, persisted context and mode ([`Reasoning`](@ref))
 - `text::TextConfig`: Output format (text, json, json_schema)
-- `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
-- `top_p::Float64`: Nucleus sampling (0.0–1.0), mutually exclusive with `temperature`
+- `temperature::Float64`: Sampling temperature (0.0–2.0); OpenAI's reference recommends altering
+  it or `top_p` "but not both", and a `Respond` that sets both sends both
+- `top_p::Float64`: Nucleus sampling (0.0–1.0)
 - `max_output_tokens::Int64`: Max tokens in the response, at least 1; a smaller value throws
   `ArgumentError`
 - `top_logprobs::Int64`: How many of the most likely tokens to return at each position, each
@@ -945,7 +946,6 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         context_management, stream_options, prompt_cache_options, moderation, seed)
         model = _resolve_model(service, model)
         tools = _respond_tools(tools)
-        !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
         !isnothing(max_output_tokens) && max_output_tokens < 1 && throw(ArgumentError("max_output_tokens must be >= 1"))

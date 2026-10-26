@@ -478,8 +478,11 @@ end
         @test !haskey(JSON.lower(Respond(input="x")), :prompt)
     end
 
-    @testset "temperature and top_p mutual exclusion" begin
-        @test_throws ArgumentError Respond(input="test", temperature=0.5, top_p=0.9)
+    @testset "temperature with top_p: built, and sent as set" begin
+        # OpenAI's reference recommends altering one "but not both"; it does not refuse the pair.
+        r = Respond(input="test", temperature=0.5, top_p=0.9)
+        @test (r.temperature, r.top_p) == (0.5, 0.9)
+        @test JSON.lower(r)[:temperature] == 0.5 && JSON.lower(r)[:top_p] == 0.9
     end
 
     @testset "with structured input" begin

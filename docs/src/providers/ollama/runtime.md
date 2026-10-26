@@ -216,7 +216,7 @@ a call error holds the text of an exception as `error` and the exception as `cau
 request again after a transient status — 408, 429, 500, 502 to 504, 520 to 524 and 529 — or a failed
 connection, as often as the call's [`RequestConfig`](@ref) allows, and then returns the last answer
 ([Timeouts & Retries](@ref timeouts_guide)); a streamed request is sent again only while none of its
-callbacks has run, and a transcription or a pull makes one attempt. `RequestConfig(max_attempts=1)`
+callbacks has run, and a pull makes one attempt. `RequestConfig(max_attempts=1)`
 reports an unreachable server at once. Ollama brings no `RequestConfig` of its own, for decision requests
 either: every call takes the field defaults unless the call, a scope or `set_default_config!` sets a
 configuration, so a model that takes minutes to load may need a longer bound.

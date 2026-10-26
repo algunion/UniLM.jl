@@ -186,9 +186,10 @@ entry's cost section says.
 
 ## [Cumulative cost is Chat-only](@id cost_tracking_cumulative)
 
-[`cumulative_cost`](@ref) returns the running USD total that `chatrequest!` accrues on a
-[`Chat`](@ref). Accumulation happens **only** inside `chatrequest!` (both streaming and
-non-streaming paths, and so every turn of a `tool_loop!`) — nothing else adds to the total:
+[`cumulative_cost`](@ref) returns the running USD total that `chatrequest!` and
+[`prefix_complete`](@ref) accrue on a [`Chat`](@ref). Accumulation happens **only** inside
+`chatrequest!` (both streaming and non-streaming paths, and so every turn of a `tool_loop!`) and
+`prefix_complete` — nothing else adds to the total:
 
 ```julia
 chat = Chat(service=service, model=model)

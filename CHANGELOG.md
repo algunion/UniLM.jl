@@ -90,6 +90,18 @@
   `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
   verb whose call offers a single option is refused too. Upgrading: add an option, such as a
   fallback `"other"`.
+- **`DeepSeekEndpoint` and `MistralEndpoint()` send a `Chat`'s `max_completion_tokens` as
+  `max_tokens`.** DeepSeek's Chat Completions reference and Mistral's chat reference name the cap
+  `max_tokens` and list no `max_completion_tokens`, yet a `Chat` that set it sent the cap under that
+  name, which those references do not list. `DeepSeekEndpoint` and a `GenericOpenAIEndpoint` on
+  Mistral's host (`MistralEndpoint()`) now send it as `max_tokens`, taken over a `max_tokens` also
+  set, as the native encoders take it. Every other endpoint sends the names the `Chat` sets, as
+  before: a generic endpoint elsewhere (Azure's v1 route, whose reasoning models take only
+  `max_completion_tokens`, or vLLM, which deprecates `max_tokens`), `AZUREServiceEndpoint` and
+  Gemini's OpenAI-compatible endpoint. A `Chat` that sets no `max_completion_tokens` sends the same
+  bytes as before. A recording keys on the request's bytes, so one of a changed request made before
+  does not replay: record it again. Upgrading: a `Chat` that sets both caps on these two endpoints
+  sends the `max_completion_tokens` value as `max_tokens`; set one of them.
 - **Gemini's language, escalation and Prohibited Use Policy stops are refusals.** A native Gemini
   candidate that ended with `finishReason` `LANGUAGE` (content "flagged for using an unsupported
   language"), `ESCALATION` ("filtered by an escalation rule") or `PUP_LIMITED_DISABLED` (the account
@@ -124,6 +136,21 @@
   it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
   Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
   price is unchanged.
+- **A DeepSeek `Chat` with a strict tool goes to DeepSeek's beta base URL.** DeepSeek's strict mode
+  is a beta feature: "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"`".
+  `DeepSeekEndpoint()` sent every `Chat` to `https://api.deepseek.com/v1/chat/completions`, so a
+  tool's `strict` never reached the URL where it applies. A `Chat` whose tools include a strict one
+  now goes to `https://api.deepseek.com/beta/v1/chat/completions`, streamed or not; one without
+  goes where it went. There "The server will validate the JSON Schema of the Function provided by the
+  user. If the schema does not conform to the specifications or contains JSON schema types that are
+  not supported by the server, an error message will be returned", and "All properties of every
+  `object` must be set as `required`, and the `additionalProperties` attribute of the `object` must be
+  set to `false`": a strict tool whose schema breaks these rules, sent before to the non-beta URL,
+  where strict mode does not apply, now gets that error (DeepSeek's page; neither observed). A
+  recording keys on the request's path, so one of such a request made before does not replay:
+  record it again. Upgrading: give a strict tool a schema DeepSeek's strict mode takes (every
+  property `required`, `additionalProperties: false`, the types its tool-calls page lists), or leave
+  `strict` unset.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -360,6 +387,60 @@
 - **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
   called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
   available". No behaviour changes.
+- **A streamed reply whose content arrives as a list of chunks loses no text.** Mistral streams
+  a reasoning reply's thinking as a list holding a `ThinkChunk`, then "a single list containing
+  both a closing `ThinkChunk` and the first `TextChunk`", then the answer as strings. The
+  OpenAI-wire stream handler read a delta's `content` only when it was a string and dropped a
+  list whole, so a streamed reasoning reply lost the answer's first chunk, in the callback and in
+  the final message, which the same reply unstreamed kept. A list is now read chunk by chunk:
+  its text chunks reach the callback and the message in order, and its thinking chunks are kept
+  apart as the turn's reasoning (`ProviderContent(:mistral, …)`), which `reasoning_text` reads.
+- **A streamed call on an endpoint type without a stream handler is refused before it is sent, alike
+  on both stream seams.** On a `ServiceEndpoint` subtype with no `handle_sse_event!` method, a
+  streamed `chatrequest!` was sent and every payload of the reply dropped as undecodable, so the
+  call ended as an `LLMFailure` with status 200 that did not name the cause; on one with no
+  `decode_agentic_stream` method, a streamed `respond` was sent and returned a `ResponseCallError`
+  holding the `MethodError`. Both now throw the missing method's `MethodError` before anything is
+  sent, as a missing `encode_request` does.
+- **`prefix_complete` on a streaming `Chat` sends a request it can read.** It sent the `Chat`'s
+  `"stream": true` (and DeepSeek's `stream_options`), so the server answered with a stream that the
+  call, which reads one whole reply, could not decode: a billed request that returned an
+  `LLMCallError`. The request now leaves `stream` and `stream_options` out and is read whole; the
+  `Chat` keeps both for `chatrequest!`. `prefix_complete` takes no callback, so nothing a stream
+  would deliver is lost. A recording keys on the request's bytes, so one of such a request made
+  before does not replay: record it again.
+- **`prefix_complete` adds its turn's cost to `cumulative_cost`.** It appended the continued turn
+  to the `Chat` but left its cost out of the `Chat`'s running total, which every `chatrequest!`
+  turn adds. A successful prefix completion now adds its result's `estimated_cost`, with or without
+  `history`; a failure adds nothing, as it carries no billed usage.
+- **`transcribe` retries a transient status, as the other inference verbs do.** It made one attempt,
+  so a 429, a 503 or a dropped connection returned at once, while `chatrequest!`, `respond`,
+  `embeddingrequest!` and `edit_image` on the same endpoint send the request again. It now retries
+  the same statuses and transport failures under its `RequestConfig` (`max_attempts`,
+  `total_deadline`, the wait a reply asks for), and each attempt sends the whole file again, as an
+  image edit does; a 429 that no retry can serve is returned at once.
+- **A DeepSeek `Chat` takes `reasoning_effort="ultra"`.** DeepSeek's thinking-mode page maps a
+  requested `ultra` to `max`, and the `Chat` constructor refused it for every endpoint. A `Chat` on a
+  `DeepSeekEndpoint` now takes `"ultra"` and sends it as set (DeepSeek answered such a request on
+  2026-10-26); on every other endpoint it is refused when the `Chat` is built, as before.
+- **`MistralEndpoint()` sends a `Chat`'s seed as `random_seed`.** Mistral's chat reference names the
+  seed `random_seed`, "The seed to use for random sampling", and lists no `seed`, which the endpoint
+  sent. A `Chat` on Mistral's host (`MistralEndpoint()`, or a `GenericOpenAIEndpoint` on
+  `api.mistral.ai`) now sends its seed as `random_seed`; every other server's request is unchanged,
+  byte for byte. A recording keys on the request's bytes, so one of such a request made before does
+  not replay: record it again.
+- **`MistralEndpoint()` sends an embedding size as `output_dimension`.** Mistral's embeddings
+  reference names the vector size `output_dimension` and lists no `dimensions`, which the endpoint
+  sent. An `Embeddings` request on Mistral's host now sends its `dimensions` as `output_dimension`;
+  every other server's request is unchanged, byte for byte. A recording keys on the request's bytes,
+  so one of such a request made before does not replay: record it again.
+- **Azure takes an earlier audio reply back by its id, as OpenAI does.** Azure's audio quickstart adds
+  "a history message referencing the previous turn's audio by ID", but `AZUREServiceEndpoint` sent an
+  audio turn back as its transcript alone, so the model lost the audio it had spoken. It now sends
+  `"audio": {"id": …}` beside the transcript, until a minute before the reply's `expires_at`, and the
+  transcript alone from then on, as `OPENAIServiceEndpoint` does. A recording of such a follow-up made
+  before still replays once the audio has expired, as a replayed reply's has; a turn whose reply named
+  no expiry (a stream cut before its last update) now goes by id, so record that follow-up again.
 - **`list_models` on an endpoint without a listing names that endpoint alone.** An endpoint with
   no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
   `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a

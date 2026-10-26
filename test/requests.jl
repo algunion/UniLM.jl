@@ -639,7 +639,7 @@ end
         @test_throws ArgumentError Message(role="tool", content="x", tool_call_id="call_1", audio_output=spoken)
     end
 
-    @testset "the next request sends the turn back: by id to OpenAI, as its transcript elsewhere" begin
+    @testset "the next request sends the turn back: by id to OpenAI and Azure, as its transcript elsewhere" begin
         conversation() = [Message(Val(:system), "Be brief."), Message(Val(:user), "Say hi."),
                           Message(role=RoleAssistant, audio_output=spoken), Message(Val(:user), "Again, in French.")]
         # The decoded reply, appended as chatrequest! appends it, goes back to OpenAI by its id while
@@ -657,10 +657,20 @@ end
         # A conversation without an audio turn goes out as it is, byte for byte.
         plain = conversation()[[1, 2, 4]]
         @test UniLM._wire_messages(OPENAIServiceEndpoint, plain) === plain
-        # Every other OpenAI-wire endpoint gets the transcript as the turn's text, and no id.
-        for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint(api_key="k"),
+        @test UniLM._wire_messages(AZUREServiceEndpoint, plain) === plain
+        # Azure's audio quickstart sends the turn back the same way, "referencing the previous turn's
+        # audio by ID": `{"role": "assistant", "audio": {"id": …}}` (an expiry in 2100, as above).
+        live = Message(role=RoleAssistant, audio_output=AudioOutput(id="audio_abc123", data=wav,
+                                                                    expires_at=4102444800, transcript="Hi there!"))
+        unexpired = [conversation()[1:2]; live; conversation()[4]]
+        az = Chat(service=AZUREServiceEndpoint, model="gpt-audio-mini", messages=unexpired)
+        @test JSON.parse(UniLM.encode_request(AZUREServiceEndpoint, az))["messages"][3] ==
+              Dict("role" => "assistant", "content" => "Hi there!", "audio" => Dict("id" => "audio_abc123"))
+        # Every other OpenAI-wire endpoint gets the transcript as the turn's text, and no id, the audio
+        # still live.
+        for service in (GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint(api_key="k"),
                         GenericOpenAIEndpoint("http://127.0.0.1:1", ""))
-            body = JSON.parse(UniLM.encode_request(service, Chat(service=service, model="m", messages=conversation())))
+            body = JSON.parse(UniLM.encode_request(service, Chat(service=service, model="m", messages=unexpired)))
             @test body["messages"][3] == Dict("role" => "assistant", "content" => "Hi there!")
         end
         # So do the native encoders, each in its own turn shape.
@@ -681,12 +691,13 @@ end
             model="claude-haiku-5-5", messages=emptied)))["messages"][2] == Dict("role" => "assistant", "content" => "Hi there!")
     end
 
-    @testset "OpenAI gets the turn by id until a minute before its expires_at, and as its transcript from then on" begin
+    @testset "OpenAI and Azure get the turn by id until a minute before its expires_at, and as its transcript from then on" for service in (OPENAIServiceEndpoint, AZUREServiceEndpoint)
         # expires_at is "when this audio response will no longer be accessible on the server for use in
         # multi-turn conversations" (the Chat Completions reference): from then on the id names no audio.
+        # Azure's reply carries the same required `expires_at` (its REST reference's response audio).
         turn(expires_at; content=nothing) = Message(role=RoleAssistant, content=content,
             audio_output=AudioOutput(id="audio_abc123", data=wav, expires_at=expires_at, transcript="Hi there!"))
-        sent(turns...) = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, Chat(model="gpt-audio-1.5",
+        sent(turns...) = JSON.parse(UniLM.encode_request(service, Chat(service=service, model="gpt-audio-1.5",
             messages=[Message(Val(:user), "Say hi."), turns..., Message(Val(:user), "Again.")])))["messages"][2:end-1]
         by_id = Dict("role" => "assistant", "content" => "Hi there!", "audio" => Dict("id" => "audio_abc123"))
         as_text = Dict("role" => "assistant", "content" => "Hi there!")

@@ -230,7 +230,7 @@ The `Chat` constructor validates parameter ranges at construction time:
 | `frequency_penalty` | -2.0–2.0         |
 | `top_logprobs`      | 0–20             |
 | `logit_bias` values | -100–100 (any `Real`) |
-| `reasoning_effort`  | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
+| `reasoning_effort`  | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`; on a `DeepSeekEndpoint` also `"ultra"` |
 
 Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually
 exclusive, and an empty `tools` vector is stored as `nothing`. Which fields and values a provider and

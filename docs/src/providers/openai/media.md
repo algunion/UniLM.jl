@@ -220,8 +220,9 @@ Each makes one attempt. `total_deadline` bounds the whole call whatever the sock
 `connect_timeout` the WebSocket's open, and `stream_idle_timeout` every send and every wait for the
 next event. Both observe the ambient [`CancelToken`](@ref): a token already cancelled sends
 nothing, and a cancel ends the call at once with an `AudioCallError` whose `cause` is a
-[`UniLMCancelled`](@ref). `transcribe` is one HTTP request, with the failures of any platform verb
-([Platform APIs](@ref openai_platform_shared)).
+[`UniLMCancelled`](@ref). `transcribe` is one HTTP request, sent again after a transient status, as
+a `Chat` is, the whole file each time ([Timeouts & Retries](@ref timeouts_retries)); its results are
+typed as a platform verb's are ([Platform APIs](@ref openai_platform_shared)).
 
 UniLM prices none of them: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a
 `SpeechSuccess` and a `TranscriptionSuccess`. OpenAI bills `gpt-transcribe` at "\$0.0045 / minute",

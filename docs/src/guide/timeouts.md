@@ -250,12 +250,12 @@ result = fetch(task)     # LLMSuccess, or a call-error carrying the UniLMTimeout
 
 Automatic retries apply to the inference verbs — `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `ask`, `list_models`, and the `tool_loop` family
+`generate_image`, `edit_image`, `transcribe`, `ask`, `list_models`, and the `tool_loop` family
 through them (streams retry only before the first callback fires). Every other
 verb makes a single bounded attempt and `max_attempts` has no effect on it: the
 platform and lifecycle verbs (batch, container, conversation, file, fine-tuning,
-moderation, upload, vector-store, audio, realtime, and the Responses lifecycle
-operations), including `upload_file` — a create is never retried, because a POST
+moderation, upload, vector-store, speech and translation, realtime, and the Responses
+lifecycle operations), including `upload_file` — a create is never retried, because a POST
 that timed out or drew a gateway 5xx may already have stored the file. The polling
 helpers [`poll_batch`](@ref) and [`poll_file_batch`](@ref) instead poll through
 retryable statuses and per-attempt timeouts until their own wall-clock `timeout`.

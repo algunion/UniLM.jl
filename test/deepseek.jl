@@ -229,3 +229,26 @@ end
         end
     end
 end
+
+@testset "a Chat with a strict tool goes to DeepSeek's beta base URL, where strict mode lives" begin
+    # "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"` to enable Beta
+    # features" (https://api-docs.deepseek.com/guides/tool_calls).
+    tool(strict) = Tool(func=FunctionSignature(name="f", parameters=Dict("type" => "object"), strict=strict))
+    chat(tools; kw...) = Chat(; service=_DS, tools, messages=[Message(Val(:user), "u")], kw...)
+    @test UniLM.get_url(chat(nothing)) == "https://api.deepseek.com/v1/chat/completions"
+    @test UniLM.get_url(chat([tool(nothing), tool(false)])) == "https://api.deepseek.com/v1/chat/completions"
+    @test UniLM.get_url(chat([tool(true)])) == "https://api.deepseek.com/beta/v1/chat/completions"
+    @test UniLM.get_url(chat([tool(false), tool(true)])) == "https://api.deepseek.com/beta/v1/chat/completions"
+    # The request goes there, streamed or not: a replay scope that holds no recording names the path it missed.
+    for stream in (nothing, true)
+        miss = try
+            with_recorded_answers(mktempdir(); mode=:replay) do
+                r = chatrequest!(chat([tool(true)]; stream))
+                r isa Task ? fetch(r) : r
+            end
+        catch e
+            e
+        end
+        @test miss isa ReplayMissError && miss.path == "/beta/v1/chat/completions"
+    end
+end

@@ -380,6 +380,64 @@ end
     @test !haskey(sent[end], "reasoning_content")
 end
 
+# DeepSeek's encoder asks a stream for its usage (`stream_options`), so the local stand-in does too.
+UniLM._asks_stream_usage(::_DSPrefixHere) = true
+
+@testset "prefix_complete on a streaming Chat sends the request unstreamed, which it reads" begin
+    # A server streams when the request asks it to; prefix_complete reads one JSON reply, which
+    # carries its usage unasked.
+    reply = JSON.json(Dict("model" => "deepseek-flash", "usage" => Dict("prompt_tokens" => 8,
+        "completion_tokens" => 3, "total_tokens" => 11), "choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
+    streamed = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => Dict("content" => "x = 1"),
+        "finish_reason" => "stop")])) * "\n\ndata: [DONE]\n\n"
+    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", stream=true,
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
+                          Message(role=UniLM.RoleAssistant, content="```python\n")])
+    r, seen = _with_scripted((_, req) -> get(JSON.parse(_body_text(req)), "stream", false) === true ?
+            HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(streamed)) :
+            _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat)
+    end
+    @test r isa LLMSuccess
+    @test r.message.content == "x = 1" && r.usage.total_tokens == 11
+    sent = JSON.parse(only(seen).body)
+    @test !haskey(sent, "stream") && !haskey(sent, "stream_options")
+    @test sent["messages"][end]["prefix"] === true
+    @test last(chat).content == "```python\nx = 1" && chat.stream === true
+end
+
+@testset "prefix_complete adds its turn's cost to cumulative_cost, as chatrequest! does" begin
+    # deepseek-flash: $0.30 per 1M input tokens, $1.20 per 1M output (DEFAULT_PRICING).
+    reply = JSON.json(Dict("model" => "deepseek-flash", "usage" => Dict("prompt_tokens" => 1000,
+        "completion_tokens" => 100, "total_tokens" => 1100), "choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
+    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
+                          Message(role=UniLM.RoleAssistant, content="```python\n")])
+    turn = (1000 * 0.30 + 100 * 1.20) / 1_000_000
+    (r1, r2), _ = _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat), prefix_complete(chat)
+    end
+    @test r1 isa LLMSuccess && estimated_cost(r1) ≈ turn
+    @test cumulative_cost(chat) ≈ 2turn                                  # each turn, as chatrequest! adds it
+    # A failure carries no billed usage and adds nothing; a call without history adds its turn too.
+    failed, _ = _with_scripted((_, _) -> _json(400, "{\"error\":{\"message\":\"bad\"}}")) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat)
+    end
+    @test failed isa LLMFailure && cumulative_cost(chat) ≈ 2turn
+    quiet = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", history=false,
+                 messages=[Message(Val(:user), "u"), Message(role=UniLM.RoleAssistant, content="```python\n")])
+    _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(quiet)
+    end
+    @test cumulative_cost(quiet) ≈ turn && length(quiet) == 2
+end
+
 @testset "fim_complete and prefix_complete: a cancelled token sends nothing" begin
     tok = cancel!(CancelToken())
     cfg = RequestConfig(max_attempts=3, total_deadline=60.0)

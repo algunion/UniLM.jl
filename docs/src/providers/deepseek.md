@@ -5,12 +5,13 @@ using UniLM
 ```
 
 DeepSeek makes the DeepSeek models and serves them through an OpenAI-compatible API.
-`DeepSeekEndpoint()` speaks its Chat Completions API and two of its beta features, FIM completion and
-chat prefix completion: a `Chat` reaches DeepSeek through `chatrequest!`, `tool_loop!` and
-`prefix_complete`, and a `FIMCompletion` through `fim_complete`. The agentic verbs — `respond` and the
-`tool_loop` that takes an input or a `Respond` — refuse this endpoint before sending anything, and no
-verb of a capability the table below lists as not available sends a request through it. Of DeepSeek's
-API, UniLM does not use the Anthropic-format API or the Search and Fetch APIs either.
+`DeepSeekEndpoint()` speaks its Chat Completions API and three of its beta features: FIM completion,
+chat prefix completion and strict tool mode ([Tools](@ref deepseek_tools)). A `Chat` reaches DeepSeek
+through `chatrequest!`, `tool_loop!` and `prefix_complete`, and a `FIMCompletion` through
+`fim_complete`. The agentic verbs — `respond` and the `tool_loop` that takes an input or a `Respond` —
+refuse this endpoint before sending anything, and no verb of a capability the table below lists as not
+available sends a request through it. Of DeepSeek's API, UniLM does not use the Anthropic-format API or
+the Search and Fetch APIs either.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:deepseek)
@@ -42,8 +43,9 @@ before the key is set; a call without it returns a call-error result whose `caus
 naming it. `DeepSeekEndpoint(api_key="sk-…")` sends the key it is given instead. Neither prints its
 key: the first shows as `DeepSeekEndpoint(#= DEEPSEEK_API_KEY =#)`, the second with the key cut to
 its first four characters and `…[redacted]`. A `Chat` goes to
-`https://api.deepseek.com/v1/chat/completions` with the key as `Authorization: Bearer`, and with no
-`model` it takes the default model named at the top of this page, as FIM does.
+`https://api.deepseek.com/v1/chat/completions`, or to the beta base URL when a tool is `strict`
+([Tools](@ref deepseek_tools)), with the key as `Authorization: Bearer`, and with no `model` it takes
+the default model named at the top of this page, as FIM does.
 
 ## [First call](@id deepseek_first_call)
 
@@ -187,8 +189,12 @@ supported in thinking mode; the API returns a `400` error. Disable thinking mode
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)), which
 `reasoning_effort="none"` does ([Reasoning](@ref deepseek_reasoning)). A tool's `strict` is a beta
 feature that needs `base_url="https://api.deepseek.com/beta"`
-([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)), while a `Chat` goes to the non-beta
-URL, so `strict` through this endpoint is untested. The loop every provider shares is on
+([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)), so a `Chat` with a strict tool goes to
+`https://api.deepseek.com/beta/v1/chat/completions`, and one without to the usual URL. In strict mode
+"all `function` need to set the `strict` property to `true`", and "The server will validate the JSON
+Schema of the Function provided by the user"; UniLM checks neither, and DeepSeek's answer is the check.
+On 26 October 2026 it answered a request there with one strict tool, and one with a strict and a
+non-strict tool, each with a call of the strict one. The loop every provider shares is on
 [Tool Calling](@ref tools_guide).
 
 ## [Structured output](@id deepseek_structured_output)
@@ -222,8 +228,10 @@ length(thought), result.usage.reasoning_tokens
 ```
 
 A `Chat`'s `reasoning_effort` goes out as it is set. DeepSeek takes `"none"`, which turns thinking
-off, and `"low"`, `"high"` and `"max"`, and maps three more: `"minimal"` to `low`, `"medium"` and
-`"xhigh"` to `high` ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)).
+off, and `"low"`, `"high"` and `"max"`, and maps four more: `"minimal"` to `low`, `"medium"` and
+`"xhigh"` to `high` ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)),
+and `"ultra"` to `max` ([Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)), which
+this endpoint alone takes; DeepSeek answered a request with `"ultra"` on 26 October 2026.
 With thinking off, the reply carries none and reports no reasoning tokens:
 
 ```@example deepseek
@@ -241,9 +249,9 @@ depends on the model ([Thinking Mode](https://api-docs.deepseek.com/guides/think
 thinking is output: it counts in `completion_tokens` and bills at the output rate, and a request that
 sets no `max_tokens` may generate "8K in non-thinking mode, 64K in thinking mode (128K with
 `reasoning_effort` set to `max`)"
-([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). Set `max_tokens`,
-DeepSeek's name for the cap: a `Chat`'s `max_completion_tokens` goes out under that name, which
-DeepSeek's reference does not list.
+([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). A `Chat`'s
+`max_completion_tokens`, else its `max_tokens`, goes out as `max_tokens`, DeepSeek's name for the cap;
+its reference lists no `max_completion_tokens`.
 
 ## [Attachments](@id deepseek_media)
 
@@ -299,9 +307,9 @@ conversation keeps the whole assistant turn, the prefix followed by the continua
 a cancellation leaves the `Chat` untouched. The request goes through this endpoint's own encoder and
 decoder, so the reply's thinking, when it has any, is kept, and goes back on a later request with
 tools, as a `chatrequest!` reply's does. DeepSeek also takes a `reasoning_content` of your own on the prefix
-message, the start of its thinking; UniLM sends none. A `Chat` with `stream=true` is sent as it is,
-asking DeepSeek for a stream, which `prefix_complete` does not read: the call returns an
-`LLMCallError`, so leave `stream` unset. The concepts both verbs share are on
+message, the start of its thinking; UniLM sends none. `prefix_complete` reads one whole reply and takes
+no callback, so a `Chat` with `stream=true` is sent unstreamed, without its `stream` and
+`stream_options`; the `Chat` keeps both for `chatrequest!`. The concepts both verbs share are on
 [FIM & Prefix Completion](@ref completions_guide).
 
 ## [Limits and refusals](@id deepseek_limits)
@@ -311,7 +319,8 @@ DeepSeek's models take a context of "1M" tokens and generate at most "384K"
 "between 1 and 384K (393216)"
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). UniLM checks none of
 these limits, and no rule of DeepSeek's: every field a `Chat` sets goes out as it is — `user`,
-`max_tokens`, a JSON Schema format, the prompt-cache fields — and DeepSeek's answer is the check
+`max_tokens`, a JSON Schema format, the prompt-cache fields —, `max_completion_tokens` under DeepSeek's
+name `max_tokens` ([Reasoning](@ref deepseek_reasoning)), and DeepSeek's answer is the check
 ([When something fails](@ref deepseek_failures)). It refuses before anything is sent what the table
 below lists, and the checks every `Chat` gets, such as a `temperature` from 0 to 2 or an `n` of 1;
 the verbs of the capabilities the table at the top of this page lists as not available refuse the
@@ -319,7 +328,7 @@ endpoint too.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| a `reasoning_effort` outside the seven UniLM takes, such as DeepSeek's `"ultra"` | `reasoning_effort must be one of`: UniLM takes `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"`, and DeepSeek maps `"ultra"` to `max` | `"max"` |
+| a `reasoning_effort` outside the eight this endpoint takes, such as `"extreme"` | `reasoning_effort must be one of`: this endpoint takes `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` and `"ultra"`, DeepSeek's names ([Reasoning](@ref deepseek_reasoning)) | one of them |
 | `prefix_complete` on a `Chat` without messages | `Chat must not be empty for prefix completion`: there is no turn to continue | the conversation, then the assistant's prefix |
 | `prefix_complete` on a `Chat` whose last message is not the assistant's | `Last message must be role=assistant for prefix completion`: DeepSeek continues the last message, which must be the assistant's | push the prefix as an assistant message |
 | a `FIMCompletion` with `stream=true` | `does not support stream=true`: `fim_complete` has no streaming path | leave `stream` unset |
@@ -352,8 +361,8 @@ lists none of them.
 
 [`estimated_cost`](@ref) prices a result at its model's row of the table below: input that missed the
 cache at the input rate, cache hits at the cached rate, and `completion_tokens`, thinking included,
-at the output rate. [`cumulative_cost`](@ref) adds up the turns `chatrequest!` and `tool_loop!` sent
-on a `Chat`; a `prefix_complete` turn is appended to the `Chat` and not added. The rows are DeepSeek's
+at the output rate. [`cumulative_cost`](@ref) adds up the turns `chatrequest!`, `tool_loop!` and
+`prefix_complete` sent on a `Chat`. The rows are DeepSeek's
 peak rates, as checked on 25 October 2026. "Off-peak rates are half of the peak rates", and peak hours
 are "01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays"
 ([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)), so an estimate of a call made

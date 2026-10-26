@@ -168,9 +168,9 @@ err isa MethodError, err.f
 ```
 
 A missing decoder fails the call too, once the reply has arrived: the result is an `LLMCallError`
-whose `cause` is the `MethodError` for `decode_response`. A missing stream handler drops every payload
-of the stream, so a streamed call ends as an `LLMFailure` with status 200, and `sse_dropped` counts the
-payloads.
+whose `cause` is the `MethodError` for `decode_response`. A missing stream handler is refused as a
+missing encoder is, before anything is sent, alike on both seams: a streamed `chatrequest!` throws the
+`MethodError` for `handle_sse_event!`, and a streamed `respond` the one for `decode_agentic_stream`.
 
 ## [See also](@id custom_backends_see_also)
 

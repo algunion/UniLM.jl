@@ -480,6 +480,74 @@ end
     @test JSON.parse(UniLM.encode_agentic(r.service, r))["user"] == "u1"
 end
 
+@testset "DeepSeek and Mistral get a Chat's token cap as max_tokens, the name their references give; other servers get it as set" begin
+    # DeepSeek's Chat Completions reference and Mistral's chat reference list `max_tokens` and no
+    # `max_completion_tokens`.
+    for service in (DeepSeekEndpoint(api_key="k"), MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("https://api.mistral.ai/", "k"))
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
+        @test b["max_tokens"] == 32 && !haskey(b, "max_completion_tokens")
+        # Set beside max_tokens, max_completion_tokens is taken over it, as the native encoders take it.
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_tokens=64, max_completion_tokens=32)))
+        @test b["max_tokens"] == 32 && !haskey(b, "max_completion_tokens")
+        # A Chat that sets no max_completion_tokens is its own JSON, byte for byte (recordings key on the bytes).
+        c = Chat(; service, model="m", max_tokens=64, temperature=0.2, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, c) == JSON.json(c)
+    end
+    # A prefix completion is built by the same encoder.
+    chat = Chat(service=DeepSeekEndpoint(api_key="k"), max_completion_tokens=16,
+                messages=[Message(Val(:user), "u"), Message(role=UniLM.RoleAssistant, content="```")])
+    @test JSON.parse(UniLM._prefix_encode(chat.service, chat))["max_tokens"] == 16
+    # OpenAI sends the cap as max_completion_tokens; Azure and Gemini's OpenAI-compatible endpoint send it as set.
+    @test _oa_chat(model="gpt-6-luna", max_completion_tokens=32)["max_completion_tokens"] == 32
+    for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
+        @test b["max_completion_tokens"] == 32 && !haskey(b, "max_tokens")
+    end
+    # Every other generic server gets the names the Chat sets, byte for byte: Azure's v1 route, as the
+    # Azure entry builds it, where "Reasoning models will only work with the `max_completion_tokens`
+    # parameter" (Azure's reasoning guide); vLLM, which deprecates `max_tokens` "in favor of the
+    # max_completion_tokens field"; a proxy to OpenAI's reasoning models.
+    azure_v1 = GenericOpenAIEndpoint("https://your-resource.openai.azure.com/openai", "", "AZURE_OPENAI_API_KEY")
+    for service in (azure_v1, GenericOpenAIEndpoint("http://localhost:8000", ""), GenericOpenAIEndpoint("https://proxy.example.com", "k"))
+        c = Chat(; service, model="your-gpt52-deployment", reasoning_effort="low", max_completion_tokens=2000,
+                 messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, c) == JSON.json(c)
+        b = JSON.parse(UniLM.encode_request(service, c))
+        @test b["max_completion_tokens"] == 2000 && !haskey(b, "max_tokens")
+        both = Chat(; service, model="m", max_tokens=64, max_completion_tokens=32, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, both) == JSON.json(both)
+    end
+end
+
+@testset "Mistral gets a Chat's seed as random_seed; other servers get the request as set" begin
+    # Mistral's chat reference names the seed `random_seed`, "The seed to use for random sampling", and
+    # lists no `seed` (https://docs.mistral.ai/api/endpoint/chat).
+    for mistral in (MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("https://API.mistral.ai/", "k"))
+        b = JSON.parse(UniLM.encode_request(mistral, Chat(service=mistral, model="mistral-large-latest", seed=7)))
+        @test b["random_seed"] == 7 && !haskey(b, "seed")
+        c = Chat(service=mistral, model="mistral-large-latest", temperature=0.2, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(mistral, c) == JSON.json(c)               # no seed: the Chat's own JSON
+    end
+    for other in (GenericOpenAIEndpoint("http://localhost:8000", ""), GenericOpenAIEndpoint("https://api.mistral.ai.example.com", ""))
+        c = Chat(service=other, model="m", seed=7, max_tokens=8, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(other, c) == JSON.json(c)                 # byte for byte
+    end
+end
+
+@testset "Mistral gets an embedding size as output_dimension; other servers as dimensions" begin
+    # Mistral's embeddings reference names it `output_dimension`, "The dimension of the output embeddings
+    # when feature available", and lists no `dimensions` (https://docs.mistral.ai/api/endpoint/embeddings).
+    mistral = MistralEndpoint(api_key="k")
+    b = JSON.parse(UniLM._encode_embeddings(mistral, Embeddings(["a", "b"]; service=mistral, model="mistral-embed-2312", dimensions=256)))
+    @test b["output_dimension"] == 256 && !haskey(b, "dimensions") && b["input"] == ["a", "b"]
+    e = Embeddings("a"; service=mistral, model="mistral-embed-2312")
+    @test UniLM._encode_embeddings(mistral, e) == JSON.json(e)              # no size: as set
+    other = GenericOpenAIEndpoint("http://localhost:8000", "")
+    e = Embeddings("a"; service=other, model="m", dimensions=256)
+    @test UniLM._encode_embeddings(other, e) == JSON.json(e)                # byte for byte
+    @test JSON.parse(UniLM._encode_embeddings(other, e))["dimensions"] == 256
+end
+
 @testset "prompt_cache_retention: refused as deprecated on GPT-5.6 and later, combinable elsewhere" begin
     # The API still answered gpt-6-luna with prompt_cache_retention="24h" (HTTP 200, 2026-10-22): the refusal
     # follows OpenAI's deprecation ("Use prompt_cache_options.ttl instead"), not an API rejection.

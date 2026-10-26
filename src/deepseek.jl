@@ -11,6 +11,10 @@
 # They also read DeepSeek's context-cache hit count into the usage.
 # ============================================================================
 
+# DeepSeek takes one effort more than OpenAI's, which it maps to its highest: "| ultra | max"
+# (https://api-docs.deepseek.com/guides/thinking_mode, the requested-to-actual effort table).
+_reasoning_efforts(::DeepSeekEndpoint)::Tuple{Vararg{String}} = (_OPENAI_REASONING_EFFORTS..., "ultra")
+
 # Copy of `m` with one field replaced; field-generic, so fields added to Message later
 # are carried over.
 _message_with(m::Message, field::Symbol, value) =
@@ -51,8 +55,11 @@ function decode_response(service::DeepSeekEndpoint, resp::HTTP.Response)
     (; message=_message_with(decoded.message, :provider_content, pc), usage, decoded.model)
 end
 
+# DeepSeek's Chat Completions reference lists the token cap as `max_tokens` and no
+# `max_completion_tokens` (https://api-docs.deepseek.com/api/create-chat-completion): a Chat's
+# `max_completion_tokens` goes out under that name, taken over a `max_tokens` also set.
 function encode_request(service::DeepSeekEndpoint, chat::Chat)::String
-    body = invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, service, chat)
+    body = _renamed_json(chat, :max_completion_tokens => :max_tokens)
     isnothing(chat.tools) && return body
     echo = Pair{Int,String}[]
     for (i, m) in pairs(chat.messages)

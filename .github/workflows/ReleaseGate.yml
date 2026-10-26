@@ -54,11 +54,13 @@ jobs:
           # Analyse with the JET the test suite already pins, so the gate and the
           # suite can never drift onto different analysers. Pkg.compat accepts the
           # full compat syntax (ranges, comma lists) that PackageSpec(version=...)
-          # does not.
+          # does not. Pkg.add installs the newest JET; when that release lies
+          # outside the pin, Pkg.compat reports the mismatch and Pkg.update moves
+          # JET into the pinned range (Pkg.resolve keeps the version and throws).
           jet = TOML.parsefile(joinpath(pwd(), "test", "Project.toml"))["compat"]["JET"]
           Pkg.add("JET")
           Pkg.compat("JET", jet)
-          Pkg.resolve()
+          Pkg.update("JET")
 
           using UniLM, JET
           report = JET.report_package(UniLM;

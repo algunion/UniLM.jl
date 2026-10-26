@@ -2,8 +2,8 @@
 # OpenAI's Decisions API — the OpenAI wrapper of the System One surface.
 #
 # POST /v1/decisions answers predicate, choice and score questions about an
-# `input` (https://developers.openai.com/api/docs/guides/decisions; a public beta
-# whose only model is gpt-6-luna). Its wire is not TypeSafe's: questions are an
+# `input` (https://developers.openai.com/api/docs/guides/decisions; generally
+# available, and its only model is gpt-6-luna). Its wire is not TypeSafe's: questions are an
 # array of typed objects whose `name` each answer echoes, answers come back as an
 # array in question order, any question may be refused, and probabilities and
 # confidences are rounded to two decimals. This file maps the generic surface
@@ -13,7 +13,7 @@
 """
     OpenAIDecisionsProtocol <: SystemOneProtocol
 
-OpenAI's Decisions API (a public beta) as a System One backend, and the protocol
+OpenAI's Decisions API, generally available, as a System One backend, and the protocol
 of [`OPENAIServiceEndpoint`](@ref): `ask(state, questions...; service =
 OPENAIServiceEndpoint)`, a [`with_system_one`](@ref)`(OPENAIServiceEndpoint)`
 scope and the natural-language verbs send `POST https://api.openai.com/v1/decisions`
@@ -23,9 +23,10 @@ when the call names none.
 The request:
 
 - `state` is the `input`: a string as it is; a JSON value (object, array, tuple,
-  `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a `Vector` of
-  strings and images, as one user message of `input_text` and `input_image`
-  parts (base64 data URLs), in order. Images go there and nowhere else, at most
+  `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a vector or
+  tuple of strings and images, as one user message of `input_text` and `input_image`
+  parts (base64 data URLs, each with its `detail` when the image sets one), in
+  order. Images go there and nowhere else, at most
   128 of them; each text — the input, or each text part of the message — is at
   most 10,485,760 characters.
 - each question is one entry of `questions`, in order, carrying its name: a
@@ -33,7 +34,9 @@ The request:
   2 to 255 options, each option's name its `value` and a string description its
   `description` (none for `nothing`); a [`ScoreQuestion`](@ref) a `score` of 2
   to 10 levels, each level its `label`; a [`RawQuestion`](@ref) verbatim, with
-  its name added as `"name"` when it has none. At most 200 questions.
+  its name added as `"name"` when it has none. At most 400 questions; each
+  question's name, instructions, option names and descriptions and level labels,
+  and the model's name, at most 1,048,576 characters.
 - provider options are keywords of [`ask`](@ref): `prompt_cache_key`, a `String`
   of at most 64 characters; `safety_identifier`, at most 128; and
   `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and `ttl`, `"30m"` or
@@ -45,8 +48,8 @@ What the wire has no form for is an `ArgumentError` before any I/O, naming
 OpenAI's rule and the fix: a question without string `instructions`; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
 [`BoxQuestion`](@ref); an image outside the state; a [`DocumentAttachment`](@ref)
-(the API takes no files) or an image's detail level anywhere, as on every
-System One backend; a `prompt_cache_options` with another `ttl`, `prewarm` or
+anywhere (the API takes no files), as on every System One backend; a
+`prompt_cache_options` with another `ttl`, `prewarm` or
 `comparison_response_id`; any other option.
 
 The reply: answers are matched to the questions by name and must come in the
@@ -64,8 +67,11 @@ one; `request_id` is the
 without the three options, which change how a request is served but never what it
 is answered, and with each image as the SHA-256 of its base64 text, never its
 bytes. [`estimated_cost`](@ref) bills what OpenAI
-bills: every input token, cached and cache-written ones included, at the model's
-input rate, twice that for a request of more than 272K input tokens, and no output.
+bills: the input tokens alone, and no output — uncached ones at the model's input
+rate, cache reads at its cached-input rate, and cache writes and a request of more
+than 272K input tokens at the surcharges OpenAI lists for the model (`gpt-6-luna`:
+a write at 1.25 times the input rate, 2.5 times for a 12-hour lifetime, and every
+rate twice above 272K).
 
 Public extension API (not exported).
 """
@@ -90,6 +96,9 @@ _probability_tolerance(::OpenAIDecisionsProtocol, n::Int)::Float64 = 0.005n + 1e
 _probability_slack(::OpenAIDecisionsProtocol)::Float64 = 0.01 + 1e-9
 _allows_refusal(::OpenAIDecisionsProtocol)::Bool = true
 _allows_raw(::OpenAIDecisionsProtocol)::Bool = true
+# An `input_image` part takes `detail` — low, high, auto or original, "using the selected
+# model's image profile" (DecisionInputImage in OpenAI's OpenAPI description) — sent as set.
+_image_detail_refusal(::OpenAIDecisionsProtocol)::Nothing = nothing
 # Transport: a hosted service like TypeSafe's — the same bounds, and the same batch width
 # for `ask_each` (its rate limits were 30,000 requests a minute for the measured account).
 _system_one_default_config(::OpenAIDecisionsProtocol, service)::Union{Nothing,RequestConfig} = _HOSTED_SYSTEM_ONE_CONFIG
@@ -99,11 +108,13 @@ _system_one_concurrency(::OpenAIDecisionsProtocol, service)::Int = 16
 
 # The limits of the published request schema (`DecisionRequest` in OpenAI's OpenAPI
 # description); lengths are in characters, as JSON Schema counts them.
-const _DECISIONS_MAX_QUESTIONS = 200
+const _DECISIONS_MAX_QUESTIONS = 400       # "Ask 1–400 questions about the input"
 const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
 const _DECISIONS_MAX_IMAGES = 128
 const _DECISIONS_MAX_INPUT = 10_485_760
+# The model, and each question's name, string instructions, choice value and description and level label.
+const _DECISIONS_MAX_FIELD = 1_048_576
 # The string options, each of at most this many characters; `prompt_cache_options` follows them.
 const _DECISIONS_OPTIONS = (prompt_cache_key = 64, safety_identifier = 128)
 const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (k, n) in pairs(_DECISIONS_OPTIONS)), ", ") *
@@ -112,8 +123,17 @@ const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (
 _decisions_refuse(name::String, why::String) = throw(ArgumentError(
     "OpenAI's Decisions API cannot carry the question $(repr(name)): $why"))
 
-const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector of strings and ImageAttachments, which is sent as " *
-                               "one user message of text and image parts in order"
+# A string the schema caps at `_DECISIONS_MAX_FIELD` characters. The refusal names the field, `what`,
+# and its length, never the text itself.
+function _decisions_field(text::AbstractString, what::String)::String
+    n = length(text)
+    n <= _DECISIONS_MAX_FIELD || throw(ArgumentError(
+        "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_FIELD) characters in $what; it has $n. Shorten it"))
+    String(text)
+end
+
+const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector or Tuple of strings and ImageAttachments, which is " *
+                               "sent as one user message of text and image parts in order"
 
 # The fix for guidance that is not text: write it as text, and move an image to the state.
 _decisions_as_text(x)::String = "Write it as text" *
@@ -121,7 +141,7 @@ _decisions_as_text(x)::String = "Write it as text" *
 
 # Every question carries instructions, as a string (the `instructions` OpenAI requires).
 function _decisions_instructions(name::String, instructions)::String
-    instructions isa AbstractString && return String(instructions)
+    instructions isa AbstractString && return _decisions_field(instructions, "the instructions of $(repr(name))")
     _decisions_refuse(name, isnothing(instructions) ?
         "every question needs `instructions`, a string. Give them as the first argument, as in " *
         "`choice(\"Which team should handle this?\", options)`" :
@@ -158,12 +178,12 @@ end
 
 function _decisions_choice(name::String, value::String, description)::JSON.Object{String,Any}
     c = JSON.Object{String,Any}()
-    c["value"] = value
+    c["value"] = _decisions_field(value, "an option's name in $(repr(name))")
     isnothing(description) && return c
     description isa AbstractString || _decisions_refuse(name,
         "the description of its option $(repr(value)) must be a string or `nothing`, not $(typeof(description)). " *
         _decisions_as_text(description))
-    c["description"] = String(description)
+    c["description"] = _decisions_field(description, "the description of the option $(repr(value)) in $(repr(name))")
     c
 end
 
@@ -181,7 +201,7 @@ function _decisions_level(name::String, index::Int, level)::JSON.Object{String,A
     level isa AbstractString || _decisions_refuse(name,
         "its level $index must be a string, the level's label, not $(typeof(level)). $(_decisions_as_text(level))")
     l = JSON.Object{String,Any}()
-    l["label"] = String(level)
+    l["label"] = _decisions_field(level, "the label of level $index of $(repr(name))")
     l
 end
 
@@ -213,7 +233,8 @@ _decisions_question(name::String, q::SystemOneQuestion) = _decisions_refuse(name
 # messages, so a JSON state is sent as its JSON text, which is what the model reads.
 _decisions_input(state::AbstractString) = _decisions_text(String(state), "the state")
 _decisions_input(state::ImageAttachment) = _decisions_message(Any[state])
-_decisions_input(state::AbstractVector) =
+# A tuple is taken as a vector is, as every System One backend takes it.
+_decisions_input(state::Union{AbstractVector,Tuple}) =
     all(x -> x isa Union{AbstractString,ImageAttachment}, state) && any(x -> x isa ImageAttachment, state) ?
         _decisions_message(state) : _decisions_json_input(state)
 _decisions_input(state) = _decisions_json_input(state)
@@ -232,7 +253,7 @@ function _decisions_text(text::String, what::String)::String
     text
 end
 
-function _decisions_message(items::AbstractVector)::Vector{Any}
+function _decisions_message(items::Union{AbstractVector,Tuple})::Vector{Any}
     n = count(x -> x isa ImageAttachment, items)
     n <= _DECISIONS_MAX_IMAGES || throw(ArgumentError(
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_IMAGES) images per request; the state has $n. " *
@@ -243,6 +264,7 @@ function _decisions_message(items::AbstractVector)::Vector{Any}
         if x isa ImageAttachment
             part["type"] = "input_image"
             part["image_url"] = string("data:", x.mime, ";base64,", base64encode(x.data))
+            isnothing(x.detail) || (part["detail"] = x.detail)
         else
             part["type"] = "input_text"
             part["text"] = _decisions_text(String(x), "a text part of the state")
@@ -294,9 +316,12 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_QUESTIONS) questions per request; this one has $n. " *
         "Split it into several requests"))
     options = _decisions_options(request.options)
+    for (name, _) in request.questions
+        _decisions_field(name, "a question's name")
+    end
     questions = Any[_decisions_question(name, q) for (name, q) in request.questions]
     body = JSON.Object{String,Any}()
-    body["model"] = _system_one_model(p, service, request)
+    body["model"] = _decisions_field(_system_one_model(p, service, request), "the model's name")
     body["input"] = _decisions_input(request.state)
     body["questions"] = questions
     url, keyed = _api_base_url(service) * _DECISIONS_PATH, _system_one_body(body)
@@ -475,19 +500,23 @@ end
 # ─── Cost ────────────────────────────────────────────────────────────────────
 
 # A Decisions call is billed for its input tokens only — the guide's "Pricing and
-# availability": "no cache-read, cache-write, or output-token charges", and "These rates
-# apply to /v1/decisions" rather than the processing-tier prices of other gpt-6-luna
-# requests — so OpenAI's billing (`_billed_cost`) is given every input token, cached or
-# written, as fresh input, with no output and no tier; OpenAI's cost method applies
-# gpt-6-luna's long-context rate (twice the input rate above 272K input tokens). A
-# regional-processing premium is not visible in a response, and is not added.
+# availability": "Prompt cache hits receive discounted input pricing; cache writes are
+# charged. Cache-read and cache-write rates match the standard `gpt-6-luna` prompt caching
+# rates. Output tokens are not charged", and "These rates apply to /v1/decisions" rather
+# than the processing-tier prices of other gpt-6-luna requests — so OpenAI's billing
+# (`_billed_cost`) is given the input tokens with their cache reads and writes, with no
+# output and no tier: it bills cache reads at the row's cached rate, writes at 1.25× the
+# input rate (2.5× for 12 hours), and a request over 272K input tokens at twice each rate
+# ("long-context input pricing multipliers apply"). A regional-processing premium is not
+# visible in a response, and is not added.
 
 function _system_one_cost(::OpenAIDecisionsProtocol, result::SystemOneSuccess, model::Union{Nothing,String},
                           pricing::AbstractDict{String,PriceRow})::Float64
     priced = something(model, result.response.model)
     rates = _price_row(pricing, priced)
     isnothing(rates) && return 0.0
-    n = token_usage(result).prompt_tokens
-    billed = TokenUsage(prompt_tokens=n, total_tokens=n)
+    u = token_usage(result)
+    billed = TokenUsage(prompt_tokens=u.prompt_tokens, total_tokens=u.prompt_tokens, cached_tokens=u.cached_tokens,
+                        cache_write_tokens=u.cache_write_tokens, cache_write_extended_tokens=u.cache_write_extended_tokens)
     _billed_cost(OPENAIServiceEndpoint, priced, billed, rates)
 end

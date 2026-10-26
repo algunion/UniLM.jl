@@ -105,7 +105,6 @@ _os1l_keyed(::Val{:pricing}, t) = :pricing
 const _OS1L_LOG = Tuple{String,String,Int,Float64}[]          # model, witness, requests, seconds
 const _OS1L_DRIFT = Ref(0.0)                                  # largest |Σp − 1| seen
 const _OS1L_27 = Pair{String,String}[]                        # model => what a 27-option Choice got
-const _OS1L_1 = Pair{String,String}[]                         # model => what a 1-option Choice got
 const _OS1L_RUNNER = Tuple{String,Symbol,String}[]            # model, a runner it has no variant for, the answer
 const _OS1L_PARITY = Tuple{String,Int,Float64}[]              # model, choices that differ, largest |Δp|
 
@@ -207,15 +206,19 @@ end
 end
 
 @testset "route bounds: refused locally, or the model's own answer" begin
-    # Refuted by: a request reaching the server, or anything but an ArgumentError naming Ollama.
+    # Refuted by: a request reaching the server, or anything but an ArgumentError naming Ollama. A
+    # one-option Choice is below the two Ollama's API reference requires (`minProperties: 2`), so it
+    # is refused for every model, though on Ollama 0.40.6 the llama.cpp path (kev, d1) answered one.
     for (witness, call) in (
             "256-option Choice" => () -> ask("s", "pick" => choice("Which?", ["o$i" => "option $i" for i in 1:256]); service=ep, model),
+            "1-option Choice"   => () -> ask("s", "pick" => choice("Which?", ["a" => "option a"]); service=ep, model),
             "object criterion"  => () -> ask("s", "pick" => choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing]); service=ep, model),
             "no model"          => () -> ask("s", noul("Is it?"); service=ep))
         e = _os1l_timed(model, witness, sent) do
             try call(); nothing catch x; x end
         end
         @test e isa ArgumentError && contains(e.msg, "Ollama")
+        witness == "1-option Choice" && @test contains(e.msg, "gives a Choice 2 to 255 options")
         @test last(_OS1L_LOG)[3] == 0
     end
     # Up to 255 options, the route's bound, are sent. A model may cap lower and says so itself, as
@@ -237,19 +240,6 @@ end
             @test r isa SystemOneFailure && r.status == 400 &&
                   contains(r.message, n > 26 ? "2–26 candidates" : "at most 24 candidates")
         end
-    end
-    # One option is sent too, and is the model's call (Ollama 0.40.6): the llama.cpp path (kev, d1, d1-omni)
-    # answers it, the MLX encoders answer their own 400 ("criteria must contain 2–26 candidates", Strands 2–255).
-    r = _os1l_timed(model, "1-option Choice", sent) do
-        ask("Option a is the right one.", "pick" => choice("Which option is the right one?", ["a" => "option a"]);
-            service=ep, model)
-    end
-    @test last(_OS1L_LOG)[3] == 1
-    push!(_OS1L_1, model => _os1l_outcome(r))
-    if info.runner === :llamacpp
-        @test r isa SystemOneSuccess && r["pick"].choice == "a" && r["pick"].probabilities == Dict("a" => 1.0)
-    else
-        @test r isa SystemOneFailure && r.status == 400 && contains(r.message, "criteria must contain 2–")
     end
 end
 
@@ -407,7 +397,6 @@ end # model testset
       join(("\n  $(rpad(m, 18)) $(rpad(w, 36)) requests=$(n)  $(round(t; digits=3)) s" for (m, w, n, t) in _OS1L_LOG)) *
       "\n  largest |Σp − 1| over the answers: $(_OS1L_DRIFT[])" *
       "\n  27-option Choice, per model:" * join(("\n  $(rpad(m, 18)) $(o)" for (m, o) in _OS1L_27)) *
-      "\n  1-option Choice, per model:" * join(("\n  $(rpad(m, 18)) $(o)" for (m, o) in _OS1L_1)) *
       "\n  a runner the model has no variant for:" *
       join(("\n  $(rpad(m, 18)) :$(rpad(rn, 9)) $(o)" for (m, rn, o) in _OS1L_RUNNER)) *
       "\n  wrapper parity, per model (choices that differ, largest |Δp|):" *

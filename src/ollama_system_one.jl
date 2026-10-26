@@ -39,38 +39,38 @@ though some models read it: `instructions` given as anything but a string, an ob
 or an array; an option described by anything but a string or `nothing`; a Score level
 or a Noul criterion that is not a string (on Ollama 0.40.6, `kev:0.8b-q8_0` and
 `d1:3b`, on the llama.cpp path, answered an option described by an object, and
-`tev1:0.8b` refused it) — and, a rule of UniLM's own, blank (whitespace-only)
-`instructions`, which Ollama would read as none. A Choice of one option is sent: the
-models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it, and the MLX models
-answer their own 400 (`criteria must contain 2–26 candidates`; `strands-decider:2b`
-2–255). The route accepts a question without
-`instructions`, but most models do not (measured on Ollama 0.40.6): `tev1:4b`,
-`nimble:9b` and `strands-decider:2b` answer HTTP 400 `instructions must be a
-nonempty string, object, or array`, `kev:0.8b-q8_0` answers 400
-`questions.intent: "instructions" must be provided` (for a question named
-`intent`), and `clef-flash:9b` answers the question — so pass `instructions` with
-local models. A model that takes fewer options (Tev1: at most 24; Nimble and Clef
-Flash: 26) says so in its own HTTP 400 too, which comes back as a
-[`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
-images excluded, at 64 KiB (measured on Ollama 0.40.6 with `kev:0.8b-q8_0`,
-`d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB for a Kev model on Ollama's own
-runner, untested): that limit is the server's to count, by its own measure, and is
+`tev1:0.8b` refused it). It refuses blank (whitespace-only) `instructions`, which
+Ollama would read as none: not blank, as the reference's `pattern: \\S` requires; and
+a Choice, Noul or Score question without `instructions`, which the reference requires
+too (measured on Ollama 0.40.6, `tev1:4b`, `nimble:9b` and `strands-decider:2b`
+answered one with HTTP 400 `instructions must be a nonempty string, object, or
+array`, `kev:0.8b-q8_0` with 400 `questions.intent: "instructions" must be provided`
+for a question named `intent`, and `clef-flash:9b` answered it), and a Choice of one
+option, below the two its API reference requires (on Ollama 0.40.6 the models on the
+llama.cpp path, `kev`, `d1` and `d1-omni`, answered one, and the MLX models their own
+400, `criteria must contain 2–26 candidates`; `strands-decider:2b` 2–255). A model
+that takes fewer options (Tev1: at most 24; Nimble and Clef Flash: 26) says so in its
+own HTTP 400 too, which comes back as a [`SystemOneFailure`](@ref). Ollama also caps
+a local request's text and schema, images excluded, at 64 KiB (measured on Ollama
+0.40.6 with `kev:0.8b-q8_0`, `d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB
+for a Kev model on Ollama's own runner, untested): that limit is the server's to count, by its own measure, and is
 not checked here; a request over it comes back as a [`SystemOneFailure`](@ref)
 carrying Ollama's 413, `text and schema must not exceed 64 KiB`. A [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
 one option is `keep_alive`: the seconds the model stays loaded after the request
 (`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.
 
 Images go in the state. Ollama takes a request's images as one list, `images`
-(raw base64), shared by all its questions and shown to the model before the
-text, so the state is an image, or a vector or tuple of images then texts
+(raw base64), shared by all its questions and apart from the text — by Ollama's
+v0.40.11 source, Clef reads them before the state's text — so the state is an
+image, or a vector or tuple of images then texts
 (`[image, "What is in it?"]`). With images, the state's other entries must be
 texts; they become `state` — none: `""`, one: that string, several: an array —
 and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
 images. An image after a text, inside a JSON object or array, or in a question
 could only be moved, never sent where it was put, and is refused before any
-I/O, as is a state of images and anything but texts, and — as on every System
-One backend — a [`DocumentAttachment`](@ref) or an image's detail level
-anywhere: the list holds an image's bytes alone. A model without vision
+I/O, as is a state of images and anything but texts, an image's detail level —
+the list holds an image's bytes alone — and, as on every System One backend, a
+[`DocumentAttachment`](@ref) anywhere. A model without vision
 answers its own 400, in its own words (Ollama 0.40.6: `tev1:0.8b` `image inputs
 are not supported by this decision model`, `kev:0.8b-q8_0`
 `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision`), which comes
@@ -104,6 +104,9 @@ _system_one_default_model(::OllamaSystemOneProtocol, service)::String = throw(Ar
 _system_one_namespace(::OllamaSystemOneProtocol)::String = "ollama"
 _allows_refusal(::OllamaSystemOneProtocol)::Bool = false
 _allows_raw(::OllamaSystemOneProtocol)::Bool = true
+# The route's `images` is an array of base64 strings, "URLs and data URLs are not supported"
+# (https://docs.ollama.com/api/systemone).
+_image_detail_refusal(::OllamaSystemOneProtocol)::String = "Ollama's `images` list holds each image's base64 bytes alone"
 # A local Ollama server's decision runners answer one request at a time, so a queue of
 # local requests only adds timeouts; its config stays the field defaults (the fallback's
 # `nothing`), since loading a model on a CPU can take minutes.
@@ -119,22 +122,27 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
-# The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options up to 255, the
-# documented maximum, and as few as one (the decision models on the llama.cpp path answered a single option;
-# the generic surface already requires one); score levels 2–10, its shared check (decision ValidateLimits);
-# `instructions` optional. A model that takes less says so in its own HTTP 400, which reaches the caller as a
-# SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options, Nimble and Clef Flash 2–26, Strands
-# 2–255; tev1, nimble, strands-decider and kev refuse a question without `instructions`, clef-flash answers it.
+# The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options 2–255, the
+# documented bounds (on Ollama 0.40.6 the decision models on the llama.cpp path answered a single option);
+# score levels 2–10, its shared check (decision ValidateLimits);
+# `instructions` required, as its API reference lists them (on Ollama 0.40.6 tev1, nimble, strands-decider and
+# kev refused a question without them, and clef-flash answered it). A model that takes less says so in its own
+# HTTP 400, which reaches the caller as a SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options,
+# Nimble and Clef Flash 2–26, Strands 2–255.
 const _OLLAMA_MAX_QUESTIONS = 64
 const _OLLAMA_MAX_OPTIONS = 255
 const _OLLAMA_MAX_LEVELS = 10
 
+# Ollama's API reference lists `instructions` among the required fields of a Choice, a Noul and a
+# Score question (https://docs.ollama.com/api/systemone, `SystemOneChoiceQuestion` and the others).
 function _ollama_instructions(name::String, instructions)::Nothing
-    isnothing(instructions) && return nothing
+    isnothing(instructions) && throw(ArgumentError(
+        "Ollama's API reference requires `instructions` on every Choice, Noul and Score question; " *
+        "$(repr(name)) has none: say what it asks, as the first argument of `choice`, `score` or `noul`"))
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
-        "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks " *
-        "(most local decision models require instructions)"))
-    instructions isa Union{AbstractString,AbstractDict,AbstractVector,NamedTuple} || throw(ArgumentError(
+        "Ollama reads blank `instructions` as none, and its API reference requires them not blank " *
+        "(`pattern: \\S`); those of $(repr(name)) are blank: say what it asks"))
+    instructions isa Union{AbstractString,AbstractDict,AbstractVector,Tuple,NamedTuple} || throw(ArgumentError(
         "Ollama reads `instructions` as a string, object or array; $(repr(name)) has $(typeof(instructions))"))
     nothing
 end
@@ -147,6 +155,10 @@ function _ollama_carries(name::String, q::ChoiceQuestion)::Nothing
             "$(repr(name)) has $(typeof(d)). Describe it in words, or pass `nothing`"))
     end
     n = length(q.criteria)
+    # The reference's `criteria` of a Choice: `minProperties: 2`, `maxProperties: 255`.
+    n >= 2 || throw(ArgumentError(
+        "Ollama's API reference gives a Choice 2 to $(_OLLAMA_MAX_OPTIONS) options; $(repr(name)) has $(n). " *
+        "Add one, such as \"other\""))
     n <= _OLLAMA_MAX_OPTIONS || throw(ArgumentError(
         "Ollama accepts at most $(_OLLAMA_MAX_OPTIONS) options per question; $(repr(name)) has $(n). " *
         "Split it, or narrow the options"))
@@ -201,8 +213,9 @@ function _ollama_system_one_keep_alive(options::NamedTuple, service)::Union{Noth
 end
 
 # The text state and the images an Ollama System One request sends. Ollama takes images as a list
-# shared by all questions and shows them before the text, so the forms that keep that order are an
-# image, or a vector or tuple whose images all come before its texts; the texts become the state
+# shared by all questions, apart from the text (Clef reads them before it: decision/clef.go of Ollama
+# v0.40.11), so the forms sent as written are an image, or a vector or tuple whose images all come
+# before its texts; the texts become the state
 # (none: "", one: that string, several: an array). An image anywhere else could only be moved, never
 # sent where the caller put it, and is refused. nl_dispatch sends its arguments inside an object, so
 # the fix it is given is its `state` keyword.
@@ -215,8 +228,8 @@ function _ollama_state_images(state)::Tuple{Any,Vector{ImageAttachment}}
             "write the other values as text, after the images"))
         first_text = findfirst(x -> x isa AbstractString, collect(state))
         isnothing(first_text) || all(x -> x isa AbstractString, collect(state)[first_text:end]) || throw(ArgumentError(
-            "Ollama shows a request's images before its text, so an image after a text cannot be sent where it is: " *
-            "put the images first, e.g. [image, \"What is in it?\"]"))
+            "Ollama takes a request's images in a list apart from its text, so an image after a text cannot be " *
+            "sent where it is (Clef reads the images first): put the images first, e.g. [image, \"What is in it?\"]"))
         texts = String[x for x in state if x isa AbstractString]
         return (isempty(texts) ? "" : length(texts) == 1 ? only(texts) : texts,
                 ImageAttachment[x for x in state if x isa ImageAttachment])

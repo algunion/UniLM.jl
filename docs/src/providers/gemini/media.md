@@ -76,8 +76,12 @@ names it. The options every provider shares are on [Image Generation](@ref image
 
 [`speak`](@ref) with `service=GEMINIServiceEndpoint` reads text aloud through Gemini TTS: one
 generateContent request to `gemini-3.8-flash-tts`, unless `model` names another, in the voice `Kore`,
-unless `voice` names another of the 30 prebuilt voices of Google's
-[speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation) page.
+unless `voice` names another. Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library
+ID, a custom Voice design ID (`voice_...`), or a Voice replication ID (`voice_...`, or optional
+stateless `voicekey_...`)" ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)):
+one of the 30 studio voices that page lists goes as a prebuilt voice, any other as the request's
+`voice`. The Extended Voice Library's hundreds of voices are listed by `GET /v1beta/voices`, not by
+UniLM, so a voice is sent as given, and Gemini answers a name it does not have.
 UniLM asks for 24 kHz, 16-bit mono PCM and returns a [`SpeechSuccess`](@ref): a WAV file with
 `response_format="wav"`, the default, which UniLM wraps in a 44-byte header, or the samples with
 `"pcm"` (`content_type` `"audio/pcm"`). Speech is not recorded, so its output here is quoted from a
@@ -101,9 +105,8 @@ save_audio(s, "bridge.wav")
 the speech style, `speech_metadata.style`: "emotions, delivery style, prosody, pacing, and volume"
 ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)).
 `instructions` become that style, and the pace is part of it (`"speaking slowly"`): Gemini TTS has
-no speed, so any `speed` is refused. A voice outside the 30 prebuilt ones is refused too — Google's
-Extended Voice Library, designed voices and replicated voices among them — as are a format other
-than `"wav"` and `"pcm"` and an empty input ([Limits and refusals](@ref gemini_limits)).
+no speed, so any `speed` is refused, as are a blank `voice`, a format other than `"wav"` and `"pcm"`
+and an empty input ([Limits and refusals](@ref gemini_limits)).
 
 A reply whose candidate did not finish with `STOP` — `MAX_TOKENS`, `SAFETY`, … — or that has no
 candidate, a blocked prompt, is an [`AudioFailure`](@ref) with `status` 200 and the reply as

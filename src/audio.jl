@@ -47,8 +47,9 @@ end
 const _REALTIME_SPEECH = _SpeechRules("OpenAI Realtime", "gpt-realtime-2.1-mini", "marin",
     ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"], (0.25, 1.5),
     "https://developers.openai.com/api/reference/resources/realtime/client-events")
-# Gemini 3.8 TTS's 30 prebuilt voices. It has no speed parameter: the pace is part of a text's
-# speech style. https://ai.google.dev/gemini-api/docs/speech-generation
+# Gemini 3.8 TTS's 30 prebuilt studio voices; it takes other voices too (`_speech_voice`). It has no
+# speed parameter: the pace is part of a text's speech style.
+# https://ai.google.dev/gemini-api/docs/speech-generation
 const _GEMINI_SPEECH = _SpeechRules("Gemini TTS", "gemini-3.8-flash-tts", "Kore",
     ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
      "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi",
@@ -57,6 +58,26 @@ const _GEMINI_SPEECH = _SpeechRules("Gemini TTS", "gemini-3.8-flash-tts", "Kore"
     "https://ai.google.dev/gemini-api/docs/speech-generation")
 _speech_rules(::_RealtimeSpeechWire) = _REALTIME_SPEECH
 _speech_rules(::_GeminiSpeechWire) = _GEMINI_SPEECH
+
+# The voice a request names, as its wire takes it: a Realtime session one of its built-in voices.
+function _speech_voice(w::_RealtimeSpeechWire, v::AbstractString)::String
+    r = _speech_rules(w)
+    v in r.voices || throw(ArgumentError(
+        "$(r.provider) voices are $(join(r.voices, ", ")) (got $(repr(v))): $(r.docs)"))
+    String(v)
+end
+# Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
+# (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)"
+# (https://ai.google.dev/gemini-api/docs/generate-content/speech-generation). The Extended Voice
+# Library's hundreds of names are listed only by `GET /v1beta/voices`, so any voice is sent as given,
+# and the API answers one it does not have; a blank one names no voice.
+function _speech_voice(::_GeminiSpeechWire, v::AbstractString)::String
+    isempty(strip(v)) && throw(ArgumentError(
+        "Gemini TTS takes a voice by name or id: a prebuilt voice such as \"Kore\" (the Extended Voice " *
+        "Library's among them), a designed or replicated voice's voice_… id, or a replicated voice's voicekey_… key " *
+        "(got $(repr(v))): https://ai.google.dev/gemini-api/docs/speech-generation#voices"))
+    String(v)
+end
 
 function _speech_speed(r::_SpeechRules, speed::Real)::Float64
     s = Float64(speed)
@@ -79,7 +100,7 @@ and `voice` left `nothing` are the service's defaults:
 | `service` | speaks through | default `model` | default `voice` | `voice` | `speed` |
 |:--|:--|:--|:--|:--|:--|
 | `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
-| `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | the 30 prebuilt voices | none |
+| `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key | none |
 
 Both services produce 16-bit mono PCM at 24 kHz: `response_format` `"wav"` returns it as a WAV file,
 `"pcm"` as the raw samples. `instructions` direct the delivery (tone, pace, accent): on OpenAI they
@@ -87,9 +108,11 @@ follow the session's instruction to read `input` word for word, on Gemini they a
 style (`speechMetadata.style`). Gemini TTS has no speed parameter: describe the pace in
 `instructions` (`"speaking slowly"`).
 
-Throws `ArgumentError`, before any request, for an empty `input`, a voice the service does not have,
-a `response_format` other than `"wav"` or `"pcm"`, a `speed` out of range, and any `speed` on Gemini;
-and for `GEMINIOpenAIServiceEndpoint`, which has no speech route, naming `GEMINIServiceEndpoint`.
+Throws `ArgumentError`, before any request, for an empty `input`, a voice the Realtime session does
+not have or a blank Gemini voice, a `response_format` other than `"wav"` or `"pcm"`, a `speed` out of
+range, and any `speed` on Gemini; and for `GEMINIOpenAIServiceEndpoint`, which has no speech route,
+naming `GEMINIServiceEndpoint`. The Extended Voice Library's names are listed only by Gemini's
+`GET /v1beta/voices`, so a Gemini voice is sent as given, and Gemini answers a name it does not have.
 Voices: [OpenAI Realtime](https://developers.openai.com/api/reference/resources/realtime/client-events),
 [Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation#voices).
 """
@@ -105,11 +128,10 @@ struct SpeechRequest
                            input::AbstractString, voice::Union{AbstractString,Nothing},
                            response_format::AbstractString, speed::Union{Real,Nothing},
                            instructions::Union{AbstractString,Nothing})
-        rules = _speech_rules(_speech_wire(service))
+        wire = _speech_wire(service)
+        rules = _speech_rules(wire)
         isempty(strip(input)) && throw(ArgumentError("speak needs text to read: input is empty"))
-        v = something(voice, rules.voice)
-        v in rules.voices || throw(ArgumentError(
-            "$(rules.provider) voices are $(join(rules.voices, ", ")) (got $(repr(v))): $(rules.docs)"))
+        v = _speech_voice(wire, something(voice, rules.voice))
         response_format in _SPEECH_FORMATS || throw(ArgumentError(
             "response_format must be \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz); " *
             "got $(repr(response_format))"))
@@ -231,11 +253,17 @@ function _gemini_speech_body(s::SpeechRequest)::String
     part = Dict{Symbol,Any}(:text => s.input)
     # Gemini 3.8 TTS reads `text` verbatim; a delivery direction is the part's speech style.
     isnothing(s.instructions) || (part[:speechMetadata] = Dict(:style => s.instructions))
+    # VoiceConfig holds `prebuiltVoiceConfig`, "The configuration for the prebuilt voice to use", or
+    # `voice`, which takes a prebuilt voice's name, a stored voice's id (`voice_…`) and a replication key
+    # (`voicekey_…`) (https://ai.google.dev/api/generate-content#VoiceConfig): a studio voice keeps the
+    # prebuilt form, and every other voice goes as `voice`.
+    voice = s.voice in _GEMINI_SPEECH.voices ? Dict(:prebuiltVoiceConfig => Dict(:voiceName => s.voice)) :
+                                                Dict(:voice => s.voice)
     JSON.json(Dict(
         :contents => [Dict(:role => "user", :parts => [part])],
         :generationConfig => Dict(
             :responseModalities => ["AUDIO"],
-            :speechConfig => Dict(:voiceConfig => Dict(:prebuiltVoiceConfig => Dict(:voiceName => s.voice))),
+            :speechConfig => Dict(:voiceConfig => voice),
             # Raw 16-bit PCM at 24 kHz: Gemini 3.8 TTS answers WAV unless asked, and UniLM writes
             # its own header.
             :responseFormat => Dict(:audio => Dict(:mimeType => "AUDIO_L16", :sampleRate => _SPEECH_RATE)))))

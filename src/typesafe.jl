@@ -600,7 +600,12 @@ end
 
 function _system_one_models(p::TypeSafeProtocol, service, config::Union{Nothing,RequestConfig},
                             cancel::Union{Nothing,CancelToken})
-    validate_capability(service, :models, "TypeSafe models listing")
+    # This protocol is the fallback of every endpoint without a listing of its own, so the refusal
+    # names the endpoint alone, never TypeSafe; an endpoint type that declares no capabilities is
+    # refused by name, as `ask` refuses it, before `validate_capability` reads a declaration.
+    _capability_declared(service) || throw(ArgumentError(
+        "Model listing is not supported by $(_service_name(service)): it declares no capabilities"))
+    validate_capability(service, :models, "Model listing")
     cfg = _resolve_config(config, _system_one_default_config(p, service)); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try

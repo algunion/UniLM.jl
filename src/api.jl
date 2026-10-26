@@ -1784,8 +1784,8 @@ Successful Chat Completions API response.
   (the reply's `model`; it differs from `self.model` when the provider routes the request to
   another model, or names the dated snapshot behind an alias, such as an id ending
   `-YYYY-MM-DD`, which is priced at the alias's row); `nothing` where the endpoint does not
-  report it, and from an
-  [`OllamaEndpoint`](@ref), whose cloud models are priced by the name requested.
+  report it. From an [`OllamaEndpoint`](@ref), a cloud model whose reply names it without its
+  cloud tag keeps the name requested, so it is priced as the cloud model it is.
   [`estimated_cost`](@ref) prices the call at this model when it is set, else at `self.model`.
 """
 @kwdef struct LLMSuccess <: LLMRequestResponse
@@ -1905,9 +1905,10 @@ isfailure(r::LLMRequestResponse) = !issuccess(r)
     text(r::LLMSuccess) -> Union{String,Nothing}
 
 The assistant reply text — `r.message.content`. Can be `nothing` when the reply
-carries only tool calls (no text). On a [`LLMFailure`](@ref) or [`LLMCallError`](@ref),
-`text` throws an [`LLMResultError`](@ref); guard with [`issuccess`](@ref) /
-[`isfailure`](@ref), or pattern-match the result type first.
+carries only tool calls (no text), or is a refusal (`r.message.refusal_message` holds
+it). On a [`LLMFailure`](@ref) or [`LLMCallError`](@ref), `text` throws an
+[`LLMResultError`](@ref); guard with [`issuccess`](@ref) / [`isfailure`](@ref), or
+pattern-match the result type first.
 """
 text(r::LLMSuccess) = r.message.content
 

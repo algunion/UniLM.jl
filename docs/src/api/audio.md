@@ -66,12 +66,12 @@ t = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b")
 | `service` | speaks through | default `model` | default `voice` | voices | `speed` |
 |:--|:--|:--|:--|:--|:--|
 | `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
-| `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | the 30 prebuilt voices | none |
+| `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key, sent as given | none |
 
 Both services produce 16-bit mono PCM at 24 kHz: `response_format = "wav"` (the
 default) wraps it in a 44-byte WAV header, `"pcm"` returns the samples
-(`content_type` `"audio/pcm"`). Any other format, a voice the service does not have
-(`nova`, `onyx` and `fable` are not Realtime voices), a speed out of range, any
+(`content_type` `"audio/pcm"`). Any other format, a voice the Realtime session does not have
+(`nova`, `onyx` and `fable` are not Realtime voices), a blank Gemini voice, a speed out of range, any
 `speed` on Gemini, and an empty `input` throw `ArgumentError` before any request, as does
 `GEMINIOpenAIServiceEndpoint`: Google's OpenAI-compatible API has no speech route, so the
 error points to `GEMINIServiceEndpoint`.

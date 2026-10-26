@@ -1560,7 +1560,8 @@ end
 function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing},
                          sse_dropped::Int, model::Union{String,Nothing})
     update!(chat, msg)
-    result = LLMSuccess(; message=msg, self=chat, usage=_result_usage(chat.service, chat, usage), sse_dropped, model)
+    result = LLMSuccess(; message=msg, self=chat, usage=_result_usage(chat.service, chat, usage), sse_dropped,
+                        model=_billed_response(chat.service, chat.model, model))
     _accumulate_cost!(chat, result)
     return result
 end
@@ -2174,7 +2175,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
         end
         update!(chat, extracted.message)
         result = LLMSuccess(message=extracted.message, self=chat, usage=_result_usage(chat.service, chat, extracted.usage),
-                            model=_decoded_model(extracted))
+                            model=_billed_response(chat.service, chat.model, _decoded_model(extracted)))
         _accumulate_cost!(chat, result)
         return result
     catch e

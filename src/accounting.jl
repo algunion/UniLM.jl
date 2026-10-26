@@ -36,8 +36,8 @@ models a provider's surcharges — cache-write premiums, long-context tiers, ser
 speed or region multipliers — [`estimated_cost`](@ref) applies them to these rates for that
 provider's results; every other result is billed at the standard rates. A billed service tier
 the provider's pricing page lists no price for — such as OpenAI's Scale tier, Fast on
-`gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens, or the Gemini Interactions
-`"deferred"` tier — is estimated at the standard rates, with one warning per model and tier.
+`gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens — is estimated at the standard rates,
+with one warning per model and tier.
 
 A row has no audio-token rates. [`estimated_cost`](@ref) bills the audio tokens
 (`prompt_audio_tokens`, `completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the

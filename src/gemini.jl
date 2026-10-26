@@ -84,10 +84,12 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
 
 # The service tiers a request names (https://ai.google.dev/gemini-api/docs/optimization):
 # generateContent takes standard, flex and priority (GenerateContentRequest.serviceTier, whose
-# "unspecified" is standard), and the Interactions API also takes deferred
-# (https://ai.google.dev/api/interactions-api). A reply reports the tier that billed it.
+# "unspecified" is standard), and so does the Interactions API, whose reference lists flex,
+# standard and priority (https://ai.google.dev/api/interactions-api). It no longer lists deferred,
+# which the API answered with HTTP 400 on 2026-10-26: "The value 'deferred' is not supported for
+# 'service_tier' on the Gemini API, it is allowed on the Gemini Enterprise Agent Platform."
+# A reply reports the tier that billed it.
 const _GEMINI_SERVICE_TIERS = ("standard", "flex", "priority")
-const _INTERACTIONS_SERVICE_TIERS = ("standard", "flex", "priority", "deferred")
 
 # GenerationConfig.seed is an int32 (its format in the API's discovery document,
 # https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta), so a seed outside
@@ -102,7 +104,8 @@ _gemini_service_tier(::Nothing, ::Tuple, ::String)::Nothing = nothing
 function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
     tier in tiers || throw(ArgumentError("$api takes service_tier $(join(repr.(tiers), ", ", " or ")) " *
         "(got $(repr(tier)))" * (tier == "deferred" ?
-        ": \"deferred\" is a Gemini Interactions tier, so send the request with respond on GEMINIServiceEndpoint" : "")))
+        ": the Gemini API answers \"deferred\" with HTTP 400, a tier \"allowed on the Gemini Enterprise Agent " *
+        "Platform\"" : "")))
     tier
 end
 
@@ -461,14 +464,18 @@ _is_synthetic_call_id(id::AbstractString) = startswith(id, "unilm_call_")
 # Gemini finishReason (the FinishReason enum, https://ai.google.dev/api/generate-content)
 # → neutral finish_reason; the decoder and the stream handler share this one rule.
 # STOP is the only normal completion, and a STOP turn that carries function calls is a
-# tool-call turn (Gemini reports STOP for those). MAX_TOKENS → "length"; the content
-# filters, the image ones included (safety, prohibited content, recitation), →
-# "content_filter". Every other value of this open enum (MALFORMED_FUNCTION_CALL,
-# UNEXPECTED_TOOL_CALL, IMAGE_OTHER, NO_IMAGE, values added later) passes through
-# lowercased, never as "stop", and calls under any non-STOP reason keep that reason: a
-# failed or filtered turn reads neither as a completed turn nor as calls to dispatch.
-const _GEMINI_FILTER_REASONS = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
-                                "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION")
+# tool-call turn (Gemini reports STOP for those). MAX_TOKENS → "length"; the stops the enum
+# describes as a filter or a policy refusal → "content_filter": the content filters, the image
+# ones included (safety, prohibited content, recitation), content "flagged for using an
+# unsupported language", a request "filtered by an escalation rule", and a stop "because the
+# user account is limited or disabled due to Prohibited Use Policy (PUP) violations". Every
+# other value of this open enum (MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, IMAGE_OTHER,
+# NO_IMAGE, values added later) passes through lowercased, never as "stop", and calls under any
+# non-STOP reason keep that reason: a failed or filtered turn reads neither as a completed turn
+# nor as calls to dispatch.
+const _GEMINI_FILTER_REASONS = ("SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+                                "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION",
+                                "PUP_LIMITED_DISABLED")
 
 _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
     fr == "STOP"                 ? (has_calls ? TOOL_CALLS : STOP) :
@@ -532,9 +539,22 @@ function _gemini_usage_metadata(u::TokenUsage)::Dict{String,Any}
 end
 
 # The refusal of a filtered candidate: its finishMessage, Google's own account of why generation
-# stopped, else the filter named.
-_gemini_refusal(cand)::String = something(cand isa AbstractDict ? _wire_string(cand, "finishMessage") : nothing,
-                                          "Model response blocked by safety filter.")
+# stopped, which is "Optional", else the stop named. A language flag, an escalation rule and a
+# Prohibited Use Policy stop are not the safety filter, so each is named with the FinishReason
+# enum's definition of it (https://ai.google.dev/api/generate-content#FinishReason).
+const _GEMINI_STOP_DEFINITIONS = Dict{String,String}(
+    "LANGUAGE" => "The response candidate content was flagged for using an unsupported language.",
+    "ESCALATION" => "Request was filtered by an escalation rule.",
+    "PUP_LIMITED_DISABLED" => "Token generation stopped because the user account is limited or disabled due to " *
+                              "Prohibited Use Policy (PUP) violations.")
+function _gemini_refusal(cand)::String
+    cand isa AbstractDict || return "Model response blocked by safety filter."
+    message = _wire_string(cand, "finishMessage")
+    isnothing(message) || return message
+    stop = _wire_string(cand, "finishReason")
+    definition = isnothing(stop) ? nothing : get(_GEMINI_STOP_DEFINITIONS, stop, nothing)
+    isnothing(definition) ? "Model response blocked by safety filter." : "$stop: $definition"
+end
 
 # The reply names the model that served it in modelVersion: a deprecated id Google routes to its
 # successor answers as that successor, which is the model priced. A reply that ends at the
@@ -783,8 +803,8 @@ const _GEMINI_TIER_PRICES = Dict{String,@NamedTuple{multiple::Float64, cache::Di
 
 # The multiples of the standard rates that the tier a reply reports costs: of the input and
 # output rates, and of the cache-hit rate. "standard" (or "unspecified", its default) or no tier
-# is the standard rates; a tier the page gives no price for (Interactions' "deferred") is
-# estimated at them, and says so once per model and tier.
+# is the standard rates; a tier the page gives no price for is estimated at them, and says so
+# once per model and tier.
 function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTuple{2,Float64}
     (isnothing(tier) || tier in ("standard", "unspecified")) && return (1.0, 1.0)
     prices = get(_GEMINI_TIER_PRICES, tier, nothing)

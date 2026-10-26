@@ -90,6 +90,40 @@
   `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
   verb whose call offers a single option is refused too. Upgrading: add an option, such as a
   fallback `"other"`.
+- **Gemini's language, escalation and Prohibited Use Policy stops are refusals.** A native Gemini
+  candidate that ended with `finishReason` `LANGUAGE` (content "flagged for using an unsupported
+  language"), `ESCALATION` ("filtered by an escalation rule") or `PUP_LIMITED_DISABLED` (the account
+  "limited or disabled due to Prohibited Use Policy (PUP) violations") reported that value in lower
+  case, `"language"`, `"escalation"` or `"pup_limited_disabled"`, and a turn without text had the
+  content `""` and no `refusal_message`, so Google's `finishMessage` was lost. Each now gives
+  `"content_filter"`, as Gemini's other filter stops do, streamed or not; a turn without text has
+  no content, and its `refusal_message` is the `finishMessage`, else the stop's name and the enum's
+  definition of it, such as "ESCALATION: Request was filtered by an escalation rule.". Upgrading: code that matched those three values tests
+  `finish_reason == "content_filter"` and reads `refusal_message`; `text(result)` of such a turn is
+  `nothing`, no longer `""`.
+- **`list_input_items` refuses `GEMINIServiceEndpoint`.** Google's Interactions API gets, cancels
+  and deletes an interaction, and its reference lists no method that lists an interaction's input
+  items, yet `list_input_items(id; service=GEMINIServiceEndpoint)` sent
+  `GET /v1beta/interactions/{id}/input_items`, a path the reference does not list, and returned what
+  came back. It now throws `ArgumentError` before any request, as it does for an `OllamaEndpoint`.
+  Upgrading: keep the `input` you sent with the interaction.
+- **Gemini Interactions refuses `service_tier="deferred"` before sending.** A `Respond` on
+  `GEMINIServiceEndpoint` sent `"deferred"` as given. The Interactions API reference no longer lists
+  it — its tiers are `flex`, `standard` and `priority` — and on 2026-10-26 the API answered a request
+  naming it with HTTP 400: "The value 'deferred' is not supported for 'service_tier' on the Gemini API,
+  it is allowed on the Gemini Enterprise Agent Platform." It now throws `ArgumentError` before any
+  request, as a `Chat` on either Gemini endpoint already did, whose message no longer sends such a
+  request to `respond`. Upgrading: send `"flex"`, `"standard"` or `"priority"`, or leave
+  `service_tier` unset.
+- **An Ollama chat result names the model its reply gives.** An `/api/chat` reply names the "Model
+  name used to generate this message", and each line of a stream the "Model name used for this
+  stream event", but UniLM dropped it, so `LLMSuccess.model` was `nothing` on an `OllamaEndpoint`,
+  while the other providers' results carry the model they report. It now holds the reply's name,
+  streamed or not. A cloud model whose reply names it without its cloud tag keeps the requested
+  name, as its `respond`, FIM and System One results do, so it is still priced as the cloud model
+  it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
+  Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
+  price is unchanged.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -326,6 +360,23 @@
 - **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
   called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
   available". No behaviour changes.
+- **`list_models` on an endpoint without a listing names that endpoint alone.** An endpoint with
+  no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
+  `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a
+  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) or an endpoint type of your own that
+  declares capabilities without `:models` threw "TypeSafe models listing is not supported by …",
+  naming a provider the call had nothing to do with, and on an endpoint type of your own that
+  declares no capabilities it threw a `MethodError`. Each now throws an `ArgumentError` that reads
+  "Model listing is not supported by" the endpoint, then lists its capabilities, as before, or says
+  that it declares none, as `ask` does.
+- **`speak` on Gemini takes the Extended Voice Library and designed and replicated voices.** Gemini
+  3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
+  (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)", yet
+  a `SpeechRequest` on `GEMINIServiceEndpoint` threw `ArgumentError` for any voice but the 30 studio
+  voices. The library's hundreds of voices are listed only by Gemini's `GET /v1beta/voices`, so a
+  voice is now sent as given, and Gemini answers a name it does not have: one of the 30 as
+  `prebuiltVoiceConfig.voiceName`, as before, any other as `voiceConfig.voice`, the field Google's
+  reference gives for a stored voice's id and a replication key. A blank voice still throws.
 
 ## 0.26.0
 

@@ -72,6 +72,9 @@ _billed_response(::OllamaEndpoint, requested::AbstractString, x::ResponseObject)
      ResponseObject(x.id, x.status, m, x.output, x.usage, x.error, x.metadata, x.raw))
 _billed_response(::OllamaEndpoint, requested::AbstractString, x::FIMResponse) =
     (m = _ollama_billed_model(requested, x.model); m == x.model ? x : FIMResponse(x.choices, x.usage, m, x.raw))
+# A chat reply names its model too, and a Chat result records the name that bills.
+_billed_response(::OllamaEndpoint, requested::AbstractString, replied::AbstractString) =
+    _ollama_billed_model(requested, replied)
 
 # ─── Chat request (neutral Chat → /api/chat body) ───────────────────────────
 
@@ -271,6 +274,7 @@ _ollama_finish(reason, has_calls::Bool) =
     has_calls ? _tool_finish_reason(reason isa AbstractString ? String(reason) : nothing) :
     reason isa AbstractString ? String(reason) : nothing
 
+# The reply names the "Model name used to generate this message" (https://docs.ollama.com/api/chat).
 function decode_response(::OllamaEndpoint, resp::HTTP.Response)
     d = JSON.parse(resp.body; dicttype=Dict{String,Any})
     d isa AbstractDict || error("Ollama reply is not a JSON object")
@@ -287,7 +291,7 @@ function decode_response(::OllamaEndpoint, resp::HTTP.Response)
         Message(role=RoleAssistant, content=text, finish_reason=finish, provider_content=pc) :
         Message(role=RoleAssistant, content=(isempty(text) ? nothing : text), tool_calls=calls,
                 finish_reason=finish, provider_content=pc)
-    (; message=msg, usage=_ollama_usage(d))
+    (; message=msg, usage=_ollama_usage(d), model=_wire_string(d, "model"))
 end
 
 # ─── Chat stream (newline-delimited JSON) ───────────────────────────────────
@@ -322,6 +326,9 @@ function handle_sse_event!(service::OllamaEndpoint, ::AbstractString, payload::A
         state.error = Dict{String,Any}("error" => err)
         return :error
     end
+    # Each line names the "Model name used for this stream event".
+    model = _wire_string(d, "model")
+    isnothing(model) || (state.model = model)
     m = get(d, "message", nothing)
     if m isa AbstractDict
         c = get(m, "content", nothing)

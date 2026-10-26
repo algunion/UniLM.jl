@@ -316,8 +316,8 @@ end
     # Values from the FinishReason enum (ai.google.dev/api/generate-content). STOP is the
     # only normal completion, and only a STOP turn with function calls is a tool-call
     # turn: calls under any other reason keep that reason, so they are never dispatched.
-    filters = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY",
-               "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION")
+    filters = ("SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY",
+               "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION", "PUP_LIMITED_DISABLED")
     cases = [("STOP", false, STOP), ("STOP", true, TOOL_CALLS),
              ("MAX_TOKENS", false, "length"), ("MAX_TOKENS", true, "length"),
              [(wire, calls, CONTENT_FILTER) for wire in filters for calls in (false, true)]...,
@@ -342,6 +342,38 @@ end
             chunk(Dict("content" => Dict("role" => "model", "parts" => parts))), state)
         UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", chunk(Dict("finishReason" => wire)), state)
         @test state.finish_reason == want
+    end
+end
+
+@testset "finishReason — a language flag, an escalation rule and a Prohibited Use Policy stop are refusals" begin
+    # FinishReason (ai.google.dev/api/generate-content): LANGUAGE "The response candidate content was flagged
+    # for using an unsupported language", ESCALATION "Request was filtered by an escalation rule",
+    # PUP_LIMITED_DISABLED "token generation stopped because the user account is limited or disabled due to
+    # Prohibited Use Policy (PUP) violations". A stop with no text has its finishMessage as the refusal.
+    why = "Google's account of the stop."
+    @testset "$wire" for wire in ("LANGUAGE", "ESCALATION", "PUP_LIMITED_DISABLED")
+        reply = JSON.json(Dict("candidates" => [Dict("finishReason" => wire, "finishMessage" => why)]))
+        msg = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(reply))).message
+        @test msg.finish_reason == CONTENT_FILTER && msg.refusal_message == why && isnothing(msg.content)
+        state = StreamState()
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", reply, state)
+        streamed = _build_stream_message(state)
+        @test streamed.finish_reason == CONTENT_FILTER && streamed.refusal_message == why
+    end
+    # The finishMessage is "Optional"; without it the refusal names the stop, in the enum's words: none of the
+    # three is the safety filter, and the stop is recoverable from the result.
+    words = Dict("LANGUAGE" => "flagged for using an unsupported language",
+                 "ESCALATION" => "filtered by an escalation rule",
+                 "PUP_LIMITED_DISABLED" => "limited or disabled due to Prohibited Use Policy (PUP) violations")
+    @testset "$wire without a finishMessage" for wire in sort(collect(keys(words)))
+        reply = JSON.json(Dict("candidates" => [Dict("finishReason" => wire)]))
+        unstreamed = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(reply))).message
+        state = StreamState()
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", reply, state)
+        for msg in (unstreamed, _build_stream_message(state))
+            @test msg.finish_reason == CONTENT_FILTER && startswith(msg.refusal_message, wire) &&
+                  occursin(words[wire], msg.refusal_message) && !occursin("safety filter", msg.refusal_message)
+        end
     end
 end
 
@@ -977,8 +1009,9 @@ end
                                  "serviceTier" => tier)
     end
     @test !haskey(body(nothing), "serviceTier")
+    # The Interactions API refuses deferred too (HTTP 400 on 2026-10-26), so the refusal sends no one there.
     e = _gemini_caught(() -> body("deferred"))
-    @test e isa ArgumentError && occursin("Interactions", e.msg) && occursin("respond", e.msg)
+    @test e isa ArgumentError && occursin("Gemini Enterprise Agent Platform", e.msg) && !occursin("respond", e.msg)
     for bad in ("auto", "default", "fast", "scale", "Standard", "unspecified")
         e = _gemini_caught(() -> body(bad))
         @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) && occursin(repr(bad), e.msg)

@@ -111,9 +111,10 @@ u = result.usage
 `reasoning_effort="none"` turns Gemma 4's thinking off for a short answer
 ([Reasoning](@ref ollama_thinking)). The reply's `done_reason` becomes `finish_reason`: `"stop"`,
 or `"length"` for a reply that reached its `max_tokens` (sent as `num_predict`); a turn that carries
-tool calls reads `"tool_calls"` unless it was cut at `"length"`. `result.model` is `nothing`: UniLM
-keeps no model name from an Ollama reply, and [`estimated_cost`](@ref) prices the model the request
-named. Of the usage, `prompt_tokens` is Ollama's `prompt_eval_count`, "How many input tokens were in
+tool calls reads `"tool_calls"` unless it was cut at `"length"`. `result.model` is the "Model name used
+to generate this message" the reply gives ([chat](https://docs.ollama.com/api/chat)), the model
+[`estimated_cost`](@ref) prices; a cloud model whose reply drops its tag keeps the name requested
+([Cost and usage](@ref ollama_cost)). Of the usage, `prompt_tokens` is Ollama's `prompt_eval_count`, "How many input tokens were in
 the prompt", `cached_tokens` its `prompt_eval_cached_count`, "How many prompt tokens were read from the
 cache", and `completion_tokens` its `eval_count`, the output tokens
 ([usage](https://docs.ollama.com/api/usage)), thinking included ([Reasoning](@ref ollama_thinking)
@@ -488,8 +489,9 @@ missing-price warning. So does every model a request to Ollama's cloud itself na
 server is `https://ollama.com` ([Setup](@ref ollama_setup)) — whose names carry no cloud tag, "such as
 `gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)). A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
 0.40.6's source, which sends the cloud the name without it; untested, as no cloud call was made): a
-System One, `respond` or FIM result keeps the requested name, and the server's stays in its `raw`,
-while a chat or embeddings result is priced by the model its request names. Through your own server,
+chat, System One, `respond` or FIM result keeps the requested name — a System One, `respond` or FIM
+result keeps the server's in its `raw` — while an embeddings result is priced by the model its request
+names. Through your own server,
 UniLM recognises a cloud model by its tag alone, so one copied under a name without it (`ollama cp`) is
 priced as local, at `0.0`, with no warning. How a call is priced on every provider is on
 [Cost Tracking](@ref cost_guide).

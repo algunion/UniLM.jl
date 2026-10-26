@@ -1070,13 +1070,24 @@ end
 @testset "Interactions encode — service_tier, seed and the safety label" begin
     body(; kw...) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
         Respond(; service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="hi", kw...)); dicttype=Dict{String,Any})
-    # flex, standard, priority and — on this API only — deferred (https://ai.google.dev/api/interactions-api).
-    for tier in ("standard", "flex", "priority", "deferred")
+    # flex, standard and priority, the tiers the reference lists (https://ai.google.dev/api/interactions-api).
+    for tier in ("standard", "flex", "priority")
         @test body(service_tier=tier) == Dict("model" => "gemini-3.8-flash", "input" => "hi", "service_tier" => tier)
+    end
+    # The reference no longer lists deferred, and the API answered it with HTTP 400 on 2026-10-26: "The value
+    # 'deferred' is not supported for 'service_tier' on the Gemini API, it is allowed on the Gemini Enterprise
+    # Agent Platform". It is refused before any request; with no key, a call that got past the refusal
+    # would come back as a call error (a KeyError) and send nothing.
+    for call in (() -> body(service_tier="deferred"),
+                 () -> respond(Respond(service=GEMINIServiceEndpoint, input="hi", service_tier="deferred");
+                               config=RequestConfig(max_attempts=1)))
+        e = withenv(() -> _ix_caught(call), "GEMINI_API_KEY" => nothing)
+        @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) &&
+              occursin("Gemini Enterprise Agent Platform", e.msg)
     end
     for bad in ("auto", "default", "fast", "scale", "ultrafast")
         e = _ix_caught(() -> body(service_tier=bad))
-        @test e isa ArgumentError && occursin("\"deferred\"", e.msg) && occursin(repr(bad), e.msg)
+        @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) && occursin(repr(bad), e.msg)
     end
     @test body(seed=7) == Dict("model" => "gemini-3.8-flash", "input" => "hi", "generation_config" => Dict("seed" => 7))
     # safety_identifier is the request label Google documents for an aggregator's end-user id.
@@ -1138,4 +1149,15 @@ end
         close(srv)
     end
     @test length(bodies) == 1 && JSON.parse(only(bodies))["seed"] == 7
+end
+
+@testset "list_input_items — Gemini Interactions lists no input items, so nothing is sent" begin
+    # The Interactions API creates, gets, cancels and deletes an interaction; neither its reference nor its
+    # OpenAPI spec has a method that lists one's input items (https://ai.google.dev/api/interactions-api).
+    # With no key, a call that got past the refusal would come back as a call error (a KeyError) and send
+    # nothing; a refusal throws.
+    e = withenv("GEMINI_API_KEY" => nothing) do
+        _ix_caught(() -> list_input_items("v1_abc"; service=GEMINIServiceEndpoint, config=RequestConfig(max_attempts=1)))
+    end
+    @test e isa ArgumentError && startswith(e.msg, "list_input_items is not supported by GEMINIServiceEndpoint")
 end

@@ -718,6 +718,35 @@ end
     end
 end
 
+@testset "a chat result names the model the reply gives; a cloud model keeps its requested name" begin
+    # A /api/chat reply names the "Model name used to generate this message", and each line of a stream the
+    # "Model name used for this stream event" (https://docs.ollama.com/api/chat). A cloud model may answer
+    # without its cloud tag; its result keeps the requested name, so it is priced as the cloud model it is.
+    renamed(line, model) = _oline(merge(JSON.parse(line), Dict("model" => model)))
+    served(asked) = asked == "gpt-oss:120b-cloud" ? "gpt-oss:120b" : "gemma4:e2b-served"
+    server, base, _ = _ollama_mock() do n, body
+        req = JSON.parse(body)
+        m = served(req["model"])
+        req["stream"] === true ? (200, [renamed(_delta(content="Hi"), m), renamed(_final(p=5, c=1), m)]) :
+                                 (200, [renamed(_reply(content="Hi", p=5, c=1), m)])
+    end
+    try
+        e = OllamaEndpoint(base_url=base)
+        table = Dict("gpt-oss:120b-cloud" => UniLM._price(1.0, 0.1, 2.0))
+        @testset "stream=$stream" for stream in (false, true)
+            send(model) = (r = chatrequest!(Chat(service=e, model=model, stream=stream,
+                                                 messages=[Message(Val(:user), "Hi")])); stream ? fetch(r) : r)
+            r = send("gemma4:e2b")
+            @test r isa LLMSuccess && r.model == "gemma4:e2b-served" && (@test_logs estimated_cost(r)) == 0.0
+            c = send("gpt-oss:120b-cloud")
+            @test c isa LLMSuccess && c.model == "gpt-oss:120b-cloud"
+            @test (@test_logs estimated_cost(c; pricing=table)) ≈ 5 * 1e-6 + 1 * 2e-6
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "a streamed respond and a fetched response record their endpoint" begin
     obj = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
         "output" => [Dict("type" => "message", "role" => "assistant",

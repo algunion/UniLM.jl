@@ -1,7 +1,8 @@
 # ─── OpenAI Decisions API Integration Tests ──────────────────────────────────
 # Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips). Spend is capped
 # at exactly ten calls, nine of a few hundred input tokens and one of about two thousand,
-# at $0.10 per 1M input tokens: a fraction of a cent. Every state is unambiguous, so a correct client is the
+# at $0.10 per 1M input tokens, the latter's cache write at the 12-hour write rate, $0.25
+# per 1M (about $0.0004 for that call): a fraction of a cent. Every state is unambiguous, so a correct client is the
 # only thing standing between the input and the asserted answer.
 
 # Defined in a module of its own, as the System One suite's live routes are, so these
@@ -120,7 +121,13 @@ end
     u = token_usage(r)
     @test u.prompt_tokens >= 1024
     @test u.cache_write_tokens > 0 && u.cache_write_extended_tokens > 0
-    @test estimated_cost(r) ≈ u.prompt_tokens * 0.10 / 1_000_000          # a write costs the input rate
+    # Priced at gpt-6-luna's caching rates per 1M tokens: $0.10 uncached input, $0.01 a cache read,
+    # $0.125 a 30-minute write and $0.25 a 12-hour one (the Decisions guide's "Pricing and availability";
+    # the pricing page). On 2026-10-22 this call reported 1,849 input tokens, 1,696 of them 12-hour writes.
+    fresh = u.prompt_tokens - u.cached_tokens - u.cache_write_tokens
+    @test estimated_cost(r) ≈ (fresh * 0.10 + u.cached_tokens * 0.01 +
+                               (u.cache_write_tokens - u.cache_write_extended_tokens) * 0.125 +
+                               u.cache_write_extended_tokens * 0.25) / 1_000_000
     @info "Decisions live 12-hour cache write" request_id = r.response.request_id input = u.prompt_tokens cached = u.cached_tokens writes = u.cache_write_tokens writes_12h = u.cache_write_extended_tokens raw_usage = get(r.response.raw, "usage", nothing) cost = estimated_cost(r)
 end
 

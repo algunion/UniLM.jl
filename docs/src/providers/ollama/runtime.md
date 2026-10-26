@@ -4,7 +4,7 @@
 using UniLM
 ```
 
-## [Options](@id ollama_options__next)
+## [Options](@id ollama_options)
 
 What would be a command-line flag or a Modelfile line in Ollama is an argument of
 [`OllamaEndpoint`](@ref): the endpoint's requests carry it, and the constructor checks it.
@@ -15,7 +15,7 @@ What would be a command-line flag or a Modelfile line in Ollama is an argument o
 | `keep_alive` | `keep_alive`, the seconds a model stays loaded after a request (`Inf` as `-1`, stay loaded), on chat, embeddings and decision requests and on [`load_model`](@ref); unset, the server's default | a number of seconds from 0 to 1e9, or `Inf` |
 | `truncate` | `truncate` on every chat and embeddings request, `false` unless set | a `Bool` |
 | `shift` | `shift` on chat requests and a chat model's load: `false` ends a reply that fills the context window at finish reason `"length"`; unset, the server's default | a `Bool`, or `nothing` |
-| `runner` | `runner` on chat, embeddings and decision requests, [`model_info`](@ref), [`load_model`](@ref), [`unload_model`](@ref) and [`pull_model`](@ref) ([Runners](@ref ollama_runners__next)) | `:mlx`, `:llamacpp`, `:ggml` or `nothing` |
+| `runner` | `runner` on chat, embeddings and decision requests, [`model_info`](@ref), [`load_model`](@ref), [`unload_model`](@ref) and [`pull_model`](@ref) ([Runners](@ref ollama_runners)) | `:mlx`, `:llamacpp`, `:ggml` or `nothing` |
 | any field of [`OllamaOptions`](@ref): `num_ctx`, `num_batch`, `num_gpu`, `main_gpu`, `num_thread`, `use_mmap`, `num_keep`, `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`, `draft_num_predict`, `typical_p` | the request's `options`, with the `Chat`'s sampling fields, on chat and embeddings requests and on a chat or embedding model's load | each in its range: `OllamaOptions` lists them |
 
 Any other keyword is refused when the endpoint is built, its `ArgumentError` naming the keywords the
@@ -49,14 +49,14 @@ deprecated and may be removed in a future release"; Ollama 0.40.11 still reads i
 log says "deprecated option provided" (observed on 25 October 2026). `respond`, `compact_response`, FIM and transcription use Ollama's
 OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runner`. Decision requests
 (`ask`) carry the endpoint's `keep_alive` and `runner` and none of its options
-([Models](@ref ollama_models__next)).
+([Models](@ref ollama_models)).
 
 - **Context window.** Ollama "defaults to the following context lengths based on VRAM": 4k under
   24 GiB, 32k from 24 to 48 GiB, 256k from 48 GiB ([context length](https://docs.ollama.com/context-length)),
   and on the machine the examples ran on, `gemma4:e4b` loaded with its whole 131,072-token context
-  (Ollama 0.40.11; [Models](@ref ollama_models__next)). `num_ctx` sets the window when the model loads; a model with
+  (Ollama 0.40.11; [Models](@ref ollama_models)). `num_ctx` sets the window when the model loads; a model with
   vision gets at least 2,048 tokens, and what a later request with another `num_ctx` does depends on the
-  runner ([Runners](@ref ollama_runners__next)).
+  runner ([Runners](@ref ollama_runners)).
 - **Input that does not fit.** With `truncate=false`, the default, a prompt longer than the window is an
   [`LLMFailure`](@ref) with HTTP 400 — `"request (… tokens) exceeds the available context size (…
   tokens), try increasing it"` — on the `:llamacpp` runner (Ollama 0.40.6), instead of an answer to a
@@ -71,7 +71,7 @@ OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runn
   `OLLAMA_KEEP_ALIVE` on the server changes that default, which a request's `keep_alive` overrides
   ([FAQ](https://docs.ollama.com/faq)). `keep_alive=0` unloads the model after each request.
 
-## [Runners](@id ollama_runners__next)
+## [Runners](@id ollama_runners)
 
 Ollama runs a model on one of its runners, which UniLM names `:mlx` (Apple Silicon, for models stored
 as safetensors), `:llamacpp` and `:ggml` (for GGUF models). [`running_models`](@ref) reports the runner
@@ -125,7 +125,7 @@ unchanged; their effect on `:mlx` is not verified.
     floor of a model with vision was measured on 22 October 2026 (and on Ollama
     0.40.7 on Linux).
 
-## [Models](@id ollama_models__next)
+## [Models](@id ollama_models)
 
 The model-management verbs return typed results like every other call: an [`OllamaSuccess`](@ref)
 holding what the verb reports, an [`OllamaFailure`](@ref) with the HTTP status and Ollama's error body
@@ -207,7 +207,7 @@ Ollama's message (`pull model manifest: file does not exist`).
     second) but thought in 68 of 80 runs where E4B thought in 15, so E4B answered
     sooner on short prompts. The pages of this entry and UniLM's own tests use E4B.
 
-## [When something fails](@id ollama_failures__next)
+## [When something fails](@id ollama_failures)
 
 `chatrequest!`, `respond`, `embeddingrequest!`, `fim_complete` and `transcribe` return what the server or
 the network did as a typed result, and do not throw it ([Results](@ref results_guide)): a failure holds
@@ -224,24 +224,24 @@ configuration, so a model that takes minutes to load may need a longer bound.
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
 | `ArgumentError` from the call, nothing sent | the request breaks a rule UniLM checks before sending ([Limits and refusals](@ref ollama_limits)) | what its row says |
-| `ArgumentError` when the endpoint is built, or a `TypeError` for a value of the wrong type | an argument breaks its rule, or is no argument of the endpoint ([Options](@ref ollama_options__next)) | what the message names |
+| `ArgumentError` when the endpoint is built, or a `TypeError` for a value of the wrong type | an argument breaks its rule, or is no argument of the endpoint ([Options](@ref ollama_options)) | what the message names |
 | `InvalidConversationError` from `chatrequest!`, nothing sent | with `history=true`, the conversation ends with an assistant message, so the reply could not be appended | a user message after it, or `history=false` |
 | `LLMCallError` "no Ollama server answered at http://127.0.0.1:11434" | the server is not running, or runs elsewhere: the connection was refused | start it (`ollama serve` or the app), or point `OLLAMA_HOST` or `base_url` at it |
 | `LLMFailure` 404 "model 'gemma4:e2b' not found" | the model is not installed | [`pull_model`](@ref), or `ollama pull` |
-| `LLMFailure` 400 "exceeds the available context size" | the prompt does not fit the window, on the `:llamacpp` runner ([Options](@ref ollama_options__next)) | raise `num_ctx`, or shorten the conversation |
+| `LLMFailure` 400 "exceeds the available context size" | the prompt does not fit the window, on the `:llamacpp` runner ([Options](@ref ollama_options)) | raise `num_ctx`, or shorten the conversation |
 | `LLMFailure` 400 "does not support tools" or "does not support thinking" | the model lacks the capability | check [`model_info`](@ref); pick a model that has it |
 | `LLMFailure` 400 after a pause, for an image or a sound: "Multimodal data provided, but model does not support multimodal requests." | the model sees or hears nothing; it was loaded first | a model with `:vision` or `:audio` among its capabilities |
-| a 400 (404 from [`model_info`](@ref) and [`load_model`](@ref)) "no compatible manifest found for runners: …" | the endpoint pins a runner the model has no variant for | pin the runner [`list_models`](@ref) names for the model, or leave `runner` unset ([Runners](@ref ollama_runners__next)) |
+| a 400 (404 from [`model_info`](@ref) and [`load_model`](@ref)) "no compatible manifest found for runners: …" | the endpoint pins a runner the model has no variant for | pin the runner [`list_models`](@ref) names for the model, or leave `runner` unset ([Runners](@ref ollama_runners)) |
 | `EmbeddingFailure` 400 "exceeds the context length" | the input is longer than the model's window | split it into chunks ([Long inputs](@ref ollama_embedding_window)) |
 | `EmbeddingFailure` 413 | an EmbeddingGemma 2 GGUF build, through an endpoint that sets `num_ctx` but not `num_batch` ([Long inputs](@ref ollama_embedding_window)) | an endpoint that sets neither |
-| `EmbeddingCallError` "an empty or all-zero vector" | a reply row that is no embedding ([Embeddings](@ref ollama_embeddings__next)) | the model, or another one |
+| `EmbeddingCallError` "an empty or all-zero vector" | a reply row that is no embedding ([Embeddings](@ref ollama_embeddings)) | the model, or another one |
 | `LLMCallError` with `status` `nothing` from a stream, the line in `error` | an `{"error": …}` line in the HTTP 200 stream ([Streaming](@ref ollama_streaming)); not sent again, and nothing is appended | the turn again |
 | `LLMFailure` with `status` 200 from a stream | the stream ended before its last line, the one whose `done` is `true`; `response` holds what arrived, and nothing is appended | the turn again |
 | `LLMFailure` 503 | "the server is overloaded": more requests wait than `OLLAMA_MAX_QUEUE` lets queue ([FAQ](https://docs.ollama.com/faq)); sent again as a transient status | fewer requests at once, or a larger queue on the server |
 | a call error with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out: a model loading, a request waiting its turn, or a long reply ([Timeouts & Retries](@ref timeouts_guide)) | [`load_model`](@ref) first, a longer bound, or a stream |
 | a call error whose `cause` is a `UniLMCancelled` | a stop: the stream's `close[] = true` or a cancelled `CancelToken` ([Streaming](@ref ollama_streaming)) | nothing, if the stop was yours |
 | a call error whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; a thrown value that is no `Exception` leaves `cause` `nothing`, its text in `error`; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |
-| an empty answer with finish reason `"length"` | thinking used the whole `max_tokens` budget ([Reasoning](@ref ollama_thinking__next)) | a larger `max_tokens`, or `reasoning_effort="none"` |
+| an empty answer with finish reason `"length"` | thinking used the whole `max_tokens` budget ([Reasoning](@ref ollama_thinking)) | a larger `max_tokens`, or `reasoning_effort="none"` |
 | `OllamaFailure` 404 from a model verb | the model is not installed | [`pull_model`](@ref), or a name `list_models` lists |
 | `OllamaCallError` "pull model manifest: file does not exist" | [`pull_model`](@ref) asked for a tag the registry does not hold | a tag the model's page lists |
 | `LLMResultError` from `text`, `output_text`, `embedding_vectors` or `fim_text` | the result is a failure, which holds no reply | check `issuccess(result)` first |

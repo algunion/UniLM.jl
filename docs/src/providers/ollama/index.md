@@ -1,4 +1,4 @@
-# [Ollama](@id ollama_guide__next)
+# [Ollama](@id ollama_guide)
 
 ```@setup ollama
 using UniLM
@@ -23,20 +23,20 @@ Main.ProviderFacts.at_a_glance(:ollama)
 | I want to… | Use | You get |
 | :--- | :--- | :--- |
 | [run a local model](@ref ollama_setup) | `ollama pull`, then `service=OllamaEndpoint(), model=…` | requests to the server at `OLLAMA_HOST`, else on this machine |
-| [make a first call](@ref ollama_first__next) | `chatrequest!(chat)` | an `LLMSuccess`: the reply and its token counts, at a cost of `0.0` |
+| [make a first call](@ref ollama_first) | `chatrequest!(chat)` | an `LLMSuccess`: the reply and its token counts, at a cost of `0.0` |
 | [hold a conversation](@ref ollama_conversations) | `push!` a message, then `chatrequest!` again | each reply appended to the `Chat` and sent back with the next turn |
 | [stream a reply](@ref ollama_streaming) | `stream=true` and a `callback` | the text as it arrives, then the whole message and its usage |
-| [let the model call my functions](@ref ollama_tools__next) | `tools` and `tool_loop!` | the calls run and answered until the model replies |
-| [get JSON that fits a schema](@ref ollama_json__next) | a JSON Schema `response_format` | a reply constrained to the schema |
-| [see how the model reasoned](@ref ollama_thinking__next) | `reasoning_effort`, `reasoning_text` | the thinking, when the model thinks |
-| [ask about an image or a recording](@ref ollama_media__next) | `ImageAttachment`, `AudioAttachment` | an answer about what the model saw or heard |
-| [embed texts, images and sound](@ref ollama_embeddings__next) | `Embeddings` with a `task`, and `embeddingrequest!` | one unit-length vector per item, written for its task |
-| [transcribe a recording](@ref ollama_transcription__next) | `transcribe(path; service=OllamaEndpoint(), model=…)` | the words the model heard |
+| [let the model call my functions](@ref ollama_tools) | `tools` and `tool_loop!` | the calls run and answered until the model replies |
+| [get JSON that fits a schema](@ref ollama_json) | a JSON Schema `response_format` | a reply constrained to the schema |
+| [see how the model reasoned](@ref ollama_thinking) | `reasoning_effort`, `reasoning_text` | the thinking, when the model thinks |
+| [ask about an image or a recording](@ref ollama_media) | `ImageAttachment`, `AudioAttachment` | an answer about what the model saw or heard |
+| [embed texts, images and sound](@ref ollama_embeddings) | `Embeddings` with a `task`, and `embeddingrequest!` | one unit-length vector per item, written for its task |
+| [transcribe a recording](@ref ollama_transcription) | `transcribe(path; service=OllamaEndpoint(), model=…)` | the words the model heard |
 | [use respond, or fill in the middle](@ref ollama_respond) | `respond`, `fim_complete` | answers from Ollama's OpenAI-compatible routes |
-| [set the context window, keep a model loaded, or pin its runner](@ref ollama_options__next) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | every request of the endpoint carrying them |
-| [install, inspect, load or delete models](@ref ollama_models__next) | `list_models`, `model_info`, `pull_model`, `load_model`, … | typed model cards and results |
+| [set the context window, keep a model loaded, or pin its runner](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | every request of the endpoint carrying them |
+| [install, inspect, load or delete models](@ref ollama_models) | `list_models`, `model_info`, `pull_model`, `load_model`, … | typed model cards and results |
 | [decide about a text or a picture](@ref ollama_decisions_start) | `ask(…; service=OllamaEndpoint(), model=…)` | typed answers with probabilities |
-| [handle a failure](@ref ollama_failures__next) | the result's type | the status or the exception, and what to do |
+| [handle a failure](@ref ollama_failures) | the result's type | the status or the exception, and what to do |
 
 ## [Setup](@id ollama_setup)
 
@@ -69,7 +69,7 @@ built. A host without a scheme is reached over `http` on port 11434 (`gpu-box` b
 bind-all addresses `0.0.0.0` and `::` on the loopback address, and `ollama.com`, given without a scheme,
 over `https` on port 443; an IPv6 address may be bare or bracketed, and a path is kept. A value UniLM
 cannot read this way, another scheme or a port outside 1–65535, throws `ArgumentError` when the
-endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_options__next).
+endpoint is built. The endpoint's other arguments are on [Options](@ref ollama_options).
 
 Ollama's local API "does not require authentication", and UniLM sends a server of your own no key. Direct
 cloud inference at `https://ollama.com/api` and `https://ollama.com/v1` "requires an API key", used "in
@@ -82,10 +82,10 @@ inference request is not sent: the call returns a call error whose `cause` is an
 `OLLAMA_API_KEY`; [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
 [`pull_model`](@ref) and [`delete_model`](@ref) go without it. No request was sent to the cloud for this
 page (its requests bill). A cloud model runs through the local server once you sign in with
-`ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first__next) says how
+`ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first) says how
 UniLM prices it.
 
-## [First call](@id ollama_first__next)
+## [First call](@id ollama_first)
 
 A `Chat` starts with its system message; `chatrequest!` sends it and returns a typed result, and `text`
 reads the reply — or throws, on a failure:
@@ -108,14 +108,14 @@ u = result.usage
 ```
 
 `reasoning_effort="none"` turns Gemma 4's thinking off for a short answer
-([Reasoning](@ref ollama_thinking__next)). The reply's `done_reason` becomes `finish_reason`: `"stop"`,
+([Reasoning](@ref ollama_thinking)). The reply's `done_reason` becomes `finish_reason`: `"stop"`,
 or `"length"` for a reply that reached its `max_tokens` (sent as `num_predict`); a turn that carries
 tool calls reads `"tool_calls"` unless it was cut at `"length"`. `result.model` is `nothing`: UniLM
 keeps no model name from an Ollama reply, and [`estimated_cost`](@ref) prices the model the request
 named. Of the usage, `prompt_tokens` is Ollama's `prompt_eval_count`, "How many input tokens were in
 the prompt", `cached_tokens` its `prompt_eval_cached_count`, "How many prompt tokens were read from the
 cache", and `completion_tokens` its `eval_count`, the output tokens
-([usage](https://docs.ollama.com/api/usage)), thinking included ([Reasoning](@ref ollama_thinking__next)
+([usage](https://docs.ollama.com/api/usage)), thinking included ([Reasoning](@ref ollama_thinking)
 shows a count). The result types are on [Results](@ref results_guide).
 
 A local model has no price, so `estimated_cost` gives `0.0` for a chat, embeddings, `respond` or FIM
@@ -135,7 +135,7 @@ priced as local, at `0.0`, with no warning.
 
 The first request to a model also loads it into memory: about 1.7 s for Gemma 4 E4B on an Apple M4
 Max with 64 GB (Ollama 0.40.6), after which a short answer took about 0.1 s. [`load_model`](@ref) loads
-a model ahead of time ([Models](@ref ollama_models__next)).
+a model ahead of time ([Models](@ref ollama_models)).
 
 ## [Conversations](@id ollama_conversations)
 
@@ -160,10 +160,10 @@ text(chatrequest!(chat))
 
 The messages go out in the order they were pushed, each with its role, so a system message pushed
 later stays where it stands. An assistant turn goes back with its text, its thinking as `thinking`
-([Reasoning](@ref ollama_thinking__next)) and its tool calls with their ids; a tool result goes back
+([Reasoning](@ref ollama_thinking)) and its tool calls with their ids; a tool result goes back
 with `tool_name`, the name of the function it answers, as Ollama's
 [tool calling](https://docs.ollama.com/capabilities/tool-calling) page sends results, and with its
-`tool_call_id` ([Tools](@ref ollama_tools__next)). A message with a `name`, and a tool result that
+`tool_call_id` ([Tools](@ref ollama_tools)). A message with a `name`, and a tool result that
 answers no tool call of an earlier assistant turn, are refused before anything is sent
 ([Limits and refusals](@ref ollama_limits)); what `push!` refuses is the same on every provider
 ([Conversations with Chat](@ref chat_guide)).
@@ -203,14 +203,14 @@ Setting `close[] = true` stops the stream ([Stopping a Stream Early](@ref stream
   that holds a call arrives.
 - **Errors.** "If an error occurs mid-stream, the error will be returned as an object" with an `error`
   property, and the status stays 200 ([errors](https://docs.ollama.com/api/errors)): UniLM ends the call
-  with an `LLMCallError` holding it ([When something fails](@ref ollama_failures__next)).
+  with an `LLMCallError` holding it ([When something fails](@ref ollama_failures)).
 - **Silence.** A stream receives nothing while Ollama loads the model or while the request waits its
   turn behind others, which Ollama queues ([FAQ](https://docs.ollama.com/faq)), and
-  `stream_idle_timeout` bounds that wait too ([When something fails](@ref ollama_failures__next)).
+  `stream_idle_timeout` bounds that wait too ([When something fails](@ref ollama_failures)).
 
 The concepts every provider shares are on [Streaming](@ref streaming_guide).
 
-## [Tools](@id ollama_tools__next)
+## [Tools](@id ollama_tools)
 
 Each `Tool` in `tools` goes out as a function tool with its `name`, `description` and `parameters`.
 `tool_loop!` runs the calls and sends their results back until the model answers in text:
@@ -251,11 +251,11 @@ Ollama's replies carry an id for each call, `call_mb4i6gbs` above, though its
 [API reference](https://docs.ollama.com/api/chat) lists none; UniLM sends the id back with the call and
 with its result, beside `tool_name`. A call that arrives without an id gets `unilm_call_<k>`, which is
 never sent: its result is matched by the function's name alone. The turn that called the tool also thought first, and that thinking went back
-with it ([Reasoning](@ref ollama_thinking__next)). A streamed turn's tool calls are on
+with it ([Reasoning](@ref ollama_thinking)). A streamed turn's tool calls are on
 [Streaming](@ref ollama_streaming), and the loop every provider shares is on
 [Tool Calling](@ref tools_guide).
 
-## [Structured output](@id ollama_json__next)
+## [Structured output](@id ollama_json)
 
 A `response_format` becomes Ollama's `format`: a JSON Schema format sends its schema, and
 `UniLM.json_object()` sends `{"type": "object"}`, the schema of any JSON object. Only the schema goes
@@ -303,7 +303,7 @@ cloud model's format all the same. The formats every provider shares are on
     twice generated until the 600 s default request timeout (more than 60,000 tokens
     in one run); the retry answered in under a second.
 
-## [Reasoning](@id ollama_thinking__next)
+## [Reasoning](@id ollama_thinking)
 
 `reasoning_effort` becomes Ollama's `think`: `"none"` sends `false`, and every other effort goes as it
 is, `"max"` among them, a level of `think` in Ollama's
@@ -365,7 +365,7 @@ Thinking spends the reply's token budget first: a small `max_tokens` can end a r
     (Ollama 0.34.4) it thought in 2 to 5 of 6 runs at the default temperature, and
     in every run at `temperature=0.0`.
 
-## [Attachments](@id ollama_media__next)
+## [Attachments](@id ollama_media)
 
 A user message carries images and sound clips as attachments, read from a file or from bytes and
 recognised by their content: an [`ImageAttachment`](@ref) (PNG, JPEG, GIF or WebP) or an
@@ -396,16 +396,16 @@ text(chatrequest!(chat))
 
 Ollama's [Gemma 4](https://ollama.com/library/gemma4) page lists text, image and audio for E2B and
 E4B, and text and image for the 26B and 31B models. [`model_info`](@ref) lists what an installed model
-takes, `:vision` and `:audio` among its `capabilities` ([Models](@ref ollama_models__next)); UniLM
+takes, `:vision` and `:audio` among its `capabilities` ([Models](@ref ollama_models)); UniLM
 checks neither, and a model without the capability answers with an HTTP 400 once it has been loaded:
 on Ollama 0.40.11, `qwen2.5-coder:1.5b-base` loaded and then answered an image with "Multimodal data
 provided, but model does not support multimodal requests."
-([When something fails](@ref ollama_failures__next)). A [`DocumentAttachment`](@ref) and an image's
+([When something fails](@ref ollama_failures)). A [`DocumentAttachment`](@ref) and an image's
 `detail` level are refused before the request: the `images` entry has room for neither
 ([Limits and refusals](@ref ollama_limits)). The attachment types are on
 [Attachments](@ref attachments_guide).
 
-## [Audio](@id ollama_transcription__next)
+## [Audio](@id ollama_transcription)
 
 Of UniLM's audio verbs, only `transcribe` reaches Ollama: a model that hears audio transcribes it,
 while `speak` and `translate` refuse the endpoint before sending anything. A transcription is not
@@ -482,8 +482,8 @@ fim_text(result)
 The completions route takes `suffix` among its fields
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and a FIM request has no
 default model. These routes carry none of the endpoint's `keep_alive`, options or `runner`
-([Options](@ref ollama_options__next)). A local model's `respond` and FIM results cost `0.0`, as its chats
-do ([First call](@ref ollama_first__next)); the verbs every provider shares are on
+([Options](@ref ollama_options)). A local model's `respond` and FIM results cost `0.0`, as its chats
+do ([First call](@ref ollama_first)); the verbs every provider shares are on
 [Agentic respond](@ref agentic_guide) and [FIM & Prefix Completion](@ref completions_guide).
 
 ## [Limits and refusals](@id ollama_limits)
@@ -491,14 +491,14 @@ do ([First call](@ref ollama_first__next)); the verbs every provider shares are 
 A request meets the model's context window, which the endpoint's `num_ctx` sets when the model loads: by
 default a chat prompt that does not fit is an HTTP 400 on the `:llamacpp` runner, not a silently
 shortened prompt, while a model on the `:mlx` runner answers it (Ollama 0.40.6;
-[Runners](@ref ollama_runners__next)). UniLM checks no size itself: not the window, not the length of
+[Runners](@ref ollama_runners)). UniLM checks no size itself: not the window, not the length of
 a sound clip, not an image's size. An embeddings input longer than the model's window is the server's
 HTTP 400 too ([Long inputs](@ref ollama_embedding_window)).
 
 A `Chat` field UniLM maps to no part of the `/api/chat` request is refused, not dropped, since dropping it
 would send a request other than the one asked for, and so is each request below that Ollama would answer with an
 error or run other than asked. The verbs throw these `ArgumentError`s before anything is sent.
-Building the endpoint refuses an argument that breaks its rule ([Options](@ref ollama_options__next)).
+Building the endpoint refuses an argument that breaks its rule ([Options](@ref ollama_options)).
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
@@ -527,7 +527,7 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | [`get_response`](@ref), [`cancel_response`](@ref), [`delete_response`](@ref) or [`list_input_items`](@ref) | `works on a stored response`: Ollama stores none | keep the `ResponseSuccess` that `respond` returns |
 | an `Embeddings` request with a `user` | `Ollama embeddings take no user field` | remove it |
 | an embeddings item holding both an image and a sound clip | `in a random order`: such an item embeds differently from one request to the next | the image and the clip as two items ([Images and sound](@ref ollama_embedding_media)) |
-| an EmbeddingGemma request without a `task`, a `dimensions` it was not trained for, or a `title` with a task other than `:document` | `expects a task prompt`, `returns 768, 512, 256, 128 dimensions`, `reads with task = :document only` | what the [task prompts](@ref ollama_embeddings__next) say |
+| an EmbeddingGemma request without a `task`, a `dimensions` it was not trained for, or a `title` with a task other than `:document` | `expects a task prompt`, `returns 768, 512, 256, 128 dimensions`, `reads with task = :document only` | what the [task prompts](@ref ollama_embeddings) say |
 | an `Embeddings` request with a `title`, or a `task` other than `:none`, for a model whose prompts UniLM does not know | `has no task prompts, so a title has nowhere to go`, `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | no title, and `task = :none` with the model's own prefix in the text |
 | a transcription without a `model` | `Ollama has no default transcription model` | a model that hears audio, such as `"gemma4:e4b"` |
 | a transcription with `temperature`, `languages` or `keywords` | `runs at temperature 0 and takes no`, `takes one`, `takes no` | remove it; one `language` is taken |

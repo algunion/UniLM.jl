@@ -8,7 +8,7 @@ Ollama serves decision models on your own machine — Tev1, Nimble, Kev, Clef Fl
 it lists as [decision models](https://ollama.com/search?c=decision) — through its System One route,
 `POST /v1/systemone`, which answers choice, yes/no and scoring questions about a state with probabilities and
 writes no text ([System One](https://docs.ollama.com/api/systemone)); no key is sent to a server of your own, and a
-local model costs nothing. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide__next) language-model
+local model costs nothing. `OllamaEndpoint()`, the endpoint of the [Ollama](@ref ollama_guide) language-model
 entry, sends [`ask`](@ref) and the verbs built on it there, and no decision verb refuses it. Of the route, UniLM does
 not wrap a `keep_alive` given as a duration string; a cloud model reached through your local server takes the same
 requests as a local one, and a request to Ollama's cloud itself, `https://ollama.com`, carries the `OLLAMA_API_KEY`
@@ -61,8 +61,8 @@ Of an [`OllamaEndpoint`](@ref)'s arguments, a decision request carries three: it
 unless the call names one, and its `runner`. Its other arguments — `truncate`, `shift` and the
 [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and are not sent, so the window is the one
 the model is loaded with, and "input is never truncated" ([System One](https://docs.ollama.com/api/systemone));
-[`load_model`](@ref) loads a decision model without them too ([Models](@ref ollama_models__next)). The constructor's
-checks are on [Options](@ref ollama_options__next).
+[`load_model`](@ref) loads a decision model without them too ([Models](@ref ollama_models)). The constructor's
+checks are on [Options](@ref ollama_options).
 
 - **`keep_alive`**, the one request option, is a keyword of [`ask`](@ref) and [`ask_each`](@ref) —
   `options = (keep_alive = …,)` on the natural-language verbs, a keyword of `with_system_one` for a scope —, else the
@@ -74,7 +74,7 @@ checks are on [Options](@ref ollama_options__next).
   it unset, or pin per model the runner its listing names (`OllamaModel.runner`):
   `OllamaEndpoint(runner = :llamacpp)` with `model = "kev:0.8b-q8_0"`. A runner the model has no build for is the
   server's HTTP 400 `no compatible manifest found for runners: <runner>`, never a fallback
-  ([Runners](@ref ollama_runners__next)).
+  ([Runners](@ref ollama_runners)).
 
 ## [First decision](@id ollama_decisions_first_decision)
 
@@ -581,4 +581,4 @@ and on 19 October 2026 the `nl_classify` calls, on `tev1:0.8b` through Ollama 0.
 branch after 0.23.0; all through Ollama's `/v1/systemone`.
 
 See also: [`OllamaEndpoint`](@ref), [`ask`](@ref), [`UniLM.OllamaSystemOneProtocol`](@ref) and [`OllamaModel`](@ref)
-in the API reference, and [Ollama](@ref ollama_guide__next) in the Language models chapter.
+in the API reference, and [Ollama](@ref ollama_guide) in the Language models chapter.

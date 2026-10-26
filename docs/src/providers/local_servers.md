@@ -216,7 +216,7 @@ heard = transcribe("memo.wav"; service=vllm,                              # /v1/
   though vLLM takes images too, "by defining a custom chat template for the server and passing a list
   of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
   a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
-  ([task prompts](@ref ollama_embeddings__next)).
+  ([task prompts](@ref ollama_embeddings)).
 - **respond** sends a `Respond`'s fields as they are, a `seed` among them: vLLM's Responses API
   "forwards vLLM sampling parameters such as `top_k`, `min_p`, `repetition_penalty`, `seed`, `stop`,
   and `ignore_eos` to the engine"
@@ -246,7 +246,7 @@ capabilities the table at the top of this page lists as not available refuse the
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the name the server serves the model under |
 | a `transcribe` call without a `model` | `has no default transcription model` | the name the server serves the model under |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
-| an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings__next), or `task = :none` where the server writes the prompts |
+| an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings), or `task = :none` where the server writes the prompts |
 | an EmbeddingGemma request with a `dimensions` other than 768, 512, 256 and 128 | `returns 768, 512, 256, 128 dimensions`: the sizes the model was trained for | one of them |
 | an EmbeddingGemma request with a `title` and a task other than `:document` | `reads with task = :document only`: a title names a document | `task = :document`, or no title |
 | an `Embeddings` request with a `title`, for a model whose prompts UniLM does not know | `has no task prompts, so a title has nowhere to go` | no title |

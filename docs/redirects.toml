@@ -7,5 +7,6 @@
 [routes]
 "guide/responses_api" = "providers/openai/responses"
 "guide/retrieval" = "providers/openai/retrieval"
+"guide/ollama" = "providers/ollama"
 
 [anchors]

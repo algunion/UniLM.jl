@@ -289,9 +289,9 @@ every kind as an `inlineData` part ahead of the text, an image's detail level as
 media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"` is refused, as is any
 level on the Gemini 2.5 and Gemma 4 models), and Gemini Interactions sends each as an `image`,
 `audio` or `document` part of an [`InputMessage`](@ref)'s content. A System One request
-carries images without a detail level, and refuses a document and a sound clip; an embedding
-input carries an image or a clip without a level. Each refusal is an `ArgumentError` before
-any network I/O.
+carries images, with a detail level on OpenAI's Decisions API alone, and refuses a document
+and a sound clip; an embedding input carries an image or a clip without a level. Each refusal
+is an `ArgumentError` before any network I/O.
 """
 abstract type Attachment end
 

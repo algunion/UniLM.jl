@@ -8,7 +8,7 @@ says *whether to act on it*.
 
 UniLM has one System One surface — [`ask`](@ref), [`ask_each`](@ref), the
 question builders and the typed answers below — over three backends: TypeSafe's
-Jev (the default), OpenAI's Decisions API (a public beta) and local decision
+Jev (the default), OpenAI's Decisions API (generally available) and local decision
 models served by Ollama. [Route and Decide](@ref system_one_guide) is the how-to
 and [Choosing a decision provider](@ref system_one_backends) compares
 the three. This page gives what every backend shares, then each backend's setup,
@@ -21,7 +21,7 @@ rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 | Backend | `service` | Model when a call names none | Credentials |
 | :--- | :--- | :--- | :--- |
 | [TypeSafe's Jev](@ref system_one_typesafe) (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` |
-| [OpenAI's Decisions API](@ref system_one_openai) (public beta) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| [OpenAI's Decisions API](@ref system_one_openai) (generally available) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
 | [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:4b` (`clef-flash:9b` for pictures) | none |
 
 A call takes its backend from `service = …`; without one, from the enclosing
@@ -301,8 +301,8 @@ the alias the request named: a `jev-X.Y.Z` id without its own row at the
 
 ## [OpenAI Decisions](@id system_one_openai)
 
-OpenAI's Decisions API (`POST /v1/decisions`, a public beta since
-October 6, 2026) answers predicate, choice and score questions, and
+OpenAI's Decisions API (`POST /v1/decisions`, a public beta from October 6,
+2026, now generally available) answers predicate, choice and score questions, and
 [`OPENAIServiceEndpoint`](@ref) speaks it: name the endpoint as the `service` of
 [`ask`](@ref) or of a [`with_system_one`](@ref) scope, and set `OPENAI_API_KEY`.
 The model is `gpt-6-luna`, the only one the API serves, unless the call names
@@ -323,14 +323,14 @@ end
 | Generic surface | Decisions wire |
 | :--- | :--- |
 | `state`: a string, or a JSON value | `input`: the string, or the value's JSON text |
-| `state`: an image, or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
+| `state`: an image, or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
 | [`noul`](@ref) | `predicate` |
 | [`choice`](@ref) | `choice` of 2–255 options: the name is the `value`, a string description the `description` |
 | [`score`](@ref) | `score` of 2–10 levels, each a string: its `label` |
 | [`RawQuestion`](@ref) | sent verbatim, with the question's name added as `name` |
 | keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128), `prompt_cache_options` (a [`PromptCacheOptions`](@ref) of `mode` and `ttl`) |
 
-Every question needs string `instructions`, and at most 200 go in one request.
+Every question needs string `instructions`, and at most 400 go in one request.
 `prompt_cache_options` takes a `ttl` of `"30m"` or `"12h"` — OpenAI's prompt-caching
 guide names `"12h"` for the Responses API, and the Decisions API answered a `"12h"`
 request with HTTP 200 — and a `mode`; with `mode="explicit"` the request marks no
@@ -353,9 +353,10 @@ the request id is the `x-request-id` header. A recording
 ([`with_recorded_answers`](@ref)) is keyed without the three options, and holds
 each image as the SHA-256 of its base64 text, `data:<mime>;sha256,<hex>`, never
 its bytes. [`estimated_cost`](@ref) charges what the guide
-prices: input tokens only — \$0.10 per million, the `gpt-6-luna` row's input rate —
-cached and cache-written ones at the full input rate, twice that rate for a
-request of more than 272K input tokens.
+prices: input tokens only — \$0.10 per million uncached, the `gpt-6-luna` row's
+input rate; cache reads at its cached rate, \$0.01, and cache writes at OpenAI's
+write rates, \$0.125 per million (\$0.25 for a 12-hour lifetime) — every rate
+twice for a request of more than 272K input tokens.
 
 The calls are bounded as TypeSafe's are (60 s per attempt, 150 s in all, while
 you set no `RequestConfig` of your own), and [`ask_each`](@ref) keeps 16 of them in
@@ -420,14 +421,17 @@ end
   an object or an array; an option described by anything but a string or
   `nothing`; a Score level or a Noul criterion that is not a string (on Ollama
   0.40.6, `kev:0.8b-q8_0` and `d1:3b`, on the llama.cpp path, answered an option
-  described by an object, and `tev1:0.8b` refused it) — and, a rule of UniLM's
-  own, blank (whitespace-only) `instructions`, which Ollama would read as none.
+  described by an object, and `tev1:0.8b` refused it). It refuses blank
+  (whitespace-only) `instructions`, which Ollama would read as none: not blank, as
+  the reference's `pattern: \S` requires; a Choice, Noul or Score question without
+  `instructions`, which the API reference requires; and a Choice of one option,
+  below the two it requires.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
-| `instructions` | optional on the route; when given, a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
-| Choice options | at most 255 (one is sent), each described by a string or `nothing` |
+| `instructions` | required on a Choice, Noul and Score, as the route's API reference lists them: a string, an object or an array — and not blank, as the reference's `pattern: \S` requires |
+| Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
 | `state` | a string, a JSON object or array, or images then texts; a blank string is refused unless images come with it |
@@ -438,18 +442,18 @@ end
 - **A model's own limits.** A model may take less than the route, and its HTTP 400
   says so, in its own words, as a [`SystemOneFailure`](@ref) carrying Ollama's
   message. Measured on Ollama 0.40.6 (an Apple M4 Max, 21 October 2026): Tev1
-  takes at most 24 options, Nimble and Clef Flash 26. A Choice of one option is
-  sent: the models on the llama.cpp path (`kev:0.8b-q8_0`, `kev:9b-q4_K_M`,
-  `d1-omni:600m`, `d1:3b`) answered it, and `tev1:0.8b`, `tev1:4b`, `nimble:9b`
-  and `clef-flash:9b` answered 400
+  takes at most 24 options, Nimble and Clef Flash 26. A Choice of one option,
+  which [`ask`](@ref) refuses, the models on the llama.cpp path (`kev:0.8b-q8_0`,
+  `kev:9b-q4_K_M`, `d1-omni:600m`, `d1:3b`) answered, and `tev1:0.8b`,
+  `tev1:4b`, `nimble:9b` and `clef-flash:9b` answered 400
   `question "pick": criteria must contain 2–26 candidates`, `strands-decider:2b`
   `question "pick": criteria must contain 2–255 candidates` (for a question named
-  `pick`). The route accepts a question without `instructions`, but `tev1:4b`,
-  `nimble:9b` and `strands-decider:2b` answered it with 400
-  `instructions must be a nonempty string, object, or array` and `kev:0.8b-q8_0`
-  with 400 `questions.intent: "instructions" must be provided` (for a question
-  named `intent`), while `clef-flash:9b` answered it: pass `instructions` with
-  local models. A model without vision answers an image with its own 400:
+  `pick`). A question without `instructions`, which [`ask`](@ref) refuses as the
+  API reference requires them, `tev1:4b`, `nimble:9b` and `strands-decider:2b`
+  answered with 400 `instructions must be a nonempty string, object, or array`
+  and `kev:0.8b-q8_0` with 400 `questions.intent: "instructions" must be
+  provided` (for a question named `intent`), while `clef-flash:9b` answered it.
+  A model without vision answers an image with its own 400:
   `image inputs are not supported by this decision model` from `tev1:0.8b`,
   `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
   `kev:0.8b-q8_0` ([Limits and refusals](@ref ollama_decisions_limits)). Ollama
@@ -459,8 +463,9 @@ end
   `kev:0.8b-q8_0` (the installed GGUF Kev), `d1-omni:600m` and `tev1:0.8b`; by
   Ollama's source, a Kev model on Ollama's own runner gets 1 MiB instead
   (untested). A [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
-- **Images.** The state's images go in Ollama's `images` (raw base64), which the
-  model sees before the text and every question shares; the state's texts become
+- **Images.** The state's images go in Ollama's `images` (raw base64), which
+  every question shares, apart from the text (by Ollama's source, Clef reads them
+  before it); the state's texts become
   its `state` — none: `""`, one: that string, several: an array — and a blank text
   is allowed beside images. A recording keys and stores each image as
   `data:<mime>;sha256,<hex>`, never its bytes.

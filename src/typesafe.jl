@@ -120,9 +120,9 @@ Before any I/O it refuses what TypeSafe rejects: more than 255 options in a
 Choice or 10 levels in a Score; an image that is not a still PNG or JPEG, is
 over 16 MiB, has a side under 280 or over 1568 pixels, whose header cannot be
 read, or a JPEG that does not end with its end-of-image marker; more than 64 levels of nested objects and arrays in the state, an
-instruction or a criterion; a body over 32 MiB; a [`DocumentAttachment`](@ref) or an
-image's detail level anywhere, as on every System One backend; and any option but
-`long_context`. Two terse failures get a hint in their `message`: a context
+instruction or a criterion; a body over 32 MiB; a [`DocumentAttachment`](@ref)
+anywhere, as on every System One backend; an image's detail level, for which an
+image asset has no field; and any option but `long_context`. Two terse failures get a hint in their `message`: a context
 overflow (`error_type = "max_tokens_exceeded"`) names `long_context` and the
 limits, and the `"Invalid request."` a Box question draws from a Jev before 1.14
 names the models that answer one.
@@ -155,6 +155,9 @@ _probability_tolerance(::TypeSafeProtocol, n::Int)::Float64 = 0.005n + _FLOAT_PR
 _probability_slack(::TypeSafeProtocol)::Float64 = 0.01 + _FLOAT_PROBABILITY_TOLERANCE
 _allows_refusal(::TypeSafeProtocol)::Bool = false
 _allows_raw(::TypeSafeProtocol)::Bool = true
+# An image asset's fields are `type`, `part` or `data_base64`, and `format`
+# (https://docs.typesafe.ai/images): none holds a detail level.
+_image_detail_refusal(::TypeSafeProtocol)::String = "an image asset holds the image's bytes and format alone"
 # Transport: a hosted service's bounds; TypeSafe's official SDKs number every retry in
 # this header ("1" on the second attempt), which tells the service a retry from a new
 # request; at about 0.3 s a request, 16 in flight serve an `ask_each` batch at some 50

@@ -75,6 +75,21 @@
   character inside the secret, which `base64decode` skipped too, so that such a secret could
   still decode to the right key, now throws. Upgrading: remove anything but the base64 text from
   inside the secret, such as the line break of a wrapped paste.
+- **Ollama's decision questions need `instructions`.** Ollama's API reference lists
+  `instructions` among the required fields of a Choice, a Noul and a Score question, and `ask`
+  on an `OllamaEndpoint` sent a question without them: most decision models answered it with
+  HTTP 400 (on Ollama 0.40.6, `tev1:4b`, `nimble:9b`, `strands-decider:2b` and
+  `kev:0.8b-q8_0`), and `clef-flash:9b`, which by Ollama's source reads the question's name in
+  their place, answered it. Such a question, a `noul` of `yes`/`no` criteria alone included, is
+  now an `ArgumentError` before anything is sent. Upgrading: give each question its
+  instructions, the first argument of `choice`, `score` or `noul`.
+- **Ollama's decision Choice takes two options or more.** Ollama's API reference gives a
+  Choice's `criteria` `minProperties: 2`, and `ask` on an `OllamaEndpoint` sent a Choice of one
+  option: on Ollama 0.40.6 the MLX decision models answered it with their own HTTP 400, and the
+  models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it. It is now an
+  `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
+  verb whose call offers a single option is refused too. Upgrading: add an option, such as a
+  fallback `"other"`.
 - **Gemini's language, escalation and Prohibited Use Policy stops are refusals.** A native Gemini
   candidate that ended with `finishReason` `LANGUAGE` (content "flagged for using an unsupported
   language"), `ESCALATION` ("filtered by an escalation rule") or `PUP_LIMITED_DISABLED` (the account
@@ -286,6 +301,56 @@
   no status for the rejection. `respond`'s named OpenAI's Responses API as its one target, and
   the keyword `chatrequest!`'s listed `config` and `cancel` among the `Chat` fields. No behaviour
   changes.
+- **OpenAI's Decisions API takes up to 400 questions a request.** `ask` on
+  `OPENAIServiceEndpoint` refused a request of more than 200 questions, the public beta's
+  limit, though the generally available API takes "1–400 questions" (OpenAI's reference), "up
+  to 400 questions per request, up from 200 during the public beta" (its guide); a request of
+  201 questions was answered on 2026-10-26. Up to 400 are now sent, and more is an
+  `ArgumentError` before anything is sent, as more than 200 was.
+- **A Decisions answer's cache reads and writes are priced at OpenAI's caching rates.**
+  `estimated_cost` priced every input token of an answer from OpenAI's Decisions API at the
+  model's input rate, cache reads and writes included, as the public beta's guide had it ("no
+  cache-read, cache-write, or output-token charges"). The guide now says "Prompt cache hits
+  receive discounted input pricing; cache writes are charged", at the standard `gpt-6-luna`
+  caching rates: a cache read now costs the cached-input rate (\$0.01 per 1M tokens) and a
+  cache write the write rate (\$0.125 per 1M, \$0.25 for a 12-hour lifetime), each twice for a
+  request of more than 272K input tokens; output is still not charged.
+- **OpenAI's Decisions API gets an image's detail level.** Every System One backend refused an
+  `ImageAttachment` with a `detail` level, though the Decisions API's `input_image` part takes
+  `detail` — `"low"`, `"high"`, `"auto"` or `"original"`, "using the selected model's image
+  profile". `OPENAIServiceEndpoint` now sends it on the image's part of the state, and a
+  recording keys it beside the image's digest. TypeSafe and Ollama still refuse it before
+  anything is sent, and now say why: a TypeSafe image asset holds the image's bytes and format
+  alone, and Ollama's `images` list each image's base64 bytes alone.
+- **A Decisions field over 1,048,576 characters is refused before it is sent.** OpenAI's reference
+  caps the model's name and each question's name, string instructions, choice value and
+  description and level label at 1,048,576 characters, and `ask` on `OPENAIServiceEndpoint`
+  checked only the 10,485,760 characters of a text input, so a longer field went out though the
+  schema rules it out. Each is now an `ArgumentError` before anything is sent, naming the field
+  and its length, counted in characters as the reference counts them.
+- **OpenAI's Decisions API takes a tuple of strings and images as a state, as the other backends
+  do.** `ask` on `OPENAIServiceEndpoint` sent a vector of strings and images as one user message
+  of text and image parts, but refused the same items in a tuple, as an image "nested in JSON",
+  while TypeSafe and Ollama take a tuple as they take the vector. A tuple is now sent as the
+  vector is.
+- **A tuple is guidance, as it is a state.** A tuple given as a question's instructions, an
+  option's description, a Score level or a Noul criterion was an `ArgumentError` when the
+  question was built, though a tuple state, and a tuple nested in guidance, are written as JSON
+  arrays. `SystemOneEntry` now holds `Tuple`, so a tuple stands wherever an array does and every
+  backend takes it as the vector of its items: TypeSafe writes it as an array, Ollama takes it
+  as array instructions, and OpenAI's Decisions API refuses it where it refuses a vector, in
+  guidance that must be a string.
+- **Ollama's refusal of an image after a text says what Ollama does.** `ask` on an
+  `OllamaEndpoint` refused an image after a text in the state with "Ollama shows a request's
+  images before its text", of every model, and the `OllamaSystemOneProtocol` docstring said the
+  same. Ollama takes a request's images in a list apart from its text, and by its source
+  (v0.40.11) only Clef's encoder places them, before the state's text; the others that take
+  images leave their place to the runner. The message now says so: "Ollama takes a request's
+  images in a list apart from its text, so an image after a text cannot be sent where it is
+  (Clef reads the images first)". What is refused is unchanged.
+- **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
+  called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
+  available". No behaviour changes.
 - **`list_models` on an endpoint without a listing names that endpoint alone.** An endpoint with
   no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
   `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a

@@ -112,6 +112,9 @@ _od_sent(request::SystemOneRequest; service=_ODMock) =
 # ─── The trait and its hooks ─────────────────────────────────────────────────
 
 @testset "OpenAI Decisions — OPENAIServiceEndpoint speaks the Decisions protocol" begin
+    # "The Decisions API is now generally available" (https://developers.openai.com/api/docs/guides/decisions).
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    @test !occursin("a public beta", flat(@doc UniLM.OpenAIDecisionsProtocol))
     @test UniLM.system_one_protocol(OPENAIServiceEndpoint) === _OD
     @test has_capability(OPENAIServiceEndpoint, :system_one)
     @test UniLM._system_one_default_model(_OD, OPENAIServiceEndpoint) == "gpt-6-luna"
@@ -211,12 +214,15 @@ end
     @test mixed[1]["text"] == "first" && mixed[3]["text"] == ""
     @test startswith(mixed[2]["image_url"], "data:image/png;base64,") && startswith(mixed[4]["image_url"], "data:image/jpeg;base64,")
     @test length(parts(fill(_OD_PNG, 128))) == 128
+    # A tuple is taken as a vector is: its strings and images are the message, in order.
+    @test parts((_OD_PNG, "What is it?")) == parts(Any[_OD_PNG, "What is it?"])
+    @test [p["type"] for p in parts(("first", _OD_PNG, "", _OD_JPEG))] == ["input_text", "input_image", "input_text", "input_image"]
 
     # An image anywhere but there has no form on the wire: refused before any I/O.
     refusals, seen = _od_serve(_od_valid) do
         [_od_caught(() -> ask(Dict("photo" => _OD_PNG), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any[Dict("photo" => _OD_PNG), "text"], "q" => noul("Is it?"); service=_ODMock)),
-         _od_caught(() -> ask((_OD_PNG, "text"), "q" => noul("Is it?"); service=_ODMock)),
+         _od_caught(() -> ask(("text", [_OD_PNG]), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask((photo = _OD_PNG,), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any["text", [_OD_PNG]], "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(fill(_OD_PNG, 129), "q" => noul("Is it?"); service=_ODMock)),
@@ -230,17 +236,42 @@ end
     end
     @test isempty(seen)
     @test all(e -> e isa ArgumentError, refusals)
-    @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector of strings and ImageAttachments"),
+    @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector or Tuple of strings and ImageAttachments"),
               refusals[1:5])
     @test contains(refusals[6].msg, "at most 128 images") && contains(refusals[6].msg, "129")
     @test contains(refusals[7].msg, "must be a string") && contains(refusals[8].msg, "description of its option \"a\"")
     @test all(e -> contains(e.msg, "an image belongs in the state") &&
-                   contains(e.msg, "Vector of strings and ImageAttachments"), refusals[[7, 8, 12]])
+                   contains(e.msg, "Vector or Tuple of strings and ImageAttachments"), refusals[[7, 8, 12]])
     @test contains(refusals[12].msg, "level 1 must be a string")
-    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector of strings")
+    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector or Tuple of strings")
     @test contains(refusals[10].msg, "10485760 characters") && contains(refusals[10].msg, "10485761")
     @test contains(refusals[11].msg, "JSON")
     @test length(input("x"^10_485_760)) == 10_485_760
+end
+
+@testset "OpenAI Decisions — an image's detail level is sent as the part's `detail`" begin
+    # The reference's `input_image` takes `detail`, "low", "high", "auto" or "original": each is sent
+    # beside the image, and an image that sets none is sent as before, without it.
+    q = "red" => noul("Is the circle red?")
+    for level in ("low", "high", "auto", "original")
+        img = ImageAttachment(_OD_PNG.data; detail=level)
+        part = only(only(_od_sent(SystemOneRequest(img, q))["input"])["content"])
+        @test collect(keys(part)) == ["type", "image_url", "detail"] && part["detail"] == level
+        mixed = only(_od_sent(SystemOneRequest(Any["Inspect this.", img, _OD_JPEG], q))["input"])["content"]
+        @test mixed[2]["detail"] == level && !haskey(mixed[1], "detail") && !haskey(mixed[3], "detail")
+    end
+    @test collect(keys(only(only(_od_sent(SystemOneRequest(_OD_PNG, q))["input"])["content"]))) == ["type", "image_url"]
+    # Sent to the service, and part of a recording's key: another level is another request.
+    low = ImageAttachment(_OD_PNG.data; detail="low")
+    dir = mktempdir()
+    live, seen = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask(low, q; service=_ODMock, config=_OD_CFG), dir; mode=:record)
+    end
+    @test live isa SystemOneSuccess && only(only(_od_body(only(seen))["input"])["content"])["detail"] == "low"
+    @test with_recorded_answers(() -> ask(low, q; service=_ODMock), dir).response.raw == live.response.raw
+    miss = with_recorded_answers(() -> _od_caught(() -> ask(ImageAttachment(_OD_PNG.data; detail="high"), q;
+                                                          service=_ODMock)), dir)
+    @test miss isa ReplayMissError && contains(miss.body, "\"detail\":\"high\"")
 end
 
 @testset "OpenAI Decisions — questions map onto predicate, choice and score; what has no form is refused" begin
@@ -263,7 +294,8 @@ end
     @test length(only(_od_sent(SystemOneRequest("s", "c" => choice("Pick.", ["o$i" for i in 1:255])))["questions"])["choices"]) == 255
     @test length(only(_od_sent(SystemOneRequest("s", "c" => choice("Pick.", ["a", "b"])))["questions"])["choices"]) == 2
     @test length(only(_od_sent(SystemOneRequest("s", "r" => score("Rate.", ["l$i" for i in 1:10])))["questions"])["levels"]) == 10
-    @test length(_od_sent(SystemOneRequest("s", ["q$i" => noul("Is it $i?") for i in 1:200]))["questions"]) == 200
+    # 1 to 400 questions, as OpenAI's reference and guide give them since general availability.
+    @test length(_od_sent(SystemOneRequest("s", ["q$i" => noul("Is it $i?") for i in 1:400]))["questions"]) == 400
 
     refused, seen = _od_serve(_od_valid) do
         one(q) = _od_caught(() -> ask("s", "q" => q; service=_ODMock))
@@ -280,7 +312,7 @@ end
          one(score(["low", "high"])),                                                   # 11
          one(box("the dent")),                                                          # 12
          one(RawQuestion(Dict("type" => "predicate", "name" => "other", "instructions" => "x"))),   # 13
-         _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:201]; service=_ODMock))]  # 14
+         _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:401]; service=_ODMock))]  # 14
     end
     @test isempty(seen)                                                   # nothing was sent
     @test all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
@@ -294,7 +326,35 @@ end
     @test contains(refused[10].msg, "level 1 must be a string") && contains(refused[11].msg, "needs `instructions`")
     @test contains(refused[12].msg, "Box question")
     @test contains(refused[13].msg, "\"name\" field is \"other\"")
-    @test contains(refused[14].msg, "at most 200 questions") && contains(refused[14].msg, "201")
+    @test contains(refused[14].msg, "at most 400 questions") && contains(refused[14].msg, "401")
+end
+
+@testset "OpenAI Decisions — a field over the reference's 1,048,576 characters is refused before sending" begin
+    # The reference caps the model, and each question's name, string instructions, choice value and
+    # description, and level label, at 1,048,576 characters (`maxLength`); JSON Schema counts characters.
+    at, over = "é"^1_048_576, "é"^1_048_577
+    sent = _od_sent(SystemOneRequest("s", [at => choice(at, [at => at, "b" => nothing]), "r" => score("Rate.", [at, "high"])];
+                                     model=at))
+    @test sent["model"] == at && sent["questions"][1]["name"] == at && sent["questions"][1]["instructions"] == at
+    @test sent["questions"][1]["choices"][1] == Dict("value" => at, "description" => at)
+    @test sent["questions"][2]["levels"][1]["label"] == at
+    refused, seen = _od_serve(_od_valid) do
+        [_od_caught(() -> ask("s", over => noul("Is it?"); service=_ODMock)),                                     # name
+         _od_caught(() -> ask("s", over => RawQuestion(Dict("type" => "predicate", "instructions" => "x")); service=_ODMock)),
+         _od_caught(() -> ask("s", "q" => noul(over); service=_ODMock)),                                         # instructions
+         _od_caught(() -> ask("s", "q" => choice("Which?", [over => nothing, "b" => nothing]); service=_ODMock)),  # value
+         _od_caught(() -> ask("s", "q" => choice("Which?", ["a" => over, "b" => nothing]); service=_ODMock)),     # description
+         _od_caught(() -> ask("s", "q" => score("Rate.", ["low", over]); service=_ODMock)),                       # label
+         _od_caught(() -> ask("s", "q" => noul("Is it?"); service=_ODMock, model=over))]                          # model
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError, refused)
+    # Each names the field and its length, never the text itself.
+    @test all(e -> startswith(e.msg, "OpenAI's Decisions API takes at most 1048576 characters in ") &&
+                   contains(e.msg, "it has 1048577") && length(e.msg) < 200, refused)
+    @test contains(refused[1].msg, "a question's name") && contains(refused[2].msg, "a question's name")
+    @test contains(refused[3].msg, "the instructions of \"q\"") && contains(refused[4].msg, "an option's name in \"q\"")
+    @test contains(refused[5].msg, "the description of the option \"a\" in \"q\"")
+    @test contains(refused[6].msg, "the label of level 1 of \"q\"") && contains(refused[7].msg, "the model's name")
 end
 
 @testset "OpenAI Decisions — the provider options, written in one order whatever the caller's" begin
@@ -790,33 +850,42 @@ end
 
 # ─── Cost ────────────────────────────────────────────────────────────────────
 
-@testset "OpenAI Decisions — estimated_cost bills input tokens alone, cached ones at the input rate" begin
+@testset "OpenAI Decisions — estimated_cost bills input tokens alone, cache reads and writes at the caching rates" begin
     result(usage; model="gpt-6-luna", service=OPENAIServiceEndpoint) = SystemOneSuccess(SystemOneResponse(
         model, Dict{String,SystemOneAnswer}(), usage, nothing, Dict{String,Any}(), service))
-    rate = DEFAULT_PRICING["gpt-6-luna"].input
-    @test rate == 0.10 / 1_000_000                                   # the guide's $0.10 per 1M input tokens
+    # The guide: uncached input "$0.10 per 1M tokens", cache reads and writes at "the standard
+    # `gpt-6-luna` prompt caching rates" — $0.01 cached, $0.125 per 30-minute and $0.25 per 12-hour
+    # write (the model page and the pricing page) — and output not charged.
+    rate, cached_rate = DEFAULT_PRICING["gpt-6-luna"].input, DEFAULT_PRICING["gpt-6-luna"].cached_input
+    @test rate == 0.10 / 1_000_000 && cached_rate == 0.01 / 1_000_000
+    w30, w12 = 0.125 / 1_000_000, 0.25 / 1_000_000
     plain = result(TokenUsage(prompt_tokens=1000, total_tokens=1000))
     cached = result(TokenUsage(prompt_tokens=1000, cached_tokens=600, completion_tokens=5, total_tokens=1005))
     @test estimated_cost(plain) ≈ 1000 * rate
-    @test estimated_cost(cached) ≈ 1000 * rate                       # no cache discount, no output charge
-    @test UniLM._system_one_cost(_OD, cached, nothing, DEFAULT_PRICING) ≈ 1000 * rate
-    # Cache writes, at either lifetime, are input tokens like the rest: no write premium.
+    @test estimated_cost(cached) ≈ 400 * rate + 600 * cached_rate                # cache reads discounted, no output
+    @test UniLM._system_one_cost(_OD, cached, nothing, DEFAULT_PRICING) ≈ 400 * rate + 600 * cached_rate
+    # Cache writes at their lifetime's rate: 100 for 30 minutes, 400 for 12 hours.
     written = result(TokenUsage(prompt_tokens=1000, cached_tokens=200, cache_write_tokens=500,
                                 cache_write_extended_tokens=400, completion_tokens=3, total_tokens=1003))
-    @test estimated_cost(written) ≈ 1000 * rate
-    @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ 1000 * rate
+    expected = 300 * rate + 200 * cached_rate + 100 * w30 + 400 * w12
+    @test estimated_cost(written) ≈ expected
+    @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ expected
     # Decisions has rates of its own: a tier a reply names prices nothing differently.
     @test estimated_cost(result(TokenUsage(prompt_tokens=1000, total_tokens=1000, service_tier="flex"))) ≈ 1000 * rate
+    @test estimated_cost(result(TokenUsage(prompt_tokens=1000, cached_tokens=600, service_tier="flex"))) ≈
+          400 * rate + 600 * cached_rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_000))) ≈ 272_000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_001))) ≈ 2 * 272_001 * rate   # long context: twice
+    @test estimated_cost(result(TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000))) ≈
+          2 * (150_000 * rate + 100_000 * cached_rate + 50_000 * w30)                   # the cache rates too
     # `model` and `pricing` keep their meaning.
     custom = Dict{String,UniLM.PriceRow}("my-luna" => UniLM._price(1.0, 0.0, 0.0))
     @test estimated_cost(plain; model="my-luna", pricing=custom) ≈ 1000 / 1_000_000
     @test (@test_logs (:warn, r"no price row") estimated_cost(result(TokenUsage(prompt_tokens=10); model="unlisted-decider"))) == 0.0
     # The same usage from another backend is priced the general way, cached tokens at the cached rate.
     elsewhere = result(TokenUsage(prompt_tokens=1000, cached_tokens=600); service=TYPESAFEServiceEndpoint)
-    @test estimated_cost(elsewhere) ≈ 400 * rate + 600 * DEFAULT_PRICING["gpt-6-luna"].cached_input
+    @test estimated_cost(elsewhere) ≈ 400 * rate + 600 * cached_rate
     @test estimated_cost(SystemOneSuccess(SystemOneResponse("gpt-6-luna", Dict{String,SystemOneAnswer}(),
         TokenUsage(prompt_tokens=1000, cached_tokens=600), nothing, Dict{String,Any}()))) ≈
-          400 * rate + 600 * DEFAULT_PRICING["gpt-6-luna"].cached_input            # built by hand: no backend
+          400 * rate + 600 * cached_rate                                           # built by hand: no backend
 end

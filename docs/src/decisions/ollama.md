@@ -216,12 +216,12 @@ What reaches the model depends on the model, since each family has its own promp
   whole question in its instructions.
 - **Option names and descriptions both travel.** A Choice's criteria map each option to its description, or to no
   description for a bare name.
-- **Give every question instructions.** Ollama's API reference lists `instructions` as required for each question;
-  UniLM sends a question without them, and most models measured answered it with an HTTP 400 (below). Instructions
-  may be a string, an object or an array; an option's description, a Score level and a Noul's `yes` and `no` are
-  strings.
+- **Give every question instructions.** Ollama's API reference lists `instructions` as required for each question,
+  and UniLM refuses a question without them before sending ([Limits and refusals](@ref ollama_decisions_limits)).
+  Instructions may be a string, an object or an array; an option's description, a Score level and a Noul's `yes` and
+  `no` are strings.
 
-The route takes 1 to 64 questions, a Choice of up to 255 options and a Score of 2 to 10 levels, and a model may take
+The route takes 1 to 64 questions, a Choice of 2 to 255 options and a Score of 2 to 10 levels, and a model may take
 fewer: the limits, and what each model measured takes, are on [Limits and refusals](@ref ollama_decisions_limits).
 Reading the answers and the decision rules on them are on [Route and Decide](@ref system_one_guide).
 
@@ -293,37 +293,40 @@ checks before sending:
 | Limit | Value | Checked before sending |
 | :--- | :--- | :--- |
 | Questions | 1 to 64 per request | yes |
-| Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | at most 255; one option is sent |
+| Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | yes |
 | Score levels | 2 to 10 per question | yes |
-| Instructions | required, a string, an object or an array that is not blank | the kind and the blank; a question without them is sent |
+| Instructions | required, a string, an object or an array that is not blank | yes |
 | State | a string, a JSON object or array, or pictures then texts; a blank string only with pictures | yes |
 | Text and schema, pictures excluded | 64 KiB for a local request | no: the server answers 413 |
 | The whole request | 32 MiB, base64 and JSON included, for a local request | no: the server answers 413 |
 | Context | "The complete input must fit the loaded context window"; "Input is never truncated" | no: the server answers 400 |
-| Pictures | in the state, before its texts; a vision model | yes, where they stand |
+| Pictures | one list, `images`, apart from the text and shared by all questions; a vision model | yes, where they stand |
 | A cloud model | 64 questions; names of up to 100 ASCII letters, digits, `_`, `.` or `-`; up to 4 pictures of at most 4 MiB and 16 megapixels each, 8 MiB in all; 13 MiB a request; its 65,536-token window | no |
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
 UniLM refuses what Ollama's route refuses in its shared checks or documents as its maximum, and what its API
-reference does not list, though some models read it; blank instructions are a refusal of UniLM's own, as Ollama
-would read them as none. A wrapper refuses rather than adapts: a request changed to fit would ask a question you did
-not write.
+reference does not list, though some models read it; blank instructions too, which Ollama would read as none: not
+blank, as the reference's `pattern: \S` requires. A wrapper refuses rather than adapts: a request changed to fit
+would ask a question you did not write.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a call that names no model, unless it names no `service` inside a scope that names one | `has no default System One model`: Ollama has no default | `model = "tev1:0.8b"`, or a `with_system_one(OllamaEndpoint(); model = …)` scope |
 | more than 64 questions | `Ollama accepts at most 64 questions per request` | split them across requests |
+| a Choice of one option | `Ollama's API reference gives a Choice 2 to 255 options` | add an option, such as `"other"` |
 | a Choice of more than 255 options | `Ollama accepts at most 255 options per question` | split it, or narrow the options |
 | an option described by anything but a string or `nothing` | `Ollama reads a Choice option's description as a string or` | describe it in words, or pass `nothing` |
 | a Score of fewer than 2 or more than 10 levels | `Ollama accepts 2 to 10 levels per question` | offer at least two, or merge levels into a coarser rubric |
 | a Score level that is not a string | `Ollama reads a Score level as a string` | write the level as text |
 | a Noul `yes` or `no` that is not a string | `Ollama reads a Noul criterion as a string` | write it as text |
-| blank instructions | `Ollama reads blank`: Ollama would read them as none | say what the question asks |
+| a Choice, Noul or Score without instructions | `Ollama's API reference requires`: a question's `instructions` are among its required fields | say what it asks, as the first argument of `choice`, `score` or `noul` |
+| blank instructions | `Ollama reads blank`: Ollama would read them as none, and its reference requires them not blank (`pattern: \S`) | say what the question asks |
 | instructions that are not a string, an object or an array | `as a string, object or array` | write them as text |
 | a `box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its System One route answers Choice, Score and Noul questions, and this wrapper sends a RawQuestion verbatim` | build it as a `RawQuestion` |
 | a picture in a question | `Ollama takes images in the state only, shared by all questions` | move it into the state, `[image, "…"]` |
-| a picture after a text in the state | `Ollama shows a request's images before its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
+| a picture with a `detail` level | `sends a System One request's images without a detail level`: Ollama's `images` list holds each picture's base64 bytes alone | build the `ImageAttachment` without `detail` |
+| a picture after a text in the state | `Ollama takes a request's images in a list apart from its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
 | pictures beside values that are not texts | `Ollama takes a state of images then texts, and this one mixes images with` | write the other values as text, after the pictures |
 | a picture inside a JSON object or array | `not inside a JSON object or array` | the pictures and texts as the state itself, or `state = [image, …texts]` to `nl_dispatch` |
 | a blank text state without pictures | `Ollama refuses a blank`: the state holds what the questions are about | send the content |
@@ -331,9 +334,8 @@ not write.
 | a `keep_alive` that is not a number of seconds from 0 to 1e9, or `Inf` | `is a number of seconds from 0 to 1e9, or Inf` | seconds, `0`, or `Inf` |
 
 Like every decision provider, the endpoint also refuses, before anything is sent, a blank or repeated question name,
-criteria that are not valid, a state or guidance holding `NaN` or `Inf`, an `AudioAttachment` or a
-`DocumentAttachment` anywhere in the request, and an `ImageAttachment` with a `detail` level, since Ollama's
-`images` list holds a picture's bytes alone; [Reading answers](@ref Reading-answers) covers a malformed request on
+criteria that are not valid, a state or guidance holding `NaN` or `Inf`, and an `AudioAttachment` or a
+`DocumentAttachment` anywhere in the request; [Reading answers](@ref Reading-answers) covers a malformed request on
 every provider.
 
 ```@example ollama_decisions
@@ -350,8 +352,8 @@ end
 
 A model may take less than the route, and says so with its own HTTP 400, which comes back as a
 [`SystemOneFailure`](@ref) carrying Ollama's message. Measured on Ollama 0.40.6 (21 October 2026), the nine models
-answered as below; the messages begin with the question's name, `question "pick": …`, and a Choice of one option
-is sent too:
+answered as below; the messages begin with the question's name, `question "pick": …`, and the one-option Choice,
+which UniLM refuses before sending, was sent past that check:
 
 | Model | Runner | Options per Choice | One option came back as | 27 options came back as |
 | :--- | :--- | :--- | :--- | :--- |
@@ -360,9 +362,10 @@ is sent too:
 | `strands-decider:2b` | MLX | 2 to 27 measured | 400 `criteria must contain 2–255 candidates` | an answer |
 | `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 1 to 27 measured | an answer, `{"a": 1.0}` | an answer |
 
-A question without instructions: `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be
-a nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.intent: "instructions" must be provided` (for a
-question named `intent`), and of the five tried only `clef-flash:9b` answered. An option described by an object:
+A question without instructions, which UniLM refuses before sending: `tev1:4b`, `nimble:9b` and
+`strands-decider:2b` answered 400 `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` 400
+`questions.intent: "instructions" must be provided` (for a question named `intent`), and of the five tried only
+`clef-flash:9b` answered. An option described by an object:
 `kev:0.8b-q8_0` and `d1:3b` answered it, and `tev1:0.8b` refused it; UniLM refuses one for every model, as Ollama's
 API reference gives a description as a string.
 A 76,284-byte state came back as a 413 `text and schema must not exceed 64 KiB` from `kev:0.8b-q8_0` (the installed
@@ -556,7 +559,7 @@ r.error
 | :--- | :--- | :--- |
 | a `SystemOneCallError` whose `error` holds `no Ollama server answered at` | no server at the endpoint's address | start Ollama, or point `OLLAMA_HOST` or `base_url` at it |
 | a `SystemOneFailure` with status 404, `model '…' not found`, then `pull it first` | the model is not installed | `ollama pull` it, or [`pull_model`](@ref) |
-| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: a question without instructions, fewer or more options than it takes, a picture it cannot see | give every question instructions; see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
+| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: more options than it takes, a picture it cannot see | see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
 | status 400, `no compatible manifest found for runners: <runner>` | the endpoint pins a runner the model has no build for | leave `runner` unset, or pin the runner the listing names ([Options](@ref ollama_decisions_options)) |
 | status 400 about the loaded context | the input does not fit the window the model is loaded with, and Ollama never truncates it | shorten the state, or ask fewer questions at once |
 | status 413 (`text and schema must not exceed 64 KiB` for the first) | the text and the questions of a local request over 64 KiB, or the whole request over 32 MiB | shorten the state, or split the questions |

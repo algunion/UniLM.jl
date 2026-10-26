@@ -1027,8 +1027,8 @@ Successful response from the Responses API. Access the parsed response via `.res
 - `response`: the parsed response ([`ResponseObject`](@ref))
 - `sse_dropped`: undecodable SSE `data:` payloads dropped while assembling a streamed turn;
   0 for a non-streamed call and for a clean stream
-- `service`: the endpoint that answered, used to price the call (a local model with no price
-  row costs 0.0); `nothing` for a result built by hand, priced by its model name
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0
+  unless you gave it a price row); `nothing` for a result built by hand, priced by its model name
 """
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject

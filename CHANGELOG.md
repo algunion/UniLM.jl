@@ -136,13 +136,17 @@
   characters was cut to 128 before. Upgrading: pass `service=` the endpoint the tools go to, to
   keep names of up to 128 characters on Anthropic and native Gemini; a `tool_choice` that names
   a bridged tool takes the name the bridge now advertises.
-- **A price row for a local Ollama model is used.** `estimated_cost` returned `0.0` for a result
-  of a local model on an `OllamaEndpoint` before it read a price row, so a `pricing=` row for the
-  model, or a `DEFAULT_PRICING` row, which `cumulative_cost` reads, was ignored without a word;
-  so was a row for a local model's System One answer. Such a row now prices the result as any
-  model's row does. A local model with no row still costs `0.0`, with no missing-price warning,
-  and `model=` still prices a result at the row of the model it names. Upgrading: to keep a local
-  model's estimates at `0.0`, leave its row out of the table you pass and of `DEFAULT_PRICING`.
+- **A price row you give a local Ollama model is used.** `estimated_cost` returned `0.0` for a result
+  of a local model on an `OllamaEndpoint` before it read any price row, so a row you gave the model,
+  in `pricing=` or added to `DEFAULT_PRICING`, which `cumulative_cost` reads, was ignored without a
+  word; so was one for a local model's System One answer. A row you give the model's exact name now
+  prices its results as any model's row does. The rows UniLM ships price hosted models only: a local
+  model that bears a hosted model's name, as Ollama suggests for tools that expect OpenAI's names
+  (`ollama cp llama3.2 gpt-3.5-turbo`), still costs `0.0`, also when a copy of those rows such as
+  `merge(DEFAULT_PRICING, …)` is passed; a row equal to a shipped one counts as the shipped one. A
+  local model with no row of yours still costs `0.0`, with no missing-price warning, and `model=`
+  still prices a result at the row of the model it names. Upgrading: to keep a local model's
+  estimates at `0.0`, remove the row you gave its name.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

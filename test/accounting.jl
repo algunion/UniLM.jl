@@ -560,7 +560,7 @@ end
     end
 end
 
-@testset "an Ollama cloud model is priced by name, a local one is free" begin
+@testset "an Ollama cloud model is priced by name, a local one only by a row the caller gave it" begin
     cloud = UniLM._ollama_cloud_model
     @test cloud("clef:cloud") && cloud("gpt-oss:120b-cloud") && cloud("registry.ollama.ai/library/clef:cloud")
     @test !cloud("gemma4:e4b") && !cloud("clef-cloud") && !cloud("cloudy:7b") && !cloud("kev")
@@ -623,6 +623,14 @@ end
     end
     # `model` still prices a result at the row of the model it names, with the warning when it has none.
     @test (@test_logs (:warn, r"no price row") estimated_cost(llm; model="zz-local-row:7b")) == 0.0
+    # A row UniLM ships prices the hosted model of that name, never a local one: by the exact id, a dated snapshot
+    # or a Jev version, a local model with no row of the caller's costs 0.0, silently.
+    for name in ("gpt-4.1", "gpt-5.2-2025-12-11", "jev-1.99.0")
+        c = Chat(service=ep, model=name); push!(c, Message(Val(:system), "s")); push!(c, Message(Val(:user), "hi"))
+        @test (@test_logs estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c, usage=u))) == 0.0
+        @test (@test_logs estimated_cost(SystemOneSuccess(SystemOneResponse(name, Dict{String,SystemOneAnswer}(),
+            TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep)))) == 0.0
+    end
 end
 
 @testset "a call made directly to Ollama's cloud is priced by name, as a cloud model is" begin

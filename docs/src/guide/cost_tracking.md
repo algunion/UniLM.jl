@@ -20,8 +20,8 @@ nothing # hide
 
 The examples use only the names bound above. `service` and `model` are the provider and model they run
 on, and `own_model` names a model the price table does not hold, such as one of your own server: bind
-your own there. On an endpoint that treats its models as local, an estimate below is `0.0` where no price
-row names the model ([Local models](@ref cost_tracking_local)). The table [at the end](@ref cost_tracking_providers)
+your own there. On an endpoint that treats its models as local, an estimate below is `0.0` unless you
+gave the model a price row ([Local models](@ref cost_tracking_local)). The table [at the end](@ref cost_tracking_providers)
 links each provider's rules.
 
 !!! warning "The zero-dollar footgun"
@@ -30,7 +30,7 @@ links each provider's rules.
     fallback row, such as a model of your own server or one newer than the table. Cost
     tracking on it reports `\$0.00` until you supply its price. See
     [Unpriced models cost \$0](@ref unpriced-zero) below. A model its endpoint treats as local is
-    the exception: with no row, it costs `0.0` with no warning
+    the exception: with no row of yours, it costs `0.0` with no warning
     ([Local models](@ref cost_tracking_local)).
 
 ## [Reading usage and cost](@id cost_tracking_reading)
@@ -157,11 +157,13 @@ pricing table before trusting a cost number.
 
 ## [Local models](@id cost_tracking_local)
 
-A model its endpoint treats as local bills no one, so with no price row it costs `0.0`, with no warning,
-as that endpoint's entry says ([a local model's cost](@ref ollama_cost)), and `cumulative_cost` adds
-`0.0` for each turn. A row for it is used as any model's is: one in `pricing=` prices `estimated_cost`,
-and one in [`DEFAULT_PRICING`](@ref) prices both; `model=` prices such a result at the row of the model it
-names.
+A model its endpoint treats as local bills no one, so it costs `0.0`, with no warning, as that endpoint's
+entry says ([a local model's cost](@ref ollama_cost)), and `cumulative_cost` adds `0.0` for each turn —
+unless you price it. A row you give its exact name is used as any model's is: one in `pricing=` prices
+`estimated_cost`, and one you add to [`DEFAULT_PRICING`](@ref) prices both. The rows the table ships price
+hosted models only: a local model that bears a hosted model's name is not priced at that model's row,
+nor at its copy in a table such as `merge(DEFAULT_PRICING, …)`, and a row equal to a shipped one counts as
+the shipped one. `model=` prices such a result at the row of the model it names.
 
 ## [Supplying custom pricing](@id cost_tracking_custom)
 

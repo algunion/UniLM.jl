@@ -1707,8 +1707,9 @@ id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13); any other
 unpriced name returns
 `0.0`. An answer from a local model through an [`OllamaEndpoint`](@ref) costs
-`0.0`, without a missing-price warning, unless `pricing` holds a row for the model or
-`model` is passed; a cloud model
+`0.0`, without a missing-price warning, unless `pricing` holds a row you gave the model's
+exact name (a row UniLM ships for a hosted model of that name does not count) or `model` is
+passed; a cloud model
 reached through it (a tag of `cloud` or ending in `-cloud`) is priced by the name
 requested, which an answer whose reply drops the tag keeps.
 A backend that bills otherwise is priced its own way: an
@@ -1722,9 +1723,9 @@ rate, 2.5 times for a 12-hour lifetime, and every rate twice above 272K).
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     service = result.response.service
-    # A local model is free unless `pricing` holds a row for it, as in `estimated_cost(::LLMRequestResponse)`.
+    # A local model is free unless the caller gave its name a row, as in `estimated_cost(::LLMRequestResponse)`.
     isnothing(model) && _is_local(service, result.response.model) &&
-        isnothing(_price_row(pricing, result.response.model; warn=false)) && return 0.0
+        isnothing(_callers_row(pricing, result.response.model)) && return 0.0
     _system_one_cost(isnothing(service) ? nothing : system_one_protocol(service)::SystemOneProtocol,
                      result, model, pricing)
 end

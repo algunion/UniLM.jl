@@ -120,7 +120,7 @@ A reply that holds audio (`audio_output`) goes back to Azure by the audio's id, 
 beside the turn's transcript, as Azure's quickstart adds "a history message referencing the previous
 turn's audio by ID"
 ([audio generation](https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart)),
-until a minute before the reply's `expires_at`, and from then on as the transcript alone, as on OpenAI
+until a minute before the reply's `expires_at`, and from then on as the transcript alone
 ([Audio replies](@ref chat_audio_output)).
 
 ## [Streaming](@id azure_streaming)

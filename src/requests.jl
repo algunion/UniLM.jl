@@ -102,17 +102,49 @@ function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
     return max(0.0, due - time())
 end
 
-# Full-jitter backoff; a Retry-After header is a FLOOR under it, not a
-# replacement: clients that all receive the same header would otherwise wake at
-# the same instant and retry in lockstep. The spread above the floor covers at
-# most HALF the budget left after it, so the attempt that follows keeps at least
-# the other half: a pause that ended just short of `remaining` would leave it a
-# near-zero bound, and it would fail on a timeout nobody configured instead of
-# returning the response that asked for the wait.
+"""
+    _retry_after(resp) -> Union{Nothing,Float64}
+
+The wait a rate-limited or overloaded response asked for, in seconds: the floor of the
+backoff before the next attempt of a call (`_retry_delay`), of a batch's shared wait
+(`ask_each`), and a System One failure's `retry_after`.
+
+`retry-after-ms` is read first and `retry-after` second: a server that sends both
+means the millisecond form, and reading only the coarse one rounds a sub-second
+hint up to a whole second of idle client. Azure OpenAI's 429 carries `retry-after-ms`,
+"The recommended wait time (in milliseconds) before retrying"
+(https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/quota), and the OpenAI,
+Anthropic and TypeSafe SDKs read it before `retry-after`. `retry-after` itself takes
+either delta-seconds or an HTTP-date, both left to `_retry_after_seconds`, so the two
+forms are not parsed twice by two rules that could drift apart. `nothing` when neither
+header arrived or neither parsed: a value that is absent, malformed or not a finite
+number must leave the client's own backoff in charge, never make it throw or sleep forever.
+"""
+function _retry_after(resp::HTTP.Response)::Union{Nothing,Float64}
+    ms = strip(HTTP.header(resp, "retry-after-ms", ""))
+    if !isempty(ms)
+        v = tryparse(Float64, ms)
+        if !isnothing(v) && isfinite(v)
+            return max(0.0, v / 1000)
+        end
+    end
+    return _retry_after_seconds(resp)
+end
+
+# Full-jitter backoff; the wait the response asks for (`_retry_after`: `retry-after-ms`,
+# else `Retry-After`) is a FLOOR under it, not a replacement: clients that all receive the
+# same header would otherwise wake at the same instant and retry in lockstep. The spread
+# above the floor covers at most HALF the budget left after it, so the attempt that follows
+# keeps at least the other half: a pause that ended just short of `remaining` would leave it
+# a near-zero bound, and it would fail on a timeout nobody configured instead of returning
+# the response that asked for the wait.
 function _retry_delay(retry::Integer, resp::HTTP.Response, remaining::Float64=Inf)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
-    ra = _retry_after_seconds(resp)
+    ra = _retry_after(resp)
     isnothing(ra) && return rand() * computed
+    # No timer holds an absurd wait (Timer counts whole milliseconds in a UInt64), so the asked
+    # wait is capped as `ask_each` caps its shared one; a finite deadline reports it as :budget.
+    ra = min(ra, _MAX_FINITE_TIMEOUT)
     return ra + rand() * min(computed, max(remaining - ra, 0.0) / 2)
 end
 
@@ -121,12 +153,12 @@ end
 
 Shared retry-budget arithmetic — the single implementation used by the non-stream
 retry loop and the stream driver. Computes the full-jitter backoff for `attempt`
-(1-based); a `Retry-After` header, when a response carries one, is the floor the
-jitter spreads above. Returns `(:sleep, delay)` when the pause fits the remaining
-total deadline, else `(:budget, delay)` — which, with a header, happens only when
-the header's own wait does not fit: fail NOW with the last real outcome — sleeping
-less and attempting with ~zero budget is a guaranteed mid-flight breach, and
-sleeping past the deadline breaks the bound.
+(1-based); the wait a response asks for, when it names one (`retry-after-ms`, else
+`Retry-After`), is the floor the jitter spreads above. Returns `(:sleep, delay)` when the
+pause fits the remaining total deadline, else `(:budget, delay)` — which, with a header,
+happens only when the header's own wait does not fit: fail NOW with the last real
+outcome — sleeping less and attempting with ~zero budget is a guaranteed mid-flight
+breach, and sleeping past the deadline breaks the bound.
 """
 function _retry_pause(cfg::RequestConfig, t0::UInt64, attempt::Int,
                       resp::Union{HTTP.Response,Nothing})::Tuple{Symbol,Float64}
@@ -500,7 +532,7 @@ Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
 
 Retryable = retryable status (408/429/500/502–504/520–524/529) ∪ per-attempt
 `UniLMTimeout(:connect|:request)` ∪ transport-level IO exceptions — never
-`InterruptException`. When the backoff (`Retry-After`/jitter) exceeds the
+`InterruptException`. When the backoff (the asked wait plus jitter) exceeds the
 remaining budget, fail NOW with the last real outcome: sleeping less and
 attempting with ~zero budget is a guaranteed mid-flight breach, and a
 budget-exhausted 429 is a 429, not a fabricated timeout. Intermediate
@@ -565,7 +597,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
         if _is_retryable(resp) && !final
             action, delay = _retry_pause(cfg, t0, attempt, resp)
             if action === :budget
-                @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
+                @warn "status is retryable but the backoff (the asked wait and jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
                 return resp
             end
             @debug "retrying after retryable status" status = resp.status attempt delay
@@ -1574,7 +1606,7 @@ continued turn, resumed from what `turn`'s earlier replies assembled. User code
 — or a `_StreamHop` when the reply continues the turn in another request, its final message
 not yet built —
 plus the `HTTP.Response` (`nothing` when the turn was recovered from teardown noise or a
-late stop) so the caller can honor `Retry-After`; throws on connect/first-byte timeout
+late stop) so the caller can honor the wait it asks for; throws on connect/first-byte timeout
 and transport failures — retry classification is the caller's job — on a stop
 (`UniLMCancelled`) and on a user-code failure (`_UserCallbackError`). A breach of the
 byte-gap idle bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it
@@ -1969,8 +2001,9 @@ Send `chat` to its provider and return a typed result.
 Non-streaming (`chat.stream !== true`): returns `LLMSuccess`, `LLMFailure`, or
 `LLMCallError`. Transient statuses (408/429/500/502–504/520–524/529) are retried with
 backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
-`total_deadline`; `Retry-After` honored). Timeouts surface as `LLMCallError` with
-`status = nothing` and the `UniLMTimeout` in `cause` — no fabricated HTTP statuses.
+`total_deadline`; `retry-after-ms`, else `Retry-After`, honored). Timeouts surface as
+`LLMCallError` with `status = nothing` and the `UniLMTimeout` in `cause` — no fabricated
+HTTP statuses.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the
 recordings, and one the scope cannot replay — no recording in `:replay` mode, or a
 recording file that cannot be read — throws [`ReplayMissError`](@ref) instead of
@@ -2136,8 +2169,8 @@ to `result.self`).
 The conversation is EITHER `messages` — copied, so the caller's vector is never
 mutated — OR `systemprompt` and `userprompt`, each a `String` or a [`Message`](@ref).
 Passing neither, only one prompt, or `messages` together with a prompt throws
-`ArgumentError` before any network I/O. Every other keyword is a [`Chat`](@ref)
-field, for example:
+`ArgumentError` before any network I/O. Every other keyword but `config` and `cancel` is a
+[`Chat`](@ref) field, for example:
 
 - `service::ServiceEndpointSpec = OPENAIServiceEndpoint`: The provider endpoint type or instance.
 - `model::String`: The model; the service's default when omitted.
@@ -2157,6 +2190,8 @@ field, for example:
 - `logit_bias::Union{AbstractDict{String,<:Real},Nothing} = nothing`: Modify the likelihood of specified tokens appearing in the completion.
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
+
+`config` and `cancel` go to `chatrequest!(chat)`:
 - `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
 - `cancel::Union{Nothing,CancelToken} = nothing`: Cancellation token; `nothing` resolves the ambient token (see `chatrequest!(chat)`).
 """

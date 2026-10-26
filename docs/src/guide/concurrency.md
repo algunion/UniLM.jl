@@ -238,9 +238,9 @@ shares thread 1 with the main task.
 - **Non-streaming calls may share one HTTP/2 connection.** They keep protocol
   negotiation, and concurrent requests to one `https` host can multiplex over one
   connection.
-- **Rate limits do not retry in lockstep.** A `Retry-After` header is a floor under
-  the jittered backoff, not a replacement for it: each call waits at least what the
-  header asked for, plus a random share of at most half the budget left after it,
+- **Rate limits do not retry in lockstep.** The wait a response asks for — its
+  `retry-after-ms` header, else `Retry-After` — is a floor under the jittered
+  backoff, not a replacement for it: each call waits at least what the header asked for, plus a random share of at most half the budget left after it,
   so a rate-limited batch spreads its retries instead of waking at one instant. A
   wait that does not fit the remaining `total_deadline` returns the last real
   response (the 429) at once.

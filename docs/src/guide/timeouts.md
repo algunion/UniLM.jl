@@ -266,8 +266,9 @@ its single `total_deadline`, timeouts and retries alike:
 - A retryable outcome (HTTP `408`/`429`/`500`/`502`–`504`/`520`–`524`/`529`, a
   per-attempt connect/request timeout, or a transport-level IO error) is retried
   with full-jitter exponential backoff.
-- **`Retry-After` is a floor, not a replacement.** The pause is the header's wait
-  plus a random spread above it — at most the exponential backoff, and at most half
+- **The asked wait is a floor, not a replacement.** The pause is the wait the
+  response asks for — its `retry-after-ms` header, else `Retry-After` — plus a
+  random spread above it — at most the exponential backoff, and at most half
   the budget left after the floor — so clients that received the same header do not
   retry in lockstep, and the next attempt keeps at least half of what remains.
 - **A retry that could not finish inside the remaining deadline is not

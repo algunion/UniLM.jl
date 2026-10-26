@@ -56,8 +56,9 @@ HTTP.close_idle_connections!()
     @test 0 < f.usage.prompt_audio_tokens <= f.usage.prompt_tokens && f.usage.completion_audio_tokens == 0
     @test estimated_cost(f) > 0 && isapprox(estimated_cost(f), _audio_live_bill(f.usage); rtol=1e-12)
 
-    # The server resolves the id it is sent: one it never issued is a 400.
-    unknown = AudioOutput(id="audio_unilm_never_issued", data=UInt8[], expires_at=0, transcript=a.transcript)
+    # The server resolves the id it is sent: one it never issued is a 400. The turn carries the real
+    # reply's expiry, still ahead, so it goes by its id (a past one sends the transcript alone).
+    unknown = AudioOutput(id="audio_unilm_never_issued", data=UInt8[], expires_at=a.expires_at, transcript=a.transcript)
     bogus = Chat(model=_AUDIO_LIVE_MODEL, max_completion_tokens=20, messages=[chat.messages[1:2]...,
         Message(role=RoleAssistant, audio_output=unknown), Message(Val(:user), _AUDIO_LIVE_ASK)])
     b = chatrequest!(bogus; config=_AUDIO_LIVE_CFG)

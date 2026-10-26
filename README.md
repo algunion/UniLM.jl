@@ -462,8 +462,8 @@ A timeout surfaces as the call's usual error result with `status = nothing` and 
 applies to the inference verbs (`chatrequest!`, `embeddingrequest!`, `respond`,
 `generate_image`, `edit_image`, `fim_complete`, `prefix_complete`, `ask`,
 `ask_each`, `list_models`); platform and lifecycle verbs, `upload_file` included, make a single
-bounded attempt. A `Retry-After` header is a floor under the jittered backoff, so a
-rate-limited batch does not retry in lockstep.
+bounded attempt. The wait a reply asks for (`retry-after-ms`, else `Retry-After`) is a floor
+under the jittered backoff, so a rate-limited batch does not retry in lockstep.
 
 Any HTTP call can be cancelled cooperatively from another task (a `realtime_connect`
 session and MCP stdio exchanges ignore the token):

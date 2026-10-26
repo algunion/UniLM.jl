@@ -429,8 +429,8 @@ that are no distribution within the rounding above — is a `SystemOneCallError`
 call (`r["name"]`, [`answer`](@ref), [`answers`](@ref)) throws a [`SystemOneError`](@ref).
 
 UniLM sends a request again after a 408, 429, 500, 502, 503, 504, 520 to 524 or 529, up to `max_attempts` times
-within `total_deadline`, waiting at least what the reply's `Retry-After` header asks for; a single call reads no
-`retry-after-ms`, which the shared backoff of [`ask_each`](@ref) reads first. A 429 whose code is a spent credit, a
+within `total_deadline`, waiting at least what the reply's `retry-after-ms` header asks for, else its
+`Retry-After`, as the shared backoff of [`ask_each`](@ref) does. A 429 whose code is a spent credit, a
 spend or usage limit, or `insufficient_quota` is not sent again, since "retrying billing, spend, or quota errors
 won't restore API access" ([Error codes](https://developers.openai.com/api/docs/guides/error-codes)); any other
 status comes back as it is. With no [`RequestConfig`](@ref) of your own, a call to the Decisions API is bounded by

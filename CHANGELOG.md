@@ -43,6 +43,38 @@
   Each now returns its type (`OPENAIServiceEndpoint() === OPENAIServiceEndpoint`), so it
   behaves as the type does. Upgrading: a value tested with `x isa T` is now tested with
   `x === T`.
+- **GPT-5.6 takes sampling controls and log probabilities at reasoning effort `"none"` only.**
+  The GPT-5.6 models (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` and their dated
+  snapshots) had no such rule, so `temperature`, `top_p` and log probabilities went out at any
+  effort; on 2026-10-25 the API answered `temperature` on `gpt-5.6-luna` at effort `"low"` with
+  HTTP 400 on both APIs (Chat Completions: "Unsupported value: 'temperature' does not support 0.5
+  with this model. Only the default (1) value is supported.") and took it at `"none"`, and OpenAI's
+  GPT-5.4 and GPT-5.2 guides state the rule for the GPT-5 family: requests with `temperature`,
+  `top_p` or `logprobs` "will raise an error for GPT-5.4 or GPT-5.2 with any other reasoning effort
+  setting, or for older GPT-5 models". As on GPT-6 Sol and Luna, `temperature`, `top_p`,
+  `logprobs=true`, `top_logprobs` and `include=["message.output_text.logprobs"]` at another effort
+  — the default `"medium"` included — now throw `ArgumentError` before anything is sent. Upgrading: set `reasoning_effort="none"` on a `Chat` or
+  `reasoning=Reasoning(effort="none")` on a `Respond`, or remove them.
+- **`get_response` and `cancel_response` return a failed response as a `ResponseFailure`.** Both
+  wrapped every response read back with HTTP 200 in a `ResponseSuccess`, also one whose `status`
+  is `"failed"`, which `respond` returns as a `ResponseFailure`, so `issuccess` reported a failed
+  background response as a success. Now each returns it as `respond` does: a `ResponseFailure`
+  whose `status` is 200, whose `response` is the response's JSON, its `error` included, and whose
+  `request_id` is the reply's; `response_status` still reads `"failed"`. Every other status is
+  still a `ResponseSuccess`. Upgrading: code that read a failed response's fields from
+  `result.response` parses `result.response` (a `String`) instead, or branches on `issuccess`.
+- **`verify_webhook` refuses a signing secret that is not base64.** It promised an
+  `ArgumentError` for such a secret, but `base64decode` skips characters outside the base64
+  alphabet, so a secret holding one — a placeholder such as `whsec_***`, a stray character —
+  decoded to another key and every delivery verified `false`. The secret after its `whsec_`
+  prefix is now checked before it is decoded: `A-Z`, `a-z`, `0-9`, `+` and `/` only, then at most
+  the `=` padding its last group lacks (a last group of two or three characters may come
+  unpadded), as RFC 4648 reads base64: "Implementations MUST reject the encoded data if it
+  contains characters outside the base alphabet". Whitespace around the secret, such as the line
+  break a file ends it with, is ignored, as `base64decode` ignored it. Whitespace or another such
+  character inside the secret, which `base64decode` skipped too, so that such a secret could
+  still decode to the right key, now throws. Upgrading: remove anything but the base64 text from
+  inside the secret, such as the line break of a wrapped paste.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -185,6 +217,50 @@
   and `with_recorded_answers`' lists `prompt_cache_options` among the options never keyed and
   names each backend's access for recording, not `TYPESAFE_API_KEY` for all; `@branch`'s says
   which model an omitted `model` means, and that Ollama has none. No behaviour changes.
+- **An OpenAI audio reply goes back as its transcript once its audio expires.** A `Chat` on
+  `OPENAIServiceEndpoint` sent an earlier audio reply back by its id whatever the reply's
+  `expires_at`, the time from which OpenAI says the audio "will no longer be accessible on the
+  server for use in multi-turn conversations", so a conversation continued after it sent the id
+  of audio OpenAI no longer keeps. From a minute before `expires_at` on — a request built later
+  could reach OpenAI after the expiry — the turn goes as its content alone, its transcript unless
+  it holds other text, as every other endpoint gets it; before then, or with no expiry known, it
+  still goes by its id. The request bytes of such a follow-up thus depend on the clock: one
+  recorded with `with_recorded_answers` while the audio was live replays only until a minute before
+  the expiry, then throws `ReplayMissError`; record it after the expiry.
+- **A background `respond` on OpenAI may set `store=false`.** A `Respond` with
+  `background=true` and `store=false` was refused for every endpoint, though OpenAI's
+  background guide says "Background requests can use `store=false`, but response data is
+  temporarily stored to support asynchronous execution and polling". It is now sent to OpenAI,
+  and to a generic server, as set; `get_response` reads the response while OpenAI holds it.
+  Gemini Interactions answers it with HTTP 400, so `respond` still refuses it there, now when
+  the request is encoded rather than when the `Respond` is built; an `OllamaEndpoint`, whose
+  Responses API keeps no response, refuses `background` and `store` as it did.
+- **Between the attempts of a call, UniLM waits what `retry-after-ms` asks for.** The retry
+  backoff read only `Retry-After`, so a reply that named its wait in `retry-after-ms` alone — the
+  header Azure OpenAI's 429 carries, "The recommended wait time (in milliseconds) before
+  retrying", and which the OpenAI, Anthropic and TypeSafe SDKs read first — got the jittered
+  backoff without it, which can be shorter, while `ask_each` and a `SystemOneFailure`'s
+  `retry_after` already read it. Every verb, streamed or not, now waits at least what
+  `retry-after-ms` asks for, else `Retry-After`.
+- **A retry wait no timer can hold is capped.** With `total_deadline = Inf`, a `Retry-After` or
+  `retry-after-ms` asking for more than 1e9 seconds threw `InexactError` from the backoff's timer
+  instead of waiting. The asked wait is now capped at 1e9 seconds, as `ask_each` caps its shared
+  wait, and a cancel ends it as it ends any backoff; a finite `total_deadline` still returns the
+  last response at once.
+- **The TypeSafe docstrings use TypeSafe's words.** `TypeSafeProtocol`'s said TypeSafe marks
+  images and Box questions experimental; TypeSafe calls them "Dreamer-ready", not yet "ready for
+  production". `TYPESAFE_DEFAULT_MODEL`'s advised pinning `jev-1.13.0`, while `jev-latest` now
+  names `jev-1.14.0`; it says to send the version a confidence threshold was tuned against, as
+  TypeSafe's Models page does. No behaviour changes.
+- **Four more docstrings say what the code does.** `DocumentAttachment`'s said its `filename` is
+  the name the provider is given; only the OpenAI Chat Completions `file` part and the Responses
+  `input_file` part carry it, and Anthropic, native Gemini and Gemini Interactions get a document
+  without it. `FunctionSignature`'s called an omitted `strict` the API's non-strict default and
+  said OpenAI rejects an invalid strict schema with a 400: OpenAI's Responses API "will attempt
+  to normalize your schema into strict mode when possible" when `strict` is omitted, and names
+  no status for the rejection. `respond`'s named OpenAI's Responses API as its one target, and
+  the keyword `chatrequest!`'s listed `config` and `cancel` among the `Chat` fields. No behaviour
+  changes.
 
 ## 0.26.0
 

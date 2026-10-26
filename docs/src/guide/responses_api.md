@@ -486,7 +486,7 @@ end
 
 ## Retry Behaviour
 
-`respond` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with full-jitter exponential backoff; a `Retry-After` header is a floor under the jittered wait. A 429 whose `error.code` reports spent credit or a reached spend or usage limit (`credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded`), or whose `error.type` (or older `error.code`) is `insufficient_quota`, is returned at once, since no retry restores access; so is a Gemini Interactions 429 whose `error.code` is `quota_exceeded`, its daily quota, which Google says to wait out (its rate-limit codes are retried). Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose wait would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; every other exception that ends the call is in `.cause` too — a [`UniLMCancelled`](@ref) for a call cancelled through its `cancel` token (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)). Local validation — an option the provider or model cannot express, or a service that supports neither `:responses` nor `:agentic` — throws `ArgumentError` before any request.
+`respond` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with full-jitter exponential backoff; the wait a reply asks for (its `retry-after-ms` header, else `Retry-After`) is a floor under the jittered wait. A 429 whose `error.code` reports spent credit or a reached spend or usage limit (`credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded`), or whose `error.type` (or older `error.code`) is `insufficient_quota`, is returned at once, since no retry restores access; so is a Gemini Interactions 429 whose `error.code` is `quota_exceeded`, its daily quota, which Google says to wait out (its rate-limit codes are retried). Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose wait would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; every other exception that ends the call is in `.cause` too — a [`UniLMCancelled`](@ref) for a call cancelled through its `cancel` token (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)). Local validation — an option the provider or model cannot express, or a service that supports neither `:responses` nor `:agentic` — throws `ArgumentError` before any request.
 
 This applies to `respond` only. The Responses **lifecycle** operations — [`get_response`](@ref), [`delete_response`](@ref), [`cancel_response`](@ref), [`list_input_items`](@ref), [`compact_response`](@ref), [`count_input_tokens`](@ref) — make a single bounded attempt; `max_attempts` has no effect on them. See [Timeouts & Retries](@ref timeouts_guide).
 
@@ -504,17 +504,17 @@ The `Respond` constructor validates parameter ranges at construction time:
 
 Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are
 mutually exclusive, `conversation` cannot be combined with `previous_response_id` (each
-already supplies the prior turns), and `background=true` requires a stored response
-(`store=false` throws). A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
+already supplies the prior turns), and on Gemini Interactions `background=true` requires a
+stored response (`store=false` throws there; OpenAI takes it). A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
 [`FunctionTool`](@ref).
 
 Per-model rules on `OPENAIServiceEndpoint` are checked when the request is encoded, before any
 request, for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
 `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot: GPT-6 Astra and GPT-6.1 Sol take
-reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol and
-Luna take sampling controls and log probabilities only at effort `"none"`; GPT-6 Sol, GPT-6 Luna
-and the GPT-5.6 models take `"none"` to `"max"` and refuse `"minimal"` (use `"low"`). Other
-models are checked by the server. On `OPENAIServiceEndpoint`, `user` throws `ArgumentError` for
+reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol, GPT-6
+Luna and the GPT-5.6 models take `"none"` to `"max"`, refuse `"minimal"` (use `"low"`), and take
+sampling controls and log probabilities only at effort `"none"`. Other models are checked by the
+server. On `OPENAIServiceEndpoint`, `user` throws `ArgumentError` for
 every model: OpenAI replaces it with `safety_identifier` and `prompt_cache_key`.
 
 ## See Also

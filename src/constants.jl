@@ -257,8 +257,8 @@ const TYPESAFE_BASE_URL_ENV::String = "TYPESAFE_BASE_URL"
 """Env var name for the TypeSafe model used when a call names none."""
 const TYPESAFE_DEFAULT_MODEL_ENV::String = "TYPESAFE_DEFAULT_MODEL"
 
-"""TypeSafe default model alias. Aliases move between versions; pin `jev-1.13.0`
-to keep tuned confidence thresholds meaningful."""
+"""TypeSafe default model alias. Aliases move between versions: to keep confidence thresholds
+tuned against one version meaningful, send that version's id, such as `jev-1.14.0`."""
 const TYPESAFE_DEFAULT_MODEL::String = "jev-latest"
 
 """TypeSafe System One evaluation path (the only POST surface; no streaming or batch exists)."""

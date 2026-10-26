@@ -2488,9 +2488,11 @@ replacement for its text-to-speech models, which shut down on 2027-01-06): UniLM
 (`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`), 24 kHz PCM
 output and instructions to read the text word for word, and collects the response's audio (Realtime
 models are conversational; OpenAI notes instructions are not guaranteed to be followed). On
-`GEMINIServiceEndpoint` it is Gemini TTS (`generateContent` on `gemini-3.8-flash-tts`, one of its 30
-prebuilt voices, `instructions` as the speech style), which reads the text verbatim. An empty
-`input`, a voice the service lacks, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
+`GEMINIServiceEndpoint` it is Gemini TTS (`generateContent` on `gemini-3.8-flash-tts`; `instructions`
+as the speech style), which reads the text verbatim: one of its 30 studio voices goes as
+`prebuiltVoiceConfig.voiceName`, any other voice — an Extended Voice Library voice, a `voice_…` id or a
+`voicekey_…` key — as `voiceConfig.voice`, sent as given. An empty `input`, a voice the Realtime session
+lacks, a blank Gemini voice, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
 flac are refused), a `speed` out of range and any `speed` on Gemini throw `ArgumentError` before any
 request, as does `GEMINIOpenAIServiceEndpoint` (no speech route there: the error points to
 `GEMINIServiceEndpoint`). **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono

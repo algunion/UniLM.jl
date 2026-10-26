@@ -261,9 +261,17 @@ end
         e = refusal(() -> SpeechRequest(input="Hi.", voice=v))
         @test e isa ArgumentError && occursin("OpenAI Realtime voices are alloy, ash", e.msg) && occursin(repr(v), e.msg)
     end
-    for v in ("kore", "marin", "alloy", "Kore2")
+    # Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
+    # (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)"
+    # (ai.google.dev/gemini-api/docs/generate-content/speech-generation). The library's hundreds of names are
+    # listed only by GET /v1beta/voices, so a name is sent as given and the API answers one it does not have;
+    # a blank voice names none.
+    for v in ("voice_abc123def456", "voicekey_c3RhdGVsZXNz", "kore", "Kore2", "marin")
+        @test SpeechRequest(input="Hi.", service=GEMINIServiceEndpoint, voice=v).voice == v
+    end
+    for v in ("", "   ")
         e = refusal(() -> SpeechRequest(input="Hi.", service=GEMINIServiceEndpoint, voice=v))
-        @test e isa ArgumentError && occursin("Gemini TTS voices are Zephyr, Puck", e.msg) && occursin(repr(v), e.msg)
+        @test e isa ArgumentError && startswith(e.msg, "Gemini TTS takes a voice") && occursin(repr(v), e.msg)
     end
     @test SpeechRequest(input="Hi.", response_format="pcm").response_format == "pcm"
     for fmt in ("mp3", "opus", "aac", "flac", "WAV", "", "audio/wav")
@@ -698,6 +706,22 @@ end
     @test body == _sp_gemini_body()
     @test body["generationConfig"]["responseModalities"] == ["AUDIO"]
     @test body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Kore"
+end
+
+@testset "speak on Gemini: a studio voice goes as a prebuilt voice, any other as the voice field" begin
+    # VoiceConfig holds `prebuiltVoiceConfig` ("The configuration for the prebuilt voice to use") or `voice`,
+    # whose formats are a "Speaker name for prebuilt voices", a "Voice ID for stored voices (for example,
+    # `voice_xxx`)" and a "Voice replication key (for example, `voicekey_xxx`)"
+    # (ai.google.dev/api/generate-content#VoiceConfig). The 30 studio voices keep the prebuilt form.
+    pcm = _sp_pcm(Int16[1, 2])
+    for v in ("voice_abc123def456", "voicekey_c3RhdGVsZXNz", "Kore2")
+        r, seen = _with_scripted((_, _) -> _json(200, _sp_gemini_reply(_sp_inline("audio/l16", pcm)))) do
+            speak("Hi."; service=GeminiSpeechProbe, voice=v)
+        end
+        @test r isa SpeechSuccess && r.audio == _sp_wav(pcm)
+        @test JSON.parse(only(seen).body; dicttype=Dict{String,Any})["generationConfig"]["speechConfig"] ==
+              Dict("voiceConfig" => Dict("voice" => v))
+    end
 end
 
 @testset "speak on Gemini: the delivery is the part's speech style; raw PCM on request" begin

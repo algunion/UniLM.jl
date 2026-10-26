@@ -293,6 +293,14 @@
   declares no `:models` threw "TypeSafe models listing is not supported by …", naming a provider
   the call had nothing to do with. The `ArgumentError` now reads "Model listing is not supported
   by" the endpoint, then lists its capabilities, as before.
+- **`speak` on Gemini takes the Extended Voice Library and designed and replicated voices.** Gemini
+  3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
+  (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)", yet
+  a `SpeechRequest` on `GEMINIServiceEndpoint` threw `ArgumentError` for any voice but the 30 studio
+  voices. The library's hundreds of voices are listed only by Gemini's `GET /v1beta/voices`, so a
+  voice is now sent as given, and Gemini answers a name it does not have: one of the 30 as
+  `prebuiltVoiceConfig.voiceName`, as before, any other as `voiceConfig.voice`, the field Google's
+  reference gives for a stored voice's id and a replication key. A blank voice still throws.
 
 ## 0.26.0
 

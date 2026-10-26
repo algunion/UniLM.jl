@@ -2002,17 +2002,25 @@ from that point on. Where it reaches the provider depends on the encoder:
 - the OpenAI wire (OpenAI, Azure, DeepSeek and other OpenAI-compatible endpoints) and
   [`OllamaEndpoint`](@ref) send it in place;
 - native Gemini joins it into `systemInstruction`;
-- native Anthropic sends it in place on the models that accept
-  [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages),
-  where the Messages API allows one (right after a user turn, and last or before an
-  assistant turn), and elsewhere joins it into the top-level `system` prompt. Claude
-  Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 refuse an earlier turn's thinking blocks
-  once the `system` prompt has changed, so on them — and on a Claude model UniLM has no
-  rules for — one pushed after an assistant turn that cannot stay in place is sent right
-  after the next user turn instead.
+- native Anthropic places it as the Anthropic entry's [Conversations](@ref anthropic_conversations)
+  section says. The system messages a conversation starts with become the top-level `system`
+  prompt, joined with a blank line. Where a system message pushed later goes depends on two
+  columns of the Claude family table ([Reasoning](@ref anthropic_reasoning)). On a model whose
+  Mid-conversation system messages cell is "yes", it stays in place, as a `system` turn, where
+  the Messages API takes one: right after a user turn (tool results count as one), and last or
+  right before an assistant turn. Anywhere else it joins the top-level `system` prompt, except,
+  on an append-only model, one pushed after a sent assistant turn. On a model whose cell is
+  "—", it joins the top-level `system` prompt. Append-only are the models whose Thinking prefix
+  check cell is "yes", and any id that matches no row (an id with a `-YYYYMMDD` snapshot suffix
+  takes the row of the id without it): once an assistant turn is sent, UniLM never edits the
+  top-level `system` prompt of an append-only model, so a later system message that cannot stay
+  in place is held back, then sent right after a later user turn, and the turns before each
+  sent reply stay as they were in the request that got it.
 
-On native Anthropic a system message pushed after an assistant turn needs a user message
-after it: until one follows, the request throws `ArgumentError`.
+On native Anthropic, a system message pushed after a reply needs a user turn after it — a user
+message, or the results of the reply's tool calls — except in a response prefill on a model whose
+Prefill cell is "yes". Until one follows, `chatrequest!` throws `ArgumentError` before sending: as
+it stands, the request would end with the assistant turn, a response prefill.
 """
 function Base.push!(chat::Chat, msg::Message)
     if msg.role != RoleSystem && isempty(chat)

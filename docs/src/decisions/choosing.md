@@ -7,7 +7,7 @@ using UniLM
 UniLM has one decision surface. The questions — [`choice`](@ref), [`score`](@ref), [`noul`](@ref), [`box`](@ref) —
 the verbs — [`ask`](@ref), [`ask_each`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref) —
 and the typed results are the same whichever model answers. Three providers answer them, each with an entry of its
-own: [Jev (TypeSafe)](@ref jev_start__next), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
+own: [Jev (TypeSafe)](@ref jev_start), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
 [Local decision models](@ref ollama_decisions_start) served by Ollama on your own machine. Each provider has a
 wrapper that knows its rules. What a provider cannot carry is refused with an `ArgumentError` before anything is
 sent, so a request never reaches a provider in a form that provider would read differently.
@@ -117,7 +117,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
 | Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1/systemone` |
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
-| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start__next) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
+| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 200 questions (OpenAI takes 400) | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
 | Guidance | strings, objects, arrays and pictures, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`; strings elsewhere |

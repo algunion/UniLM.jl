@@ -67,7 +67,6 @@
         "Start here" => ["Overview" => "decisions/index.md"],
         "Jev (TypeSafe)" => [
             "Start here" => "decisions/jev/index.md",
-            "Start Here: Decisions in Five Minutes" => "guide/jev_start.md",
             "Images, Box, long context, structured guidance" => "decisions/jev/abilities.md",
             "Confidence, errors, cost & testing" => "decisions/jev/operations.md",
         ],

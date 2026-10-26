@@ -134,7 +134,7 @@ above replays the manual's own recordings, so the example reaches no service eit
 ([How this manual runs its examples](@ref jev_testing_manual)).
 
 - **Pin the model.** A request's key holds the model it names. An unpinned request names the default model, an
-  alias ([at the top of the start page](@ref jev_start__next)), so its recording keeps answering with the version
+  alias ([at the top of the start page](@ref jev_start)), so its recording keeps answering with the version
   it was recorded on after the alias moves; a pinned one misses once
   you move the pin, until it is recorded again. An unpinned request names `TYPESAFE_DEFAULT_MODEL` instead when
   that is set: record with the environment you replay with, or pin.

@@ -102,6 +102,13 @@
   characters was cut to 128 before. Upgrading: pass `service=` the endpoint the tools go to, to
   keep names of up to 128 characters on Anthropic and native Gemini; a `tool_choice` that names
   a bridged tool takes the name the bridge now advertises.
+- **A price row for a local Ollama model is used.** `estimated_cost` returned `0.0` for a result
+  of a local model on an `OllamaEndpoint` before it read a price row, so a `pricing=` row for the
+  model, or a `DEFAULT_PRICING` row, which `cumulative_cost` reads, was ignored without a word;
+  so was a row for a local model's System One answer. Such a row now prices the result as any
+  model's row does. A local model with no row still costs `0.0`, with no missing-price warning,
+  and `model=` still prices a result at the row of the model it names. Upgrading: to keep a local
+  model's estimates at `0.0`, leave its row out of the table you pass and of `DEFAULT_PRICING`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

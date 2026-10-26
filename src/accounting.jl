@@ -198,6 +198,9 @@ Returns `0.0` for failures, which carry no billable usage, for an unpriced model
 tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices) and for an
 embeddings reply that reported no usage (Gemini's OpenAI-compatible endpoint reports none);
 the last three also log a warning, once per model id (for audio, per model and endpoint). A
+local model — one an [`OllamaEndpoint`](@ref) serves from a server of your own, its name
+carrying no cloud tag — bills no one: unless `model` is given, it is priced at the row `pricing`
+holds for it, as any model is, and with no row it costs `0.0` without the warning. A
 billed service tier the provider's pricing page lists no price for is estimated at the standard
 rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
@@ -227,7 +230,9 @@ function estimated_cost(result::LLMRequestResponse;
     mdl = isnothing(model) ? _priced_model(result) : model
     isnothing(mdl) && return 0.0                   # a failure: nothing was billed
     service = _result_service(result)
-    isnothing(model) && _is_local(service, mdl) && return 0.0
+    # A model on the caller's own machine bills no one: with no row for it in `pricing` it costs 0.0
+    # and warns nothing, since no price is missing; a row for it is the caller's price, used as given.
+    isnothing(model) && _is_local(service, mdl) && isnothing(_price_row(pricing, mdl; warn=false)) && return 0.0
     _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
@@ -282,19 +287,19 @@ end
 # -YYYY-MM-DD snapshot, Anthropic's pre-4.6 ids carry -YYYYMMDD; only those date
 # suffixes are stripped, so arbitrary custom names stay unpriced), then the Jev family
 # rate for a versioned Jev id. A miss logs once per model id: the 0.0 it becomes is
-# indistinguishable from a free call.
-function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
+# indistinguishable from a free call. `warn=false` looks up a model that is free without a row.
+function _price_row(pricing::AbstractDict{String,PriceRow}, model::String; warn::Bool=true)::Union{PriceRow,Nothing}
     rates = @something(get(pricing, model, nothing),
                        get(pricing, replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""), nothing),
                        occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing,
                        Some(nothing))
-    isnothing(rates) && @warn "no price row for this model; its estimated cost is 0.0" model _id = Symbol(
+    warn && isnothing(rates) && @warn "no price row for this model; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unpriced_", model) maxlog = 1
     rates
 end
 
-# The endpoint a result came from, where the result records it; a model local to it prices
-# at 0.0 (`_is_local`, defined with the endpoint).
+# The endpoint a result came from, where the result records it; a model local to it costs 0.0
+# unless a price row names it (`_is_local`, defined with the endpoint).
 _result_service(r::LLMSuccess) = r.self.service
 _result_service(r::EmbeddingSuccess) = r.embeddings.service
 _result_service(r::ResponseSuccess) = r.service
@@ -309,7 +314,8 @@ _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += 
     cumulative_cost(chat::Chat) -> Float64
 
 Return the estimated cost, in USD, that [`chatrequest!`](@ref) calls on this `Chat` have
-accrued, priced with [`DEFAULT_PRICING`](@ref) as [`estimated_cost`](@ref) prices a result.
+accrued, priced with [`DEFAULT_PRICING`](@ref) as [`estimated_cost`](@ref) prices a result: a
+local model's turns add `0.0` unless the table holds a row for the model.
 A committed turn adds its result's cost. A call that ends without committing one adds what
 its provider reported billing it, a lower bound: the replies of a continued Gemini turn
 received before the failure or stop, and the usage a stream had reported when it was stopped,

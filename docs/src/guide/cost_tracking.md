@@ -20,9 +20,9 @@ nothing # hide
 
 The examples use only the names bound above. `service` and `model` are the provider and model they run
 on, and `own_model` names a model the price table does not hold, such as one of your own server: bind
-your own there. On an endpoint that treats its models as local, the estimates below are `0.0`
-([Local models](@ref cost_tracking_local)). The table [at the end](@ref cost_tracking_providers) links each
-provider's rules.
+your own there. On an endpoint that treats its models as local, an estimate below is `0.0` where no price
+row names the model ([Local models](@ref cost_tracking_local)). The table [at the end](@ref cost_tracking_providers)
+links each provider's rules.
 
 !!! warning "The zero-dollar footgun"
     [`estimated_cost`](@ref) returns `0.0` — with no error, only a warning logged once per
@@ -30,7 +30,7 @@ provider's rules.
     fallback row, such as a model of your own server or one newer than the table. Cost
     tracking on it reports `\$0.00` until you supply its price. See
     [Unpriced models cost \$0](@ref unpriced-zero) below. A model its endpoint treats as local is
-    the exception: it costs `0.0` with no warning, whatever `pricing=` or the table holds
+    the exception: with no row, it costs `0.0` with no warning
     ([Local models](@ref cost_tracking_local)).
 
 ## [Reading usage and cost](@id cost_tracking_reading)
@@ -157,10 +157,11 @@ pricing table before trusting a cost number.
 
 ## [Local models](@id cost_tracking_local)
 
-A model its endpoint treats as local costs `0.0`, with no warning, as that endpoint's entry says
-([a local model's cost](@ref ollama_cost)): `estimated_cost` returns before it reads a price row, so
-neither `pricing=` nor [`DEFAULT_PRICING`](@ref) changes the estimate, and `cumulative_cost` adds `0.0` for
-each turn. Only `model=` prices such a result, at the row of the model it names.
+A model its endpoint treats as local bills no one, so with no price row it costs `0.0`, with no warning,
+as that endpoint's entry says ([a local model's cost](@ref ollama_cost)), and `cumulative_cost` adds
+`0.0` for each turn. A row for it is used as any model's is: one in `pricing=` prices `estimated_cost`,
+and one in [`DEFAULT_PRICING`](@ref) prices both; `model=` prices such a result at the row of the model it
+names.
 
 ## [Supplying custom pricing](@id cost_tracking_custom)
 
@@ -214,7 +215,7 @@ unstreamed reply UniLM could not decode.
     for the running total. So a `Chat` on an **unpriced** model reports
     `cumulative_cost == 0.0` even after successful calls — unless you add its row to the
     table (`DEFAULT_PRICING[own_model] = row`, safe while requests run), after which
-    later calls accrue — but for a model its endpoint treats as local, which accrues `0.0`
+    later calls accrue, on a model its endpoint treats as local too
     ([Local models](@ref cost_tracking_local)). Alternatively, ignore the running total and sum
     [`estimated_cost`](@ref)`(result; pricing=…)` yourself.
 

@@ -577,14 +577,52 @@ end
                               usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)))
     @test (@test_logs estimated_cost(succ("gemma4:e4b"))) == 0.0          # local: free, no warning
     @test (@test_logs (:warn, r"no price row") estimated_cost(succ("zz-unpriced:7b-cloud"))) == 0.0
-    # With a row for each, the cloud model is charged and the local one is still free.
+    # With a row for each, both are charged: a local model's row is the caller's price for it.
     row = UniLM._price(1.0, 0.1, 2.0)
     table = Dict("zz-priced:cloud" => row, "zz-priced:7b" => row)
     @test (@test_logs estimated_cost(succ("zz-priced:cloud"); pricing=table)) ≈ 10 * 1e-6 + 5 * 2e-6
-    @test (@test_logs estimated_cost(succ("zz-priced:7b"); pricing=table)) == 0.0
+    @test (@test_logs estimated_cost(succ("zz-priced:7b"); pricing=table)) ≈ 10 * 1e-6 + 5 * 2e-6
     s1 = SystemOneSuccess(SystemOneResponse("zz-unpriced-s1:cloud", Dict{String,SystemOneAnswer}(),
                           TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
     @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+end
+
+@testset "a local model is priced at a row that names it, and is free, silently, without one" begin
+    # A model on the caller's machine bills no one, so with no row it costs 0.0 and warns nothing; a row
+    # for it, passed as `pricing=` or held in DEFAULT_PRICING (which `cumulative_cost` reads), is the
+    # caller's price for it, and was ignored: `estimated_cost` returned 0.0 before it read a row.
+    ep = OllamaEndpoint(base_url="http://box:11434")
+    row = UniLM._price(1.0, 0.1, 2.0)
+    u = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    chat() = (c = Chat(service=ep, model="zz-local-row:7b"); push!(c, Message(Val(:system), "s"));
+              push!(c, Message(Val(:user), "hi")); c)
+    llm = LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=chat(), usage=u)
+    emb = EmbeddingSuccess(embeddings=Embeddings("x"; service=ep, model="zz-local-row:7b", task=:none),
+                           usage=TokenUsage(prompt_tokens=10, total_tokens=10), raw=Dict{String,Any}())
+    resp = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model="zz-local-row:7b",
+        output=Any[], usage=Dict{String,Any}("input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15),
+        raw=Dict{String,Any}()), service=ep)
+    fim = FIMSuccess(response=FIMResponse(choices=[FIMChoice(text="x")], model="zz-local-row:7b", usage=u), service=ep)
+    s1 = SystemOneSuccess(SystemOneResponse("zz-local-row:7b", Dict{String,SystemOneAnswer}(),
+                          TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
+    priced = (llm => 10e-6 + 5 * 2e-6, emb => 10e-6, resp => 10e-6 + 5 * 2e-6, fim => 10e-6 + 5 * 2e-6, s1 => 10e-6)
+    for (r, cost) in priced
+        @test (@test_logs estimated_cost(r; pricing=Dict("zz-local-row:7b" => row))) ≈ cost
+        @test (@test_logs estimated_cost(r)) == 0.0                       # no row: free, and no warning
+    end
+    DEFAULT_PRICING["zz-local-row:7b"] = row
+    try
+        for (r, cost) in priced
+            @test (@test_logs estimated_cost(r)) ≈ cost
+        end
+        c = chat()
+        UniLM._accumulate_cost!(c, llm)
+        @test cumulative_cost(c) ≈ 10e-6 + 5 * 2e-6
+    finally
+        delete!(DEFAULT_PRICING, "zz-local-row:7b")
+    end
+    # `model` still prices a result at the row of the model it names, with the warning when it has none.
+    @test (@test_logs (:warn, r"no price row") estimated_cost(llm; model="zz-local-row:7b")) == 0.0
 end
 
 @testset "a call made directly to Ollama's cloud is priced by name, as a cloud model is" begin

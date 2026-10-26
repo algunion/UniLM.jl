@@ -9,7 +9,7 @@ L2‑normalized (unit‑length) vectors" ([embeddings](https://docs.ollama.com/c
 It holds one item or several — a text, an [`EmbeddingInput`](@ref), an image or a sound clip — and
 names an installed embedding model, since Ollama has no default; `embeddingrequest!` fills its vectors
 in place. The usage counts the input tokens, Ollama's `prompt_eval_count`, and a local model's
-embeddings cost `0.0`, as its chats do ([Cost and usage](@ref ollama_cost)). The request carries the
+embeddings cost `0.0` with no price row, as its chats do ([Cost and usage](@ref ollama_cost)). The request carries the
 endpoint's `keep_alive`, options and `runner` ([Options](@ref ollama_options)).
 
 ## [Embeddings with EmbeddingGemma 2](@id ollama_embeddings)

@@ -1732,8 +1732,9 @@ Public extension API (not exported); see the Custom Backends guide.
 """
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
-# The response a result reports for a request that named `requested`: as decoded, unless the endpoint
-# answers under a name other than the one that bills (an Ollama cloud model; see `_ollama_billed_model`).
+# The response a result reports for a request that named `requested` (for a Chat result, the model
+# its reply named): as decoded, unless the endpoint answers under a name other than the one that
+# bills (an Ollama cloud model; see `_ollama_billed_model`).
 _billed_response(_, ::AbstractString, x) = x
 
 """

@@ -13,7 +13,7 @@
   as `api_key` is sent as is, as before. `GenericOpenAIEndpoint` gains a third field,
   `key_env`: the variable read per request when `api_key` is empty (`""` reads none); the
   two-argument constructor is unchanged. Upgrading: code that takes the key from
-  `DeepSeekEndpoint().api_key` or `MistralEndpoint().api_key` (now `""`), or relies on
+  `DeepSeekEndpoint().api_key` (now `nothing`) or `MistralEndpoint().api_key` (now `""`), or relies on
   building the endpoint to check that the key is set, reads the variable itself.
 - **Inside a `:replay` scope, streamed calls, the Responses lifecycle calls and FIM no
   longer reach the network.** At 0.26.0 a streamed `chatrequest!` or `respond` (and so a
@@ -280,8 +280,8 @@
   *Start Here: Decisions in Five Minutes* and *Backends: Jev, OpenAI and Local Models* — each leave
   a page at their old address that forwards the reader to the page that replaced it, at the section
   the link named where the site still defines it; every other page keeps its address, and the API
-  pages keep every docstring they held. Every section id the v0.26.0 pages declared still resolves,
-  the six that were retired to their successors. The Documentation workflow writes the forwarding
+  pages keep every docstring they held. Every section id the v0.26.0 pages declared still resolves;
+  the six that were retired lead to their successors. The Documentation workflow writes the forwarding
   pages and fails when an address or a declared section id of v0.26.0 resolves to nothing.
 
 ### Fixed

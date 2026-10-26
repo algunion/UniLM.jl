@@ -138,7 +138,7 @@ UniLM on one machine:
 
 Each model's answer was the one Ollama sent: UniLM's probabilities equalled the server's reply to the same bytes,
 on all nine. How the hosted providers did on the same tickets is on
-[Choosing a decision provider](@ref system_one_backends__next).
+[Choosing a decision provider](@ref system_one_backends).
 
 !!! details "Evidence"
     Measured on 21 October 2026 with Ollama 0.40.6 on an Apple M4 Max with 64 GB, through UniLM: one Choice of seven
@@ -407,7 +407,7 @@ tev1 put 0.534 of the probability on `billing`, out of four options: the formula
 `(4 × 0.5337 − 1)/3 ≈ 0.378`, below the 0.6 asked for, so the message went to a person; the entropy measure Ollama
 reports reads the same answer as 0.375. The two measures part most on a peaked answer: tev1's answer about shipping
 to Norway, 0.811 on `other`, is 0.748 by the formula and 0.638 by the entropy
-([One formula, calibrated per model](@ref backends_confidence__next)).
+([One formula, calibrated per model](@ref backends_confidence)).
 
 Probabilities are accepted when they sum to 1 within 0.00005 per outcome, since Kev models on Ollama's own runner
 round each to four decimals, and the chosen option when it lies at most 0.0001 below the most probable; a reply

@@ -452,7 +452,7 @@ end
   local models. A model without vision answers an image with its own 400:
   `image inputs are not supported by this decision model` from `tev1:0.8b`,
   `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
-  `kev:0.8b-q8_0` ([What a model takes](@ref backends_ollama_limits)). Ollama
+  `kev:0.8b-q8_0` ([Limits and refusals](@ref ollama_decisions_limits)). Ollama
   caps a request's text and schema, images excluded, at 64 KiB for the models
   measured, which [`ask`](@ref) does not check: a 76,284-byte state came back as a
   413 [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`, from
@@ -487,7 +487,7 @@ end
 - **Speed.** On 129 labelled tickets (21 October 2026, Ollama 0.40.6, an Apple M4
   Max, one request at a time), a warm call took from 0.025 s (`d1-omni:600m`) to
   0.64 s (`clef-flash:9b`) at the median, and a first call, which loads the model,
-  0.69 s to 3.44 s; [Which model](@ref backends_ollama_models) has each model's
+  0.69 s to 3.44 s; [Models](@ref ollama_decisions_models) has each model's
   accuracy, calibration and latency. The server's decision runners answer one
   request at a time, so [`ask_each`](@ref) keeps one in flight unless its
   `ntasks` says otherwise.

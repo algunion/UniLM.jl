@@ -37,7 +37,7 @@ It also has one **System One** surface, which answers enumerated questions about
 - 📐 **Structured Output** — JSON Schema–constrained generation
 - ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
 - 📋 **Provider model listings** — `list_models` shows the models OpenAI, Anthropic and Gemini serve your key, with token limits, capabilities and lifecycle dates; a live drift check in the release gate holds UniLM's model rules and prices to them
-- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included ([Backends](@ref backends_ollama)); model management — at no cost
+- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included ([Local decision models](@ref ollama_decisions_start)); model management — at no cost
 - ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Chat Completions vs Responses (OpenAI)

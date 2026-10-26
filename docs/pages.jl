@@ -81,7 +81,6 @@
         ],
         "Across decision providers" => [
             "Choosing a decision provider" => "decisions/choosing.md",
-            "Backends: Jev, OpenAI and Local Models" => "guide/system_one_backends.md",
             "Write your own decision provider" => "decisions/custom.md",
         ],
     ],

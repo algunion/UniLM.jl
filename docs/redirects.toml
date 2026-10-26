@@ -9,5 +9,12 @@
 "guide/retrieval" = "providers/openai/retrieval"
 "guide/ollama" = "providers/ollama"
 "guide/jev_start" = "decisions/jev"
+"guide/system_one_backends" = "decisions/choosing"
 
 [anchors]
+backends_ollama = "ollama_decisions_start"
+backends_ollama_images = "ollama_decisions_images"
+backends_ollama_limits = "ollama_decisions_limits"
+backends_ollama_models = "ollama_decisions_models"
+backends_openai = "openai_decisions_start"
+backends_recordings = "backends_table"

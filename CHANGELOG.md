@@ -136,6 +136,21 @@
   it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
   Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
   price is unchanged.
+- **A DeepSeek `Chat` with a strict tool goes to DeepSeek's beta base URL.** DeepSeek's strict mode
+  is a beta feature: "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"`".
+  `DeepSeekEndpoint()` sent every `Chat` to `https://api.deepseek.com/v1/chat/completions`, so a
+  tool's `strict` never reached the URL where it applies. A `Chat` whose tools include a strict one
+  now goes to `https://api.deepseek.com/beta/v1/chat/completions`, streamed or not; one without
+  goes where it went. There "The server will validate the JSON Schema of the Function provided by the
+  user. If the schema does not conform to the specifications or contains JSON schema types that are
+  not supported by the server, an error message will be returned", and "All properties of every
+  `object` must be set as `required`, and the `additionalProperties` attribute of the `object` must be
+  set to `false`": a strict tool whose schema breaks these rules, sent before to the non-beta URL,
+  where strict mode does not apply, now gets that error (DeepSeek's page; neither observed). A
+  recording keys on the request's path, so one of such a request made before does not replay:
+  record it again. Upgrading: give a strict tool a schema DeepSeek's strict mode takes (every
+  property `required`, `additionalProperties: false`, the types its tool-calls page lists), or leave
+  `strict` unset.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -403,13 +418,6 @@
   the same statuses and transport failures under its `RequestConfig` (`max_attempts`,
   `total_deadline`, the wait a reply asks for), and each attempt sends the whole file again, as an
   image edit does; a 429 that no retry can serve is returned at once.
-- **A DeepSeek `Chat` with a strict tool goes to DeepSeek's beta base URL.** DeepSeek's strict mode
-  is a beta feature: "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"`".
-  `DeepSeekEndpoint()` sent every `Chat` to `https://api.deepseek.com/v1/chat/completions`, so a
-  tool's `strict` never reached the URL where it applies. A `Chat` whose tools include a strict one
-  now goes to `https://api.deepseek.com/beta/v1/chat/completions`, streamed or not; one without
-  goes where it went. A recording keys on the request's path, so one of such a request made before
-  does not replay: record it again.
 - **A DeepSeek `Chat` takes `reasoning_effort="ultra"`.** DeepSeek's thinking-mode page maps a
   requested `ultra` to `max`, and the `Chat` constructor refused it for every endpoint. A `Chat` on a
   `DeepSeekEndpoint` now takes `"ultra"` and sends it as set (DeepSeek answered such a request on

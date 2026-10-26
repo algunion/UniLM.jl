@@ -59,8 +59,10 @@ _header_dict(headers)::Dict{String,String} = Dict(lowercase(string(first(p))) =>
 
 Verify an OpenAI webhook signature (Standard Webhooks). `payload` is the raw request body;
 `headers` is a Dict or iterable of pairs containing `webhook-id`, `webhook-timestamp`, and
-`webhook-signature`; `secret` is the endpoint signing secret (with or without the `whsec_`
-prefix). Returns `true` iff a fresh, validly-signed `v1` signature is present.
+`webhook-signature`; `secret` is the endpoint signing secret, with or without the `whsec_`
+prefix: without it, the secret is read as base64 too, as the Standard Webhooks libraries read
+it (OpenAI's SDKs take an unprefixed secret's raw bytes as the key). Returns `true` iff a
+fresh, validly-signed `v1` signature is present.
 
 Replay protection: timestamps outside `±tolerance_seconds` of now are rejected, as are
 timestamps that are not finite numbers — pass `tolerance_seconds=Inf` to skip the time
@@ -97,8 +99,8 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
     # A secret that is not base64 is a configuration error on this side, not a forged
     # message. Returning false here would silently reject every inbound webhook forever,
     # indistinguishable from an attacker's bad signature.
-    occursin(_BASE64_SECRET, sec) || throw(ArgumentError("webhook signing secret is not valid base64: after its " *
-        "whsec_ prefix, a secret holds only A-Z, a-z, 0-9, + and /, with = padding at its end only"))
+    occursin(_BASE64_SECRET, sec) || throw(ArgumentError("webhook signing secret is not valid base64: the secret " *
+        "(after its whsec_ prefix, if any) holds only A-Z, a-z, 0-9, + and /, with = padding at its end only"))
     key = base64decode(sec)
     # `string(...)` is a single `::String` method, so the signed base is concretely a
     # `String` regardless of how the header-map value types infer at this call.

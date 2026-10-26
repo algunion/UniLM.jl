@@ -597,7 +597,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
         if _is_retryable(resp) && !final
             action, delay = _retry_pause(cfg, t0, attempt, resp)
             if action === :budget
-                @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
+                @warn "status is retryable but the backoff (the asked wait and jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
                 return resp
             end
             @debug "retrying after retryable status" status = resp.status attempt delay

@@ -493,7 +493,10 @@ callback as text. When the conversation goes on, the OpenAI Chat encoder
 (`OPENAIServiceEndpoint`) sends the turn back as
 `{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
 beside the id, until a minute before `expires_at`, and always when `expires_at` is
-`nothing`; from then on it sends the content alone. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+`nothing`; from then on it sends the content alone. Such a follow-up's request bytes
+therefore depend on the clock: one recorded with [`with_recorded_answers`](@ref) while the
+audio was live replays only until a minute before `expires_at`, then throws
+[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
 DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
 the turn's content alone, the neutral form it also sends for another provider's
 [`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.

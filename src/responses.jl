@@ -1750,8 +1750,8 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
     respond(r::Respond; config=nothing, callback=nothing, cancel=nothing)
 
 Send `r` to the agentic API of `r.service`: the Responses API of OpenAI, of an
-[`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or Gemini Interactions
-on `GEMINIServiceEndpoint`.
+[`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or of an endpoint
+type of your own, or Gemini Interactions on `GEMINIServiceEndpoint`.
 
 Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings,
@@ -1935,16 +1935,20 @@ end
 
 Retrieve an existing response by its ID: a `ResponseSuccess`, or a `ResponseFailure` when
 the response's `status` is `"failed"`, as [`respond`](@ref) returns it. OpenAI keeps a
-response "for at least 30 days" when its request stored it (`store=true`, the default); the
-data of a background request made with `store=false` is "temporarily stored to support
-asynchronous execution and polling"
-([background mode](https://developers.openai.com/api/docs/guides/background), which gives
-"roughly 10 minutes" for such requests from Zero Data Retention projects): `get_response`
-reads it while OpenAI holds it, and not once it is deleted. An endpoint whose Responses API
-stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
-through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
-an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
-of returning a `ResponseCallError`.
+stored response (`store=true`, the default) "for at least 30 days, subject to the data
+retention exceptions"; the data of a background request made with `store=false` is
+"temporarily stored to support asynchronous execution and polling", and OpenAI's background
+guide names two exceptions: a Zero Data Retention project's "Background requests … run with
+`store=false`", their data kept "for roughly 10 minutes", and in a Modified Abuse
+Monitoring project "Background responses are retained after the polling period only when
+`store=true` is explicitly provided"
+([background mode](https://developers.openai.com/api/docs/guides/background)).
+`get_response` reads a response while OpenAI holds it, and not once it is deleted. An
+endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+request passes through the recordings: one the scope cannot replay throws
+[`ReplayMissError`](@ref), and an answer whose recording cannot be written throws
+[`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -2065,10 +2069,10 @@ end
 Cancel an in-progress response by its ID. Returns `ResponseSuccess` with the response it
 read back, or a `ResponseFailure` when that response's `status` is `"failed"`, as
 [`respond`](@ref) does. An endpoint whose Responses API stores no responses
-([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
-through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
-an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
-of returning a `ResponseCallError`.
+([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a
+[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
+scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
+be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia

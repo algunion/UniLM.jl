@@ -67,12 +67,12 @@ timestamps that are not finite numbers — pass `tolerance_seconds=Inf` to skip 
 check (e.g. when replaying a stored fixture). Uses a constant-time digest compare.
 Negative or NaN tolerances throw `ArgumentError`.
 
-Throws `ArgumentError` when `secret` is not valid base64 — a character outside `A-Z`,
-`a-z`, `0-9`, `+` and `/` (whitespace included), or `=` padding anywhere but at its end or
-more than its last group lacks — for a delivery that reaches the signature check: that is
-a misconfiguration of this endpoint, and reporting it as an unverified signature would
-silently drop every webhook. A `false` return therefore always means the message failed
-verification.
+Whitespace around `secret` is ignored. Throws `ArgumentError` when the rest is not valid
+base64 — a character outside `A-Z`, `a-z`, `0-9`, `+` and `/` (whitespace inside it
+included), or `=` padding anywhere but at its end or more than its last group lacks — for a
+delivery that reaches the signature check: that is a misconfiguration of this endpoint, and
+reporting it as an unverified signature would silently drop every webhook. A `false` return
+therefore always means the message failed verification.
 """
 function verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds::Real=300)
     !isnan(tolerance_seconds) && tolerance_seconds >= 0 || throw(ArgumentError(
@@ -89,7 +89,11 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
         # the replay window. Reject it as the malformed message it is.
         (isnothing(ts) || !isfinite(ts) || abs(time() - ts) > tolerance_seconds) && return false
     end
-    sec = startswith(secret, "whsec_") ? secret[7:end] : secret
+    # Whitespace around the secret — the line break a file or an env file ends it with — is
+    # no part of it, and every decoder that accepts it yields the intended key (OpenAI's SDKs
+    # decode with Python's non-validating `b64decode` and Node's `Buffer.from`, which skip it).
+    trimmed = strip(secret)
+    sec = startswith(trimmed, "whsec_") ? trimmed[7:end] : trimmed
     # A secret that is not base64 is a configuration error on this side, not a forged
     # message. Returning false here would silently reject every inbound webhook forever,
     # indistinguishable from an attacker's bad signature.

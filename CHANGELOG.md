@@ -69,9 +69,11 @@
   prefix is now checked before it is decoded: `A-Z`, `a-z`, `0-9`, `+` and `/` only, then at most
   the `=` padding its last group lacks (a last group of two or three characters may come
   unpadded), as RFC 4648 reads base64: "Implementations MUST reject the encoded data if it
-  contains characters outside the base alphabet". Whitespace counts as such a character, so a
-  secret with a trailing line break, which decoded to the right key before, is refused too.
-  Upgrading: pass the secret without surrounding whitespace (`strip` one read from a file).
+  contains characters outside the base alphabet". Whitespace around the secret, such as the line
+  break a file ends it with, is ignored, as `base64decode` ignored it. Whitespace or another such
+  character inside the secret, which `base64decode` skipped too, so that such a secret could
+  still decode to the right key, now throws. Upgrading: remove anything but the base64 text from
+  inside the secret, such as the line break of a wrapped paste.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

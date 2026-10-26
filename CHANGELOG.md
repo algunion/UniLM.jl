@@ -308,6 +308,13 @@
   of text and image parts, but refused the same items in a tuple, as an image "nested in JSON",
   while TypeSafe and Ollama take a tuple as they take the vector. A tuple is now sent as the
   vector is.
+- **A tuple is guidance, as it is a state.** A tuple given as a question's instructions, an
+  option's description, a Score level or a Noul criterion was an `ArgumentError` when the
+  question was built, though a tuple state, and a tuple nested in guidance, are written as JSON
+  arrays. `SystemOneEntry` now holds `Tuple`, so a tuple stands wherever an array does and every
+  backend takes it as the vector of its items: TypeSafe writes it as an array, Ollama takes it
+  as array instructions, and OpenAI's Decisions API refuses it where it refuses a vector, in
+  guidance that must be a string.
 
 ## 0.26.0
 

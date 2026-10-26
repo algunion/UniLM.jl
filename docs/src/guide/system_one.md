@@ -189,8 +189,8 @@ high value means yes.
 
 Guidance — `instructions`, a Choice option's description, a Score level, a
 Noul's `yes` and `no` — is a string to start with. The question constructors also
-take an object (a `NamedTuple` or a `Dict`), a vector — a tuple only inside an
-object or a vector — or an image wherever guidance appears, so that two options that keep getting confused can each say
+take an object (a `NamedTuple` or a `Dict`), a vector or a tuple, or an image
+wherever guidance appears, so that two options that keep getting confused can each say
 what they cover, what they do not, and a few examples. Not every provider's API
 has room for structure, or for every guidance field: a wrapper refuses what its
 provider cannot carry, before anything is sent, rather than send a question you

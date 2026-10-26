@@ -142,7 +142,7 @@ function _ollama_instructions(name::String, instructions)::Nothing
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
         "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks " *
         "(most local decision models require instructions)"))
-    instructions isa Union{AbstractString,AbstractDict,AbstractVector,NamedTuple} || throw(ArgumentError(
+    instructions isa Union{AbstractString,AbstractDict,AbstractVector,Tuple,NamedTuple} || throw(ArgumentError(
         "Ollama reads `instructions` as a string, object or array; $(repr(name)) has $(typeof(instructions))"))
     nothing
 end

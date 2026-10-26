@@ -20,16 +20,17 @@
     SystemOneEntry
 
 What may stand wherever a piece of guidance appears (`instructions`, a Choice
-option description, a Score level, a Noul criterion): a string, a JSON object,
-a JSON array, or an [`ImageAttachment`](@ref) — an image is carried only by a
-backend whose wrapper sends images, and refused before any request by the
-others. Numbers and booleans are not entries: the model reads words, and a bare
-number carries none. No backend sends a [`DocumentAttachment`](@ref), and only
-OpenAI's Decisions API an image's detail level: a document anywhere in a request,
-or an image with a detail level its backend does not send, is an `ArgumentError`
-before any request.
+option description, a Score level, a Noul criterion): a string, a JSON object
+(a `NamedTuple` too), a JSON array — a vector or a tuple, which every backend
+takes as the vector of its items, as it takes a state — or an
+[`ImageAttachment`](@ref) — an image is carried only by a backend whose wrapper
+sends images, and refused before any request by the others. Numbers and booleans
+are not entries: the model reads words, and a bare number carries none. No
+backend sends a [`DocumentAttachment`](@ref), and only OpenAI's Decisions API an
+image's detail level: a document anywhere in a request, or an image with a detail
+level its backend does not send, is an `ArgumentError` before any request.
 """
-const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple, ImageAttachment}
+const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple, ImageAttachment}
 
 """
     SystemOneQuestion
@@ -419,8 +420,9 @@ JSON.lower(q::RawQuestion) = q.fields
 """
     SystemOneState
 
-What `state` may be: a string, a JSON object, a JSON array (a `Tuple` and a
-`NamedTuple` serialize as those), or an [`ImageAttachment`](@ref) — images,
+What `state` may be: a string, a JSON object (a `NamedTuple` too), a JSON array
+— a vector or a tuple, which every backend takes as the vector of its items, as
+it takes a piece of guidance — or an [`ImageAttachment`](@ref) — images,
 here or nested anywhere in the content, are carried only by a backend whose
 wrapper sends them, and with a detail level only by OpenAI's Decisions API. A
 [`DocumentAttachment`](@ref) is no state, and one nested in the content is an

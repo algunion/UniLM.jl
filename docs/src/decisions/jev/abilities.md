@@ -200,8 +200,8 @@ for every call inside that names no backend and no options of its own.
 ## [Structured guidance](@id jev_structured)
 
 Wherever guidance appears — a question's `instructions`, a Choice option's description, a Score level, a Noul's
-`yes` and `no` — Jev takes a string, an object (a `NamedTuple` or a `Dict`), an array (a vector; a tuple only
-inside an object or an array, where it is written as an array), or an image, nested up to the limit ([Limits and refusals](@ref jev_limits);
+`yes` and `no` — Jev takes a string, an object (a `NamedTuple` or a `Dict`), an array (a vector or a tuple), or an
+image, nested up to the limit ([Limits and refusals](@ref jev_limits);
 [Advanced: structure](https://docs.typesafe.ai/primitives/advanced)). Start with strings. When two options keep
 getting confused, give each what it covers, what it does not, and a few examples:
 

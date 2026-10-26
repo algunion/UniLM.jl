@@ -610,6 +610,28 @@ end
     @test contains(refused[5].msg, "at least one option")
 end
 
+@testset "System One — a tuple is taken as a vector is, in guidance as in the state" begin
+    # Instructions, an option's description, a Score level and a Noul criterion: the System One JSON
+    # form writes a tuple as the array its vector writes, as it writes a tuple state.
+    form(state, q) = JSON.json(UniLM._system_one_json(SystemOneRequest(state, "q" => q), "m"))
+    @test form("s", noul(("Is it", "red?"))) == form("s", noul(["Is it", "red?"]))
+    @test form("s", noul("Is it?"; yes=("red", "round"))) == form("s", noul("Is it?"; yes=["red", "round"]))
+    @test form("s", choice("Which?", ["a" => ("x", "y"), "b" => nothing])) ==
+          form("s", choice("Which?", ["a" => ["x", "y"], "b" => nothing]))
+    @test form("s", score("How?", ["low", ("high", "urgent")])) == form("s", score("How?", ["low", ["high", "urgent"]]))
+    @test form(("a", "b"), noul("Is it?")) == form(["a", "b"], noul("Is it?"))
+    # Each backend sends the tuple as the vector: Ollama's array instructions, and OpenAI's refusal of
+    # instructions that are not a string.
+    ollama = OllamaEndpoint(base_url="http://box:11434")
+    enc(p, ep, q) = UniLM.encode_system_one(p, ep, SystemOneRequest("s", "q" => q; model="m")).body
+    @test enc(UniLM.OllamaSystemOneProtocol(), ollama, noul(("Is it", "red?"))) ==
+          enc(UniLM.OllamaSystemOneProtocol(), ollama, noul(["Is it", "red?"]))
+    @test enc(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, choice("Which?", ["a" => ("x", "y"), "b" => nothing])) ==
+          enc(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, choice("Which?", ["a" => ["x", "y"], "b" => nothing]))
+    e = _s1_caught(() -> enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(("Is it", "red?"))))
+    @test e isa ArgumentError && contains(e.msg, "its `instructions` must be a string, not Tuple{String, String}")
+end
+
 @testset "System One — malformed local input is an ArgumentError before any I/O" begin
     q = noul("Is it?")
     table = (refund = "the customer wants a refund", other = "anything else")

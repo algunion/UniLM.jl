@@ -235,9 +235,15 @@ end
         with_system_one(() -> list_models(; config=_ML_CFG), OPENAIServiceEndpoint)
     end
     @test r isa ModelListCallError && occursin("OPENAI_API_KEY", r.error)
-    # An endpoint with no listing of its own, whose System One protocol has none, is refused.
-    for service in (GEMINIOpenAIServiceEndpoint, AZUREServiceEndpoint)
-        @test_throws ArgumentError list_models(; service)
+    # An endpoint with no listing of its own, whose System One protocol has none, is refused by its own
+    # name, in words that name no other provider's listing.
+    for (service, name) in (GEMINIOpenAIServiceEndpoint => "GEMINIOpenAIServiceEndpoint",
+                            AZUREServiceEndpoint => "AZUREServiceEndpoint", DeepSeekEndpoint() => "DeepSeekEndpoint",
+                            GenericOpenAIEndpoint("http://127.0.0.1:9/v1", "") => "GenericOpenAIEndpoint",
+                            MistralEndpoint() => "GenericOpenAIEndpoint")
+        e = try list_models(; service); nothing catch x; x end
+        @test e isa ArgumentError && startswith(e.msg, "Model listing is not supported by $name") &&
+              !occursin("TypeSafe", e.msg)
     end
 end
 

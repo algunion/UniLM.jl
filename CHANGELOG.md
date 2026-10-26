@@ -278,6 +278,13 @@
   no status for the rejection. `respond`'s named OpenAI's Responses API as its one target, and
   the keyword `chatrequest!`'s listed `config` and `cancel` among the `Chat` fields. No behaviour
   changes.
+- **`list_models` on an endpoint without a listing names that endpoint alone.** An endpoint with
+  no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
+  `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a
+  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) or an endpoint type of your own that
+  declares no `:models` threw "TypeSafe models listing is not supported by …", naming a provider
+  the call had nothing to do with. The `ArgumentError` now reads "Model listing is not supported
+  by" the endpoint, then lists its capabilities, as before.
 
 ## 0.26.0
 

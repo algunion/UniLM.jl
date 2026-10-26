@@ -361,6 +361,10 @@
   with a tuple of options throws an `ArgumentError` that names the forms it takes. `score` now
   throws an `ArgumentError`, "Score `levels` must be a vector of levels, lowest first", for a
   tuple or any other container, and for a call that gives instructions alone.
+- **`Respond`'s docstring states its constructor's checks of `max_output_tokens` and
+  `top_logprobs`.** The constructor throws `ArgumentError` for a `max_output_tokens` below 1 and a
+  `top_logprobs` outside 0 to 20, the range OpenAI's reference gives ("An integer between 0 and
+  20"); the docstring stated neither and did not list `top_logprobs`. No behaviour changes.
 
 ## 0.26.0
 

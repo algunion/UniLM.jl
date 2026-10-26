@@ -292,6 +292,7 @@ names meets only the other rules.
 | a `function_call_output` item without a `name` | `Gemini function_result requires a name` | `tool_result(call_id, name, output)` |
 | an image request's `size`, `quality`, `background`, `output_format`, `output_compression` or `moderation`, or an edit's `mask` or `input_fidelity` | `Gemini image generation does not take`, `Gemini image editing does not take` | `aspect_ratio` and `resolution` ([Image generation](@ref gemini_images)) |
 | an image request's `n` other than 1 | `Gemini returns one image per request` | one request per image |
+| an edit's image path that is no file | `image not found:` | the path of the file |
 | an `aspect_ratio` or a `resolution` outside Gemini's lists, or a resolution the model does not render | `Gemini aspect_ratio must be one of`, `must be one of` | a value the [Image generation](@ref gemini_images) section lists |
 | `speak` with a blank `voice`, any `speed`, a `response_format` other than `"wav"` and `"pcm"`, or an empty input | `Gemini TTS takes a voice by name or id`, `has no speed control`, `response_format must be "wav"`, `speak needs text to read`: Gemini TTS has these formats, and no speed | a voice's name or id, the pace in `instructions`, `"wav"` or `"pcm"`, some text ([Audio](@ref gemini_audio)) |
 | an `EmbeddingInput` with an image or a sound clip, on `GEMINIOpenAIServiceEndpoint` | `takes text only`: the compatible wire carries text | the text alone ([Embeddings](@ref gemini_embeddings)) |

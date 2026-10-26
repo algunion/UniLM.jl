@@ -487,6 +487,24 @@ end
 
 using Base64
 
+@testset "edit_image refuses an input image or mask that is no file before anything is sent" begin
+    # As upload_file, transcribe and translate refuse a path that is no file.
+    png = tempname() * ".png"
+    write(png, UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    try
+        for (call, words) in ((() -> edit_image("/no/such/image.png", "p"; service=URLProbe, model="m"), "image not found"),
+                              (() -> edit_image([png, "/no/such/b.png"], "p"; service=URLProbe, model="m"), "image not found"),
+                              (() -> edit_image(png, "p"; mask="/no/such/mask.png", service=URLProbe, model="m"), "mask not found"))
+            err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+                try call(); nothing catch e; e end
+            end
+            @test err isa ArgumentError && occursin(words, err.msg) && isempty(seen)
+        end
+    finally
+        rm(png; force=true)
+    end
+end
+
 @testset "save_image decodes before it opens the destination" begin
     # `open(path, "w")` truncates on entry, so decoding inside the block meant a
     # malformed payload destroyed whatever already lived there and left a 0-byte
@@ -780,11 +798,11 @@ UniLM._image_reply(::Type{GeminiImagesHere}, resp::HTTP.Response) = UniLM._image
                 generate_image("a red circle"; service=GeminiImagesHere, config=one)
             end
             @test r isa ImageCallError && occursin("IMAGE_SAFETY", r.error) && isnothing(r.status)
-            # A missing input image is the call's error, as on OpenAI, and nothing is sent.
+            # A missing input image is refused before anything is sent, as on OpenAI.
             missing_input, none = _with_scripted((_, _) -> _json(200, ok)) do
-                edit_image("/no/such/image.png", "p"; service=GeminiImagesHere, config=one)
+                _refusal(() -> edit_image("/no/such/image.png", "p"; service=GeminiImagesHere, config=one))
             end
-            @test missing_input isa ImageCallError && occursin("image not found", missing_input.error) && isempty(none)
+            @test missing_input isa ArgumentError && occursin("image not found", missing_input.msg) && isempty(none)
             # Refused before any request: OpenAI-only fields, a size Nano Banana 2.1 does not render.
             thrown, none = _with_scripted((_, _) -> _json(200, ok)) do
                 map(_refusal, (() -> generate_image("p"; service=GeminiImagesHere, quality="high"),

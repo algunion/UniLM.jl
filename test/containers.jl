@@ -12,6 +12,14 @@
     end
 end
 
+@testset "add_container_file refuses a path that is no file before anything is sent, as upload_file does" begin
+    err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        try add_container_file("cntr_1", "/no/such/file.csv"; service=URLProbe); nothing catch e; e end
+    end
+    @test err isa ArgumentError && err.msg == "file not found: /no/such/file.csv" && isempty(seen)
+    @test_throws ArgumentError upload_file("/no/such/file.csv", "user_data"; service=URLProbe)
+end
+
 @testset "add_container_file decodes the container-file object it gets back" begin
     path, io = mktemp()
     write(io, "x")

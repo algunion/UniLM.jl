@@ -440,11 +440,11 @@ end
 Edit/extend image(s) under a text prompt — on OpenAI's Images API, or on Gemini's
 `generateContent` for `service=GEMINIServiceEndpoint`. Returns the same
 `ImageSuccess`/`ImageFailure`/`ImageCallError` shapes as [`generate_image`](@ref), and a
-Gemini reply decodes the same way. An input image or mask that is not a readable file is
-an `ImageCallError`.
+Gemini reply decodes the same way.
 
 Throws `ArgumentError` before any network I/O when `e.service` declares its capabilities
-without `:image_edits`, when `e.image` is an empty vector, and when the request sets a
+without `:image_edits`, when `e.image` is an empty vector, when an input image or the mask
+is no file (as [`upload_file`](@ref) and [`transcribe`](@ref) refuse one), and when the request sets a
 field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, or a `safety_identifier` outside its provider's rule (see
 [`ImageEdit`](@ref)). Other OpenAI values are sent as given.
@@ -462,6 +462,7 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
     e.image isa Vector && isempty(e.image) && throw(ArgumentError(
         "an image edit needs at least one input image, and `image` is an empty vector: pass a path or a vector of paths"))
     _check_image_request(e.service, e)
+    _check_edit_files(e)
     _image_call(e.service, e, config, cancel)
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
@@ -478,8 +479,8 @@ edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
 
 const _ImageRequest = Union{ImageGeneration,ImageEdit}
 
-# Build, send through the retry seam, decode a 200. Whatever fails from here on, a
-# missing input file included, is the call's result (an ImageCallError), not a throw.
+# Build, send through the retry seam, decode a 200. Whatever fails from here on is the
+# call's result (an ImageCallError), not a throw.
 function _image_call(service, r::_ImageRequest, config::Union{Nothing,RequestConfig},
                      cancel::Union{Nothing,CancelToken})
     cfg = _resolve_config(config)
@@ -502,13 +503,19 @@ end
 _set_image_fields(r::_ImageRequest, fields)::Vector{String} =
     String[String(f) for f in fields if !isnothing(getfield(r, f))]
 
-# An edit's input paths. Validate up front: a missing file is the caller's error, reported
-# before any wire attempt rather than once per attempt from inside the retry loop.
+# An edit's input paths, each a file: a missing one is the caller's error, which `edit_image`
+# reports before any request (`_check_edit_files`), as `upload_file` and `transcribe` do.
 function _edit_images(e::ImageEdit)::Vector{String}
     images = e.image isa String ? [e.image] : e.image
     absent = findfirst(!isfile, images)
     isnothing(absent) || throw(ArgumentError("image not found: $(images[absent])"))
     images
+end
+
+function _check_edit_files(e::ImageEdit)::Nothing
+    _edit_images(e)
+    isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
+    nothing
 end
 
 # ── OpenAI Images API (the default) ──
@@ -536,7 +543,6 @@ function _image_request(service, e::ImageEdit)
     model = isempty(e.model) ? something(default_image_model(service), "") : e.model
     isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(service))"))
     images = _edit_images(e)
-    isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
     # A Form is consumed by the attempt that sends it, so the retry loop gets a
     # factory: every attempt re-reads the images into its own multipart body.
     body = _BodyFactory() do

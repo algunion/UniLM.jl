@@ -78,9 +78,9 @@ transparent area marks what to change: "The image to edit and mask must be of th
 size (less than 50MB in size)", and "The mask image must also contain an alpha channel"
 ([image generation](https://developers.openai.com/api/docs/guides/image-generation#mask-requirements)).
 `input_fidelity` is sent as given; OpenAI's reference documents it for `gpt-image-1.5` and
-`gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". UniLM reads the files as it
-sends the request, so a path that is no file makes the result an [`ImageCallError`](@ref), not a
-throw.
+`gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". An image or mask path that is no
+file is refused before anything is sent, as `upload_file` and `transcribe` refuse one
+([Limits and refusals](@ref openai_media_limits)).
 
 [`token_usage`](@ref) reads the reply's usage: the prompt's text tokens, and an edit's input image
 too, as input — 640 image and 26 text tokens in the edit above, by the `input_tokens_details` of its
@@ -331,6 +331,7 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | `aspect_ratio` or `resolution` on an image request | `the OpenAI Images API has no`: OpenAI sizes an image with one `WIDTHxHEIGHT`; those fields are Gemini's | `size="WIDTHxHEIGHT"` |
 | a `safety_identifier` of no character or of more than 128 on an image request | `the OpenAI Images API takes a safety_identifier of 1 to 128 characters`: OpenAI reads an empty one as none, and its guide keeps it to 128 | a hash of your user's id: a SHA-256 hex digest is 64 characters |
 | `edit_image` with an empty vector of images | `an image edit needs at least one input image` | a path, or a vector of paths |
+| `edit_image` with an image or a `mask` path that is no file | `image not found:`, `mask not found:` | the path of the file |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |
 | a `voice` that is not one of the ten built-in voices, a custom voice among them | `OpenAI Realtime voices are`: UniLM sends the built-in voices only | one of them |
 | a `speak` `response_format` other than `"wav"` and `"pcm"` | `response_format must be "wav"`: the session's audio is 24 kHz PCM, which UniLM returns as a WAV file or as samples | `"wav"` or `"pcm"` |

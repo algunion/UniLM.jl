@@ -12,6 +12,13 @@
   own message, no longer meets it. A `Respond`, whose `input_text(text; cache_breakpoint=true)`
   marks a breakpoint, keeps explicit mode. Upgrading: use `mode="implicit"` or leave `mode` unset,
   or send a `Respond` that marks its breakpoints.
+- **`add_container_file` and `edit_image` refuse a path that is no file before sending, as `upload_file`,
+  `transcribe` and `translate` do.** A missing local file threw an `ArgumentError` (`file not found:`)
+  from those three before any request, but `add_container_file` returned a `ContainerCallError`, and
+  `edit_image` an `ImageCallError` for a missing image or mask. Both now throw the `ArgumentError`
+  (`file not found:`; `image not found:`, `mask not found:`) before any request, on Gemini's edits too.
+  Upgrading: code that checked for that call error checks the path first, or catches the
+  `ArgumentError`.
 
 ### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`

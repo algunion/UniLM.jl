@@ -292,8 +292,8 @@ any files you may need from the container while it is active"
 container it makes has OpenAI's default, `"1g"`; [`retrieve_container`](@ref),
 [`list_containers`](@ref) and [`delete_container`](@ref) read, list and delete containers, and
 [`add_container_file`](@ref)`(id, path)` uploads a file into one, returning a `ContainerSuccess`
-whose `response` is the file's record, its `path` where the code sees it. UniLM reads the local
-file as it sends, so a path that is no file makes the result a `ContainerCallError`. It does not
+whose `response` is the file's record, its `path` where the code sees it; a path that is no file is
+refused before anything is sent ([Limits and refusals](@ref openai_platform_limits)). It does not
 wrap the endpoints that list, read or delete the files in a container. A container bills "1 GB
 \$0.03, 4 GB \$0.12, 16 GB \$0.48, 64 GB \$1.92 per 20-minute session per container"
 ([pricing](https://developers.openai.com/api/docs/pricing#built-in-tools)), which
@@ -598,7 +598,7 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a platform verb on an endpoint that declares its capabilities without the verb's | `is not supported by`: the endpoint has no such API | `OPENAIServiceEndpoint` |
-| `upload_file` with a path that is no file | `file not found:` | the path of the file |
+| `upload_file` or `add_container_file` with a path that is no file | `file not found:` | the path of the file |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
 | a `poll_batch` or `poll_file_batch` `interval` that is not a finite number above 0 | `interval must be a finite number of seconds > 0` | a pause in seconds |

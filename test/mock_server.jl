@@ -564,8 +564,8 @@ try
         @test r isa ImageSuccess
         @test image_data(r) == ["EDITED"]
         rm(img)
-        # missing file is caught inside the request → ImageCallError
-        @test edit_image("/no/such.png", "x"; service=MockServiceEndpoint) isa ImageCallError
+        # a missing file is refused before anything is sent, as upload_file refuses one
+        @test_throws ArgumentError edit_image("/no/such.png", "x"; service=MockServiceEndpoint)
         set_error!(400, "bad")
         img2 = tempname() * ".png"
         write(img2, "fakepng")

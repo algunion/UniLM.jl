@@ -151,15 +151,16 @@ end
     add_container_file(container_id, path; service=OPENAIServiceEndpoint)  (multipart upload)
 
 Upload the file at `path` into the container. A success is a `ContainerSuccess` whose
-`response` is the created [`ContainerFileObject`](@ref).
+`response` is the created [`ContainerFileObject`](@ref). A `path` that is no file throws
+`ArgumentError` before any request, as in [`upload_file`](@ref).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    isfile(path) || throw(ArgumentError("file not found: $path"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        isfile(path) || throw(ArgumentError("file not found: $path"))
         form = HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
         url = _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(container_id) * "/files"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))

@@ -2091,7 +2091,10 @@ that declares its capabilities and does not list `:chat` (a custom endpoint decl
 none and is dispatched unvalidated), or when the provider's encoder rejects the
 request (e.g. an option the provider or model does not support);
 `InvalidConversationError` when `chat.history` is on and the conversation ends with an
-assistant message, so the reply could not be appended.
+assistant message, so the reply could not be appended; and the `MethodError` of a
+seam method the endpoint type lacks — [`encode_request`](@ref), and on a stream
+[`handle_sse_event!`](@ref), whose missing method would otherwise drop every payload
+of the reply.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
@@ -2101,6 +2104,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)
+    chat.stream === true && _require_stream_handler(chat.service)
     cfg = _resolve_config(config, _model_default_config(chat.service, chat.model))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()

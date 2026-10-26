@@ -786,6 +786,45 @@ end
     end
 end
 
+# An endpoint of the caller's own that implements its wire's encoders and decoders but no stream
+# handler: the chat seam's `handle_sse_event!`, the agentic seam's `decode_agentic_stream`.
+struct _NoStreamHandler <: UniLM.ServiceEndpoint end
+UniLM.get_url(::_NoStreamHandler, ::Chat) = _url_probe_base[] * "/v1/chat/completions"
+UniLM.get_url(::_NoStreamHandler, ::Respond) = _url_probe_base[] * "/v1/responses"
+UniLM.auth_header(::_NoStreamHandler) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::_NoStreamHandler, chat::Chat) = JSON.json(chat)
+UniLM.decode_response(::_NoStreamHandler, resp::HTTP.Response) = UniLM.extract_message(resp)
+UniLM.encode_agentic(::_NoStreamHandler, r::Respond) = JSON.json(r)
+UniLM.decode_agentic(::_NoStreamHandler, resp::HTTP.Response) = UniLM.parse_response(resp)
+
+@testset "a missing stream handler is refused before anything is sent, on both seams" begin
+    sse(lines...) = HTTP.Response(200, ["Content-Type" => "text/event-stream"],
+                                  Vector{UInt8}(join(("data: " * l * "\n\n" for l in lines))))
+    chat = Chat(service=_NoStreamHandler(), model="m", stream=true,
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    err, seen = _with_scripted((_, _) -> sse("{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}",
+                                             "[DONE]")) do
+        try chatrequest!(chat) catch e; e end
+    end
+    @test err isa MethodError && err.f === UniLM.handle_sse_event! && isempty(seen)
+    @test occursin("handle_sse_event!(::$(_NoStreamHandler)", sprint(showerror, err))
+    @test length(chat) == 2
+    r = Respond(service=_NoStreamHandler(), model="m", input="hi", stream=true)
+    err, seen = _with_scripted((_, _) -> sse("{\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}")) do
+        try respond(r) catch e; e end
+    end
+    @test err isa MethodError && err.f === UniLM.decode_agentic_stream && isempty(seen)
+    @test occursin("decode_agentic_stream(::$(_NoStreamHandler)", sprint(showerror, err))
+    # Every built-in endpoint has its handlers: none is refused.
+    for s in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, GEMINIServiceEndpoint,
+              ANTHROPICServiceEndpoint(), DeepSeekEndpoint(api_key="k"), MistralEndpoint(), OllamaEndpoint())
+        @test isnothing(UniLM._require_stream_handler(s))
+    end
+    for s in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:1", ""), OllamaEndpoint())
+        @test isnothing(UniLM._require_agentic_stream_decoder(s))
+    end
+end
+
 # ─── Driver: cancellation, stops, time in user code, user-code failures ─────────
 
 # SSE server on an OS-assigned port. After reading the request it answers `status`

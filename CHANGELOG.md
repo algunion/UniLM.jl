@@ -334,6 +334,13 @@
   the final message, which the same reply unstreamed kept. A list is now read chunk by chunk:
   its text chunks reach the callback and the message in order, and its thinking chunks are kept
   apart as the turn's reasoning (`ProviderContent(:mistral, …)`), which `reasoning_text` reads.
+- **A streamed call on an endpoint type without a stream handler is refused before it is sent, alike
+  on both stream seams.** On a `ServiceEndpoint` subtype with no `handle_sse_event!` method, a
+  streamed `chatrequest!` was sent and every payload of the reply dropped as undecodable, so the
+  call ended as an `LLMFailure` with status 200 that did not name the cause; on one with no
+  `decode_agentic_stream` method, a streamed `respond` was sent and returned a `ResponseCallError`
+  holding the `MethodError`. Both now throw the missing method's `MethodError` before anything is
+  sent, as a missing `encode_request` does.
 
 ## 0.26.0
 

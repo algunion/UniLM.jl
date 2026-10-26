@@ -112,15 +112,30 @@ once per complete `data:` payload, with the current SSE event name. Mutates
   payload in `state.error` (the driver then returns a non-success result).
 Text deltas are appended to BOTH `state.content` and `state.pending_delta`
 (the driver forwards the latter to the streaming callback). Throwing on an
-undecodable payload is safe: the dispatcher logs, counts, and drops the line.
+undecodable payload is safe: the dispatcher logs the payload, counts it in the
+result's `sse_dropped` and drops it, the rest of the stream is read, and a stream
+that ends without its turn is an `LLMFailure`.
 The `OpenAIWireEndpoint` default reads OpenAI Chat Completions chunks and ends at
 `[DONE]`; a provider without a sentinel (native Gemini) never returns `:done`, and
 its stream ends at EOF with `state.finish_reason` recorded.
 
 Public extension API (not exported): a backend adds a method for its own service
-type (dispatch is on the first argument); see the Custom Backends guide.
+type (dispatch is on the first argument); see the Custom Backends guide. A streamed
+[`chatrequest!`](@ref) on an endpoint with no method throws the `MethodError` for this
+function before anything is sent, as a missing [`encode_request`](@ref) does, and so does
+a streamed [`respond`](@ref) on one with no [`decode_agentic_stream`](@ref).
 """
 function handle_sse_event! end
+
+# The stream handler a streamed Chat reads its reply with, checked before anything is sent. The
+# dispatcher drops a payload whose handler throws, so on an endpoint without one every payload of
+# a paid reply would be dropped as undecodable: it is refused with the `MethodError` the handler's
+# call raises, as an endpoint without an encoder is.
+function _require_stream_handler(service)::Nothing
+    hasmethod(handle_sse_event!, Tuple{Core.Typeof(service),String,SubString{String},StreamState}) ||
+        throw(MethodError(handle_sse_event!, (service, "", SubString(""), StreamState())))
+    nothing
+end
 
 # How a provider frames its stream into (event, payload) pairs: SSE for every
 # built-in wire but Ollama's, whose lines are each one JSON payload (src/ollama.jl).

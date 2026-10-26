@@ -353,9 +353,10 @@ the request id is the `x-request-id` header. A recording
 ([`with_recorded_answers`](@ref)) is keyed without the three options, and holds
 each image as the SHA-256 of its base64 text, `data:<mime>;sha256,<hex>`, never
 its bytes. [`estimated_cost`](@ref) charges what the guide
-prices: input tokens only — \$0.10 per million, the `gpt-6-luna` row's input rate —
-cached and cache-written ones at the full input rate, twice that rate for a
-request of more than 272K input tokens.
+prices: input tokens only — \$0.10 per million uncached, the `gpt-6-luna` row's
+input rate; cache reads at its cached rate, \$0.01, and cache writes at OpenAI's
+write rates, \$0.125 per million (\$0.25 for a 12-hour lifetime) — every rate
+twice for a request of more than 272K input tokens.
 
 The calls are bounded as TypeSafe's are (60 s per attempt, 150 s in all, while
 you set no `RequestConfig` of your own), and [`ask_each`](@ref) keeps 16 of them in

@@ -339,12 +339,12 @@ u = token_usage(r)
 ```
 
 `prompt_tokens` is OpenAI's `input_tokens`, which includes the cached and the cache-written ones, `cached_tokens`
-its `cached_tokens` and `cache_write_tokens` its `cache_write_tokens`. [`estimated_cost`](@ref) prices every input
-token at the model's input rate, twice that rate for a request of more than 272K input tokens, and no output; it
-adds no regional premium, which a response does not show. It does not apply the caching rates OpenAI's guide now
-names, so for a request that reads or writes OpenAI's cache the estimate and the bill differ; a request whose shared
-input is under the 1,024 tokens caching needs, such as the one above, reads and writes no cache. Totals across calls
-and prices of your own are on [Cost Tracking](@ref cost_guide).
+its `cached_tokens` and `cache_write_tokens` its `cache_write_tokens`. [`estimated_cost`](@ref) prices them as the
+guide does: the uncached input at the model's input rate, the cache reads at its cached-input rate, the cache writes
+at its write rate — a 12-hour write, counted in `cache_write_extended_tokens`, at its own — every rate twice for a
+request of more than 272K input tokens, and no output; it adds no regional premium, which a response does not show.
+A request whose shared input is under the 1,024 tokens caching needs, such as the one above, reads and writes no
+cache. Totals across calls and prices of your own are on [Cost Tracking](@ref cost_guide).
 
 ## [Testing and recordings](@id openai_decisions_testing)
 

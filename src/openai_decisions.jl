@@ -64,8 +64,11 @@ one; `request_id` is the
 without the three options, which change how a request is served but never what it
 is answered, and with each image as the SHA-256 of its base64 text, never its
 bytes. [`estimated_cost`](@ref) bills what OpenAI
-bills: every input token, cached and cache-written ones included, at the model's
-input rate, twice that for a request of more than 272K input tokens, and no output.
+bills: the input tokens alone, and no output — uncached ones at the model's input
+rate, cache reads at its cached-input rate, and cache writes and a request of more
+than 272K input tokens at the surcharges OpenAI lists for the model (`gpt-6-luna`:
+a write at 1.25 times the input rate, 2.5 times for a 12-hour lifetime, and every
+rate twice above 272K).
 
 Public extension API (not exported).
 """
@@ -475,19 +478,23 @@ end
 # ─── Cost ────────────────────────────────────────────────────────────────────
 
 # A Decisions call is billed for its input tokens only — the guide's "Pricing and
-# availability": "no cache-read, cache-write, or output-token charges", and "These rates
-# apply to /v1/decisions" rather than the processing-tier prices of other gpt-6-luna
-# requests — so OpenAI's billing (`_billed_cost`) is given every input token, cached or
-# written, as fresh input, with no output and no tier; OpenAI's cost method applies
-# gpt-6-luna's long-context rate (twice the input rate above 272K input tokens). A
-# regional-processing premium is not visible in a response, and is not added.
+# availability": "Prompt cache hits receive discounted input pricing; cache writes are
+# charged. Cache-read and cache-write rates match the standard `gpt-6-luna` prompt caching
+# rates. Output tokens are not charged", and "These rates apply to /v1/decisions" rather
+# than the processing-tier prices of other gpt-6-luna requests — so OpenAI's billing
+# (`_billed_cost`) is given the input tokens with their cache reads and writes, with no
+# output and no tier: it bills cache reads at the row's cached rate, writes at 1.25× the
+# input rate (2.5× for 12 hours), and a request over 272K input tokens at twice each rate
+# ("long-context input pricing multipliers apply"). A regional-processing premium is not
+# visible in a response, and is not added.
 
 function _system_one_cost(::OpenAIDecisionsProtocol, result::SystemOneSuccess, model::Union{Nothing,String},
                           pricing::AbstractDict{String,PriceRow})::Float64
     priced = something(model, result.response.model)
     rates = _price_row(pricing, priced)
     isnothing(rates) && return 0.0
-    n = token_usage(result).prompt_tokens
-    billed = TokenUsage(prompt_tokens=n, total_tokens=n)
+    u = token_usage(result)
+    billed = TokenUsage(prompt_tokens=u.prompt_tokens, total_tokens=u.prompt_tokens, cached_tokens=u.cached_tokens,
+                        cache_write_tokens=u.cache_write_tokens, cache_write_extended_tokens=u.cache_write_extended_tokens)
     _billed_cost(OPENAIServiceEndpoint, priced, billed, rates)
 end

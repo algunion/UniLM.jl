@@ -143,7 +143,7 @@ checked again on each upgrade. Each has a fallback, which a protocol that define
 | `_system_one_default_config(p, service)` | `nothing`: the [`RequestConfig`](@ref) field defaults, 600 s per attempt and 900 s in all | TypeSafe and OpenAI: 60 s per attempt, 150 s in all |
 | `_system_one_retry_header(p)` | `nothing`: retries carry no count | TypeSafe: `X-TypeSafe-Retry-Count` |
 | `_system_one_concurrency(p, service)` | 8: the requests [`ask_each`](@ref) keeps in flight when its `ntasks` names none | TypeSafe and OpenAI: 16; Ollama: 1 |
-| `_system_one_cost(p, result, model, pricing)` | input, cached input and output tokens at the model's row of the price table | OpenAI: every input token at the input rate, and no output |
+| `_system_one_cost(p, result, model, pricing)` | input, cached input and output tokens at the model's row of the price table | OpenAI: the input tokens alone, cache reads and writes at OpenAI's caching rates, and no output |
 | `_api_base_url(service)` | none for an endpoint of your own: define it, or write the URL into the wire | where the built-in encoders start a request's URL |
 | `_check_request(p, service, request)` | — | called first by each built-in encoder: a blank or repeated question name, criteria that are not valid, a `RawQuestion` the protocol does not allow, a `DocumentAttachment` or an image `detail` |
 | `_check_answers(p, request, response)` | — | called by each built-in decoder: every question answered once, of its kind, within the protocol's tolerance |

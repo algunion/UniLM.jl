@@ -267,6 +267,14 @@
   to 400 questions per request, up from 200 during the public beta" (its guide); a request of
   201 questions was answered on 2026-10-26. Up to 400 are now sent, and more is an
   `ArgumentError` before anything is sent, as more than 200 was.
+- **A Decisions answer's cache reads and writes are priced at OpenAI's caching rates.**
+  `estimated_cost` priced every input token of an answer from OpenAI's Decisions API at the
+  model's input rate, cache reads and writes included, as the public beta's guide had it ("no
+  cache-read, cache-write, or output-token charges"). The guide now says "Prompt cache hits
+  receive discounted input pricing; cache writes are charged", at the standard `gpt-6-luna`
+  caching rates: a cache read now costs the cached-input rate (\$0.01 per 1M tokens) and a
+  cache write the write rate (\$0.125 per 1M, \$0.25 for a 12-hour lifetime), each twice for a
+  request of more than 272K input tokens; output is still not charged.
 
 ## 0.26.0
 

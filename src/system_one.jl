@@ -1696,8 +1696,10 @@ requested, which an answer whose reply drops the tag keeps.
 A backend that bills otherwise is priced its own way: an
 answer from OpenAI's Decisions API
 ([`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol)) costs its input
-tokens alone, cached ones included, at the row's input rate — twice that rate
-above 272K input tokens.
+tokens alone, and no output: the uncached ones at the row's input rate, cache reads
+at its cached-input rate, and cache writes and more than 272K input tokens at the
+surcharges OpenAI lists for the model (`gpt-6-luna`: a write at 1.25 times the input
+rate, 2.5 times for a 12-hour lifetime, and every rate twice above 272K).
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64

@@ -791,33 +791,42 @@ end
 
 # ─── Cost ────────────────────────────────────────────────────────────────────
 
-@testset "OpenAI Decisions — estimated_cost bills input tokens alone, cached ones at the input rate" begin
+@testset "OpenAI Decisions — estimated_cost bills input tokens alone, cache reads and writes at the caching rates" begin
     result(usage; model="gpt-6-luna", service=OPENAIServiceEndpoint) = SystemOneSuccess(SystemOneResponse(
         model, Dict{String,SystemOneAnswer}(), usage, nothing, Dict{String,Any}(), service))
-    rate = DEFAULT_PRICING["gpt-6-luna"].input
-    @test rate == 0.10 / 1_000_000                                   # the guide's $0.10 per 1M input tokens
+    # The guide: uncached input "$0.10 per 1M tokens", cache reads and writes at "the standard
+    # `gpt-6-luna` prompt caching rates" — $0.01 cached, $0.125 per 30-minute and $0.25 per 12-hour
+    # write (the model page and the pricing page) — and output not charged.
+    rate, cached_rate = DEFAULT_PRICING["gpt-6-luna"].input, DEFAULT_PRICING["gpt-6-luna"].cached_input
+    @test rate == 0.10 / 1_000_000 && cached_rate == 0.01 / 1_000_000
+    w30, w12 = 0.125 / 1_000_000, 0.25 / 1_000_000
     plain = result(TokenUsage(prompt_tokens=1000, total_tokens=1000))
     cached = result(TokenUsage(prompt_tokens=1000, cached_tokens=600, completion_tokens=5, total_tokens=1005))
     @test estimated_cost(plain) ≈ 1000 * rate
-    @test estimated_cost(cached) ≈ 1000 * rate                       # no cache discount, no output charge
-    @test UniLM._system_one_cost(_OD, cached, nothing, DEFAULT_PRICING) ≈ 1000 * rate
-    # Cache writes, at either lifetime, are input tokens like the rest: no write premium.
+    @test estimated_cost(cached) ≈ 400 * rate + 600 * cached_rate                # cache reads discounted, no output
+    @test UniLM._system_one_cost(_OD, cached, nothing, DEFAULT_PRICING) ≈ 400 * rate + 600 * cached_rate
+    # Cache writes at their lifetime's rate: 100 for 30 minutes, 400 for 12 hours.
     written = result(TokenUsage(prompt_tokens=1000, cached_tokens=200, cache_write_tokens=500,
                                 cache_write_extended_tokens=400, completion_tokens=3, total_tokens=1003))
-    @test estimated_cost(written) ≈ 1000 * rate
-    @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ 1000 * rate
+    expected = 300 * rate + 200 * cached_rate + 100 * w30 + 400 * w12
+    @test estimated_cost(written) ≈ expected
+    @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ expected
     # Decisions has rates of its own: a tier a reply names prices nothing differently.
     @test estimated_cost(result(TokenUsage(prompt_tokens=1000, total_tokens=1000, service_tier="flex"))) ≈ 1000 * rate
+    @test estimated_cost(result(TokenUsage(prompt_tokens=1000, cached_tokens=600, service_tier="flex"))) ≈
+          400 * rate + 600 * cached_rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_000))) ≈ 272_000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_001))) ≈ 2 * 272_001 * rate   # long context: twice
+    @test estimated_cost(result(TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000))) ≈
+          2 * (150_000 * rate + 100_000 * cached_rate + 50_000 * w30)                   # the cache rates too
     # `model` and `pricing` keep their meaning.
     custom = Dict{String,UniLM.PriceRow}("my-luna" => UniLM._price(1.0, 0.0, 0.0))
     @test estimated_cost(plain; model="my-luna", pricing=custom) ≈ 1000 / 1_000_000
     @test (@test_logs (:warn, r"no price row") estimated_cost(result(TokenUsage(prompt_tokens=10); model="unlisted-decider"))) == 0.0
     # The same usage from another backend is priced the general way, cached tokens at the cached rate.
     elsewhere = result(TokenUsage(prompt_tokens=1000, cached_tokens=600); service=TYPESAFEServiceEndpoint)
-    @test estimated_cost(elsewhere) ≈ 400 * rate + 600 * DEFAULT_PRICING["gpt-6-luna"].cached_input
+    @test estimated_cost(elsewhere) ≈ 400 * rate + 600 * cached_rate
     @test estimated_cost(SystemOneSuccess(SystemOneResponse("gpt-6-luna", Dict{String,SystemOneAnswer}(),
         TokenUsage(prompt_tokens=1000, cached_tokens=600), nothing, Dict{String,Any}()))) ≈
-          400 * rate + 600 * DEFAULT_PRICING["gpt-6-luna"].cached_input            # built by hand: no backend
+          400 * rate + 600 * cached_rate                                           # built by hand: no backend
 end

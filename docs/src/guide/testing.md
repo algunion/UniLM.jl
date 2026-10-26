@@ -11,11 +11,13 @@ every run.
 
 ```@example testing
 service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+key = "OPENAI_API_KEY"
 nothing # hide
 ```
 
 The examples use only the names bound above. `service` and `model` are the provider and model they run
-on: bind your own there. The table [at the end](@ref testing_providers) links each provider's start page.
+on, and `key` the variable the provider's key is read from: bind your own there. The table
+[at the end](@ref testing_providers) links each provider's start page.
 
 ## [Record once, replay without a key](@id testing_record)
 
@@ -38,7 +40,7 @@ replays its committed recordings, so the answer above is the one recorded for th
 The default mode replays. With the key removed, nothing could be sent, and the answer is the recorded one:
 
 ```@example testing
-replayed = withenv("OPENAI_API_KEY" => nothing) do
+replayed = withenv(key => nothing) do
     with_recorded_answers(calculate, recordings)
 end
 text(replayed) == text(recorded)
@@ -93,7 +95,8 @@ billed it.
 
 A recording is `<dir>/<key>.json`, and the key is the SHA-256 of the method, the path of the URL and the
 exact request body: a request that differs in one byte — another prompt, another model, another option,
-`stream=true` — is another request, with a recording of its own. The host is not part of the key, and
+`stream=true` — is another request, with a recording of its own; a decision request is keyed as
+[Recorded answers](@ref jev_testing_recorded) says. The host is not part of the key, and
 neither is the query, which can carry a credential; [`list_input_items`](@ref) adds the page its query
 names instead. A credential the body carries, such as an MCP tool's `authorization`, and the bytes of media sent
 as a `data:` URL are replaced before anything is keyed or written: the key and the file hold

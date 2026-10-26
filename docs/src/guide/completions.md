@@ -7,8 +7,10 @@ using JSON
 
 **Fill-in-the-Middle (FIM)** completion has a model write the text between a prefix and a suffix — the
 gap in the code you are editing, say — and **chat prefix completion** has it continue an assistant reply
-from the start you give it, to force an output format such as a code block. A provider serves them when
-its endpoint's capabilities hold `:fim` or `:prefix_completion`.
+from the start you give it, to force an output format such as a code block. A provider can serve them
+only when its endpoint's capabilities hold `:fim` or `:prefix_completion`, and a generic endpoint
+(`GenericOpenAIEndpoint`) declares `:fim` for any server: whether yours fills in the middle is on its entry,
+which the table at the end links.
 
 ```@example completions
 service, model = DeepSeekEndpoint(), "deepseek-flash"
@@ -133,7 +135,8 @@ println("Last role: ", chat[end].role)
 
 Both `fim_complete` and `prefix_complete` check the endpoint's capabilities before making a request: an
 endpoint without `:fim`, or without `:prefix_completion`, throws `ArgumentError` naming the feature and the
-capabilities it has. [Capabilities by provider](@ref capabilities_guide) shows which providers have them.
+capabilities it has. [Capabilities by provider](@ref capabilities_guide) shows which endpoints declare
+them, a generic endpoint's as sent unchecked: it declares `:fim` whatever its server serves.
 
 ```@example completions
 println(has_capability(service, :fim))

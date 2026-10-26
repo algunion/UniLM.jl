@@ -20,14 +20,18 @@ nothing # hide
 
 The examples use only the names bound above. `service` and `model` are the provider and model they run
 on, and `own_model` names a model the price table does not hold, such as one of your own server: bind
-your own there. The table [at the end](@ref cost_tracking_providers) links each provider's rules.
+your own there. On an endpoint that treats its models as local, the estimates below are `0.0`
+([Local models](@ref cost_tracking_local)). The table [at the end](@ref cost_tracking_providers) links each
+provider's rules.
 
 !!! warning "The zero-dollar footgun"
     [`estimated_cost`](@ref) returns `0.0` — with no error, only a warning logged once per
     model id — for any model that is not a key in [`DEFAULT_PRICING`](@ref) and has no
     fallback row, such as a model of your own server or one newer than the table. Cost
     tracking on it reports `\$0.00` until you supply its price. See
-    [Unpriced models cost \$0](@ref unpriced-zero) below.
+    [Unpriced models cost \$0](@ref unpriced-zero) below. A model its endpoint treats as local is
+    the exception: it costs `0.0` with no warning, whatever `pricing=` or the table holds
+    ([Local models](@ref cost_tracking_local)).
 
 ## [Reading usage and cost](@id cost_tracking_reading)
 
@@ -64,8 +68,8 @@ explicitly when needed:
 estimated_cost(result; model=model)   # priced as `model`, whatever served it
 ```
 
-The decision providers' results — what `ask` returns — are priced as each one's entry in the
-[Decisions](@ref decisions_start) chapter says.
+The decision providers' results — what `ask` returns — are priced as each one's entry says: the second
+table [at the end](@ref cost_tracking_providers) links their cost sections.
 
 ## [How the estimate is computed](@id cost_estimate)
 
@@ -130,7 +134,8 @@ println(model, " row: ", DEFAULT_PRICING[model])
 
 If the model key is absent from the pricing table, `estimated_cost` returns `0.0` — it does
 **not** raise; it logs one warning per model id. (The dated-snapshot fallback above applies
-first.) This bites a model of your own server, or one newer than the table:
+first.) This bites a model of your own server that its endpoint does not treat as local, or one newer
+than the table:
 
 ```@example cost_tracking
 println(own_model, " priced? ", haskey(DEFAULT_PRICING, own_model))
@@ -140,11 +145,22 @@ unpriced = LLMSuccess(
     self    = Chat(service=service, model=own_model),
     usage   = TokenUsage(prompt_tokens=100_000, completion_tokens=50_000),
 )
+using Logging # hide
+no_source(level, _...) = (Logging.default_logcolor(level), (level == Logging.Warn ? "Warning" : string(level)) * ":", "") # hide
+with_logger(ConsoleLogger(stderr; meta_formatter=no_source)) do # hide
 println("estimated_cost with default pricing = \$", estimated_cost(unpriced))
+end # hide
 ```
 
 150,000 tokens, and the estimate is still `\$0.0`. Always confirm your model is a key in the
 pricing table before trusting a cost number.
+
+## [Local models](@id cost_tracking_local)
+
+A model its endpoint treats as local costs `0.0`, with no warning, as that endpoint's entry says
+([a local model's cost](@ref ollama_cost)): `estimated_cost` returns before it reads a price row, so
+neither `pricing=` nor [`DEFAULT_PRICING`](@ref) changes the estimate, and `cumulative_cost` adds `0.0` for
+each turn. Only `model=` prices such a result, at the row of the model it names.
 
 ## [Supplying custom pricing](@id cost_tracking_custom)
 
@@ -186,19 +202,20 @@ chatrequest!(chat)                     # accrues again
 cumulative_cost(chat)                  # e.g. 0.00231  (USD, summed over both calls)
 ```
 
-A call that ends without committing a turn adds what its provider reported billing it, as a
-lower bound. A stream stopped, cancelled, timed out or cut off, or ended by an exception from its
-`callback` or `on_tool_call`, adds the usage the provider had reported by then; when a provider reports
-it is on its entry's streaming section. A request stopped before any usage arrived adds nothing, though
-the provider bills it; so do an attempt UniLM retried, a stream the provider ended with an error event,
-and an unstreamed reply UniLM could not decode.
+A call that ends without committing a turn adds what its provider reported billing it, as a lower bound. A
+stream stopped, cancelled, timed out or cut off, or ended by an exception from its `callback` or
+`on_tool_call`, adds the usage the provider had reported by then; where an entry knows when its provider
+reports usage, its streaming section says so. A request stopped before any usage arrived adds nothing, though
+the provider bills it; so do an attempt UniLM retried, a stream the provider ended with an error event, and an
+unstreamed reply UniLM could not decode.
 
 !!! warning "Auto-accumulation always uses the default pricing table"
     `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`
     for the running total. So a `Chat` on an **unpriced** model reports
     `cumulative_cost == 0.0` even after successful calls — unless you add its row to the
     table (`DEFAULT_PRICING[own_model] = row`, safe while requests run), after which
-    later calls accrue. Alternatively, ignore the running total and sum
+    later calls accrue — but for a model its endpoint treats as local, which accrues `0.0`
+    ([Local models](@ref cost_tracking_local)). Alternatively, ignore the running total and sum
     [`estimated_cost`](@ref)`(result; pricing=…)` yourself.
 
 ## [Totaling respond, tool-loop and embeddings costs](@id cost_tracking_totals)
@@ -222,14 +239,14 @@ embeddings_cost = estimated_cost(res)                       # USD for this batch
 A `respond` tool loop sends a request per turn and returns its last response alone, as `loop.response`
 ([Agentic respond](@ref agentic_guide)): `estimated_cost(loop.response)` prices that last request, not the
 turns before it. A `tool_loop!` on a `Chat` adds every turn to the `Chat`'s `cumulative_cost`. Embedding
-models missing from the default table (one on your own server, for example) hit the same `0.0` behavior —
-supply `pricing=` for them too.
+models missing from the default table (one on your own server that its endpoint does not treat as local,
+for example) hit the same `0.0` behavior — supply `pricing=` for them too.
 
 ## [Prices drift](@id cost_tracking_drift)
 
-[`DEFAULT_PRICING`](@ref) is a hardcoded snapshot of the providers' list prices, and each entry's cost
-section says when its rows were checked. Provider list prices change; re-verify against the provider's
-current pricing before relying on any number, and pass your own `pricing=` dict when you need
+[`DEFAULT_PRICING`](@ref) is a hardcoded snapshot of the providers' list prices, and each entry with a price
+table says in its cost section when its rows were checked. Provider list prices change; re-verify against the
+provider's current pricing before relying on any number, and pass your own `pricing=` dict when you need
 authoritative figures.
 
 ## [See also](@id cost_tracking_see_also)
@@ -244,4 +261,10 @@ authoritative figures.
 
 ```@eval
 Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :cost)
+```
+
+The decision providers' cost sections, for what `ask` returns:
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.decisions, :cost)
 ```

@@ -461,7 +461,8 @@ otherwise the row's input rate, since an input price that names no modality, or 
 others, is every modality's. Three cases are estimated at `0.0`, with one warning per model and
 endpoint: audio on a model the page prices without audio (the image models) or does not list, audio
 in the output, and audio in a call that also hit the cache on one of those four models, whose
-cached-audio price the usage cannot tell apart.
+cached-audio price the usage cannot tell apart. On `GEMINIOpenAIServiceEndpoint`, a result's tier and its
+audio are priced as [The OpenAI-compatible endpoint](@ref gemini_compatible) says.
 
 A reply that names a tier other than standard, flex and priority — `"deferred"`, say — is estimated
 at the standard rates, with one warning per model and tier. A model with no row, any other id

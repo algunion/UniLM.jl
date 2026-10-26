@@ -169,7 +169,7 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   wait, mid-stream, or during a retry backoff — unless the provider's completion
   marker already arrived: then the turn is committed, the final-message callback
   runs, and usage may be missing. On a Chat stream that marker is the chunk carrying
-  the finish reason, and each entry's streaming section says whether usage follows it;
+  the finish reason, which usage may follow, as an entry's streaming section says where it knows;
   on a Responses stream it is the terminal event, whose response (usage included)
   is the result. `nl_dispatch` and `@branch`
   throw `SystemOneError` wrapping the `SystemOneCallError`, as for any failed call. A
@@ -185,7 +185,7 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   first. An MCP stdio exchange does not observe the token (it is bounded by
   `mcp_request_timeout`); an MCP call over HTTP does (see [MCP](@ref concurrency_mcp)).
   Whether a verb that runs over a WebSocket observes the token is on the entry of the
-  provider that serves it.
+  provider that serves it ([a WebSocket session](@ref timeout_realtime)).
 
 ```julia
 tok = CancelToken()

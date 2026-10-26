@@ -438,10 +438,10 @@ to the server is accepted without an answer (HTTP `202`).
 
 ## [MCP servers a provider reaches](@id mcp_hosted)
 
-Separately from the client and server above, a provider may connect to an MCP server itself, as a
-hosted tool of a `respond` request: the model calls the server's tools during the response, and the
-provider runs them, while `mcp_connect` runs them in your process. Each entry says whether its provider
-has such a tool, and how to give it one.
+Separately from the client and server above, a provider may call an MCP server itself, as a hosted tool
+of a request: the model calls the server's tools during the response and the provider calls the server,
+while with `mcp_connect` your process does. Some entries name such a tool, and where UniLM sends one, the
+provider's entry says how to give it one.
 
 ---
 

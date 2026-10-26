@@ -229,7 +229,8 @@ filter(id -> !haskey(DEFAULT_PRICING, id), [m.id for m in chat_models if startsw
 
 Google routes two deprecated ids to their successors: `gemini-3.7-flash` "automatically routes API
 requests to `gemini-3.8-flash`", and `gemini-3.5-flash` to `gemini-3.6-flash`
-([deprecations](https://ai.google.dev/gemini-api/docs/deprecations)). Such a request meets the
+([deprecations](https://ai.google.dev/gemini-api/docs/deprecations)), both since the changelog entry of
+October 8, 2026 ([changelog](https://ai.google.dev/gemini-api/docs/changelog)). Such a request meets the
 rules of the id it names and is priced as the model that served it ([First call](@ref gemini_first_call)).
 A `-latest` alias "will get hot-swapped with every new release of a specific model variation"
 ([models](https://ai.google.dev/gemini-api/docs/models)); the thinking table holds the aliases to the
@@ -323,7 +324,7 @@ sends again, or `quota_exceeded`, "your daily quota", which it returns at once
 | `LLMCallError` from a stream, its `error` naming "Gemini prompt blocked" | the same block, in a stream | another prompt |
 | `LLMFailure` from a stream, its `status` the HTTP `code` of an error the stream carried | Google sent an error in the stream; it is sent again only while no callback has run | the request again |
 | `LLMFailure` with `status` 200 from a stream | the stream ended before a finish reason; `response` holds what arrived, and nothing is appended | the turn again |
-| a call-error result with a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)) | a longer bound, or a stream for a long reply |
+| a call-error result with a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out ([Timeouts & Retries](@ref timeouts_guide)); a `gemini-4-` model has longer bounds by default, and each request of a continued turn the whole budget ([Long generations](@ref gemini_long_decode)) | a longer bound, or a stream for a long reply |
 | a call-error result whose `cause` is the connection's exception | the network failed, on each attempt the call's `RequestConfig` allows, or on a stream once a callback had run | the connection, then the request again |
 | a call-error result whose `cause` is a `UniLMCancelled` | a stop before the turn's finish reason arrived: the stream's `close[] = true` (`:callback`) or a cancelled `CancelToken` (`:token`); nothing is appended | nothing, if the stop was yours |
 | a call-error result whose `cause` is the exception your `callback` or `on_tool_call` threw | the exception ended the stream; it is not sent again, and nothing is appended; an `InterruptException`, or a recorded call's `ReplayMissError` or `RecordingWriteError`, is thrown at `fetch` instead | the callback |

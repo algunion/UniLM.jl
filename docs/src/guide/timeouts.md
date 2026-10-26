@@ -96,7 +96,7 @@ raises the default.
     |---|---|---|---|
     | OpenAI (reasoning) | `gpt-5.5` | 8.5s (504 chunks, 16.1s stream) | 14× |
     | Anthropic (extended thinking) | — | not measured this release | — |
-    | Gemini | `gemini-3.5-flash` | 15.9s (55 chunks, 19.8s stream) | 7.5× |
+    | Gemini | `gemini-3.5-flash`, routed to `gemini-3.6-flash` since 2026-10-08 ([Models](@ref gemini_models)) | 15.9s (55 chunks, 19.8s stream) | 7.5× |
 
     The Gemini stream held a healthy ~16-second silent gap mid-thinking — the class
     of pause the byte-gap default must tolerate.

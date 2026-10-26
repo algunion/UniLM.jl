@@ -505,6 +505,21 @@ end
     end
 end
 
+@testset "Mistral gets a Chat's seed as random_seed; other servers get the request as set" begin
+    # Mistral's chat reference names the seed `random_seed`, "The seed to use for random sampling", and
+    # lists no `seed` (https://docs.mistral.ai/api/endpoint/chat).
+    for mistral in (MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("https://API.mistral.ai/", "k"))
+        b = JSON.parse(UniLM.encode_request(mistral, Chat(service=mistral, model="mistral-large-latest", seed=7)))
+        @test b["random_seed"] == 7 && !haskey(b, "seed")
+        c = Chat(service=mistral, model="mistral-large-latest", temperature=0.2, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(mistral, c) == JSON.json(c)               # no seed: the Chat's own JSON
+    end
+    for other in (GenericOpenAIEndpoint("http://localhost:8000", ""), GenericOpenAIEndpoint("https://api.mistral.ai.example.com", ""))
+        c = Chat(service=other, model="m", seed=7, max_tokens=8, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(other, c) == JSON.json(c)                 # byte for byte
+    end
+end
+
 @testset "prompt_cache_retention: refused as deprecated on GPT-5.6 and later, combinable elsewhere" begin
     # The API still answered gpt-6-luna with prompt_cache_retention="24h" (HTTP 200, 2026-10-22): the refusal
     # follows OpenAI's deprecation ("Use prompt_cache_options.ttl instead"), not an API rejection.

@@ -815,6 +815,10 @@ _resolve_base_url(::Type{<:ServiceEndpoint}) = throw(ArgumentError("base URL is 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
 get_url(s::GenericOpenAIEndpoint, ::Chat)::String = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
+
+# Whether a generic endpoint is on Mistral's API host, as `MistralEndpoint()` is: Mistral serves FIM
+# on a route of its own and names a few fields otherwise than the OpenAI wire.
+_mistral_host(s::GenericOpenAIEndpoint)::Bool = lowercase(HTTP.URI(rstrip(s.base_url, '/')).host) == MISTRAL_API_HOST
 get_url(s::GenericOpenAIEndpoint, ::Embeddings)::String = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
 _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
@@ -1232,7 +1236,11 @@ end
 # endpoints send `max_completion_tokens` as `max_tokens`, taken over a `max_tokens` also set, as
 # the native encoders take it (https://api-docs.deepseek.com/api/create-chat-completion,
 # https://docs.mistral.ai/api/endpoint/chat, https://lmstudio.ai/docs/developer/openai-compat/chat-completions).
-encode_request(::GenericOpenAIEndpoint, chat::Chat)::String = _renamed_json(chat, :max_completion_tokens => :max_tokens)
+# Mistral's chat reference also names the seed `random_seed`, "The seed to use for random sampling",
+# and lists no `seed`: on Mistral's host a Chat's seed goes out under that name.
+encode_request(s::GenericOpenAIEndpoint, chat::Chat)::String = _mistral_host(s) ?
+    _renamed_json(chat, :max_completion_tokens => :max_tokens, :seed => :random_seed) :
+    _renamed_json(chat, :max_completion_tokens => :max_tokens)
 
 """
     decode_response(service, resp::HTTP.Response)

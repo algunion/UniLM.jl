@@ -158,10 +158,8 @@ _llm_result_body(r::FIMCallError)   = r.error
 get_url(s::DeepSeekEndpoint, ::FIMCompletion)::String = DEEPSEEK_BETA_BASE_URL * COMPLETIONS_PATH
 # Mistral (MistralEndpoint is a GenericOpenAIEndpoint on its API host) serves FIM at its
 # own path; other OpenAI-compatible servers (Ollama, vLLM) use the completions path.
-function get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String
-    base = rstrip(s.base_url, '/')
-    base * (lowercase(HTTP.URI(base).host) == MISTRAL_API_HOST ? MISTRAL_FIM_PATH : COMPLETIONS_PATH)
-end
+get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String =
+    rstrip(s.base_url, '/') * (_mistral_host(s) ? MISTRAL_FIM_PATH : COMPLETIONS_PATH)
 # FIM is an OpenAI-compatible-only verb (DeepSeek beta + GenericOpenAIEndpoint); any other
 # endpoint is rejected up front by `validate_capability(:fim)`. These fail-loud fallbacks
 # give the router total coverage so `get_url(fim.service, fim)` types as `String` for any

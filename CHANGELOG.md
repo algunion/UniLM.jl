@@ -378,6 +378,11 @@
   requested `ultra` to `max`, and the `Chat` constructor refused it for every endpoint. A `Chat` on a
   `DeepSeekEndpoint` now takes `"ultra"` and sends it as set (DeepSeek answered such a request on
   2026-10-26); on every other endpoint it is refused when the `Chat` is built, as before.
+- **`MistralEndpoint()` sends a `Chat`'s seed as `random_seed`.** Mistral's chat reference names the
+  seed `random_seed`, "The seed to use for random sampling", and lists no `seed`, which the endpoint
+  sent. A `Chat` on Mistral's host (`MistralEndpoint()`, or a `GenericOpenAIEndpoint` on
+  `api.mistral.ai`) now sends its seed as `random_seed`; every other server's request is unchanged,
+  byte for byte.
 
 ## 0.26.0
 

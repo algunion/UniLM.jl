@@ -812,6 +812,13 @@ end
     for model in ("gpt-5.2-pro", "gpt-5.2-pro-2025-12-11")   # the snapshot OpenAI's models list names
         @test isapprox((@test_logs estimated_cost(_oa_result(model, u))), 1_000_000 * 21e-6 + 100_000 * 168e-6; rtol=1e-12)
     end
+    # The model is served on the Responses API alone ("Chat Completions | `v1/chat/completions` | Not supported", its
+    # model page), so its results come as a ResponseSuccess.
+    resp = ResponseSuccess(response=UniLM.ResponseObject(id="resp_1", status="completed", model="gpt-5.2-pro", output=Any[],
+        usage=Dict{String,Any}("input_tokens" => 1_000_000, "output_tokens" => 100_000, "total_tokens" => 1_100_000,
+                               "input_tokens_details" => Dict{String,Any}("cached_tokens" => 200_000)),
+        raw=Dict{String,Any}()), service=OPENAIServiceEndpoint)
+    @test isapprox((@test_logs estimated_cost(resp)), 1_000_000 * 21e-6 + 100_000 * 168e-6; rtol=1e-12)
 end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 

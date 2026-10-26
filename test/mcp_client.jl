@@ -3648,7 +3648,8 @@ end
         [Dict{String,Any}("type" => "text", "text" => p["name"])]))])
     session = _scripted_session(t)
     stem = "github_enterprise_repository_management_list_pull_request_review_"   # 65 characters
-    names = [stem * "comments", stem * "threads", "a"^100, "x.y"^50, "admin.tools.list", "plain_name"]
+    names = [stem * "comments", stem * "threads", "a"^100, "x.y"^50, "admin.tools.list", "plain_name",
+             "b"^64, "c"^65, "d"^128, "e"^129]   # each limit's edge: kept at it, cut one past it
     session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
     cut(n, limit) = first(replace(n, '.' => '_'), limit - 9) * "_" * bytes2hex(UniLM.sha256(n))[1:8]
     within(limit) = [length(n) <= limit ? replace(n, '.' => '_') : cut(n, limit) for n in names]

@@ -848,8 +848,9 @@ Configuration struct for an OpenAI Responses API request.
   `"scale"`, `"fast"` (or its former name `"priority"`), or `"ultrafast"`, which OpenAI serves
   for `gpt-6-astra` and `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI
   model, throws `ArgumentError`. On Gemini Interactions (`GEMINIServiceEndpoint`),
-  `"standard"`, `"flex"`, `"priority"` or `"deferred"` (`"deferred"` is an Interactions tier
-  only: native Gemini Chat takes the other three); another value throws `ArgumentError`.
+  `"standard"`, `"flex"` or `"priority"`, as on native Gemini Chat; another value throws
+  `ArgumentError`, `"deferred"` among them: the API answered it with HTTP 400 on 2026-10-26, a
+  tier "allowed on the Gemini Enterprise Agent Platform", and its reference no longer lists it.
   [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
@@ -1719,6 +1720,10 @@ function _check_stored_responses(service, verb::String, fix::String)
     nothing
 end
 
+# An agentic API that stores its responses but has no method listing their input items throws
+# here, before `list_input_items` sends a request to a path the API does not serve.
+_check_input_items(_) = nothing
+
 """
     decode_agentic(service, resp::HTTP.Response) -> ResponseObject
 
@@ -1731,8 +1736,9 @@ Public extension API (not exported); see the Custom Backends guide.
 """
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
-# The response a result reports for a request that named `requested`: as decoded, unless the endpoint
-# answers under a name other than the one that bills (an Ollama cloud model; see `_ollama_billed_model`).
+# The response a result reports for a request that named `requested` (for a Chat result, the model
+# its reply named): as decoded, unless the endpoint answers under a name other than the one that
+# bills (an Ollama cloud model; see `_ollama_billed_model`).
 _billed_response(_, ::AbstractString, x) = x
 
 """
@@ -2021,7 +2027,9 @@ end
 
 List input items for a stored response. Returns a Dict with `"data"`, `"first_id"`, `"last_id"`, `"has_more"`.
 An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
-`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+`ArgumentError` before any request, and so does [`GEMINIServiceEndpoint`](@ref): Google's
+Interactions API gets, cancels and deletes an interaction, and has no method that lists its
+input items. Inside a [`with_recorded_answers`](@ref) scope the
 request passes through the recordings, keyed with its `limit`, `order` and `after`: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
 be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
@@ -2042,6 +2050,7 @@ function list_input_items(response_id::String;
     config::Union{Nothing,RequestConfig}=nothing)
 
     _check_stored_responses(service, "list_input_items", "the input is the `input` you sent")
+    _check_input_items(service)
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try

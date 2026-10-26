@@ -319,9 +319,9 @@ right after it was created has answered `403` (`permission_denied`) for a few se
 became readable (observed on 20 August 2026; Google's pages do not mention it): retry such a read in
 your poll before taking it for a permission error.
 
-Google's Interactions API reads, cancels and deletes an interaction, and lists no input items:
-[`list_input_items`](@ref) sends a request to a path the API reference does not list
-([Interactions API](https://ai.google.dev/api/interactions-api)), and its answer is untested.
+Google's Interactions API reads, cancels and deletes an interaction, and lists no input items
+([Interactions API](https://ai.google.dev/api/interactions-api)), so [`list_input_items`](@ref)
+throws `ArgumentError` for this endpoint before sending anything; the input is the `input` you sent.
 [`compact_response`](@ref) and [`count_input_tokens`](@ref) send nothing for this endpoint, and
 return a `ResponseCallError`.
 
@@ -333,11 +333,11 @@ return a `ResponseCallError`.
 - `temperature`, `top_p` and `seed` follow the rules of a `Chat` ([Request options](@ref gemini_request_options)):
   sampling only for the earlier models, a seed in the int32 range.
 - `safety_identifier` becomes the request label `safety_identifier`, under the same rule as on a `Chat`.
-- `service_tier` takes `"standard"`, `"flex"`, `"priority"` and `"deferred"`. Google's Interactions
-  API reference lists `flex`, `standard` and `priority` as its tiers
-  ([Interactions API](https://ai.google.dev/api/interactions-api)), and not `deferred`, which UniLM
-  sends as given: what the API answers to it is untested, and a reply that reports it is estimated at
-  the standard rates, with a warning ([Cost and usage](@ref gemini_cost)).
+- `service_tier` takes `"standard"`, `"flex"` and `"priority"`, the tiers Google's Interactions API
+  reference lists ([Interactions API](https://ai.google.dev/api/interactions-api)). `"deferred"`, which
+  the reference no longer lists, is refused before sending: on 26 October 2026 the API answered it with
+  HTTP 400, "The value 'deferred' is not supported for 'service_tier' on the Gemini API, it is allowed
+  on the Gemini Enterprise Agent Platform."
 - `store` and `background` are sent as they are ([Background requests](@ref gemini_background)).
 
 A body that is not an interaction — a 200 without a non-empty `id` or `status`, which the API

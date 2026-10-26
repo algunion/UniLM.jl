@@ -15,6 +15,13 @@
 
 _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTERACTIONS_PATH
 
+# The Interactions API creates, gets, cancels and deletes an interaction; its reference lists no
+# method that lists an interaction's input items (https://ai.google.dev/api/interactions-api).
+_check_input_items(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError(
+    "list_input_items is not supported by GEMINIServiceEndpoint: Google's Interactions API gets, cancels " *
+    "and deletes an interaction, and lists no input items (https://ai.google.dev/api/interactions-api); " *
+    "the input is the `input` you sent"))
+
 # ─── Request encoding (neutral Respond → Interactions body, snake_case) ───────
 
 # The neutral Respond fields this wire maps. Everything else is derived from
@@ -95,7 +102,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.store)      || (body[:store] = r.store)
     isnothing(r.background) || (body[:background] = r.background)
     isnothing(r.stream)     || (body[:stream] = r.stream)
-    tier = _gemini_service_tier(r.service_tier, _INTERACTIONS_SERVICE_TIERS, "Gemini Interactions")
+    tier = _gemini_service_tier(r.service_tier, _GEMINI_SERVICE_TIERS, "Gemini Interactions")
     isnothing(tier) || (body[:service_tier] = tier)
     # Request labels carry an aggregator's end-user id under the key generateContent documents.
     isnothing(r.safety_identifier) ||

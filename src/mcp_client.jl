@@ -1724,11 +1724,13 @@ const _PROVIDER_TOOL_NAME = r"^[a-zA-Z0-9_-]+$"
 # The longest function name the API of the endpoint the tools go to accepts: "a maximum length
 # of 64" on OpenAI's Chat Completions (https://developers.openai.com/api/reference/resources/chat),
 # `^[a-zA-Z0-9_-]{1,128}$` on Anthropic's Messages API
-# (https://platform.claude.com/docs/en/api/messages) and "a maximum length of 128" on Gemini's
-# generateContent (https://ai.google.dev/api/generate-content). Any other endpoint gets OpenAI's 64.
+# (https://platform.claude.com/docs/en/api/messages), and "a maximum length of 128" on Gemini's
+# generateContent (https://ai.google.dev/api/generate-content) and DeepSeek's Chat Completions
+# (https://api-docs.deepseek.com/api/create-chat-completion). Any other endpoint gets OpenAI's 64.
 _tool_name_limit(::ServiceEndpointSpec)::Int = 64
 _tool_name_limit(::_AnthropicEndpoint)::Int = 128
 _tool_name_limit(::Type{GEMINIServiceEndpoint})::Int = 128
+_tool_name_limit(::DeepSeekEndpoint)::Int = 128
 
 """Provider-safe aliases for MCP tool names, position for position, of at most `limit`
 characters: a conforming name is kept; any other has each non-conforming character replaced
@@ -1764,9 +1766,9 @@ Each tool's callable invokes `call_tool(session, name, args)` under the hood. To
 names are advertised provider-safe: a function name takes letters, digits, `_` and `-`,
 so any other character of an MCP name (e.g. the dots in `admin.tools.list`) becomes `_`,
 and at most the length `service`'s provider gives — 128 characters for
-`ANTHROPICServiceEndpoint` (`^[a-zA-Z0-9_-]{1,128}\$`) and `GEMINIServiceEndpoint` ("a
-maximum length of 128"), 64 for `OPENAIServiceEndpoint` (its Chat Completions reference: "a
-maximum length of 64") and for any other endpoint. A longer name is cut to that limit less 9
+`ANTHROPICServiceEndpoint` (`^[a-zA-Z0-9_-]{1,128}\$`), `GEMINIServiceEndpoint` and
+`DeepSeekEndpoint` ("a maximum length of 128"), 64 for `OPENAIServiceEndpoint` (its Chat
+Completions reference: "a maximum length of 64") and for any other endpoint. A longer name is cut to that limit less 9
 characters, followed by `_` and the first 8 hex digits of the SHA-256 of its MCP name, so
 names that agree up to the cut stay apart. The callable still calls the tool by its MCP
 name. Two tools whose names map to the same alias raise an `ArgumentError`.

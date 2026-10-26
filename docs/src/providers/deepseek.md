@@ -144,8 +144,12 @@ The concepts every provider shares are on [Streaming](@ref streaming_guide).
 
 Each `Tool` in `tools` goes out as a function tool, and `tool_choice`, `parallel_tool_calls` and a
 tool's `strict` go as they are set; a `Chat` with tools sends `parallel_tool_calls: false` unless it
-sets another value. `tool_loop!` runs the calls and sends their results back until the model answers in
-text:
+sets another value. A function's name "Must be a-z, A-Z, 0-9, or contain underscores and dashes, with a
+maximum length of 128" ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion));
+UniLM sends a name as given, and [`mcp_tools`](@ref)`(session; service)`, with `service` this endpoint,
+advertises an MCP server's tools under such names, one over 128 characters cut and marked with a hash of
+its MCP name ([MCP](@ref mcp_guide)). `tool_loop!` runs the calls and sends their results back until the
+model answers in text:
 
 ```@example deepseek
 weather = UniLM.CallableTool(

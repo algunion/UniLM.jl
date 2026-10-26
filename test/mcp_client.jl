@@ -3640,10 +3640,10 @@ end
 @testset "bridged MCP tool names fit the provider they go to, and stay distinct when cut" begin
     # A function name is "a-z, A-Z, 0-9, or … underscores and dashes, with a maximum length of 64"
     # on OpenAI's Chat Completions (and Azure's), `^[a-zA-Z0-9_-]{1,128}$` on Anthropic's Messages
-    # API and of "a maximum length of 128" on Gemini's generateContent, while an MCP tool name
-    # "SHOULD be between 1 and 128 characters"; every other endpoint gets OpenAI's 64. A longer name
-    # is cut to the limit less 9 characters, then `_` and the first 8 hex digits of its MCP name's
-    # SHA-256: two names that agree up to the cut stay apart.
+    # API and of "a maximum length of 128" on Gemini's generateContent and DeepSeek's Chat Completions,
+    # while an MCP tool name "SHOULD be between 1 and 128 characters"; every other endpoint gets
+    # OpenAI's 64. A longer name is cut to the limit less 9 characters, then `_` and the first 8 hex
+    # digits of its MCP name's SHA-256: two names that agree up to the cut stay apart.
     t = _ScriptedTransport((m, id, p) -> [_ok_frame(id, Dict{String,Any}("content" =>
         [Dict{String,Any}("type" => "text", "text" => p["name"])]))])
     session = _scripted_session(t)
@@ -3654,7 +3654,8 @@ end
     within(limit) = [length(n) <= limit ? replace(n, '.' => '_') : cut(n, limit) for n in names]
     for (service, limit) in ((nothing, 64), (OPENAIServiceEndpoint, 64), (AZUREServiceEndpoint, 64), (OllamaEndpoint(), 64),
                              (GEMINIOpenAIServiceEndpoint, 64), (ANTHROPICServiceEndpoint, 128),
-                             (ANTHROPICServiceEndpoint(inference_geo="us"), 128), (GEMINIServiceEndpoint, 128))
+                             (ANTHROPICServiceEndpoint(inference_geo="us"), 128), (GEMINIServiceEndpoint, 128),
+                             (DeepSeekEndpoint(), 128))
         tools, rtools = isnothing(service) ? (mcp_tools(session), mcp_tools_respond(session)) :
                                              (mcp_tools(session; service), mcp_tools_respond(session; service))
         aliases = [ct.tool.func.name for ct in tools]

@@ -129,13 +129,13 @@
   name of "a maximum length of 64", so a name of 65 to 128 characters went to OpenAI as it was.
   Both now take `service`, the endpoint the tools go to (`OPENAIServiceEndpoint` unless given),
   and keep each name within its provider's limit: 128 characters for `ANTHROPICServiceEndpoint`,
-  whose Messages API takes `^[a-zA-Z0-9_-]{1,128}$`, and `GEMINIServiceEndpoint`, whose
-  generateContent takes "a maximum length of 128", and 64 for any other endpoint. A longer name is
-  cut to the limit less 9 characters and followed by `_` and the first 8 hex digits of the
-  SHA-256 of its MCP name, so names that agree up to the cut stay apart; a name over 128
-  characters was cut to 128 before. Upgrading: pass `service=` the endpoint the tools go to, to
-  keep names of up to 128 characters on Anthropic and native Gemini; a `tool_choice` that names
-  a bridged tool takes the name the bridge now advertises.
+  whose Messages API takes `^[a-zA-Z0-9_-]{1,128}$`, and for `GEMINIServiceEndpoint` and
+  `DeepSeekEndpoint`, whose generateContent and Chat Completions take "a maximum length of 128",
+  and 64 for any other endpoint. A longer name is cut to the limit less 9 characters and followed
+  by `_` and the first 8 hex digits of the SHA-256 of its MCP name, so names that agree up to the
+  cut stay apart; a name over 128 characters was cut to 128 before. Upgrading: pass `service=` the endpoint the tools go to, to
+  keep names of up to 128 characters on Anthropic, native Gemini and DeepSeek; a `tool_choice`
+  that names a bridged tool takes the name the bridge now advertises.
 - **A price row you give a local Ollama model is used.** `estimated_cost` returned `0.0` for a result
   of a local model on an `OllamaEndpoint` before it read any price row, so a row you gave the model,
   in `pricing=` or added to `DEFAULT_PRICING`, which `cumulative_cost` reads, was ignored without a

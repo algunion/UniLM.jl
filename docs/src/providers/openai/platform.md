@@ -200,9 +200,10 @@ objects and items in them are not subject to the 30 day TTL" of a stored respons
 ([conversation state](https://developers.openai.com/api/docs/guides/conversation-state)).
 [`retrieve_conversation`](@ref) and [`update_conversation`](@ref)`(id, metadata)` read and change the
 conversation's record, [`add_conversation_items`](@ref) appends items without a response,
-[`list_conversation_items`](@ref) pages through them (`limit`, `order`, `after`), and
-[`delete_conversation_item`](@ref) removes one, returning the conversation. No verb reads a single
-item: `ConversationItemSuccess` is a result type no verb returns.
+[`list_conversation_items`](@ref) pages through them (`limit`, `order`, `after`),
+[`retrieve_conversation_item`](@ref)`(id, item_id; include)` reads one, "a single item from a
+conversation", as a `ConversationItemSuccess`, and [`delete_conversation_item`](@ref) removes one,
+returning the conversation.
 
 ## [Code interpreter and containers](@id openai_containers)
 

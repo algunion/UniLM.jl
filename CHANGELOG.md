@@ -13,6 +13,14 @@
   marks a breakpoint, keeps explicit mode. Upgrading: use `mode="implicit"` or leave `mode` unset,
   or send a `Respond` that marks its breakpoints.
 
+### Added
+- **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`
+  was exported and documented as a Conversations result, yet no verb returned it: UniLM had no call for
+  OpenAI's `GET /v1/conversations/{conversation_id}/items/{item_id}`, which gets "a single item from a
+  conversation with the given IDs". `retrieve_conversation_item(conversation_id, item_id; include)`
+  sends it, each `include` value as an `include[]` query parameter, and returns that
+  `ConversationItemSuccess`.
+
 ### Fixed
 - **A `Chat`'s log probabilities and moderation results reach its result.** A `Chat` with
   `logprobs=true` (and `top_logprobs`) or a `ModerationConfig` sent them and the request was billed,

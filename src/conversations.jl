@@ -58,7 +58,7 @@ end
 @kwdef struct ConversationSuccess <: LLMRequestResponse; response::ConversationObject; end
 "Successful [`list_conversation_items`](@ref) / [`add_conversation_items`](@ref) result wrapping a [`ConversationItemList`](@ref)."
 @kwdef struct ConversationItemListSuccess <: LLMRequestResponse; response::ConversationItemList; end
-"Successful result wrapping a single [`ConversationItem`](@ref)."
+"Successful [`retrieve_conversation_item`](@ref) result wrapping the [`ConversationItem`](@ref) it read."
 @kwdef struct ConversationItemSuccess <: LLMRequestResponse; response::ConversationItem; end
 "Successful [`delete_conversation`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct ConversationDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
@@ -216,6 +216,34 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
         else
             _failure(ConversationFailure, resp)
         end
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(ConversationCallError, e)
+    end
+end
+
+"""
+    retrieve_conversation_item(conversation_id, item_id; include=nothing, service=OPENAIServiceEndpoint)
+
+Read one item of a conversation, "a single item from a conversation with the given IDs"
+(`GET /v1/conversations/{conversation_id}/items/{item_id}`). `include` names the
+"Additional fields to include in the response", such as `"message.output_text.logprobs"`,
+each sent as an `include[]` query parameter, as OpenAI's SDKs send it. Returns
+`ConversationItemSuccess` (its `response` the [`ConversationItem`](@ref)),
+`ConversationFailure`, or `ConversationCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+"""
+function retrieve_conversation_item(conv_id::String, item_id::String; include::Union{Vector{String},Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        url = _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id)
+        isnothing(include) || isempty(include) || (url *= "?" * join(("include%5B%5D=" * _uripart(i) for i in include), "&"))
+        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0))
+        resp.status == 200 ? ConversationItemSuccess(response=_parse_conv_item(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
+            _failure(ConversationFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(ConversationCallError, e)

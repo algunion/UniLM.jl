@@ -358,6 +358,7 @@ export
     delete_conversation,
     add_conversation_items,
     list_conversation_items,
+    retrieve_conversation_item,
     delete_conversation_item
 
 # ─── Moderations API ──────────────────────────────────────────────────────────

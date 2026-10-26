@@ -28,6 +28,30 @@ end
                     body="{}") isa UniLM.ConversationCallError
 end
 
+@testset "retrieve_conversation_item returns one item as a ConversationItemSuccess" begin
+    # `GET /conversations/{conversation_id}/items/{item_id}`: "Get a single item from a conversation with the
+    # given IDs" (OpenAI's Conversations reference). `include` goes as OpenAI's SDKs send an array parameter,
+    # `include[]` once per value.
+    item = """{"type": "message", "id": "msg_abc", "status": "completed", "role": "user",
+               "content": [{"type": "input_text", "text": "Hello!"}]}"""
+    r, seen = _with_scripted((_, _) -> _json(200, item)) do
+        retrieve_conversation_item("conv_123", "msg_abc"; service=URLProbe)
+    end
+    @test r isa ConversationItemSuccess && r.response.id == "msg_abc" && r.response.type == "message"
+    @test r.response.raw["content"][1]["text"] == "Hello!"
+    @test only(seen).method == "GET" && only(seen).target == "/v1/conversations/conv_123/items/msg_abc"
+    t = _recorded_targets() do
+        retrieve_conversation_item(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe,
+                                   include=["message.output_text.logprobs", "message.input_image.image_url"])
+    end
+    @test t == ["/v1/conversations/$_HOSTILE_ENC/items/$_HOSTILE_ENC?include%5B%5D=message.output_text.logprobs" *
+                "&include%5B%5D=message.input_image.image_url"]
+    f = _answered(() -> retrieve_conversation_item("c", "i"; service=URLProbe), 404; headers=["x-request-id" => "req_item"])
+    @test f isa UniLM.ConversationFailure && f.request_id == "req_item"
+    @test _seam_timeout(retrieve_conversation_item("c", "i"; service=SeamProbe, config=_TINY_DEADLINE),
+                        UniLM.ConversationCallError)
+end
+
 @testset "Conversations API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_conversation("conv_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_conv"])

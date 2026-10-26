@@ -35,6 +35,7 @@ update_conversation
 delete_conversation
 add_conversation_items
 list_conversation_items
+retrieve_conversation_item
 delete_conversation_item
 ```
 
@@ -58,6 +59,7 @@ update_conversation("conv_abc123", Dict("status" => "closed"))
 # Add items, list them, then clean up
 add_conversation_items("conv_abc123", [InputMessage(role="user", content="Hello")])
 items = list_conversation_items("conv_abc123", limit=20)
+one = retrieve_conversation_item("conv_abc123", "msg_xyz")
 delete_conversation_item("conv_abc123", "msg_xyz")
 delete_conversation("conv_abc123")
 ```

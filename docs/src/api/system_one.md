@@ -422,12 +422,14 @@ end
   `nothing`; a Score level or a Noul criterion that is not a string (on Ollama
   0.40.6, `kev:0.8b-q8_0` and `d1:3b`, on the llama.cpp path, answered an option
   described by an object, and `tev1:0.8b` refused it) — and, a rule of UniLM's
-  own, blank (whitespace-only) `instructions`, which Ollama would read as none.
+  own, blank (whitespace-only) `instructions`, which Ollama would read as none. It
+  refuses a Choice, Noul or Score question without `instructions`, which the API
+  reference requires.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
-| `instructions` | optional on the route; when given, a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
+| `instructions` | required on a Choice, Noul and Score, as the route's API reference lists them: a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
 | Choice options | at most 255 (one is sent), each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
@@ -445,12 +447,12 @@ end
   and `clef-flash:9b` answered 400
   `question "pick": criteria must contain 2–26 candidates`, `strands-decider:2b`
   `question "pick": criteria must contain 2–255 candidates` (for a question named
-  `pick`). The route accepts a question without `instructions`, but `tev1:4b`,
-  `nimble:9b` and `strands-decider:2b` answered it with 400
-  `instructions must be a nonempty string, object, or array` and `kev:0.8b-q8_0`
-  with 400 `questions.intent: "instructions" must be provided` (for a question
-  named `intent`), while `clef-flash:9b` answered it: pass `instructions` with
-  local models. A model without vision answers an image with its own 400:
+  `pick`). A question without `instructions`, which [`ask`](@ref) refuses as the
+  API reference requires them, `tev1:4b`, `nimble:9b` and `strands-decider:2b`
+  answered with 400 `instructions must be a nonempty string, object, or array`
+  and `kev:0.8b-q8_0` with 400 `questions.intent: "instructions" must be
+  provided` (for a question named `intent`), while `clef-flash:9b` answered it.
+  A model without vision answers an image with its own 400:
   `image inputs are not supported by this decision model` from `tev1:0.8b`,
   `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
   `kev:0.8b-q8_0` ([Limits and refusals](@ref ollama_decisions_limits)). Ollama

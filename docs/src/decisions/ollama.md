@@ -216,10 +216,10 @@ What reaches the model depends on the model, since each family has its own promp
   whole question in its instructions.
 - **Option names and descriptions both travel.** A Choice's criteria map each option to its description, or to no
   description for a bare name.
-- **Give every question instructions.** Ollama's API reference lists `instructions` as required for each question;
-  UniLM sends a question without them, and most models measured answered it with an HTTP 400 (below). Instructions
-  may be a string, an object or an array; an option's description, a Score level and a Noul's `yes` and `no` are
-  strings.
+- **Give every question instructions.** Ollama's API reference lists `instructions` as required for each question,
+  and UniLM refuses a question without them before sending ([Limits and refusals](@ref ollama_decisions_limits)).
+  Instructions may be a string, an object or an array; an option's description, a Score level and a Noul's `yes` and
+  `no` are strings.
 
 The route takes 1 to 64 questions, a Choice of up to 255 options and a Score of 2 to 10 levels, and a model may take
 fewer: the limits, and what each model measured takes, are on [Limits and refusals](@ref ollama_decisions_limits).
@@ -295,7 +295,7 @@ checks before sending:
 | Questions | 1 to 64 per request | yes |
 | Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | at most 255; one option is sent |
 | Score levels | 2 to 10 per question | yes |
-| Instructions | required, a string, an object or an array that is not blank | the kind and the blank; a question without them is sent |
+| Instructions | required, a string, an object or an array that is not blank | yes |
 | State | a string, a JSON object or array, or pictures then texts; a blank string only with pictures | yes |
 | Text and schema, pictures excluded | 64 KiB for a local request | no: the server answers 413 |
 | The whole request | 32 MiB, base64 and JSON included, for a local request | no: the server answers 413 |
@@ -318,6 +318,7 @@ not write.
 | a Score of fewer than 2 or more than 10 levels | `Ollama accepts 2 to 10 levels per question` | offer at least two, or merge levels into a coarser rubric |
 | a Score level that is not a string | `Ollama reads a Score level as a string` | write the level as text |
 | a Noul `yes` or `no` that is not a string | `Ollama reads a Noul criterion as a string` | write it as text |
+| a Choice, Noul or Score without instructions | `Ollama's API reference requires`: a question's `instructions` are among its required fields | say what it asks, as the first argument of `choice`, `score` or `noul` |
 | blank instructions | `Ollama reads blank`: Ollama would read them as none | say what the question asks |
 | instructions that are not a string, an object or an array | `as a string, object or array` | write them as text |
 | a `box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
@@ -360,9 +361,10 @@ is sent too:
 | `strands-decider:2b` | MLX | 2 to 27 measured | 400 `criteria must contain 2–255 candidates` | an answer |
 | `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 1 to 27 measured | an answer, `{"a": 1.0}` | an answer |
 
-A question without instructions: `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be
-a nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.intent: "instructions" must be provided` (for a
-question named `intent`), and of the five tried only `clef-flash:9b` answered. An option described by an object:
+A question without instructions, which UniLM refuses before sending: `tev1:4b`, `nimble:9b` and
+`strands-decider:2b` answered 400 `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` 400
+`questions.intent: "instructions" must be provided` (for a question named `intent`), and of the five tried only
+`clef-flash:9b` answered. An option described by an object:
 `kev:0.8b-q8_0` and `d1:3b` answered it, and `tev1:0.8b` refused it; UniLM refuses one for every model, as Ollama's
 API reference gives a description as a string.
 A 76,284-byte state came back as a 413 `text and schema must not exceed 64 KiB` from `kev:0.8b-q8_0` (the installed
@@ -556,7 +558,7 @@ r.error
 | :--- | :--- | :--- |
 | a `SystemOneCallError` whose `error` holds `no Ollama server answered at` | no server at the endpoint's address | start Ollama, or point `OLLAMA_HOST` or `base_url` at it |
 | a `SystemOneFailure` with status 404, `model '…' not found`, then `pull it first` | the model is not installed | `ollama pull` it, or [`pull_model`](@ref) |
-| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: a question without instructions, fewer or more options than it takes, a picture it cannot see | give every question instructions; see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
+| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: fewer or more options than it takes, a picture it cannot see | see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
 | status 400, `no compatible manifest found for runners: <runner>` | the endpoint pins a runner the model has no build for | leave `runner` unset, or pin the runner the listing names ([Options](@ref ollama_decisions_options)) |
 | status 400 about the loaded context | the input does not fit the window the model is loaded with, and Ollama never truncates it | shorten the state, or ask fewer questions at once |
 | status 413 (`text and schema must not exceed 64 KiB` for the first) | the text and the questions of a local request over 64 KiB, or the whole request over 32 MiB | shorten the state, or split the questions |

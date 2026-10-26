@@ -40,16 +40,15 @@ or an array; an option described by anything but a string or `nothing`; a Score 
 or a Noul criterion that is not a string (on Ollama 0.40.6, `kev:0.8b-q8_0` and
 `d1:3b`, on the llama.cpp path, answered an option described by an object, and
 `tev1:0.8b` refused it) — and, a rule of UniLM's own, blank (whitespace-only)
-`instructions`, which Ollama would read as none. A Choice of one option is sent: the
+`instructions`, which Ollama would read as none. It refuses a Choice, Noul or Score
+question without `instructions`, which Ollama's API reference requires (measured on
+Ollama 0.40.6, `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered one with HTTP
+400 `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` with
+400 `questions.intent: "instructions" must be provided` for a question named
+`intent`, and `clef-flash:9b` answered it). A Choice of one option is sent: the
 models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it, and the MLX models
 answer their own 400 (`criteria must contain 2–26 candidates`; `strands-decider:2b`
-2–255). The route accepts a question without
-`instructions`, but most models do not (measured on Ollama 0.40.6): `tev1:4b`,
-`nimble:9b` and `strands-decider:2b` answer HTTP 400 `instructions must be a
-nonempty string, object, or array`, `kev:0.8b-q8_0` answers 400
-`questions.intent: "instructions" must be provided` (for a question named
-`intent`), and `clef-flash:9b` answers the question — so pass `instructions` with
-local models. A model that takes fewer options (Tev1: at most 24; Nimble and Clef
+2–255). A model that takes fewer options (Tev1: at most 24; Nimble and Clef
 Flash: 26) says so in its own HTTP 400 too, which comes back as a
 [`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
 images excluded, at 64 KiB (measured on Ollama 0.40.6 with `kev:0.8b-q8_0`,
@@ -125,15 +124,20 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 # The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options up to 255, the
 # documented maximum, and as few as one (the decision models on the llama.cpp path answered a single option;
 # the generic surface already requires one); score levels 2–10, its shared check (decision ValidateLimits);
-# `instructions` optional. A model that takes less says so in its own HTTP 400, which reaches the caller as a
-# SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options, Nimble and Clef Flash 2–26, Strands
-# 2–255; tev1, nimble, strands-decider and kev refuse a question without `instructions`, clef-flash answers it.
+# `instructions` required, as its API reference lists them (on Ollama 0.40.6 tev1, nimble, strands-decider and
+# kev refused a question without them, and clef-flash answered it). A model that takes less says so in its own
+# HTTP 400, which reaches the caller as a SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options,
+# Nimble and Clef Flash 2–26, Strands 2–255.
 const _OLLAMA_MAX_QUESTIONS = 64
 const _OLLAMA_MAX_OPTIONS = 255
 const _OLLAMA_MAX_LEVELS = 10
 
+# Ollama's API reference lists `instructions` among the required fields of a Choice, a Noul and a
+# Score question (https://docs.ollama.com/api/systemone, `SystemOneChoiceQuestion` and the others).
 function _ollama_instructions(name::String, instructions)::Nothing
-    isnothing(instructions) && return nothing
+    isnothing(instructions) && throw(ArgumentError(
+        "Ollama's API reference requires `instructions` on every Choice, Noul and Score question; " *
+        "$(repr(name)) has none: say what it asks, as the first argument of `choice`, `score` or `noul`"))
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
         "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks " *
         "(most local decision models require instructions)"))

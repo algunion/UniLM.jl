@@ -243,6 +243,9 @@ struct _Os1Odd <: SystemOneQuestion end
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
             "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank: say what it asks (most local decision models require instructions)"),
+            "no instructions"       => (a("s", choice(["a", "b"])), "Ollama's API reference requires `instructions` on every Choice, Noul and Score question"),
+            "criteria-only noul"    => (a("s", noul(; yes="It is")), "\"q1\" has none: say what it asks"),
+            "score, no instructions" => (a("s", score(["low", "high"])), "requires `instructions`"),
             "image instructions"    => (a("s", score(img, ["low", "high"])), "as a string, object or array"),
             "object description"    => (a("s", choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])), "string or `nothing`"),
             "tuple description"     => (a("s", choice("Which?", (a=(d="A",), b="B"))), "string or `nothing`"),
@@ -268,23 +271,21 @@ struct _Os1Odd <: SystemOneQuestion end
         @test !contains(_os1_caught(a("s", choice("  ", ["a", "b"]))).msg, "pass none")
         @test isempty(seen)                               # nothing reached the server
         # What the route leaves to the model is sent: the mock's models, like the generic MLX
-        # encoder, require `instructions` and take 2–26 options, and say so in their own 400. One
-        # option is the model's call too: the llama.cpp path (kev, d1, d1-omni) answered it on Ollama 0.40.6.
-        served = ["no instructions"    => (a("s", choice(["a", "b"])), "instructions must be a nonempty string"),
-                  "criteria-only noul" => (a("s", noul(; yes="It is")), "instructions must be a nonempty string"),
-                  "27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates"),
+        # encoder, take 2–26 options, and say so in their own 400. One option is the model's call
+        # too: the llama.cpp path (kev, d1, d1-omni) answered it on Ollama 0.40.6.
+        served = ["27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates"),
                   "one option"         => (a("s", choice("Which?", ["a"])), "criteria must contain 2–26 candidates")]
         @testset "$what reaches the server" for (what, (f, needle)) in served
             r = f()
             @test r isa SystemOneFailure && r.status == 400 && contains(r.message, needle)
         end
-        @test length(seen) == 4
+        @test length(seen) == 2
     end
-    # What the wrapper refuses for its shape, the mock (above) rejects too: the local check saves
-    # the round trip and does not narrow what Ollama accepts — save blank `instructions`, which
-    # Ollama would read as none and the wrapper refuses deliberately. The shapes the wrapper
-    # leaves to the model (no instructions, 27 options, one option) the mock rejects too, as the
-    # generic MLX encoder does.
+    # What the wrapper refuses for its shape, the mock (above) rejects too, as the generic MLX encoder
+    # does: the local check saves the round trip. Beyond that encoder it refuses blank `instructions`,
+    # which Ollama would read as none, and a question without `instructions`, which Ollama's API
+    # reference requires though Clef reads the question's name in their place. The shapes the wrapper
+    # leaves to the model (27 options, one option) the mock rejects too.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),
@@ -574,11 +575,11 @@ end
 @testset "route rules: what any Ollama model may take is sent; the rest is refused locally" begin
     e = OllamaEndpoint(base_url="http://box:11434")
     enc(qs...; state="The sky is blue.") = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, collect(qs); model="kev:0.8b-q8_0"))
-    @test enc("q" => choice(["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire          # 255: route bound
-    @test enc("q" => choice(["a" => "A"])) isa UniLM.SystemOneWire                     # one: the llama.cpp path answers it
-    @test _os1_caught(() -> enc("q" => choice(["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
+    @test enc("q" => choice("Which?", ["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire # 255: route bound
+    @test enc("q" => choice("Which?", ["a" => "A"])) isa UniLM.SystemOneWire           # one: the llama.cpp path answers it
+    @test _os1_caught(() -> enc("q" => choice("Which?", ["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
     @test enc("q" => noul("Is it?")) isa UniLM.SystemOneWire
-    @test enc("q" => choice(["a" => "A", "b" => "B"])) isa UniLM.SystemOneWire                        # no instructions: the server's call
+    @test _os1_caught(() -> enc("q" => choice(["a" => "A", "b" => "B"]))) isa ArgumentError           # no instructions: required
     @test _os1_caught(() -> enc("q" => choice("   ", ["a" => "A", "b" => "B"]))) isa ArgumentError  # blank instructions
     @test _os1_caught(() -> enc("q" => score("How?", ["l$i" for i in 1:11]))) isa ArgumentError       # 2–10 levels
     @test _os1_caught(() -> enc("q" => noul("Is it?"); state="   ")) isa ArgumentError                # blank text state

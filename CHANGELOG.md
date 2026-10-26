@@ -75,6 +75,14 @@
   character inside the secret, which `base64decode` skipped too, so that such a secret could
   still decode to the right key, now throws. Upgrading: remove anything but the base64 text from
   inside the secret, such as the line break of a wrapped paste.
+- **Ollama's decision questions need `instructions`.** Ollama's API reference lists
+  `instructions` among the required fields of a Choice, a Noul and a Score question, and `ask`
+  on an `OllamaEndpoint` sent a question without them: most decision models answered it with
+  HTTP 400 (on Ollama 0.40.6, `tev1:4b`, `nimble:9b`, `strands-decider:2b` and
+  `kev:0.8b-q8_0`), and `clef-flash:9b`, which by Ollama's source reads the question's name in
+  their place, answered it. Such a question, a `noul` of `yes`/`no` criteria alone included, is
+  now an `ArgumentError` before anything is sent. Upgrading: give each question its
+  instructions, the first argument of `choice`, `score` or `noul`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

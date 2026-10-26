@@ -9,8 +9,8 @@ import blurCyanImage from '@/images/blur-cyan.png'
 import blurIndigoImage from '@/images/blur-indigo.png'
 import '@/lib/prism'
 
-// The first call of "Start Here: Decisions in Five Minutes"; `:billing` is the
-// answer recorded for it in docs/recorded_answers. Its sentences are sent as
+// The `nl_classify` call of the Jev entry's first decision (docs/src/decisions/jev/index.md);
+// `:billing` is the answer recorded for it in docs/recorded_answers. Its sentences are sent as
 // written, so the lines stay long: the panel's 12px type fits them when the hero
 // is at its widest, and a narrower panel scrolls them sideways.
 const codeLanguage = 'julia'
@@ -56,17 +56,18 @@ export function Hero() {
             />
             <div className="relative">
               <p className="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
-                A unified Julia interface for large language models.
+                One Julia API for language models and decision models.
               </p>
               <p className="mt-3 text-2xl tracking-tight text-slate-400">
-                Native backends for OpenAI, Anthropic and Gemini, any
-                OpenAI-compatible provider, and Jev, TypeSafe’s System One
-                model, for typed, calibrated decisions about a text.
+                Language models on OpenAI, Anthropic, Gemini, Ollama and any
+                OpenAI-compatible server, and decision models that answer
+                with a probability for each option, behind one set of types
+                and verbs.
               </p>
               <div className="mt-8 flex gap-4 md:justify-center lg:justify-start">
-                <Button href="/getting_started/">Get started</Button>
-                <Button href="/guide/jev_start/" variant="secondary">
-                  Decisions in five minutes
+                <Button href="/providers/">Language models</Button>
+                <Button href="/decisions/" variant="secondary">
+                  Decisions
                 </Button>
               </div>
             </div>

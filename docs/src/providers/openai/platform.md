@@ -572,12 +572,18 @@ simply return the final `Response` object"
 ([background mode](https://developers.openai.com/api/docs/guides/background)). A background response
 that failed comes back from `get_response` and `cancel_response` as a `ResponseFailure`, as `respond`
 returns a failed response: its `status` is 200, its `response` the response's JSON with OpenAI's
-`error`, and [`response_status`](@ref) reads `"failed"`. A background request may set `store=false`: "Background requests can use
-`store=false`, but response data is temporarily stored to support asynchronous execution and
-polling", "for roughly 10 minutes" in a Zero Data Retention project
-([background mode](https://developers.openai.com/api/docs/guides/background)), and `get_response`
-reads such a response while OpenAI holds it; a stored one (`store=true`, the default) is kept "for at
-least 30 days" ([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)).
+`error`, and [`response_status`](@ref) reads `"failed"`.
+
+A background request may set `store=false`: "Background requests can use `store=false`, but response
+data is temporarily stored to support asynchronous execution and polling", and `get_response` reads
+such a response while OpenAI holds it. A stored response (`store=true`, the default) is kept "for at
+least 30 days, subject to the data retention exceptions"
+([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)),
+and the background guide names two for background requests: in a Zero Data Retention project they
+"run with `store=false`", their data kept "for roughly 10 minutes"; in a Modified Abuse Monitoring
+project, "Background responses are retained after the polling period only when `store=true` is
+explicitly provided. If `store` is omitted or set to `false` for a background request, the response is
+deleted after roughly 10 minutes" ([background mode](https://developers.openai.com/api/docs/guides/background)).
 
 ## [Limits and refusals](@id openai_platform_limits)
 

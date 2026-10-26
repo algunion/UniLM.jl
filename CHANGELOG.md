@@ -47,12 +47,13 @@
   The GPT-5.6 models (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` and their dated
   snapshots) had no such rule, so `temperature`, `top_p` and log probabilities went out at any
   effort; on 2026-10-25 the API answered `temperature` on `gpt-5.6-luna` at effort `"low"` with
-  HTTP 400 on both APIs ("Unsupported value: 'temperature' does not support 0.5 with this model.
-  Only the default (1) value is supported.") and took it at `"none"`. As on GPT-6 Sol and Luna,
-  `temperature`, `top_p`, `logprobs=true`, `top_logprobs` and
-  `include=["message.output_text.logprobs"]` at another effort — the default `"medium"` included —
-  now throw `ArgumentError` before anything is sent; the API's answer to `top_p` and the log
-  probabilities there was not checked. Upgrading: set `reasoning_effort="none"` on a `Chat` or
+  HTTP 400 on both APIs (Chat Completions: "Unsupported value: 'temperature' does not support 0.5
+  with this model. Only the default (1) value is supported.") and took it at `"none"`, and OpenAI's
+  GPT-5.4 and GPT-5.2 guides state the rule for the GPT-5 family: requests with `temperature`,
+  `top_p` or `logprobs` "will raise an error for GPT-5.4 or GPT-5.2 with any other reasoning effort
+  setting, or for older GPT-5 models". As on GPT-6 Sol and Luna, `temperature`, `top_p`,
+  `logprobs=true`, `top_logprobs` and `include=["message.output_text.logprobs"]` at another effort
+  — the default `"medium"` included — now throw `ArgumentError` before anything is sent. Upgrading: set `reasoning_effort="none"` on a `Chat` or
   `reasoning=Reasoning(effort="none")` on a `Respond`, or remove them.
 - **`get_response` and `cancel_response` return a failed response as a `ResponseFailure`.** Both
   wrapped every response read back with HTTP 200 in a `ResponseSuccess`, also one whose `status`
@@ -223,7 +224,9 @@
   of audio OpenAI no longer keeps. From a minute before `expires_at` on — a request built later
   could reach OpenAI after the expiry — the turn goes as its content alone, its transcript unless
   it holds other text, as every other endpoint gets it; before then, or with no expiry known, it
-  still goes by its id.
+  still goes by its id. The request bytes of such a follow-up thus depend on the clock: one
+  recorded with `with_recorded_answers` while the audio was live replays only until a minute before
+  the expiry, then throws `ReplayMissError`; record it after the expiry.
 - **A background `respond` on OpenAI may set `store=false`.** A `Respond` with
   `background=true` and `store=false` was refused for every endpoint, though OpenAI's
   background guide says "Background requests can use `store=false`, but response data is

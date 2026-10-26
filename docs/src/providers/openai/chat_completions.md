@@ -165,8 +165,11 @@ this audio response will no longer be accessible on the server for use in multi-
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), the assistant
 message's `audio` and the reply's `audio`). From then on it sends the turn as its text alone, so that a
 request built just before the expiry does not arrive after it; a turn whose `expires_at` is `nothing`
-goes by its id. This page replays recorded replies, and the first one's
-`expires_at` had passed when the request below was recorded, so it sends that reply as its transcript:
+goes by its id. The request's bytes therefore depend on the clock, and so does a recording of it
+([Testing and recordings](@ref testing_guide)): recorded while the audio was live, it sends the id and
+replays only until a minute before the expiry. This page replays recorded replies, and the request below
+was recorded after the first one's `expires_at`, so it sends that reply as its transcript and replays at
+any later time:
 
 ```@example openai
 push!(chat, Message(Val(:user), "Now say it in French."))

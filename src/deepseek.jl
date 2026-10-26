@@ -11,6 +11,10 @@
 # They also read DeepSeek's context-cache hit count into the usage.
 # ============================================================================
 
+# DeepSeek takes one effort more than OpenAI's, which it maps to its highest: "| ultra | max"
+# (https://api-docs.deepseek.com/guides/thinking_mode, the requested-to-actual effort table).
+_reasoning_efforts(::DeepSeekEndpoint)::Tuple{Vararg{String}} = (_OPENAI_REASONING_EFFORTS..., "ultra")
+
 # Copy of `m` with one field replaced; field-generic, so fields added to Message later
 # are carried over.
 _message_with(m::Message, field::Symbol, value) =

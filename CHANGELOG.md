@@ -374,6 +374,10 @@
   now goes to `https://api.deepseek.com/beta/v1/chat/completions`, streamed or not; one without
   goes where it went. A recording keys on the request's path, so one of such a request made before
   does not replay: record it again.
+- **A DeepSeek `Chat` takes `reasoning_effort="ultra"`.** DeepSeek's thinking-mode page maps a
+  requested `ultra` to `max`, and the `Chat` constructor refused it for every endpoint. A `Chat` on a
+  `DeepSeekEndpoint` now takes `"ultra"` and sends it as set (DeepSeek answered such a request on
+  2026-10-26); on every other endpoint it is refused when the `Chat` is built, as before.
 
 ## 0.26.0
 

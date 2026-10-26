@@ -227,8 +227,10 @@ length(thought), result.usage.reasoning_tokens
 ```
 
 A `Chat`'s `reasoning_effort` goes out as it is set. DeepSeek takes `"none"`, which turns thinking
-off, and `"low"`, `"high"` and `"max"`, and maps three more: `"minimal"` to `low`, `"medium"` and
-`"xhigh"` to `high` ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)).
+off, and `"low"`, `"high"` and `"max"`, and maps four more: `"minimal"` to `low`, `"medium"` and
+`"xhigh"` to `high` ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)),
+and `"ultra"` to `max` ([Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)), which
+this endpoint alone takes; DeepSeek answered a request with `"ultra"` on 26 October 2026.
 With thinking off, the reply carries none and reports no reasoning tokens:
 
 ```@example deepseek
@@ -325,7 +327,7 @@ endpoint too.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
-| a `reasoning_effort` outside the seven UniLM takes, such as DeepSeek's `"ultra"` | `reasoning_effort must be one of`: UniLM takes `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"`, and DeepSeek maps `"ultra"` to `max` | `"max"` |
+| a `reasoning_effort` outside the eight this endpoint takes, such as `"extreme"` | `reasoning_effort must be one of`: this endpoint takes `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` and `"ultra"`, DeepSeek's names ([Reasoning](@ref deepseek_reasoning)) | one of them |
 | `prefix_complete` on a `Chat` without messages | `Chat must not be empty for prefix completion`: there is no turn to continue | the conversation, then the assistant's prefix |
 | `prefix_complete` on a `Chat` whose last message is not the assistant's | `Last message must be role=assistant for prefix completion`: DeepSeek continues the last message, which must be the assistant's | push the prefix as an assistant message |
 | a `FIMCompletion` with `stream=true` | `does not support stream=true`: `fim_complete` has no streaming path | leave `stream` unset |

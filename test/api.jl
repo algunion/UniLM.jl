@@ -1425,6 +1425,23 @@ struct _NoEmbeddingDefault <: UniLM.ServiceEndpoint end
         @test_throws ArgumentError Chat(reasoning_effort="High")
     end
 
+    @testset "DeepSeek alone takes reasoning_effort \"ultra\", which it maps to max" begin
+        # DeepSeek's thinking-mode page maps each requested effort: "| ultra | max"
+        # (https://api-docs.deepseek.com/guides/thinking_mode).
+        ds = DeepSeekEndpoint(api_key="k")
+        c = Chat(service=ds, reasoning_effort="ultra", messages=[Message(Val(:user), "u")])
+        @test JSON.parse(UniLM.encode_request(ds, c))["reasoning_effort"] == "ultra"
+        for service in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, GEMINIServiceEndpoint,
+                        ANTHROPICServiceEndpoint(), OllamaEndpoint(), MistralEndpoint(api_key="k"))
+            e = try Chat(; service, model="m", reasoning_effort="ultra"); nothing catch x; x end
+            @test e isa ArgumentError &&
+                  e.msg == "reasoning_effort must be one of none, minimal, low, medium, high, xhigh, max (got \"ultra\")"
+        end
+        e = try Chat(service=ds, reasoning_effort="extreme"); nothing catch x; x end
+        @test e isa ArgumentError &&
+              e.msg == "reasoning_effort must be one of none, minimal, low, medium, high, xhigh, max, ultra (got \"extreme\")"
+    end
+
     @testset "top_logprobs in [0, 20]" begin
         @test Chat(top_logprobs=0).top_logprobs == 0
         @test Chat(top_logprobs=20).top_logprobs == 20

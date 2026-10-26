@@ -221,6 +221,11 @@ const _MESSAGE_ROLES = (RoleSystem, RoleUser, RoleAssistant, RoleTool)
 # Reasoning effort values the OpenAI API accepts; each model supports a subset.
 const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+# The `reasoning_effort` values a Chat on `service` takes: OpenAI's, unless the endpoint's provider
+# names more (DeepSeek, src/deepseek.jl). A value no endpoint's provider takes is refused when the
+# Chat is built.
+_reasoning_efforts(_)::Tuple{Vararg{String}} = _OPENAI_REASONING_EFFORTS
+
 """
     Model(name::String)
 
@@ -1457,7 +1462,8 @@ The constructor validates ranges and throws `ArgumentError` on a violation; amon
 them, `n` must be `1` when set — a result carries a single choice — `top_logprobs`
 must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
 `reasoning_effort` one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
-`"xhigh"`, `"max"`. An empty `tools` vector is stored as `nothing`.
+`"xhigh"`, `"max"`, and on a `DeepSeekEndpoint` also `"ultra"`, which DeepSeek maps to
+`max`. An empty `tools` vector is stored as `nothing`.
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -1554,8 +1560,9 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(logit_bias) || all(v -> -100 <= v <= 100, values(logit_bias)) ||
             throw(ArgumentError("logit_bias values must be in [-100, 100]"))
-        isnothing(reasoning_effort) || reasoning_effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
-            "reasoning_effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(reasoning_effort)))"))
+        efforts = _reasoning_efforts(service)
+        isnothing(reasoning_effort) || reasoning_effort in efforts || throw(ArgumentError(
+            "reasoning_effort must be one of $(join(efforts, ", ")) (got $(repr(reasoning_effort)))"))
         return new(
             service,
             model,

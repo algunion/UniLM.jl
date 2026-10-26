@@ -37,7 +37,7 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [know what a call cost](@ref openai_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
 | [generate or edit images](@ref openai_images) | `generate_image`, `edit_image` | images from OpenAI's Images API |
 | [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, audio from text |
-| [hold a Realtime session](@ref timeout_realtime__next) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
+| [hold a Realtime session](@ref timeout_realtime) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
 | [answer from my own files](@ref retrieval_guide__next) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
 | [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |
 | [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)` | each model's id, creation time and shutdown date |
@@ -308,6 +308,9 @@ result = embeddingrequest!(emb)
 length.(embedding_vectors(result)), token_usage(result).prompt_tokens, estimated_cost(result)
 ```
 
+By default "the length of the embedding vector is `1536` for `text-embedding-3-small` or `3072` for
+`text-embedding-3-large`"
+([embeddings guide](https://developers.openai.com/api/docs/guides/embeddings#how-to-get-embeddings)).
 `dimensions` is sent as it is: the `text-embedding-3` models return a shorter vector when a request
 asks for one
 ([embeddings guide](https://developers.openai.com/api/docs/guides/embeddings#reducing-embedding-dimensions)),

@@ -209,29 +209,42 @@ heard = transcribe("memo.wav"; service=vllm,                              # /v1/
                    model="openai/whisper-large-v3-turbo", language="en")
 ```
 
-- **Embeddings** need an embedding model: vLLM's embeddings route is "Only applicable to embedding
-  models" ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)),
-  and `llama-server`'s "requires that the model uses a pooling different than type `none`". An item
-  holding an image or a sound clip is refused before the request: UniLM sends these routes text only,
-  though vLLM takes images too, "by defining a custom chat template for the server and passing a list
-  of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
-  a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
-  ([task prompts](@ref ollama_embeddings__next)).
-- **respond** sends a `Respond`'s fields as they are, a `seed` among them: vLLM's Responses API
-  "forwards vLLM sampling parameters such as `top_k`, `min_p`, `repetition_penalty`, `seed`, `stop`,
-  and `ignore_eos` to the engine"
-  ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)).
-  vLLM serves stored responses
-  (`/v1/responses/{response_id}`), LM Studio takes a `previous_response_id`, and `llama-server`'s route
-  "works by converting Responses request into Chat Completions request".
-- **FIM** sends the `suffix` to `/v1/completions`, where vLLM's Completions API notes "`suffix` parameter
-  is not supported", so a vLLM server cannot fill in the middle.
-- **transcribe** sends the file and the fields a request sets to `/v1/audio/transcriptions`, where vLLM's
-  Transcriptions API is "Only applicable to Automatic Speech Recognition (ASR) models"
-  ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/))
-  and takes `model` as "required" ([speech to text](https://docs.vllm.ai/en/latest/serving/online_serving/speech_to_text/)):
-  the endpoint has no default model, so a call names the server's. `speak` and `translate` refuse the
-  endpoint.
+### [Embeddings](@id local_servers_embeddings)
+
+Embeddings need an embedding model: vLLM's embeddings route is "Only applicable to embedding
+models" ([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)),
+and `llama-server`'s "requires that the model uses a pooling different than type `none`". An item
+holding an image or a sound clip is refused before the request: UniLM sends these routes text only,
+though vLLM takes images too, "by defining a custom chat template for the server and passing a list
+of `messages` in the request" ([embeddings](https://docs.vllm.ai/en/latest/models/pooling_models/embed/)),
+a request UniLM does not write. EmbeddingGemma's task prompts hold on any server
+([task prompts](@ref ollama_embeddings__next)). The concepts every provider shares are on
+[Embeddings](@ref embeddings_guide).
+
+### [respond](@id local_servers_respond)
+
+`respond` sends a `Respond`'s fields as they are, a `seed` among them: vLLM's Responses API
+"forwards vLLM sampling parameters such as `top_k`, `min_p`, `repetition_penalty`, `seed`, `stop`,
+and `ignore_eos` to the engine"
+([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)).
+vLLM serves stored responses
+(`/v1/responses/{response_id}`), LM Studio takes a `previous_response_id`, and `llama-server`'s route
+"works by converting Responses request into Chat Completions request".
+
+### [FIM completion](@id local_servers_completions)
+
+FIM sends the `suffix` to `/v1/completions`, where vLLM's Completions API notes "`suffix` parameter
+is not supported", so a vLLM server cannot fill in the middle. The concepts every provider shares are on
+[FIM & Prefix Completion](@ref completions_guide).
+
+### [Transcription](@id local_servers_transcription)
+
+`transcribe` sends the file and the fields a request sets to `/v1/audio/transcriptions`, where vLLM's
+Transcriptions API is "Only applicable to Automatic Speech Recognition (ASR) models"
+([OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/))
+and takes `model` as "required" ([speech to text](https://docs.vllm.ai/en/latest/serving/online_serving/speech_to_text/)):
+the endpoint has no default model, so a call names the server's. `speak` and `translate` refuse the
+endpoint.
 
 ## [Limits and refusals](@id local_servers_limits)
 

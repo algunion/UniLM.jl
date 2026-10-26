@@ -1,31 +1,36 @@
 # [FIM & Prefix Completion](@id completions_guide)
 
-UniLM.jl supports **Fill-in-the-Middle (FIM)** completion and **Chat Prefix Completion** —
-features for code completion and controlled text generation.
-
-FIM is supported by [`DeepSeekEndpoint`](@ref) (beta), [`MistralEndpoint`](@ref) and
-Ollama; vLLM's `/v1/completions` does not accept `suffix`, so it cannot fill in the
-middle. Prefix completion is supported by [`DeepSeekEndpoint`](@ref) (beta). The default
-DeepSeek model for both is `deepseek-flash`.
-
 ```@setup completions
 using UniLM
 using JSON
 ```
 
----
+**Fill-in-the-Middle (FIM)** completion has a model write the text between a prefix and a suffix — the
+gap in the code you are editing, say — and **chat prefix completion** has it continue an assistant reply
+from the start you give it, to force an output format such as a code block. A provider can serve them
+only when its endpoint's capabilities hold `:fim` or `:prefix_completion`, and a generic endpoint
+(`GenericOpenAIEndpoint`) declares `:fim` for any server: whether yours fills in the middle is on its entry,
+which the table at the end links.
 
-## FIM Completion
+```@example completions
+service, model = DeepSeekEndpoint(), "deepseek-flash"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref completions_providers) links each provider's rules.
+
+## [FIM completion](@id completions_fim)
 
 FIM generates text between a `prompt` (prefix) and an optional `suffix`. This is the
 standard pattern for code completion — the model fills in the gap.
 
-### Basic Usage
+### [Building a request](@id completions_fim_request)
 
 ```@example completions
 fim = FIMCompletion(
-    service=DeepSeekEndpoint("demo-key"),
-    model="deepseek-flash",
+    service=service,
+    model=model,
     prompt="def fib(a):",
     suffix="    return fib(a-1) + fib(a-2)",
     max_tokens=128,
@@ -38,7 +43,11 @@ println("JSON body:")
 println(JSON.json(fim, 2))
 ```
 
-### Making Requests
+A `FIMCompletion` without `model` takes the endpoint's default FIM model, and the request throws
+`ArgumentError` for an endpoint that has none; `max_tokens` is 128 unless it is set, and the other fields
+are sent only when they are set.
+
+### [Making requests](@id completions_fim_send)
 
 ```julia
 # Struct form
@@ -48,14 +57,17 @@ if result isa FIMSuccess
 end
 
 # Convenience form
-result = fim_complete("def hello():",
-    service=DeepSeekEndpoint(),
+result = fim_complete("def hello():";
+    service, model,
     suffix="    print('done')",
     max_tokens=64,
     stop=["\n\n"])
 ```
 
-### Result Types
+`fim_complete` sends the request to the endpoint's completions route, which its entry names, and reads
+the completion's text from each choice of the reply.
+
+### [Result types](@id completions_fim_results)
 
 FIM returns [`FIMSuccess`](@ref), [`FIMFailure`](@ref), or [`FIMCallError`](@ref). Local
 validation — the endpoint's `:fim` capability, model resolution, routing, and
@@ -78,34 +90,17 @@ catch e
 end
 ```
 
-### Provider Support
-
-| Provider | Endpoint | Notes |
-|---|---|---|
-| DeepSeek | `DeepSeekEndpoint()` | Beta — uses `api.deepseek.com/beta` internally |
-| Mistral | `MistralEndpoint()` | Via `/v1/fim/completions`; its `message.content` choices are read |
-| Ollama | `OllamaEndpoint()` | Via `/v1/completions` |
-
-```@example completions
-# URL routing adapts per provider
-println("DeepSeek: ", UniLM.get_url(DeepSeekEndpoint("k"), fim))
-println("Mistral:  ", UniLM.get_url(MistralEndpoint(api_key="k"), fim))
-println("Ollama:   ", UniLM.get_url(OllamaEndpoint(), fim))
-```
-
----
-
-## Chat Prefix Completion
+## [Chat prefix completion](@id completions_prefix)
 
 Prefix completion lets you provide a partial assistant message that the model continues
 from. Useful for forcing specific output formats (e.g., starting with a code block).
 
-### Usage
+### [Usage](@id completions_prefix_usage)
 
 The last message in the chat must be `role=assistant` with the partial text:
 
 ```julia
-chat = Chat(service=DeepSeekEndpoint())   # deepseek-flash
+chat = Chat(service=service, model=model)
 push!(chat, Message(Val(:system), "You are a coding assistant."))
 push!(chat, Message(Val(:user), "Write a Python quicksort"))
 push!(chat, Message(role=RoleAssistant, content="```python\n"))
@@ -115,19 +110,20 @@ result = prefix_complete(chat)
 result isa LLMSuccess && println(result.message.content)
 ```
 
-The result's `message` is the continuation the API returns. With `chat.history` (the
+The request is the endpoint's own `Chat` request, its last message marked as the prefix to continue. The
+result's `message` is the continuation the API returns. With `chat.history` (the
 default) the conversation keeps the whole assistant turn — the prefix followed by the
 continuation. A failure or a cancellation (`cancel=`, or an ambient `with_cancel`
 token) leaves `chat` untouched.
 
-### Validation
+### [Validation](@id completions_prefix_validation)
 
 `prefix_complete` validates that:
 - The chat is not empty
 - The last message has `role=assistant`
 
 ```@example completions
-chat = Chat(service=DeepSeekEndpoint("k"))
+chat = Chat(service=service, model=model)
 push!(chat, Message(Val(:system), "sys"))
 push!(chat, Message(Val(:user), "hello"))
 println("Last role: ", chat[end].role)
@@ -135,22 +131,26 @@ println("Last role: ", chat[end].role)
 # prefix_complete(chat)  # ArgumentError
 ```
 
----
+## [Capability validation](@id completions_capabilities)
 
-## Capability Validation
-
-Both `fim_complete` and `prefix_complete` check provider capabilities before making
-requests. If a provider doesn't support the feature, you get a clear error:
+Both `fim_complete` and `prefix_complete` check the endpoint's capabilities before making a request: an
+endpoint without `:fim`, or without `:prefix_completion`, throws `ArgumentError` naming the feature and the
+capabilities it has. [Capabilities by provider](@ref capabilities_guide) shows which endpoints declare
+them, a generic endpoint's as sent unchecked: it declares `:fim` whatever its server serves.
 
 ```@example completions
-# OpenAI does not support FIM
-println(has_capability(OPENAIServiceEndpoint, :fim))       # false
-println(has_capability(DeepSeekEndpoint("k"), :fim))        # true
-println(has_capability(DeepSeekEndpoint("k"), :prefix_completion))  # true
+println(has_capability(service, :fim))
+println(has_capability(service, :prefix_completion))
 ```
 
-## See Also
+## [See also](@id completions_see_also)
 
-- [FIM API Reference](@ref fim_api) — full type and function reference
+- [FIM Types](@ref fim_api) — full type and function reference
 - [Provider Capabilities](@ref capabilities_api) — capability system
-- [Multi-Backend Guide](@ref backend_guide) — all supported providers
+- [One API across providers](@ref backend_guide) — switching providers
+
+## [On your provider](@id completions_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :completions)
+```

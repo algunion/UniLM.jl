@@ -164,6 +164,17 @@ end
     @test [k for k in (:azure, :deepseek, :openai_compatible) if !haskey(entry(k).features, :media)] == Symbol[]
     @test haskey(entry(:openai_compatible).features, :conversations)
 end
+@testset "ProviderFacts — the entries whose endpoints embed, fill in the middle or price as local have those sections" begin
+    # the concept pages' tables list an entry by its section: an endpoint that declares `:embeddings` or `:fim`
+    # (a generic one declares both for any server) has the section that says whether its server serves them, and
+    # one whose models cost 0.0 as local has a cost section that says so
+    llm = filter(e -> e.chapter == ProviderFacts.llm, REGISTRY)
+    declares(e, cap) = any(ep -> has_capability(ep, cap), e.endpoints)
+    @test [e.key for e in llm if declares(e, :embeddings) && !haskey(e.features, :embeddings)] == Symbol[]
+    @test [e.key for e in llm if declares(e, :fim) && !haskey(e.features, :completions)] == Symbol[]
+    @test [e.key for e in llm if any(ep -> UniLM._is_local(ep, "a-local-model"), e.endpoints) &&
+                                 !haskey(e.features, :cost)] == Symbol[]
+end
 @testset "ProviderFacts — the registry and price checks refuse a broken table, naming what is wrong" begin
     remake(e; changes...) = ProviderEntry(; (f => get(changes, f, getfield(e, f)) for f in fieldnames(ProviderEntry))...)
     function refusal(entries)                       # the entry and field the check names; `nothing` when it accepts

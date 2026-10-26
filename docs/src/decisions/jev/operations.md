@@ -83,6 +83,8 @@ messages of your own, with the version pinned: a bar tuned against one version i
 TypeSafe bills the input tokens of a request — the state, the questions and the pictures — and output tokens
 are free ([Models](https://docs.typesafe.ai/models), [Images](https://docs.typesafe.ai/images)). The state is
 read once for every question of a request, so many questions in one `ask` cost far less than a request each.
+The rows are TypeSafe's prices as checked on 25 October 2026; prices change, so check the Models page before
+relying on an estimate.
 
 ```@eval
 Main.ProviderFacts.price_table(:jev)

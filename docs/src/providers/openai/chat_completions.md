@@ -28,8 +28,12 @@ breaks one is refused ([Limits and refusals](@ref openai_limits)).
 ## [Tools on Chat Completions](@id openai_chat_tools)
 
 Each `Tool` in `tools` goes out as a `function` tool with its `name` and, where its `FunctionSignature`
-sets them, its `description`, `parameters` and `strict` flag. `tool_choice` is sent as given: `"auto"`,
-`"none"`, `"required"`, or `UniLM.GPTToolChoice(func=:get_weather)` for
+sets them, its `description`, `parameters` and `strict` flag. A function's name "Must be a-z, A-Z, 0-9, or
+contain underscores and dashes, with a maximum length of 64"
+([Create chat completion](https://developers.openai.com/api/reference/resources/chat)); UniLM sends a name
+as given, and [`mcp_tools`](@ref) advertises an MCP tool under a name of up to 128 characters
+([MCP](@ref mcp_guide)), so a name longer than 64 characters goes out as it is. `tool_choice` is sent as
+given: `"auto"`, `"none"`, `"required"`, or `UniLM.GPTToolChoice(func=:get_weather)` for
 `{"type": "function", "function": {"name": "get_weather"}}`. Strict mode makes the calls "reliably adhere
 to the function schema", and OpenAI recommends "always enabling" it; its schema needs
 `additionalProperties: false` on every object and every field `required`, and a request whose strict

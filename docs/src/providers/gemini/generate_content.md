@@ -310,10 +310,11 @@ The concepts every provider shares are on [Streaming](@ref streaming_guide).
 The candidate's `finishReason` becomes the message's `finish_reason`, streamed or not: `STOP` gives
 `"stop"`, or `"tool_calls"` when the turn holds function calls; `MAX_TOKENS` gives `"length"`; the
 filters `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY`,
-`IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` give `"content_filter"`, as do the policy stops
-`LANGUAGE` (content "flagged for using an unsupported language"), `ESCALATION` ("filtered by an
-escalation rule") and `PUP_LIMITED_DISABLED` ("the user account is limited or disabled due to
-Prohibited Use Policy (PUP) violations"); and every other value passes through in lower case —
+`IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` give `"content_filter"`, as do the filters
+`LANGUAGE` (content "flagged for using an unsupported language") and `ESCALATION` ("filtered by an
+escalation rule"), and the policy stop `PUP_LIMITED_DISABLED` ("the user account is limited or
+disabled due to Prohibited Use Policy (PUP) violations"); and every other value passes through in
+lower case —
 `"malformed_function_call"`, `"unexpected_tool_call"`, `"continuation"`
 ([Long generations](@ref gemini_long_decode)), `"other"`, … — never as `"stop"`. A candidate without a `finishReason` reads `nothing`, and function calls under a
 reason other than `STOP` keep that reason, so `tool_loop!` does not run them. Google's reference
@@ -363,8 +364,8 @@ The same ids are the ones a `Chat` may end with an assistant turn on ([Conversat
   refused before the request.
 - `n` is not sent: a request gets one candidate.
 
-`service_tier` takes `"standard"`, `"flex"` and `"priority"`, sent as `serviceTier`, as a `Respond`
-does ([The Interactions API](@ref gemini_interactions_options)). Flex costs
+`service_tier` takes `"standard"`, `"flex"` and `"priority"`, sent as `serviceTier`; a `Respond` takes
+the same three ([The Interactions API](@ref gemini_interactions_options)). Flex costs
 half the standard rates and its latency is "Minutes (1--15 min target)"; Priority costs "75% to
 100% over Standard rates", and a request over its limits is downgraded: "Downgraded requests are
 billed at the standard rate"

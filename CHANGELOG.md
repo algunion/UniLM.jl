@@ -115,6 +115,15 @@
   request, as a `Chat` on either Gemini endpoint already did, whose message no longer sends such a
   request to `respond`. Upgrading: send `"flex"`, `"standard"` or `"priority"`, or leave
   `service_tier` unset.
+- **An Ollama chat result names the model its reply gives.** An `/api/chat` reply names the "Model
+  name used to generate this message", and each line of a stream the "Model name used for this
+  stream event", but UniLM dropped it, so `LLMSuccess.model` was `nothing` on an `OllamaEndpoint`,
+  while the other providers' results carry the model they report. It now holds the reply's name,
+  streamed or not. A cloud model whose reply names it without its cloud tag keeps the requested
+  name, as its `respond`, FIM and System One results do, so it is still priced as the cloud model
+  it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
+  Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
+  price is unchanged.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -368,13 +377,6 @@
   voice is now sent as given, and Gemini answers a name it does not have: one of the 30 as
   `prebuiltVoiceConfig.voiceName`, as before, any other as `voiceConfig.voice`, the field Google's
   reference gives for a stored voice's id and a replication key. A blank voice still throws.
-- **An Ollama chat result names the model its reply gives.** An `/api/chat` reply names the "Model
-  name used to generate this message", and each line of a stream the "Model name used for this
-  stream event", but UniLM dropped it, so `LLMSuccess.model` was `nothing` on an `OllamaEndpoint`,
-  while the other providers' results carry the model they report. It now holds the reply's name,
-  streamed or not. A cloud model whose reply names it without its cloud tag keeps the requested
-  name, as its `respond`, FIM and System One results do, so it is still priced as the cloud model
-  it is; a local model's result still costs `0.0`.
 
 ## 0.26.0
 

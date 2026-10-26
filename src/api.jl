@@ -1882,9 +1882,10 @@ isfailure(r::LLMRequestResponse) = !issuccess(r)
     text(r::LLMSuccess) -> Union{String,Nothing}
 
 The assistant reply text — `r.message.content`. Can be `nothing` when the reply
-carries only tool calls (no text). On a [`LLMFailure`](@ref) or [`LLMCallError`](@ref),
-`text` throws an [`LLMResultError`](@ref); guard with [`issuccess`](@ref) /
-[`isfailure`](@ref), or pattern-match the result type first.
+carries only tool calls (no text), or is a refusal (`r.message.refusal_message` holds
+it). On a [`LLMFailure`](@ref) or [`LLMCallError`](@ref), `text` throws an
+[`LLMResultError`](@ref); guard with [`issuccess`](@ref) / [`isfailure`](@ref), or
+pattern-match the result type first.
 """
 text(r::LLMSuccess) = r.message.content
 

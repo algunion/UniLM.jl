@@ -15,7 +15,6 @@
             "Chat Completions" => "providers/openai/chat_completions.md",
             "Responses & hosted tools" => "providers/openai/responses.md",
             "Retrieval & file search" => "providers/openai/retrieval.md",
-            "Retrieval & File Search" => "guide/retrieval.md",
             "Images, audio & realtime" => "providers/openai/media.md",
             "Platform APIs" => "providers/openai/platform.md",
         ],

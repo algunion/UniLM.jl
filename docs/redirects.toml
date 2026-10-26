@@ -6,5 +6,6 @@
 # [anchors]  retired anchor id = its successor, an id that a page of the site defines.
 [routes]
 "guide/responses_api" = "providers/openai/responses"
+"guide/retrieval" = "providers/openai/retrieval"
 
 [anchors]

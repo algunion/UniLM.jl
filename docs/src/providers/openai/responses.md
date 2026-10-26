@@ -110,7 +110,7 @@ come back in the response's output items; the last row's are calls the applicati
 | Tool | Made by | Its results |
 | :--- | :--- | :--- |
 | web search | [`web_search`](@ref)`(; context_size, location, filters)` | the answer's [`url_citations`](@ref); [`web_search_results`](@ref) |
-| file search | [`file_search`](@ref)`(vector_store_ids; max_results, ranking, filters)` | [`file_search_results`](@ref); the stores on [Retrieval & file search](@ref retrieval_guide__next) |
+| file search | [`file_search`](@ref)`(vector_store_ids; max_results, ranking, filters)` | [`file_search_results`](@ref); the stores on [Retrieval & file search](@ref retrieval_guide) |
 | code interpreter | [`code_interpreter`](@ref)`()` | [`code_interpreter_outputs`](@ref); its settings on [Platform APIs](@ref openai_containers) |
 | image generation | [`image_generation_tool`](@ref)`(; size, quality, action, …)` | the images as base64, [`image_generation_results`](@ref) |
 | remote MCP servers | [`mcp_tool`](@ref)`(label, url; require_approval, allowed_tools, …)` | [`mcp_call_outputs`](@ref); [`mcp_approval_requests`](@ref) |

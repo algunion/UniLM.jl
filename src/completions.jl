@@ -289,6 +289,8 @@ to continue from. The result's `message` is the continuation the API returns; wi
 `chat.history` the conversation keeps the whole assistant turn, prefix followed by
 continuation. The request is never streamed: the call reads one whole reply and takes no
 callback, so a `chat` with `stream=true` is sent without its `stream` and `stream_options`.
+A successful call adds its turn's cost to [`cumulative_cost`](@ref)`(chat)`, with or without
+`chat.history`, as [`chatrequest!`](@ref) does.
 
 Supported by [`DeepSeekEndpoint`](@ref) (beta).
 
@@ -339,7 +341,9 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
+            result = LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
+            _accumulate_cost!(chat, result)   # a billed turn joins the Chat's total, as a chatrequest! turn does
+            return result
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.

@@ -408,6 +408,36 @@ UniLM._asks_stream_usage(::_DSPrefixHere) = true
     @test last(chat).content == "```python\nx = 1" && chat.stream === true
 end
 
+@testset "prefix_complete adds its turn's cost to cumulative_cost, as chatrequest! does" begin
+    # deepseek-flash: $0.30 per 1M input tokens, $1.20 per 1M output (DEFAULT_PRICING).
+    reply = JSON.json(Dict("model" => "deepseek-flash", "usage" => Dict("prompt_tokens" => 1000,
+        "completion_tokens" => 100, "total_tokens" => 1100), "choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
+    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
+                          Message(role=UniLM.RoleAssistant, content="```python\n")])
+    turn = (1000 * 0.30 + 100 * 1.20) / 1_000_000
+    (r1, r2), _ = _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat), prefix_complete(chat)
+    end
+    @test r1 isa LLMSuccess && estimated_cost(r1) ≈ turn
+    @test cumulative_cost(chat) ≈ 2turn                                  # each turn, as chatrequest! adds it
+    # A failure carries no billed usage and adds nothing; a call without history adds its turn too.
+    failed, _ = _with_scripted((_, _) -> _json(400, "{\"error\":{\"message\":\"bad\"}}")) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat)
+    end
+    @test failed isa LLMFailure && cumulative_cost(chat) ≈ 2turn
+    quiet = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", history=false,
+                 messages=[Message(Val(:user), "u"), Message(role=UniLM.RoleAssistant, content="```python\n")])
+    _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(quiet)
+    end
+    @test cumulative_cost(quiet) ≈ turn && length(quiet) == 2
+end
+
 @testset "fim_complete and prefix_complete: a cancelled token sends nothing" begin
     tok = cancel!(CancelToken())
     cfg = RequestConfig(max_attempts=3, total_deadline=60.0)

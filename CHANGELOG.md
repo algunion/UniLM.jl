@@ -347,6 +347,10 @@
   `LLMCallError`. The request now leaves `stream` and `stream_options` out and is read whole; the
   `Chat` keeps both for `chatrequest!`. `prefix_complete` takes no callback, so nothing a stream
   would deliver is lost.
+- **`prefix_complete` adds its turn's cost to `cumulative_cost`.** It appended the continued turn
+  to the `Chat` but left its cost out of the `Chat`'s running total, which every `chatrequest!`
+  turn adds. A successful prefix completion now adds its result's `estimated_cost`, with or without
+  `history`; a failure adds nothing, as it carries no billed usage.
 
 ## 0.26.0
 

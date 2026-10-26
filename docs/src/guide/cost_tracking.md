@@ -188,7 +188,8 @@ entry's cost section says.
 
 [`cumulative_cost`](@ref) returns the running USD total that `chatrequest!` accrues on a
 [`Chat`](@ref). Accumulation happens **only** inside `chatrequest!` (both streaming and
-non-streaming paths, and so every turn of a `tool_loop!`) — nothing else adds to the total:
+non-streaming paths, and so every turn of a `tool_loop!`) and [`prefix_complete`](@ref) — nothing
+else adds to the total:
 
 ```julia
 chat = Chat(service=service, model=model)

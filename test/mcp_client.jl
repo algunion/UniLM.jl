@@ -3673,11 +3673,12 @@ end
     t = _ScriptedTransport((m, id, p) -> (m == "tools/call" && push!(seen, p["name"]);
         [_ok_frame(id, Dict{String,Any}("content" => [Dict{String,Any}("type" => "text", "text" => "ok")]))]))
     session = _scripted_session(t)
-    names = ["admin.tools.list", "plain_name", "has space", "x"^130]
+    # A name ending in a line break is not a conforming one: PCRE's `$` also matches before a final `\n`.
+    names = ["admin.tools.list", "plain_name", "has space", "x"^130, "abc\n"]
     session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
     tools = mcp_tools(session)
     aliases = [ct.tool.func.name for ct in tools]
-    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^55 * "_" * bytes2hex(UniLM.sha256("x"^130))[1:8]]
+    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^55 * "_" * bytes2hex(UniLM.sha256("x"^130))[1:8], "abc_"]
     @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,64}$", a), aliases)
     @test tools[1].callable("admin_tools_list", Dict{String,Any}()) == "ok"
     rtools = mcp_tools_respond(session)

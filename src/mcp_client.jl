@@ -1719,7 +1719,8 @@ end
 
 # The characters of a function name every provider accepts. MCP tool names may also contain
 # dots (e.g. `admin.tools.list`) — or, from servers predating the naming guidance, anything.
-const _PROVIDER_TOOL_NAME = r"^[a-zA-Z0-9_-]+$"
+# Anchored with \A and \z: `$` would also match before a final line break.
+const _PROVIDER_TOOL_NAME = r"\A[a-zA-Z0-9_-]+\z"
 
 # The longest function name the API of the endpoint the tools go to accepts: "a maximum length
 # of 64" on OpenAI's Chat Completions (https://developers.openai.com/api/reference/resources/chat),

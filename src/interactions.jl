@@ -361,24 +361,45 @@ function _interaction_output(steps)::Vector{Any}
 end
 
 # Append a model_output step's text to the answer message. `content` is null on a step that
-# produced no parts, which adds nothing.
+# produced no parts, which adds nothing. A text part's `annotations` — the citations of a
+# grounded answer, `url_citation` among them (TextContent, https://ai.google.dev/api/interactions-api)
+# — stay on the message's output_text part, where `url_citations` reads them. Their `start_index`
+# and `end_index` count bytes of the text ("measured in bytes"), so those of a part joined after
+# other text move by that text's byte length; the step's own annotations are left as Google sent them.
 function _extend_answer!(message::Dict{String,Any}, step::AbstractDict)::Nothing
+    content = message["content"]::Vector{Any}
+    before = isempty(content) ? 0 : ncodeunits(only(content)["text"]::String)
     io = IOBuffer()
+    notes = Any[]
     for c in _as_iter(get(step, "content", ()))
         _interaction_text_part(c) || continue
         t = get(c, "text", "")
-        t isa AbstractString && print(io, t)
+        t isa AbstractString || continue
+        for a in _as_iter(get(c, "annotations", ()))
+            a isa AbstractDict && push!(notes, _shifted_annotation(a, before + position(io)))
+        end
+        print(io, t)
     end
     text = takestring!(io)
-    isempty(text) && return nothing
-    content = message["content"]::Vector{Any}
+    isempty(text) && isempty(notes) && return nothing
     if isempty(content)
         push!(content, Dict{String,Any}("type" => "output_text", "text" => text))
     else
         part = only(content)
         part["text"] = string(part["text"], text)
     end
+    isempty(notes) || append!(get!(Vector{Any}, only(content), "annotations"), notes)
     nothing
+end
+
+# A copy of an annotation whose integer `start_index` and `end_index` count `shift` bytes further on.
+function _shifted_annotation(a::AbstractDict, shift::Int)::Dict{String,Any}
+    d = Dict{String,Any}(a)
+    for k in ("start_index", "end_index")
+        v = get(d, k, nothing)
+        v isa Integer && (d[k] = v + shift)
+    end
+    d
 end
 
 # Gemini Interactions usage → OpenAI-Responses-shaped usage so token_usage/estimated_cost
@@ -470,7 +491,7 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 
 # ─── Streaming decode (Interactions SSE → per-step assembly + final rebuild) ──
 # Named events: interaction.created/status_update, step.start, step.delta
-# (delta.type: text | arguments_delta | thought_summary | thought_signature),
+# (delta.type: text | text_annotation_delta | arguments_delta | thought_summary | thought_signature),
 # step.stop, interaction.completed (final object + usage but NO steps; its
 # `status` may be "completed" or "requires_action" — there is no dedicated
 # requires_action event), then event:done / [DONE].
@@ -481,7 +502,8 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # (`state.text_by_step`) and is written into the step once, when the interaction
 # completes; by step type it is the function-call argument JSON (partial-JSON string
 # deltas), the answer text (extending the step's last text part), or the thought
-# signature. Each thought_summary delta adds one item to the thought's `summary`.
+# signature. Each thought_summary delta adds one item to the thought's `summary`, and each
+# text_annotation_delta its annotations to the answer step's last text part.
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                                state::AgenticStreamState)
     for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
@@ -567,6 +589,19 @@ function _interaction_step_delta!(state::AgenticStreamState, data::Dict{String,A
         summary = get(step, "summary", nothing)
         summary isa Vector{Any} || (step["summary"] = summary = Any[])
         push!(summary, c)
+    elseif dt == "text_annotation_delta"
+        # A grounded answer's citations, which arrive after the text they cite (a google_search
+        # stream on 2026-10-26): kept on the step's last text part, which the streamed text then
+        # extends, as an unstreamed interaction carries them.
+        notes = get(d, "annotations", nothing)
+        (notes isa AbstractVector && kind == "model_output" && !isnothing(step)) || return nothing
+        content = step["content"]::Vector{Any}
+        part = isempty(content) ? nothing : last(content)
+        if !(_interaction_text_part(part) && get(part, "text", nothing) isa AbstractString)
+            part = Dict{String,Any}("type" => "text", "text" => "")
+            push!(content, part)
+        end
+        append!(get!(Vector{Any}, part, "annotations"), notes)
     else
         # Answer text (a top-level `text`). `textbuff` is the full accumulation
         # diagnostics can read; `pending_delta` is what the driver forwards.

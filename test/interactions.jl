@@ -871,6 +871,69 @@ end
     @test rd["output"] == decode([thought("a"), say("A"), thought("b"), say("B")]).output
 end
 
+@testset "Interactions decode — a grounded answer's citations stay on its text, where url_citations reads them" begin
+    # The google_search interaction the Gemini Interactions page records: Google puts the answer's
+    # sources on its text part as `annotations` (TextContent.annotations, ai.google.dev/api/interactions-api).
+    recorded = JSON.parsefile(joinpath(pkgdir(UniLM), "docs", "recorded_answers",
+        "ceefb4214a16cb9016e470a8f059119a283f189a7e5d67ed2555c9de831772b7.json"); dicttype=Dict{String,Any})
+    body = recorded["response"]["body"]
+    sent = only(only(s["content"])["annotations"] for s in body["steps"] if s["type"] == "model_output")
+    @test [a["type"] for a in sent] == ["url_citation"]                                  # premise
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
+    @test url_citations(ro) == sent
+    @test url_citations(ResponseSuccess(response=ro, service=GEMINIServiceEndpoint)) == sent
+    @test only(url_citations(ro))["title"] == "julialang.org"
+    # Steps joined into one answer keep each citation on the segment it names: Google counts start_index and
+    # end_index in bytes of the text, so a later part's are moved by the bytes before it ("—" is three).
+    cite(url, i, j) = Dict{String,Any}("type" => "url_citation", "url" => url, "title" => url, "start_index" => i,
+                                       "end_index" => j)
+    part(text, notes...) = Dict{String,Any}("type" => "text", "text" => text, "annotations" => collect(Any, notes))
+    file = Dict{String,Any}("type" => "file_citation", "file_name" => "notes.pdf", "start_index" => 0, "end_index" => 4)
+    steps = Any[Dict("type" => "model_output", "content" => [part("Julia 1.13 — ", cite("a", 0, 10))]),
+                Dict("type" => "thought", "signature" => "s"),
+                Dict("type" => "model_output", "content" => [part("was released ", file), part("in 2026.", cite("b", 0, 7))])]
+    joined = UniLM._interaction_response_object(Dict("id" => "v1_c", "status" => "completed", "model" => "m",
+                                                     "steps" => steps))
+    answer = output_text(joined)
+    @test answer == "Julia 1.13 — was released in 2026."
+    segment(a) = String(codeunits(answer)[a["start_index"]+1:a["end_index"]])
+    @test [segment(a) for a in url_citations(joined)] == ["Julia 1.13", "in 2026"]
+    notes = only(only(o["content"]) for o in joined.output if o["type"] == "message")["annotations"]
+    @test [a["type"] for a in notes] == ["url_citation", "file_citation", "url_citation"]  # every kind is kept
+    @test segment(notes[2]) == "was "
+    @test steps[3]["content"][2]["annotations"][1]["start_index"] == 0    # the interaction's own steps are untouched
+    # A step without annotations gives its part none, as before.
+    plain = UniLM._interaction_response_object(Dict("id" => "v1_p", "status" => "completed", "model" => "m",
+        "steps" => [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "Hi")])]))
+    @test only(only(plain.output)["content"]) == Dict("type" => "output_text", "text" => "Hi")
+end
+
+@testset "Interactions stream — a grounded answer's citations arrive after its text and stay on it" begin
+    # A streamed google_search interaction on gemini-3.8-flash (2026-10-26): the answer's text, then one
+    # step.delta of type text_annotation_delta carrying its annotations, in the same step.
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    answer = "The latest stable release of the Julia programming language is version 1.13.3."
+    cite = Dict("type" => "url_citation", "url" => "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x",
+                "title" => "julialang.org", "start_index" => 0, "end_index" => 77)
+    interaction = Dict("id" => "v1_s", "status" => "completed", "model" => "gemini-3.8-flash")
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "thought"))) *
+          ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "thought_signature", "signature" => "sig"))) *
+          ev("step.stop", Dict("index" => 0)) *
+          ev("step.start", Dict("index" => 1, "step" => Dict("type" => "model_output"))) *
+          ev("step.delta", Dict("index" => 1, "delta" => Dict("type" => "text", "text" => answer))) *
+          ev("step.delta", Dict("index" => 1, "delta" => Dict("type" => "text_annotation_delta", "annotations" => [cite]))) *
+          ev("step.stop", Dict("index" => 1)) *
+          ev("interaction.completed", Dict("interaction" => interaction))
+    rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
+    streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
+    @test output_text(streamed) == answer
+    @test url_citations(streamed) == [cite]
+    # The same interaction unstreamed decodes to the same output.
+    steps = [Dict("type" => "thought", "signature" => "sig"),
+             Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => answer, "annotations" => [cite])])]
+    @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
+end
+
 @testset "Interactions decode — the faults an interaction records reach ResponseObject.error" begin
     # An Interaction reports its faults in `errors`, an array of {code, message}
     # (ai.google.dev/api/interactions-api): the error surface holds the first, raw keeps them all.

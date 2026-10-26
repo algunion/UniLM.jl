@@ -83,6 +83,13 @@
   `decode_system_one`, `encode_system_one` and `ask` now state that each built-in encoder and
   decoder calls the shared checks (`_check_request`, `_check_box_image`, `_check_answers`) and that
   a protocol of your own gets them only by calling them. No behaviour changes.
+- **`url_citations` reads a Gemini interaction's citations.** Google puts a grounded answer's sources on
+  its text as `annotations`, `url_citation` among them, and the message UniLM built from an interaction's
+  `model_output` step kept the text alone, streamed or not, so `url_citations` found none. The answer's
+  `output_text` part now keeps every annotation Google sent, and `url_citations` returns its
+  `url_citation`s. Google counts `start_index` and `end_index` in bytes of the text, so an annotation of a
+  part joined after other text is moved by that text's bytes; the steps an unstreamed interaction keeps in
+  `response.raw` stay as Google sent them.
 
 ## 0.27.1
 

@@ -1182,7 +1182,10 @@ end
 """
     url_citations(r) -> Vector{Dict{String,Any}}
 
-URL-citation annotations on output_text parts (from web_search).
+URL-citation annotations on output_text parts: those of an answer grounded by OpenAI's
+`web_search` or by Gemini Interactions' `google_search` ([`gemini_google_search`](@ref)). Each
+is the provider's own `url_citation` dict; Gemini counts its `start_index` and `end_index` in
+bytes of the answer's text.
 """
 function url_citations(r::ResponseObject)
     out = Dict{String,Any}[]

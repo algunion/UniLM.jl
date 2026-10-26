@@ -216,8 +216,7 @@ output_text(result)
 ```
 
 ```@example gemini
-answer = only(step for step in result.response.raw["steps"] if step["type"] == "model_output")
-[(a["type"], a["title"]) for a in answer["content"][1]["annotations"]]
+[(c["type"], c["title"]) for c in url_citations(result)]
 ```
 
 A hosted tool's work is in `response.output` as the steps Google sent — `google_search_call` and
@@ -225,9 +224,10 @@ A hosted tool's work is in `response.output` as the steps Google sent — `googl
 `url_context_result` — each a `Dict` with Google's fields, beside the `message` items that hold the
 answer: read the queries, results and code there. Google puts a grounded answer's sources in "inline
 `annotations`" on its text ([Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)),
-and the message UniLM builds from a `model_output` step keeps the text alone, so
-[`url_citations`](@ref) finds none in an interaction: read them from the `model_output` step in
-`response.raw["steps"]`, as the last block above does. Another tool the API takes — Google's error
+and the message UniLM builds from a `model_output` step keeps them on its text, streamed or not, where
+[`url_citations`](@ref) reads the `url_citation`s, as the last block above does. Their `start_index`
+and `end_index` count bytes of the text, "measured in bytes"
+([Interactions reference](https://ai.google.dev/api/interactions-api)). Another tool the API takes — Google's error
 reference names `mcp_server`, `file_search`, `google_maps` and `computer_use` among its tool types
 ([Interactions errors](https://ai.google.dev/gemini-api/docs/api-errors)) — goes as a `Dict` in the
 API's own shape, which UniLM sends as it is. The input a tool read

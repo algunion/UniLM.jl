@@ -176,6 +176,7 @@ end
     @test isempty(r.tool_calls)
     @test isnothing(r.llm_error)
     @test r.response === success
+    @test r.responses == [success]      # built from its first five fields: the one response
 end
 
 # ─── _next_respond ───────────────────────────────────────────────────────────
@@ -356,6 +357,30 @@ end
     @test res.response isa ResponseSuccess && res.response.response.id == "resp_2"
 end
 
+@testset "every turn's result stays on the loop's result, so each turn's usage is reachable" begin
+    # A Respond loop's turns are separate requests, each billed, and no Chat adds them up: the
+    # result keeps every one, in order, the last being `response`.
+    function turn(n)
+        d = JSON.parse(n < 3 ? _tl_resp("resp_$n", [_tl_fcall("call_$n", "noop")]) : _tl_resp("resp_3", [_tl_text("done")]))
+        d["usage"] = Dict("input_tokens" => 10n, "output_tokens" => n, "total_tokens" => 11n)
+        JSON.json(d)
+    end
+    res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(), (name, args) -> "ok")
+    end
+    @test res.completed && res.turns_used == 3 && length(seen) == 3
+    @test length(res.responses) == 3 && last(res.responses) === res.response
+    @test [r.response.id for r in res.responses] == ["resp_1", "resp_2", "resp_3"]
+    @test [token_usage(r).prompt_tokens for r in res.responses] == [10, 20, 30]
+    # A Chat loop's result keeps them too.
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "noop"), _tl_reply("done")]))
+    res2, _ = _tl_scripted() do
+        tool_loop!(chat, (name, args) -> "ok")
+    end
+    @test res2.completed && length(res2.responses) == 2 && last(res2.responses) === res2.response
+    @test only(res2.responses[1].message.tool_calls).id == "c1"
+end
+
 @testset "max_turns below 1 is rejected before any request" begin
     dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
     for n in (0, -1)
@@ -512,6 +537,8 @@ end
     @test !res.completed && res.turns_used == 1 && length(seen) == 1
     @test res.response isa ResponseCallError && res.response.cause isa UniLMCancelled
     @test res.llm_error == res.response.error
+    # The turn's response, then the cancellation result.
+    @test length(res.responses) == 2 && res.responses[1] isa ResponseSuccess && last(res.responses) === res.response
 end
 
 @testset "cancel: the ambient with_cancel token is honoured (CallableTool variant)" begin

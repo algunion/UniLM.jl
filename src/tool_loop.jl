@@ -104,6 +104,14 @@ Result of a tool dispatch loop.
   ran, a pending server action, or `max_turns` exhaustion leaves this `false`.
 - `llm_error::Union{String,Nothing}`: Why the loop stopped when not completed
   (e.g. `"max turns (3) exhausted"`).
+- `responses::Vector{LLMRequestResponse}`: Every result the loop received, in order: each
+  turn's, and last the cancellation result of a loop cancelled between dispatches; `response`
+  is its last element. Each turn is billed on its own, so its usage and cost are its result's
+  ([`token_usage`](@ref), [`estimated_cost`](@ref), `0.0` for a failure):
+  `sum(estimated_cost, r.responses)` estimates what a [`tool_loop`](@ref) on a `Respond` cost,
+  whose turns no `Chat` adds up, as [`cumulative_cost`](@ref) of its `Chat` does for a
+  [`tool_loop!`](@ref). Built positionally, the first five fields build one whose `responses`
+  holds `response` alone.
 """
 struct ToolLoopResult
     response::LLMRequestResponse
@@ -111,6 +119,10 @@ struct ToolLoopResult
     turns_used::Int
     completed::Bool
     llm_error::Union{String,Nothing}
+    responses::Vector{LLMRequestResponse}
+    ToolLoopResult(response, tool_calls, turns_used, completed, llm_error,
+                   responses=LLMRequestResponse[response]) =
+        new(response, tool_calls, turns_used, completed, llm_error, responses)
 end
 
 # ─── Dispatch Helper ────────────────────────────────────────────────────────
@@ -308,6 +320,7 @@ function tool_loop!(chat::Chat, dispatcher::Function;
     t0 = time_ns()
     _in_cancel_scope(tok) do
         all_outcomes = ToolCallOutcome[]
+        results = LLMRequestResponse[]   # every turn's result, each billed on its own
         turns = 0
         latest::Union{Nothing,LLMSuccess} = nothing   # set by every turn that does not return
 
@@ -316,11 +329,12 @@ function tool_loop!(chat::Chat, dispatcher::Function;
             before = length(chat)
             raw = chatrequest!(chat; config, callback, on_tool_call)
             result = raw isa Task ? fetch(raw) : raw
+            push!(results, result)
 
             if result isa LLMFailure
-                return ToolLoopResult(result, all_outcomes, turns, false, result.response)
+                return ToolLoopResult(result, all_outcomes, turns, false, result.response, results)
             elseif result isa LLMCallError
-                return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+                return ToolLoopResult(result, all_outcomes, turns, false, result.error, results)
             end
 
             latest = result
@@ -330,21 +344,21 @@ function tool_loop!(chat::Chat, dispatcher::Function;
             if isempty(calls)
                 reason = msg.finish_reason
                 reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
-                    false, "Model output was truncated by the token limit")
+                    false, "Model output was truncated by the token limit", results)
                 # A text turn answers only when it finished normally: "stop", no reason, or
                 # a "tool_calls" finish that carried no calls. A filtered, paused or
                 # otherwise cut-off turn is not a completed answer.
                 isnothing(reason) || reason in (STOP, TOOL_CALLS) ||
                     return ToolLoopResult(result, all_outcomes, turns, false,
-                        "turn finished with finish_reason=$(repr(reason))")
-                return ToolLoopResult(result, all_outcomes, turns, true, nothing)
+                        "turn finished with finish_reason=$(repr(reason))", results)
+                return ToolLoopResult(result, all_outcomes, turns, true, nothing, results)
             end
 
             if msg.finish_reason != TOOL_CALLS
                 resize!(chat.messages, before)   # no results will answer this turn
                 return ToolLoopResult(result, all_outcomes, turns, false,
                     "turn finished with finish_reason=$(repr(msg.finish_reason)); " *
-                    "its $(length(calls)) tool call(s) were not executed")
+                    "its $(length(calls)) tool call(s) were not executed", results)
             end
 
             ran = try
@@ -363,11 +377,11 @@ function tool_loop!(chat::Chat, dispatcher::Function;
                 resize!(chat.messages, before)   # its remaining calls will never be answered
                 c = _cancelled_since(t0)
                 err = LLMCallError(error=sprint(showerror, c), self=chat, cause=c)
-                return ToolLoopResult(err, all_outcomes, turns, false, err.error)
+                return ToolLoopResult(err, all_outcomes, turns, false, err.error, push!(results, err))
             end
         end
 
-        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted")
+        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted", results)
     end
 end
 
@@ -449,7 +463,8 @@ pending call type in `llm_error`; none of that turn's calls run.
 
 `max_turns` (default 10; `< 1` throws `ArgumentError`) bounds the round-trips; when
 they run out, the result keeps the last response, with `completed=false` and
-`llm_error = "max turns (N) exhausted"`.
+`llm_error = "max turns (N) exhausted"`. Every turn's response stays in the result's
+`responses`, so each turn's usage and cost can be read ([`ToolLoopResult`](@ref)).
 
 `cancel` works as in [`tool_loop!`](@ref): every turn runs inside `with_cancel(cancel)`
 (`nothing` uses the ambient token), the token is checked before each dispatch, and a
@@ -476,6 +491,7 @@ function tool_loop(r::Respond, dispatcher::Function;
     t0 = time_ns()
     _in_cancel_scope(tok) do
         all_outcomes = ToolCallOutcome[]
+        results = LLMRequestResponse[]   # every turn's result, each billed on its own
         turns = 0
         input = r.input
         prev_id = r.previous_response_id
@@ -486,11 +502,12 @@ function tool_loop(r::Respond, dispatcher::Function;
             req = _next_respond(r; input, previous_response_id=prev_id)
             raw = respond(req; config)
             result = raw isa Task ? fetch(raw) : raw
+            push!(results, result)
 
             if result isa ResponseFailure
-                return ToolLoopResult(result, all_outcomes, turns, false, result.response)
+                return ToolLoopResult(result, all_outcomes, turns, false, result.response, results)
             elseif result isa ResponseCallError
-                return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+                return ToolLoopResult(result, all_outcomes, turns, false, result.error, results)
             end
 
             latest = result
@@ -499,19 +516,19 @@ function tool_loop(r::Respond, dispatcher::Function;
                 details = incomplete_details(result)
                 reason = details isa AbstractDict ? get(details, "reason", nothing) : nothing
                 return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete " *
-                    "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
+                    "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"), results)
             end
 
             pending = _pending_client_calls(result.response.output)
             isempty(pending) || return ToolLoopResult(result, all_outcomes, turns, false,
-                "Response requests $(join(pending, ", ")), which this tool loop cannot execute")
+                "Response requests $(join(pending, ", ")), which this tool loop cannot execute", results)
 
             calls = function_calls(result)
 
             if isempty(calls)
                 completed = status == "completed"
                 return ToolLoopResult(result, all_outcomes, turns, completed,
-                    completed ? nothing : "Response requires an action this tool loop cannot perform")
+                    completed ? nothing : "Response requires an action this tool loop cannot perform", results)
             end
 
             output_items = Any[]
@@ -528,14 +545,14 @@ function tool_loop(r::Respond, dispatcher::Function;
             if !ran
                 c = _cancelled_since(t0)
                 err = ResponseCallError(error=sprint(showerror, c), cause=c)
-                return ToolLoopResult(err, all_outcomes, turns, false, err.error)
+                return ToolLoopResult(err, all_outcomes, turns, false, err.error, push!(results, err))
             end
 
             input = output_items
             prev_id = isnothing(r.conversation) ? result.response.id : nothing
         end
 
-        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted")
+        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted", results)
     end
 end
 

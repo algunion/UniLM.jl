@@ -33,6 +33,14 @@
   parameters. Anthropic still refuses each of them (its API version 2026-10-21 takes neither), and
   native Gemini and `GEMINIOpenAIServiceEndpoint` still take them only on the models released before
   Gemini 3.6 Flash.
+- **A tool loop keeps every turn's result, so a `respond` loop's earlier turns can be priced.**
+  `tool_loop` on a `Respond` sent a request per turn, each billed, and returned only the last
+  response, so the usage of the turns before it was unreachable, while `tool_loop!` adds every turn of
+  a `Chat` to its `cumulative_cost`. `ToolLoopResult` gains `responses`, every result the loop
+  received, in order, `response` being its last: `sum(estimated_cost, loop.responses)` prices them
+  all. The results are kept rather than one usage summed over the turns because a provider prices
+  each request on its own, a long-context rate applying per request. Built positionally, the five
+  earlier fields still build one, whose `responses` holds its `response`.
 
 ## 0.27.1
 

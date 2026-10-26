@@ -311,8 +311,10 @@ result = tool_loop("Do something"; service, model, tools=tools)
 ## [Inspecting the result](@id tool_calling_result)
 
 `tool_loop` / `tool_loop!` return a [`ToolLoopResult`](@ref): the last `response` the loop
-received, the list of `tool_calls` that ran (each a [`ToolCallOutcome`](@ref)),
-`turns_used`, whether it `completed`, and — when it did not — the `llm_error` saying why.
+received, every turn's result in `responses` (each billed on its own:
+`sum(estimated_cost, result.responses)` is what a `respond` loop cost), the list of `tool_calls`
+that ran (each a [`ToolCallOutcome`](@ref)), `turns_used`, whether it `completed`, and — when it
+did not — the `llm_error` saying why.
 
 ```julia
 result = tool_loop("What's the weather in Paris and Tokyo?"; service, model, tools=[ct])

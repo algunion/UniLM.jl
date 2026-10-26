@@ -41,7 +41,7 @@ Each is an [`LLMRequestResponse`](@ref):
 
 A failure or call error of `chatrequest!`, `respond` or `fim_complete` also keeps the provider's request
 id header, when one came, as `request_id`. A tool loop returns a [`ToolLoopResult`](@ref) whose
-`response` is the last result it received ([Inspecting the result](@ref tool_calling_result)). Of the
+`response` is the last result it received, and `responses` every one, in order ([Inspecting the result](@ref tool_calling_result)). Of the
 lifecycle verbs of stored responses, [`delete_response`](@ref), [`list_input_items`](@ref),
 [`compact_response`](@ref) and [`count_input_tokens`](@ref) return the provider's answer as a `Dict` on
 success, and a `ResponseFailure` or `ResponseCallError` otherwise.

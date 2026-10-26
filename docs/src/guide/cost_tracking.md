@@ -240,9 +240,10 @@ res = embeddingrequest!(emb)
 embeddings_cost = estimated_cost(res)                       # USD for this batch
 ```
 
-A `respond` tool loop sends a request per turn and returns its last response alone, as `loop.response`
-([Agentic respond](@ref agentic_guide)): `estimated_cost(loop.response)` prices that last request, not the
-turns before it. A `tool_loop!` on a `Chat` adds every turn to the `Chat`'s `cumulative_cost`. Embedding
+A `respond` tool loop sends a request per turn and keeps every turn's result, in order, as `loop.responses`
+([Inspecting the result](@ref tool_calling_result)): `sum(estimated_cost, loop.responses)` prices them all,
+while `estimated_cost(loop.response)` prices the last request alone. A `tool_loop!` on a `Chat` adds every
+turn to the `Chat`'s `cumulative_cost`. Embedding
 models missing from the default table (one on your own server that its endpoint does not treat as local,
 for example) hit the same `0.0` behavior — supply `pricing=` for them too.
 

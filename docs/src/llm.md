@@ -1438,6 +1438,7 @@ struct ToolLoopResult
     turns_used::Int
     completed::Bool                     # true only for a final text answer that finished normally
     llm_error::Union{String,Nothing}    # why it stopped, when not completed
+    responses::Vector{LLMRequestResponse}  # every result received, in order; `response` is the last
 end
 ```
 

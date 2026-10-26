@@ -419,8 +419,8 @@ begun, as an [`AudioCallError`](@ref) (by the same source; untested), and reads 
 though Ollama labels it `application/x-ndjson`. `response_format = "text"` is refused before the
 request, since such a failure would read as an empty transcript: leave `response_format` unset and
 read the text with [`transcript_text`](@ref). `temperature`, `languages`, `keywords` and any other
-format are refused too ([Limits and refusals](@ref ollama_limits)). A transcription makes one
-attempt, which `max_attempts` does not change.
+format are refused too ([Limits and refusals](@ref ollama_limits)). A transcription is sent again
+after a transient status, as a chat request is, the whole file each time.
 
 ## [respond and FIM](@id ollama_respond)
 

@@ -158,10 +158,8 @@ _llm_result_body(r::FIMCallError)   = r.error
 get_url(s::DeepSeekEndpoint, ::FIMCompletion)::String = DEEPSEEK_BETA_BASE_URL * COMPLETIONS_PATH
 # Mistral (MistralEndpoint is a GenericOpenAIEndpoint on its API host) serves FIM at its
 # own path; other OpenAI-compatible servers (Ollama, vLLM) use the completions path.
-function get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String
-    base = rstrip(s.base_url, '/')
-    base * (lowercase(HTTP.URI(base).host) == MISTRAL_API_HOST ? MISTRAL_FIM_PATH : COMPLETIONS_PATH)
-end
+get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String =
+    rstrip(s.base_url, '/') * (_mistral_host(s) ? MISTRAL_FIM_PATH : COMPLETIONS_PATH)
 # FIM is an OpenAI-compatible-only verb (DeepSeek beta + GenericOpenAIEndpoint); any other
 # endpoint is rejected up front by `validate_capability(:fim)`. These fail-loud fallbacks
 # give the router total coverage so `get_url(fim.service, fim)` types as `String` for any
@@ -287,7 +285,10 @@ Chat prefix completion: the model continues from a partial assistant message.
 The last message in `chat` must be `role=assistant` containing the text prefix
 to continue from. The result's `message` is the continuation the API returns; with
 `chat.history` the conversation keeps the whole assistant turn, prefix followed by
-continuation.
+continuation. The request is never streamed: the call reads one whole reply and takes no
+callback, so a `chat` with `stream=true` is sent without its `stream` and `stream_options`.
+A successful call adds its turn's cost to [`cumulative_cost`](@ref)`(chat)`, with or without
+`chat.history`, as [`chatrequest!`](@ref) does.
 
 Supported by [`DeepSeekEndpoint`](@ref) (beta).
 
@@ -317,8 +318,11 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
-    # The body the endpoint's encoder builds, with the prefix flag on the last message.
+    # The body the endpoint's encoder builds, with the prefix flag on the last message. The call reads
+    # one whole reply and takes no callback, so a streaming Chat's `stream` and `stream_options` stay
+    # out of it: a server asked for a stream answers with one, which this call cannot read.
     wire = JSON.parse(_prefix_encode(chat.service, chat))
+    delete!(wire, "stream"); delete!(wire, "stream_options")
     wire["messages"][end]["prefix"] = true
     body = JSON.json(wire)
     url = _prefix_complete_url(chat.service)
@@ -335,7 +339,9 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
+            result = LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
+            _accumulate_cost!(chat, result)   # a billed turn joins the Chat's total, as a chatrequest! turn does
+            return result
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.

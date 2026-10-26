@@ -221,6 +221,11 @@ const _MESSAGE_ROLES = (RoleSystem, RoleUser, RoleAssistant, RoleTool)
 # Reasoning effort values the OpenAI API accepts; each model supports a subset.
 const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+# The `reasoning_effort` values a Chat on `service` takes: OpenAI's, unless the endpoint's provider
+# names more (DeepSeek, src/deepseek.jl). A value no endpoint's provider takes is refused when the
+# Chat is built.
+_reasoning_efforts(_)::Tuple{Vararg{String}} = _OPENAI_REASONING_EFFORTS
+
 """
     Model(name::String)
 
@@ -252,10 +257,13 @@ flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
 `signature` must be echoed unmodified or tool round-trips on thinking models
 are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, DeepSeek
 `reasoning_content` and Ollama `thinking`. `provider` tags the wire dialect
-(`:anthropic`, `:gemini`, `:deepseek` or `:ollama`); `blocks` is the provider's
+(`:anthropic`, `:gemini`, `:deepseek`, `:ollama` or `:mistral`); `blocks` is the provider's
 content/parts array exactly as decoded (String-keyed JSON) — for `:deepseek`,
 `[Dict("reasoning_content" => text)]`, echoed only on requests that carry tools; for
-`:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`.
+`:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`; for
+`:mistral`, the thinking chunks of a streamed reply joined into one Mistral `ThinkChunk`,
+`[Dict("type" => "thinking", "thinking" => [Dict("type" => "text", "text" => text)])]`, which
+no encoder sends.
 
 Encoders ignore a `ProviderContent` tagged for a different provider — a
 conversation moved across providers falls back to the neutral reconstruction
@@ -473,15 +481,15 @@ The audio an OpenAI model answers a Chat Completions turn with, on the assistant
 that speaks, such as `gpt-audio-1.5`
 ([Audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions)).
 
-- `id::String`: OpenAI's id for the audio, by which a later turn refers to it.
+- `id::String`: the service's id for the audio (OpenAI's or Azure's), by which a later turn refers to it.
 - `data::Vector{UInt8}`: the audio, decoded from base64, in the format the request asked for.
 - `format::Union{String,Nothing}`: that format as the bytes' file signature shows it —
   `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
   bytes that begin with none, such as `"pcm16"`'s raw samples.
-- `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
+- `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which the service keeps the
   audio for later turns; from a minute before then on the turn goes back without its id
-  (below): OpenAI no longer holds the audio when the request arrives, and it answered an id it
-  never issued with HTTP 400 `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
+  (below): the service no longer holds the audio when the request arrives, and OpenAI answered
+  an id it never issued with HTTP 400 `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
   reply's expiry, which comes alone in its last update after the turn's finish, was lost to
   a connection that closed between the two; the turn is kept either way.
 - `transcript::String`: what the audio says; the turn's `content` too, unless the turn
@@ -489,14 +497,14 @@ that speaks, such as `gpt-audio-1.5`
 
 The OpenAI-wire decoders read it from a reply's `message.audio`; a streamed reply
 assembles it from its `delta.audio` chunks, and the transcript reaches the streaming
-callback as text. When the conversation goes on, the OpenAI Chat encoder
-(`OPENAIServiceEndpoint`) sends the turn back as
+callback as text. When the conversation goes on, the OpenAI and Azure Chat encoders
+(`OPENAIServiceEndpoint`, `AZUREServiceEndpoint`) send the turn back as
 `{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
 beside the id, until a minute before `expires_at`, and always when `expires_at` is
-`nothing`; from then on it sends the content alone. Such a follow-up's request bytes
+`nothing`; from then on they send the content alone. Such a follow-up's request bytes
 therefore depend on the clock: one recorded with [`with_recorded_answers`](@ref) while the
 audio was live replays only until a minute before `expires_at`, then throws
-[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — the Gemini OpenAI-compatible endpoint,
 DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
 the turn's content alone, the neutral form it also sends for another provider's
 [`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.
@@ -538,7 +546,7 @@ Represents a single message in a Chat Completions conversation.
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
-- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`), `nothing` otherwise. Never serialized on the OpenAI wire.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`) and by the OpenAI-wire stream handler for the thinking chunks of a streamed Mistral reply (`:mistral`), `nothing` otherwise. Never serialized on the OpenAI wire.
 - `attachments::Union{Nothing,Vector{Attachment}}`: Images, sound clips and PDF documents sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref), [`DocumentAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends or refuses them.
 - `audio_output::Union{Nothing,AudioOutput}`: The audio an OpenAI model answered with ([`AudioOutput`](@ref)), set by the OpenAI-wire decoders; `nothing` otherwise. Its docstring says how each encoder sends the turn back.
 
@@ -601,7 +609,7 @@ JSON.omit_null(::Type{Message}) = true
 # The request wire form. provider_content is a decode-side round-trip cache for
 # provider-native blocks (same precedent as ToolCall.thought_signature) and
 # finish_reason is a response-only field: neither is sent; audio_output goes back by
-# its id on OpenAI's own wire only, until it expires (`_wire_messages`). A refusal travels under
+# its id on OpenAI's and Azure's wire only, until it expires (`_wire_messages`). A refusal travels under
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),
@@ -940,6 +948,11 @@ Embeddings, FIM, transcription and (where the provider implements it) the Respon
 An empty key, given or read, sends no `Authorization` header: use `""` for local servers
 with no auth.
 
+A request goes out with its fields as set and under their own names, except on Mistral's host,
+as `MistralEndpoint()` is: there a `Chat`'s `max_completion_tokens` goes out as `max_tokens`
+(taken over a `max_tokens` also set), its `seed` as `random_seed`, and an `Embeddings` request's
+`dimensions` as `output_dimension`, the names Mistral's references give them.
+
 # Example
 ```julia
 # vLLM (local)
@@ -1248,7 +1261,9 @@ end
 Pre-configured endpoint for [Mistral AI](https://mistral.ai) API. A given `api_key` is sent
 as is; without one the key is read from `MISTRAL_API_KEY` each time a request is built
 (`GenericOpenAIEndpoint("https://api.mistral.ai", "", "MISTRAL_API_KEY")`), so building the
-endpoint needs no key and a missing variable fails the request, naming it.
+endpoint needs no key and a missing variable fails the request, naming it. Requests go out under
+Mistral's names: a `Chat`'s `max_completion_tokens` as `max_tokens`, its `seed` as `random_seed`,
+an `Embeddings` request's `dimensions` as `output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
 """
 MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
     isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
@@ -1420,8 +1435,11 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 
 On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
-both throws `ArgumentError`), `user` throws (use `safety_identifier` or
-`prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
+both throws `ArgumentError`); `DeepSeekEndpoint` and `MistralEndpoint()` send
+`max_completion_tokens` as `max_tokens`, the name their references give the cap, taken over a
+`max_tokens` also set, and every other endpoint sends the name the `Chat` sets. On the native
+OpenAI endpoint `user` throws (use
+`safety_identifier` or `prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
 `"scale"`, `"priority"` or `"fast"`. Native Gemini and `GEMINIOpenAIServiceEndpoint` take
 `service_tier` `"standard"`, `"flex"` or `"priority"`, and native Gemini sends `seed` (an
 int32) and `store`; `ANTHROPICServiceEndpoint` takes `"auto"`, `"standard_only"` or
@@ -1455,7 +1473,8 @@ The constructor validates ranges and throws `ArgumentError` on a violation; amon
 them, `n` must be `1` when set — a result carries a single choice — `top_logprobs`
 must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
 `reasoning_effort` one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
-`"xhigh"`, `"max"`. An empty `tools` vector is stored as `nothing`.
+`"xhigh"`, `"max"`, and on a `DeepSeekEndpoint` also `"ultra"`, which DeepSeek maps to
+`max`. An empty `tools` vector is stored as `nothing`.
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -1552,8 +1571,9 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(logit_bias) || all(v -> -100 <= v <= 100, values(logit_bias)) ||
             throw(ArgumentError("logit_bias values must be in [-100, 100]"))
-        isnothing(reasoning_effort) || reasoning_effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
-            "reasoning_effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(reasoning_effort)))"))
+        efforts = _reasoning_efforts(service)
+        isnothing(reasoning_effort) || reasoning_effort in efforts || throw(ArgumentError(
+            "reasoning_effort must be one of $(join(efforts, ", ")) (got $(repr(reasoning_effort)))"))
         return new(
             service,
             model,
@@ -1631,9 +1651,12 @@ _asks_stream_usage(_) = false
 # every other endpoint, the turn goes as its content alone, the transcript unless the turn
 # holds other text. The minute covers a request built just before the expiry, which could
 # reach OpenAI after it, and a server clock ahead of this one. A turn whose expiry is unknown
-# goes by id. A conversation without an audio reply goes out as it is.
+# goes by id. A conversation without an audio reply goes out as it is. Azure takes the turn
+# back the same way: its audio quickstart adds "a history message referencing the previous
+# turn's audio by ID", and its reply's audio carries the same `expires_at`
+# (https://learn.microsoft.com/en-us/azure/foundry/openai/audio-completions-quickstart).
 _wire_messages(_, messages::Conversation) = messages
-_wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
+_wire_messages(::Union{Type{OPENAIServiceEndpoint},Type{AZUREServiceEndpoint}}, messages::Conversation) =
     any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages
 
 function _audio_turn(m::Message)
@@ -1914,8 +1937,9 @@ text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
 The reasoning ("thinking") text a provider returned with an assistant turn, read
 from its [`ProviderContent`](@ref): Ollama's `thinking`, DeepSeek's
 `reasoning_content`, Anthropic `thinking` blocks (separate blocks joined by a blank
-line; redacted blocks carry no text) and Gemini thought parts. `nothing` when the
-turn carries none — the provider returned no reasoning, or the model did not think.
+line; redacted blocks carry no text), Gemini thought parts and the thinking chunks of a
+streamed Mistral reply. `nothing` when the turn carries none — the provider returned no
+reasoning, or the model did not think.
 Like [`text`](@ref), it throws an [`LLMResultError`](@ref) on a failure result.
 
 ```julia
@@ -1947,8 +1971,17 @@ function _reasoning_in(provider::Symbol, b)::Union{String,Nothing}
         provider === :deepseek  ? get(b, "reasoning_content", nothing) :
         provider === :anthropic ? (get(b, "type", nothing) == "thinking" ? get(b, "thinking", nothing) : nothing) :
         provider === :gemini    ? (get(b, "thought", false) === true ? get(b, "text", nothing) : nothing) :
+        provider === :mistral   ? _think_chunk_text(b) :
         nothing
     t isa AbstractString && !isempty(t) ? String(t) : nothing
+end
+
+# The text of a Mistral ThinkChunk, `{"type": "thinking", "thinking": [TextChunk…]}`: its text
+# chunks joined (https://docs.mistral.ai/studio/conversations/reasoning).
+function _think_chunk_text(b::AbstractDict)::Union{String,Nothing}
+    parts = get(b, "type", nothing) == "thinking" ? get(b, "thinking", nothing) : nothing
+    parts isa AbstractVector || return nothing
+    join(String(p["text"]) for p in parts if p isa AbstractDict && get(p, "text", nothing) isa AbstractString)
 end
 
 # The status and the body/message text of a non-success result: every `*Failure`
@@ -2286,7 +2319,8 @@ The result aliases this struct, so use one `Embeddings` per concurrent call.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
 - `user::Union{String,Nothing}`: Optional end-user identifier.
 - `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it; a value
-  that is not positive throws `ArgumentError`.
+  that is not positive throws `ArgumentError`. On Mistral's host ([`MistralEndpoint`](@ref)) it
+  goes out as `output_dimension`, Mistral's name for it.
 - `encoding_format::Union{String,Nothing}`: `"float"` or unset; any other format
   (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
 - `task::Union{Symbol,Nothing}`: What the texts are for, as a task prompt (see below); `nothing` for none.

@@ -10,8 +10,9 @@ Mistral's host, `https://api.mistral.ai`: UniLM speaks Mistral's chat, embedding
 transcription routes as OpenAI-compatible ones, and a hosted service of another vendor with an
 OpenAI-compatible API is reached the same way, with `GenericOpenAIEndpoint(base_url, key)`. The rules
 on this page are that endpoint's; the facts marked as Mistral's are Mistral's alone. UniLM holds no
-rule of Mistral's or of any other service: it sends every field a request sets as it is, and sends the
-requests of the capabilities the table below lists without knowing whether the service serves them. A
+rule of Mistral's or of any other service: it sends every field a request sets as it is, under its own
+name but for those [First call](@ref openai_compatible_first_call) lists, and sends the requests of the
+capabilities the table below lists without knowing whether the service serves them. A
 verb that needs a capability the table lists as not available refuses the endpoint, and so does `ask`;
 `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes `transcription` or
 `audio`, are sent. Of Mistral's API, UniLM does not use the Agents and Conversations APIs, OCR or the
@@ -88,16 +89,19 @@ The reply is read as a Chat Completions reply: `result.model` is the model the s
 price row, so the first `chatrequest!` logs a warning and the call costs `0.0`
 ([Cost and usage](@ref openai_compatible_cost)).
 
-A reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's reasoning
-models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text` chunks
-([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text` chunks
-joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`.
+An unstreamed reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's
+reasoning models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text`
+chunks ([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text`
+chunks joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`. A
+streamed reply keeps them ([Streaming](@ref openai_compatible_streaming)).
 
-Fields go out under the names of the `Chat`, and a field Mistral names otherwise does not reach it as
-Mistral's: a `seed` goes out as `seed`, while Mistral's chat reference names the seed `random_seed`;
-Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `Chat` fields
+Fields go out under the names of the `Chat`, but on Mistral's host a `max_completion_tokens` goes out
+as `max_tokens`, taken over a `max_tokens` also set, the name Mistral's chat reference gives the cap
+([chat completions](https://docs.mistral.ai/api/endpoint/chat)), and a `seed` as `random_seed`, "The
+seed to use for random sampling", the name it gives the seed; any other service gets both as the `Chat`
+names them. Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `Chat` fields
 ([chat completions](https://docs.mistral.ai/api/endpoint/chat)). What Mistral does with a field its
-reference does not list, such as `seed`, is untested.
+reference does not list is untested.
 
 ## [Conversations](@id openai_compatible_conversations)
 
@@ -109,8 +113,8 @@ push!(chat, Message(Val(:user), "And a composite number?"))
 text(chatrequest!(chat))
 ```
 
-A reply's reasoning is not kept ([First call](@ref openai_compatible_first_call)), so none goes back
-with a later turn. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+A reply's reasoning never goes back with a later turn: an unstreamed reply keeps none
+([First call](@ref openai_compatible_first_call)), and the reasoning a streamed one keeps is not sent. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
 
 ## [Streaming](@id openai_compatible_streaming)
 
@@ -132,12 +136,14 @@ at `data: [DONE]`, or, without one, when the HTTP body ends after the finish rea
 runs once per call whose arguments decode, as the next call begins or at the end of the stream; and
 setting `close[] = true` stops it ([Stopping a Stream Early](@ref streaming_stop)).
 
-A delta whose `content` is a list is dropped whole: UniLM reads a streamed delta's content only when it
-is a string. Mistral streams a reasoning reply's thinking in such lists, then "a single list containing
-both a closing `ThinkChunk` and the first `TextChunk`"
-([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)), so a streamed reasoning reply
-loses the answer's first chunk, in the callback and in the final `Message`; unstreamed, the reply keeps
-it. The concepts every provider shares are on [Streaming](@ref streaming_guide).
+A delta whose `content` is a list of chunks is read chunk by chunk. Mistral streams a reasoning reply's
+thinking in such lists, then "a single list containing both a closing `ThinkChunk` and the first
+`TextChunk`", then the answer as strings
+([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)): the `text` chunks reach the
+callback and the final `Message` in order, and the `thinking` chunks are kept apart as the turn's
+reasoning, which [`reasoning_text`](@ref) reads once the finish reason or `data: [DONE]` has arrived; a
+stream cut before then keeps none. No thinking reaches the callback. The concepts every provider shares
+are on [Streaming](@ref streaming_guide).
 
 ## [Tools](@id openai_compatible_tools)
 
@@ -202,9 +208,10 @@ length(embedding_vectors(r)), length(first(embedding_vectors(r)))
 ```
 
 Mistral's embeddings route takes `input`, `model`, `output_dimension`, `output_dtype`,
-`encoding_format` and `metadata` ([embeddings](https://docs.mistral.ai/api/endpoint/embeddings)). An
-`Embeddings` request's `dimensions` goes out under that name, not as `output_dimension`, and its effect
-on Mistral is untested. Each item is text: an image or a sound clip is refused before the request
+`encoding_format` and `metadata` ([embeddings](https://docs.mistral.ai/api/endpoint/embeddings)). On
+Mistral's host an `Embeddings` request's `dimensions` goes out as `output_dimension`, "The dimension of
+the output embeddings when feature available", and on any other service as `dimensions`; its effect on
+Mistral is untested. Each item is text: an image or a sound clip is refused before the request
 ([Limits and refusals](@ref openai_compatible_limits)). The concepts every provider shares are on
 [Embeddings](@ref embeddings_guide).
 
@@ -223,7 +230,7 @@ can boost accuracy"), `temperature`, `timestamp_granularities`, `context_bias` a
 ([transcriptions](https://docs.mistral.ai/api/endpoint/audio/transcriptions)); a request's `prompt`
 and `response_format`, which that reference does not list, go out as set, untested. The endpoint has no
 default transcription model, so a call names one ([Limits and refusals](@ref openai_compatible_limits)).
-`transcribe` is sent once: a transient status is not sent again, and `max_attempts` does not apply
+`transcribe` is sent again after a transient status, as a `Chat` is, whole each time
 ([When something fails](@ref openai_compatible_failures)).
 
 ## [FIM completion](@id openai_compatible_completions)
@@ -298,8 +305,7 @@ service's HTTP `status` and, as `response`, the body that came with it; a call e
 an exception as `error` and the exception as `cause`. UniLM sends a request again after a transient
 status — 408, 429, 500, 502 to 504, 520 to 524 and 529 — or a failed connection, as often as the call's
 [`RequestConfig`](@ref) allows, and then returns the last answer ([Timeouts & Retries](@ref timeouts_guide));
-a streamed request is sent again only while none of its callbacks has run, and a transcription is sent
-once. The statuses below are Mistral's ([error glossary](https://docs.mistral.ai/resources/error-glossary)):
+a streamed request is sent again only while none of its callbacks has run. The statuses below are Mistral's ([error glossary](https://docs.mistral.ai/resources/error-glossary)):
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
@@ -309,8 +315,8 @@ once. The statuses below are Mistral's ([error glossary](https://docs.mistral.ai
 | a failure with `status` 402 | "A billing condition on your Organization blocks the request" | what the message's link says |
 | a failure with `status` 403 or 404 | a model your subscription does not include, or "Invalid model ID or endpoint path"; not sent again | the model's name, or the route |
 | a failure with `status` 400 or 422 | "The request body is malformed or missing required fields", or it "contains invalid parameter values"; not sent again | what the message says |
-| a failure with `status` 429 | "You have exceeded the rate limit for your subscription tier"; sent again, a transcription aside, until the attempts or the deadline run out | fewer requests, or a higher tier |
-| a failure with `status` 500 or another transient status | a fault on the service, sent again, a transcription aside, until the attempts or the deadline run out | the request again, later |
+| a failure with `status` 429 | "You have exceeded the rate limit for your subscription tier"; sent again until the attempts or the deadline run out | fewer requests, or a higher tier |
+| a failure with `status` 500 or another transient status | a fault on the service, sent again until the attempts or the deadline run out | the request again, later |
 | an `LLMFailure` with `status` 200 from a stream | the stream ended before a finish reason; `response` holds what arrived, and nothing is appended | the turn again |
 | a call error with `status` `nothing` and a `UniLMTimeout` as `cause` | a bound of the call's `RequestConfig` ran out | a longer bound, or a stream for a long reply ([Timeouts & Retries](@ref timeouts_guide)) |
 | a call error whose `cause` is a `UniLMCancelled` | a stop: the stream's `close[] = true` or a cancelled `CancelToken` | nothing, if the stop was yours |

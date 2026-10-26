@@ -9,8 +9,12 @@ yours, through an OpenAI-compatible API, and `GenericOpenAIEndpoint` speaks it: 
 base URL, a `Chat` goes to `/v1/chat/completions`, an `Embeddings` request to `/v1/embeddings`,
 `respond` to `/v1/responses`, `fim_complete` to `/v1/completions` and `transcribe` to
 `/v1/audio/transcriptions`. UniLM is an OpenAI-compatible client there: it holds no rule of any server,
-sends every field a request sets as it is, and refuses what [Limits and refusals](@ref local_servers_limits)
-lists. A verb that needs a capability the table below lists as not available refuses this endpoint, and
+sends every field a request sets as it is, under the name the request gives it — LM Studio's chat
+reference lists the cap as `max_tokens`
+([chat completions](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)), while vLLM
+takes `max_completion_tokens` and deprecates `max_tokens` "in favor of the max_completion_tokens field"
+([protocol](https://github.com/vllm-project/vllm/blob/v0.32.0/vllm/entrypoints/openai/chat_completion/protocol.py))
+—, and refuses what [Limits and refusals](@ref local_servers_limits) lists. A verb that needs a capability the table below lists as not available refuses this endpoint, and
 so does `ask`; `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes
 `transcription` or `audio`, are sent. Local decision models have an entry of their own:
 [Local decision models](@ref ollama_decisions_start). UniLM does not use the servers' own APIs either,

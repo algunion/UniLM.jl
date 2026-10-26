@@ -110,8 +110,10 @@ result = prefix_complete(chat)
 result isa LLMSuccess && println(result.message.content)
 ```
 
-The request is the endpoint's own `Chat` request, its last message marked as the prefix to continue. The
-result's `message` is the continuation the API returns. With `chat.history` (the
+The request is the endpoint's own `Chat` request, its last message marked as the prefix to continue, and
+never streamed: `prefix_complete` reads one whole reply and takes no callback, so a `Chat` with
+`stream=true` is sent without its `stream` and `stream_options`. The result's `message` is the
+continuation the API returns. With `chat.history` (the
 default) the conversation keeps the whole assistant turn — the prefix followed by the
 continuation. A failure or a cancellation (`cancel=`, or an ambient `with_cancel`
 token) leaves `chat` untouched.

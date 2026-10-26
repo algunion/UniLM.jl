@@ -331,11 +331,11 @@ _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += 
 """
     cumulative_cost(chat::Chat) -> Float64
 
-Return the estimated cost, in USD, that [`chatrequest!`](@ref) calls on this `Chat` have
-accrued, priced with [`DEFAULT_PRICING`](@ref) as [`estimated_cost`](@ref) prices a result: a
-local model's turns add `0.0` unless you added a row for its exact name to the table (a row UniLM
-ships for a hosted model of that name does not count).
-A committed turn adds its result's cost. A call that ends without committing one adds what
+Return the estimated cost, in USD, that [`chatrequest!`](@ref) and [`prefix_complete`](@ref)
+calls on this `Chat` have accrued, priced with [`DEFAULT_PRICING`](@ref) as
+[`estimated_cost`](@ref) prices a result: a local model's turns add `0.0` unless you added a row
+for its exact name to the table (a row UniLM ships for a hosted model of that name does not
+count). A committed turn adds its result's cost. A call that ends without committing one adds what
 its provider reported billing it, a lower bound: the replies of a continued Gemini turn
 received before the failure or stop, and the usage a stream had reported when it was stopped,
 cancelled, timed out, cut off or ended by an exception from its `callback` or `on_tool_call`

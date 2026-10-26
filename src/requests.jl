@@ -815,6 +815,10 @@ _resolve_base_url(::Type{<:ServiceEndpoint}) = throw(ArgumentError("base URL is 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
 get_url(s::GenericOpenAIEndpoint, ::Chat)::String = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
+
+# Whether a generic endpoint is on Mistral's API host, as `MistralEndpoint()` is: Mistral serves FIM
+# on a route of its own and names a few fields otherwise than the OpenAI wire.
+_mistral_host(s::GenericOpenAIEndpoint)::Bool = lowercase(HTTP.URI(rstrip(s.base_url, '/')).host) == MISTRAL_API_HOST
 get_url(s::GenericOpenAIEndpoint, ::Embeddings)::String = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
 _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
@@ -845,7 +849,14 @@ end
 
 # ─── DeepSeekEndpoint dispatch ───────────────────────────────────────────────
 
-get_url(s::DeepSeekEndpoint, ::Chat)::String = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
+# DeepSeek's strict tool mode is a beta feature: "To use `strict` mode, you need to: Use
+# `base_url="https://api.deepseek.com/beta"` to enable Beta features"
+# (https://api-docs.deepseek.com/guides/tool_calls). A Chat with a strict tool goes there; the page
+# adds that every function must then be strict, which UniLM does not check (DeepSeek answered a
+# request mixing strict and non-strict tools on 2026-10-26).
+get_url(s::DeepSeekEndpoint, chat::Chat)::String =
+    (_strict_tools(chat) ? DEEPSEEK_BETA_BASE_URL : DEEPSEEK_BASE_URL) * CHAT_COMPLETIONS_PATH
+_strict_tools(chat::Chat)::Bool = !isnothing(chat.tools) && any(t -> t.func.strict === true, chat.tools)
 get_url(s::DeepSeekEndpoint, ::Embeddings)::String = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
 _resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 
@@ -1209,6 +1220,27 @@ calls the encoder before any network I/O and lets it propagate.
 Public extension API (not exported); see the Custom Backends guide.
 """
 encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
+
+# `chat`'s Chat Completions body with each field `from => to` it sets sent under the provider's
+# name `to`, which then holds that field's value; a body that renames nothing is the Chat's own
+# JSON, byte for byte.
+function _renamed_json(chat::Chat, renames::Pair{Symbol,Symbol}...)::String
+    set = [r for r in renames if !isnothing(getfield(chat, first(r)))]
+    isempty(set) && return JSON.json(chat)
+    body = JSON.lower(chat)
+    foreach(((from, to),) -> body[to] = pop!(body, from), set)
+    JSON.json(body)
+end
+
+# Mistral's chat reference lists the token cap as `max_tokens` and no `max_completion_tokens`, and
+# names the seed `random_seed`, "The seed to use for random sampling", listing no `seed`
+# (https://docs.mistral.ai/api/endpoint/chat): on Mistral's host a Chat's `max_completion_tokens`
+# goes out as `max_tokens`, taken over a `max_tokens` also set, as the native encoders take it, and
+# its seed as `random_seed` (DeepSeek's encoder renames the cap the same way). Every other server
+# gets the names the Chat sets: Azure's v1 route takes only `max_completion_tokens` for its reasoning
+# models, and vLLM deprecates `max_tokens` in its favour.
+encode_request(s::GenericOpenAIEndpoint, chat::Chat)::String = _mistral_host(s) ?
+    _renamed_json(chat, :max_completion_tokens => :max_tokens, :seed => :random_seed) : JSON.json(chat)
 
 """
     decode_response(service, resp::HTTP.Response)
@@ -2092,7 +2124,10 @@ that declares its capabilities and does not list `:chat` (a custom endpoint decl
 none and is dispatched unvalidated), or when the provider's encoder rejects the
 request (e.g. an option the provider or model does not support);
 `InvalidConversationError` when `chat.history` is on and the conversation ends with an
-assistant message, so the reply could not be appended.
+assistant message, so the reply could not be appended; and the `MethodError` of a
+seam method the endpoint type lacks — [`encode_request`](@ref), and on a stream
+[`handle_sse_event!`](@ref), whose missing method would otherwise drop every payload
+of the reply.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
@@ -2102,6 +2137,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)
+    chat.stream === true && _require_stream_handler(chat.service)
     cfg = _resolve_config(config, _model_default_config(chat.service, chat.model))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
@@ -2219,6 +2255,17 @@ _prompt_message(::String, prompt::Message)::Message = prompt
 # `_wire_texts` first: its refusal stays a plain ArgumentError whatever JSON.json does with errors thrown in `lower`.
 _encode_embeddings(_, emb::Embeddings)::String = (_wire_texts(emb); JSON.json(emb))
 _decode_embeddings(_, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
+# Mistral's embeddings reference names the vector size `output_dimension`, "The dimension of the
+# output embeddings when feature available", and lists no `dimensions`
+# (https://docs.mistral.ai/api/endpoint/embeddings): on Mistral's host the size goes out under that
+# name, and every other server gets the request as the OpenAI Embeddings API names it.
+function _encode_embeddings(s::GenericOpenAIEndpoint, emb::Embeddings)::String
+    _mistral_host(s) && !isnothing(emb.dimensions) || return invoke(_encode_embeddings, Tuple{Any,Embeddings}, s, emb)
+    _wire_texts(emb)
+    body = JSON.lower(emb)
+    body[:output_dimension] = pop!(body, :dimensions)
+    JSON.json(body)
+end
 # The body a recording keys and stores: the one sent, unless the endpoint names its media otherwise.
 _record_embeddings_body(_, _, body::String)::String = body
 

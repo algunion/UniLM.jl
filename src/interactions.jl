@@ -15,6 +15,13 @@
 
 _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTERACTIONS_PATH
 
+# The Interactions API creates, gets, cancels and deletes an interaction; its reference lists no
+# method that lists an interaction's input items (https://ai.google.dev/api/interactions-api).
+_check_input_items(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError(
+    "list_input_items is not supported by GEMINIServiceEndpoint: Google's Interactions API gets, cancels " *
+    "and deletes an interaction, and lists no input items (https://ai.google.dev/api/interactions-api); " *
+    "the input is the `input` you sent"))
+
 # ─── Request encoding (neutral Respond → Interactions body, snake_case) ───────
 
 # The neutral Respond fields this wire maps. Everything else is derived from

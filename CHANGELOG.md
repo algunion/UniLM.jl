@@ -86,6 +86,12 @@
   safety filter.". Upgrading: code that matched those three values tests
   `finish_reason == "content_filter"` and reads `refusal_message`; `text(result)` of such a turn is
   `nothing`, no longer `""`.
+- **`list_input_items` refuses `GEMINIServiceEndpoint`.** Google's Interactions API gets, cancels
+  and deletes an interaction, and its reference lists no method that lists an interaction's input
+  items, yet `list_input_items(id; service=GEMINIServiceEndpoint)` sent
+  `GET /v1beta/interactions/{id}/input_items`, a path the reference does not list, and returned what
+  came back. It now throws `ArgumentError` before any request, as it does for an `OllamaEndpoint`.
+  Upgrading: keep the `input` you sent with the interaction.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

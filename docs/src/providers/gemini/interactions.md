@@ -319,9 +319,9 @@ right after it was created has answered `403` (`permission_denied`) for a few se
 became readable (observed on 20 August 2026; Google's pages do not mention it): retry such a read in
 your poll before taking it for a permission error.
 
-Google's Interactions API reads, cancels and deletes an interaction, and lists no input items:
-[`list_input_items`](@ref) sends a request to a path the API reference does not list
-([Interactions API](https://ai.google.dev/api/interactions-api)), and its answer is untested.
+Google's Interactions API reads, cancels and deletes an interaction, and lists no input items
+([Interactions API](https://ai.google.dev/api/interactions-api)), so [`list_input_items`](@ref)
+throws `ArgumentError` for this endpoint before sending anything; the input is the `input` you sent.
 [`compact_response`](@ref) and [`count_input_tokens`](@ref) send nothing for this endpoint, and
 return a `ResponseCallError`.
 

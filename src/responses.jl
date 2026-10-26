@@ -1715,6 +1715,10 @@ function _check_stored_responses(service, verb::String, fix::String)
     nothing
 end
 
+# An agentic API that stores its responses but has no method listing their input items throws
+# here, before `list_input_items` sends a request to a path the API does not serve.
+_check_input_items(_) = nothing
+
 """
     decode_agentic(service, resp::HTTP.Response) -> ResponseObject
 
@@ -2017,7 +2021,9 @@ end
 
 List input items for a stored response. Returns a Dict with `"data"`, `"first_id"`, `"last_id"`, `"has_more"`.
 An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
-`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+`ArgumentError` before any request, and so does [`GEMINIServiceEndpoint`](@ref): Google's
+Interactions API gets, cancels and deletes an interaction, and has no method that lists its
+input items. Inside a [`with_recorded_answers`](@ref) scope the
 request passes through the recordings, keyed with its `limit`, `order` and `after`: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
 be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
@@ -2038,6 +2044,7 @@ function list_input_items(response_id::String;
     config::Union{Nothing,RequestConfig}=nothing)
 
     _check_stored_responses(service, "list_input_items", "the input is the `input` you sent")
+    _check_input_items(service)
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try

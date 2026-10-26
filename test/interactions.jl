@@ -1139,3 +1139,13 @@ end
     end
     @test length(bodies) == 1 && JSON.parse(only(bodies))["seed"] == 7
 end
+
+@testset "list_input_items — Gemini Interactions lists no input items, so nothing is sent" begin
+    # The Interactions API creates, gets, cancels and deletes an interaction; neither its reference nor its
+    # OpenAPI spec has a method that lists one's input items (https://ai.google.dev/api/interactions-api).
+    # A sent request would come back as a result (here a call error: no key, no network); a refusal throws.
+    e = withenv("GEMINI_API_KEY" => "k") do
+        _ix_caught(() -> list_input_items("v1_abc"; service=GEMINIServiceEndpoint, config=RequestConfig(max_attempts=1)))
+    end
+    @test e isa ArgumentError && startswith(e.msg, "list_input_items is not supported by GEMINIServiceEndpoint")
+end

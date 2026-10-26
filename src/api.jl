@@ -750,7 +750,9 @@ Built-in subtypes:
 - `GEMINIServiceEndpoint` — Google Gemini native generateContent API
 - `ANTHROPICServiceEndpoint` — Anthropic (Claude) native Messages API
 - `OllamaEndpoint` — a local Ollama server (native chat and embeddings API)
+- `DeepSeekEndpoint` — DeepSeek API (chat, FIM and prefix completion)
 - `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Mistral, vLLM, LM Studio, etc.)
+- `TYPESAFEServiceEndpoint` — TypeSafe's System One (decisions only)
 """
 abstract type ServiceEndpoint end
 
@@ -2254,10 +2256,13 @@ end
 
 Create an embedding request for one or more texts. `model=""` resolves to the service's
 default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
-`gemini-embedding-2` for `GEMINIOpenAIServiceEndpoint` — and a service without one
-(generic endpoints, DeepSeek) needs an explicit `model` (`ArgumentError` otherwise). Works
-with any provider via the `service` parameter — Ollama, Gemini, Mistral, or any
-OpenAI-compatible server.
+`gemini-embedding-2` for `GEMINIOpenAIServiceEndpoint` —, and any other service needs an
+explicit `model` (`ArgumentError` otherwise). DeepSeek and Azure do not serve embeddings
+through UniLM: [`embeddingrequest!`](@ref) refuses them with an `ArgumentError` before any
+I/O, whatever the model, as it refuses every endpoint whose declared capabilities lack
+`:embeddings`. Embeddings work with OpenAI, `GEMINIOpenAIServiceEndpoint`, Ollama,
+`GenericOpenAIEndpoint` (Mistral included) and custom endpoints that declare `:embeddings` or no
+capabilities.
 
 An input is a text, an [`EmbeddingInput`](@ref), or an [`ImageAttachment`](@ref) or
 [`AudioAttachment`](@ref) on its own; a vector of them embeds each item as a vector of its own.

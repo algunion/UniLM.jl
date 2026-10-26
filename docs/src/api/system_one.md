@@ -86,7 +86,7 @@ whatever it is; TypeSafe's `long_context` is part of the key.
 every call that names none outside a [`with_system_one`](@ref) scope — on
 TypeSafe's wire, [`TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol).
 
-### [Setup](@id jev_setup)
+### [Setup](@id system_one_typesafe_setup)
 
 ```bash
 export TYPESAFE_API_KEY="..."
@@ -116,7 +116,7 @@ and `:models`, so [`chatrequest!`](@ref), [`respond`](@ref),
 be built, with an explicit `model=`, but not sent ([Provider
 Capabilities](@ref capabilities_api)).
 
-### [Models and versions](@id jev_models)
+### [Models and versions](@id system_one_typesafe_models)
 
 [`list_models`](@ref) returns the names the account may put in `model`:
 
@@ -149,9 +149,9 @@ In October 2026 `jev-latest` answers as `jev-1.13.0` and `jev-preview` as
 [`box`](@ref) question needs Jev 1.14 or later — `model = "jev-1.14.0"` or
 `"jev-preview"`. Jev 1.13 answers a request with one with HTTP 400 and the bare
 message `"Invalid request."`, which [`ask`](@ref) returns with a hint naming those
-models. `long_context = true` works on both ([Limits](@ref jev_limits)).
+models. `long_context = true` works on both ([Limits](@ref system_one_typesafe_limits)).
 
-### [Limits](@id jev_limits)
+### [Limits](@id system_one_typesafe_limits)
 
 | Limit | Value |
 | :--- | :--- |
@@ -202,7 +202,7 @@ accurate than the default limits, and the answer does not say which ran. A
 request over its context comes back as a 400 whose `error_type` is
 `"max_tokens_exceeded"`, and its `message` names `long_context` and the limits.
 
-### [Errors, timeouts and retries](@id jev_errors)
+### [Errors, timeouts and retries](@id system_one_typesafe_errors)
 
 A call that reaches the service returns a [`SystemOneSuccess`](@ref), a
 [`SystemOneFailure`](@ref) (a status other than 200) or a
@@ -274,7 +274,7 @@ ambient [`with_cancel`](@ref) token, with a [`UniLMCancelled`](@ref) as the
 Retries](@ref timeouts_guide), [Concurrency, Tasks and Cancellation](@ref
 concurrency_guide)).
 
-### [Cost](@id jev_cost)
+### [Cost](@id system_one_typesafe_cost)
 
 Only **input** tokens are billed; output tokens are currently free
 ([Models](https://docs.typesafe.ai/models)). Every question in one call shares

@@ -66,7 +66,7 @@ Jev's best guess, `billing`, came with a confidence below the 0.6 asked for. Set
 costs against a person's time; where some mistakes cost more than others, price each one and let a `decide`
 policy choose the cheapest action ([When mistakes have different prices](@ref jev_loss_matrix)). Tune a bar on
 messages of your own, with the version pinned: a bar tuned against one version is a claim about that version
-([Models](@ref jev_models__next)). The measurements below were made on Jev 1.13, and on 25 October 2026
+([Models](@ref jev_models)). The measurements below were made on Jev 1.13, and on 25 October 2026
 `jev-latest` points at Jev 1.14. The decision rules on every provider are on
 [Act on the answer](@ref jev_act_on_answer).
 
@@ -78,7 +78,7 @@ messages of your own, with the version pinned: a bar tuned against one version i
     September 2026, also on jev-1.13.0, two other sets of ours measured higher errors: 0.047 on 100 items built
     on the model's documented failure modes, and 0.071 on 74 Noul answers, which were under-confident.
 
-## [Cost](@id jev_cost__next)
+## [Cost](@id jev_cost)
 
 TypeSafe bills the input tokens of a request — the state, the questions and the pictures — and output tokens
 are free ([Models](https://docs.typesafe.ai/models), [Images](https://docs.typesafe.ai/images)). The state is
@@ -230,7 +230,7 @@ results = ask_each(MESSAGES, "team" => choice("Which team should handle this mes
     through `ask_each` with its default of 16 in flight, and 13.21 s as 50 `ask` calls one after another. The
     batch used a single connection (HTTP/2).
 
-## [When something fails](@id jev_errors__next)
+## [When something fails](@id jev_errors)
 
 A call that reaches TypeSafe returns a [`SystemOneSuccess`](@ref); a [`SystemOneFailure`](@ref) for a status
 other than 200, with the `status`, TypeSafe's `message`, its `error_type` where TypeSafe sends one, and the
@@ -260,7 +260,7 @@ end
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |
-| a `SystemOneCallError` whose `error` reads `TYPESAFE_API_KEY is not set` | no key in the environment; nothing was sent | set it ([Setup](@ref jev_setup__next)) |
+| a `SystemOneCallError` whose `error` reads `TYPESAFE_API_KEY is not set` | no key in the environment; nothing was sent | set it ([Setup](@ref jev_setup)) |
 | a `SystemOneFailure` with status 401 and `error_type` `"authentication_error"` | the key is not valid | a key from the TypeSafe console |
 | status 400, `"Unknown model: …"` | a model name TypeSafe does not know | a name `list_models` returns, or a versioned id |
 | status 400, `error_type` `"max_tokens_exceeded"`, and a message naming the limits, and `long_context` when the request did not set it | the request is longer than its context | shorten the state, split the questions, or `long_context = true` |

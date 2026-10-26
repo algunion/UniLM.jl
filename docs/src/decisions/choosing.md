@@ -106,7 +106,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
   that must go elsewhere.
 - Pin the model a threshold was tuned on in the same place:
   `with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0") do … end`
-  ([Models](@ref jev_models__next)).
+  ([Models](@ref jev_models)).
 - `with_system_one` checks its endpoint before running anything: one that does not declare `:system_one`, such as
   a chat-only endpoint, is an `ArgumentError`, and so is a blank model.
 
@@ -146,7 +146,7 @@ refuses a picture after a text on every model. Each entry has the rest: [Jev's I
 - **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at `https://api.openai.com`; Ollama at the
   endpoint's host: `OLLAMA_HOST`, else `http://127.0.0.1:11434` ([Setup](@ref ollama_decisions_setup)).
 - **Other models.** On Jev, a call may name `jev-preview`, or a version such as `jev-1.13.0`, instead
-  ([Models](@ref jev_models__next)); on Ollama, any installed decision model
+  ([Models](@ref jev_models)); on Ollama, any installed decision model
   ([Models](@ref ollama_decisions_models)).
 - **Recordings.** Each provider's go under a path of its own, so the same question asked of two providers is two
   recordings, and a replay never answers one provider with another's answer. The options that change how a request
@@ -190,7 +190,7 @@ None of these reached a server. A wrapper refuses rather than adapts: dropping a
 image as text, would answer a question you did not write, and the answer would carry no sign of the change. The
 question types themselves set no limit, so a program built for one provider is checked against another's rules
 only when it is sent there. Each entry's Limits and refusals section lists its refusals:
-[Jev](@ref jev_limits__next), [OpenAI](@ref openai_decisions_limits), [Ollama](@ref ollama_decisions_limits).
+[Jev](@ref jev_limits), [OpenAI](@ref openai_decisions_limits), [Ollama](@ref ollama_decisions_limits).
 
 ## [One formula, calibrated per model](@id backends_confidence)
 

@@ -51,7 +51,7 @@ are. A Score level that is an image comes back in the answer's `legend` as the
 same `ImageAttachment`. UniLM looks for images in those containers, not in the
 fields of a struct of your own: a request whose image only a struct holds is
 refused with an `ArgumentError` before anything is sent, rather than writing the
-image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits__next)).
+image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits)).
 
 - **Sent once, billed per use.** Each distinct image goes out once, as a part of
   a multipart request, and every place it stood holds a reference to it. Every
@@ -64,7 +64,7 @@ image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits__n
 - **Checked before sending.** PNG or JPEG, a still image (no animated PNG), at
   most 16 MiB, 280 to 1568 pixels on each side, a JPEG ending with its
   end-of-image marker (one cut short is refused); the whole request at most
-  32 MiB ([Limits and refusals](@ref jev_limits__next)). TypeSafe applies no EXIF
+  32 MiB ([Limits and refusals](@ref jev_limits)). TypeSafe applies no EXIF
   rotation, so turn a photo's pixels upright before you send it.
 - **Other providers.** Where a picture may stand differs per provider
   ([Choosing a decision provider](@ref system_one_backends)).
@@ -95,7 +95,7 @@ confidence.
 A Box needs Jev 1.14 or later ([Images](https://docs.typesafe.ai/images)) —
 `model = "jev-1.14.0"`, or an alias that points to it: on 25 October 2026
 TypeSafe points `jev-latest` and `jev-preview` at `jev-1.14.0`
-([Models](@ref jev_models__next)). Asked of Jev 1.13 in October 2026, a Box
+([Models](@ref jev_models)). Asked of Jev 1.13 in October 2026, a Box
 question drew HTTP 400 and `"Invalid request."`; [`ask`](@ref) returns that
 [`SystemOneFailure`](@ref) with a hint naming the models that answer one.
 
@@ -121,7 +121,7 @@ A [`BoxAnswer`](@ref) holds `box`, a [`BoxCoordinates`](@ref) — `top` and
 `right` as fractions of its width from its left edge, so `(0, 1, 0, 1)` is the
 whole image — then `confidence`, `nothing` when the model reports none, and
 `raw`. A Box question needs an image in the request, and [`ask`](@ref) refuses
-one without before anything is sent ([Limits and refusals](@ref jev_limits__next)):
+one without before anything is sent ([Limits and refusals](@ref jev_limits)):
 
 ```@example jev
 try
@@ -201,7 +201,7 @@ for every call inside that names no backend and no options of its own.
 
 Wherever guidance appears — a question's `instructions`, a Choice option's description, a Score level, a Noul's
 `yes` and `no` — Jev takes a string, an object (a `NamedTuple` or a `Dict`), an array (a vector; a tuple only
-inside an object or an array, where it is written as an array), or an image, nested up to the limit ([Limits and refusals](@ref jev_limits__next);
+inside an object or an array, where it is written as an array), or an image, nested up to the limit ([Limits and refusals](@ref jev_limits);
 [Advanced: structure](https://docs.typesafe.ai/primitives/advanced)). Start with strings. When two options keep
 getting confused, give each what it covers, what it does not, and a few examples:
 

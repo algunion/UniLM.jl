@@ -163,8 +163,9 @@ two APIs take different options:
 
 - **Chat Completions** takes `mode` and `ttl="30m"`; another `ttl`, `prewarm` and
   `comparison_response_id` are refused ([Limits and refusals](@ref openai_limits)). A `Chat` marks no
-  breakpoint, so with `mode="explicit"` its request "does not use prompt caching"
-  ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), `prompt_cache_options`).
+  breakpoint, and with `mode="explicit"` "If there are no explicit breakpoints, the request does not
+  use prompt caching" ([Create chat completion](https://developers.openai.com/api/reference/resources/chat),
+  `prompt_cache_options`): a `Chat` with `mode="explicit"` is refused when it is built.
 - **Responses** takes `ttl="30m"` or `"12h"`; `input_text(text; cache_breakpoint=true)` marks a
   breakpoint at the end of that block, with its own `cache_ttl` if given; `prewarm=true` "Prepares the
   prompt cache without generating output"; and `comparison_response_id` asks for diagnostics against an
@@ -293,6 +294,7 @@ no row names meets only the other rules.
 | `user` on a `Chat` or a `Respond` | `OpenAI replaces the deprecated user field`: the field "is being replaced by `safety_identifier` and `prompt_cache_key`" | `safety_identifier` for the end user, `prompt_cache_key` for cache routing |
 | `max_tokens` and `max_completion_tokens` both set on a `Chat` | `OpenAI sends max_tokens as max_completion_tokens`: `max_tokens` "is now deprecated in favor of `max_completion_tokens`", which UniLM sends it as | one of them |
 | `prompt_cache_options` with `prewarm` or `comparison_response_id` on a `Chat` | `Chat Completions prompt_cache_options accepts only mode and ttl`: the Chat Completions object has no other field | a `Respond` ([Prompt caching](@ref openai_caching)) |
+| `prompt_cache_options` with `mode="explicit"` on a `Chat`, when it is built | `prompt_cache_options mode="explicit" caches only the prefixes a request marks with cache breakpoints, and a Chat cannot mark one`: without one the request "does not use prompt caching" | `mode="implicit"` or unset, or a `Respond` whose `input_text(text; cache_breakpoint=true)` marks one ([Prompt caching](@ref openai_caching)) |
 | a `prompt_cache_options` `ttl` of `"5m"` or `"1h"`, or `"12h"` on a `Chat` | `OpenAI Chat Completions accepts prompt_cache_options ttl`, `OpenAI Responses accepts prompt_cache_options ttl`: the API answers HTTP 400 for it | `"30m"`, or `"12h"` on a `Respond` |
 | `prompt_cache_retention` on a `Chat` or a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` on a `Respond` |
 | `seed` on a `Respond` | `Responses API takes no seed`: the Responses API has no seed, while Chat Completions has one | a `Chat`, or no seed |

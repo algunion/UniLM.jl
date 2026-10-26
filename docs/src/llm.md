@@ -317,7 +317,7 @@ through that accessor, never directly.
 - **Parameter validation**: the constructor validates at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` must be `1` (a result carries a single choice), `max_tokens` / `max_completion_tokens` ≥ 1, `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0], `top_logprobs` ∈ [0, 20], every `logit_bias` value ∈ [-100, 100], `reasoning_effort` ∈ {`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`} (on a `DeepSeekEndpoint` also `"ultra"`, which DeepSeek maps to `max`). Violations throw `ArgumentError`. An empty `tools` vector is stored as `nothing`; a `Vector{<:CallableTool}` is accepted and stored as its `Tool`s.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
 - **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
-- `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": `mode="explicit"` on a `Chat` turns prompt caching off. `moderation` takes a [`ModerationConfig`](@ref).
+- `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": a `Chat` with `mode="explicit"` throws `ArgumentError` when it is built, on every endpoint. `moderation` takes a [`ModerationConfig`](@ref).
 - `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
 
 ### Message
@@ -821,11 +821,12 @@ refusing the rest with an `ArgumentError` naming it, before any request: native 
 `"30m"` on Chat Completions (which answers any other ttl with HTTP 400) and `"30m"` or `"12h"`
 on Responses and on its Decisions API; on `ANTHROPICServiceEndpoint` the options become a
 top-level `cache_control` (automatic caching, the breakpoint on the last cacheable block) with
-`ttl` `"5m"` or `"1h"` and `mode` `"implicit"` or unset — `"explicit"`, `prewarm=true`,
+`ttl` `"5m"` or `"1h"` and `mode` `"implicit"` or unset — `prewarm=true`,
 `comparison_response_id` and the OpenAI ttls throw; native Gemini (Chat and Interactions) and
 `OllamaEndpoint` refuse `prompt_cache_options` (Gemini caches prompts implicitly; UniLM does not
 wrap its explicit caching); Azure, `GEMINIOpenAIServiceEndpoint`, DeepSeek and generic
-endpoints send the object unchanged, the server's answer being the check.
+endpoints send the object unchanged, the server's answer being the check. A `Chat` with
+`mode="explicit"` throws `ArgumentError` when it is built, whatever its endpoint (below).
 
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
@@ -834,7 +835,8 @@ unchecked, beside `prompt_cache_options` when that is set too (the Responses ref
 two fields independently, and documents `prompt_cache_options` for gpt-5.6 and later), leaving
 both to the server — the reference takes only `"24h"` on `gpt-5.5` and `gpt-5.5-pro`. Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
-Responses input part; a `Chat` sets none, so explicit mode on a `Chat` means no prompt caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
+Responses input part; a `Chat` sets none, so explicit mode would turn its caching off, and the
+`Chat` constructor refuses it. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
 `prewarm` or `comparison_response_id` set throws `ArgumentError`). Diagnostics requested with
 `comparison_response_id` come back in `r.response.raw["prompt_cache_diagnostics"]`.
 Unset fields are omitted.

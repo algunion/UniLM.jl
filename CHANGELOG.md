@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Breaking
+- **A `Chat` with `prompt_cache_options` `mode="explicit"` is refused when it is built.** Explicit
+  mode caches only the prefixes a request marks with `prompt_cache_breakpoint`, and a `Chat`'s
+  message content, plain text, marks none: "If there are no explicit breakpoints, the request does
+  not use prompt caching" (OpenAI's Chat Completions reference). Such a `Chat` was sent on every
+  OpenAI-wire endpoint, and its prompt caching silently turned off. Its constructor now throws an
+  `ArgumentError` naming why, whatever the endpoint; Anthropic's encoder, which refused it with its
+  own message, no longer meets it. A `Respond`, whose `input_text(text; cache_breakpoint=true)`
+  marks a breakpoint, keeps explicit mode. Upgrading: use `mode="implicit"` or leave `mode` unset,
+  or send a `Respond` that marks its breakpoints.
+
 ### Fixed
 - **A `Chat`'s log probabilities and moderation results reach its result.** A `Chat` with
   `logprobs=true` (and `top_logprobs`) or a `ModerationConfig` sent them and the request was billed,

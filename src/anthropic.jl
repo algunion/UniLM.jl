@@ -219,7 +219,6 @@ _anthropic_cache_control(::Nothing) = nothing
 function _anthropic_cache_control(o::PromptCacheOptions)::Dict{Symbol,String}
     refuse(why) = throw(ArgumentError("Anthropic prompt caching takes prompt_cache_options mode=\"implicit\" " *
         "(or unset) and ttl=$(join(repr.(_ANTHROPIC_CACHE_TTLS), " or ")) (or unset, 5 minutes): $why"))
-    o.mode == "explicit" && refuse("mode=\"explicit\" caches only the breakpoints a request marks, and a Chat marks none")
     o.prewarm === true && refuse("prewarm=true is not sent; the Messages API pre-warms a cache with max_tokens 0, " *
                                  "which a Chat does not take")
     isnothing(o.comparison_response_id) || refuse("comparison_response_id is not sent; Anthropic's cache " *

@@ -638,14 +638,14 @@ end
     @test_throws ArgumentError PromptCacheOptions(mode="typo", prewarm=true)
     @test_throws ArgumentError PromptCacheOptions(ttl="24h", comparison_response_id="resp_1")
 
-    chat = Chat(model="gpt-5.6-luna", prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"))
-    @test JSON.parse(JSON.json(chat))["prompt_cache_options"] == Dict("mode" => "explicit", "ttl" => "30m")
+    chat = Chat(model="gpt-5.6-luna", prompt_cache_options=PromptCacheOptions(mode="implicit", ttl="30m"))
+    @test JSON.parse(JSON.json(chat))["prompt_cache_options"] == Dict("mode" => "implicit", "ttl" => "30m")
     @test JSON.parse(UniLM.encode_request(chat.service, chat))["prompt_cache_options"] ==
-          Dict("mode" => "explicit", "ttl" => "30m")
+          Dict("mode" => "implicit", "ttl" => "30m")
     @test !haskey(JSON.parse(JSON.json(Chat(model="gpt-5.6-luna"))), "prompt_cache_options")
     # The Chat Completions object has only mode and ttl; a set Responses-only field fails loud.
     for pco in (PromptCacheOptions(prewarm=true), PromptCacheOptions(prewarm=false),
-                PromptCacheOptions(mode="explicit", ttl="30m", comparison_response_id="resp_1"))
+                PromptCacheOptions(mode="implicit", ttl="30m", comparison_response_id="resp_1"))
         bad = Chat(model="gpt-5.6-luna", prompt_cache_options=pco)
         err = try UniLM.encode_request(bad.service, bad); nothing catch e; e end
         @test err isa ArgumentError && err.msg == "Chat Completions prompt_cache_options accepts only " *
@@ -656,8 +656,28 @@ end
     @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_options"] ==
           Dict("prewarm" => true, "comparison_response_id" => "resp_1")
     # Native Gemini Chat has no equivalent, so the field fails loud there.
-    @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
-        Chat(service=GEMINIServiceEndpoint, prompt_cache_options=PromptCacheOptions(mode="explicit")))
+    err = try UniLM.encode_request(GEMINIServiceEndpoint,
+        Chat(service=GEMINIServiceEndpoint, prompt_cache_options=PromptCacheOptions(mode="implicit"))); nothing catch e; e end
+    @test err isa ArgumentError && startswith(err.msg, "Gemini takes no prompt_cache_options")
+end
+
+@testset "a Chat with prompt_cache_options mode=\"explicit\" is refused when built: it marks no cache breakpoint" begin
+    # "With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit
+    # breakpoints. If there are no explicit breakpoints, the request does not use prompt caching" (Chat
+    # Completions reference, `prompt_cache_options.mode`), and a Chat's message content, plain text, marks none.
+    for service in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint("k"),
+                    GenericOpenAIEndpoint("http://x", ""), ANTHROPICServiceEndpoint, OllamaEndpoint())
+        for o in (PromptCacheOptions(mode="explicit"), PromptCacheOptions(mode="explicit", ttl="30m"))
+            err = try Chat(; service, model="m", prompt_cache_options=o); nothing catch e; e end
+            @test err isa ArgumentError && startswith(err.msg, "prompt_cache_options mode=\"explicit\" caches only") &&
+                  occursin("a Chat cannot mark one", err.msg)
+        end
+    end
+    @test Chat(prompt_cache_options=PromptCacheOptions(mode="implicit")).prompt_cache_options.mode == "implicit"
+    @test isnothing(Chat(prompt_cache_options=PromptCacheOptions(ttl="30m")).prompt_cache_options.mode)
+    # A Respond marks its breakpoints in its input (`input_text(…; cache_breakpoint=true)`), so it keeps explicit mode.
+    r = Respond(model="gpt-5.6-luna", input="hi", prompt_cache_options=PromptCacheOptions(mode="explicit"))
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_options"] == Dict("mode" => "explicit")
 end
 
 @testset "ModerationConfig validation and wire shape on Chat and Respond" begin

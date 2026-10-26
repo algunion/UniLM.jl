@@ -1448,7 +1448,6 @@ end
     @test isnothing(cc(nothing))
     # What automatic caching cannot carry is refused, naming the options Anthropic takes.
     for (o, cause) in ((PromptCacheOptions(ttl="30m"), "\"30m\""), (PromptCacheOptions(ttl="12h"), "\"12h\""),
-                       (PromptCacheOptions(mode="explicit"), "explicit"), (PromptCacheOptions(mode="explicit", ttl="5m"), "explicit"),
                        (PromptCacheOptions(prewarm=true), "prewarm=true"), (PromptCacheOptions(prewarm=true, ttl="5m"), "prewarm=true"),
                        (PromptCacheOptions(comparison_response_id="resp_1"), "comparison_response_id"))
         e = _anthropic_err(model="claude-haiku-5-5", prompt_cache_options=o)

@@ -1346,7 +1346,7 @@ naming it, before any request:
   any other ttl); the Responses API ([`Respond`](@ref)) and OpenAI Decisions take `"30m"`
   and `"12h"`.
 - `ANTHROPICServiceEndpoint`: a top-level `cache_control` (automatic caching) with ttl
-  `"5m"` or `"1h"` and mode `"implicit"` or unset; `"explicit"`, `prewarm=true` and
+  `"5m"` or `"1h"` and mode `"implicit"` or unset; `prewarm=true` and
   `comparison_response_id` throw.
 - Native Gemini (Chat and Interactions) and [`OllamaEndpoint`](@ref) refuse
   `prompt_cache_options`.
@@ -1365,9 +1365,10 @@ Responses API only:
 Chat Completions accepts only `mode` and `ttl`: a [`Chat`](@ref) for
 `OPENAIServiceEndpoint` with `prewarm` or `comparison_response_id` set throws
 `ArgumentError` when encoded. [`Message`](@ref) content is a plain string, so a `Chat`
-cannot mark cache breakpoints: with `mode="explicit"` its request has none, and per the
-Chat Completions reference such a request does not use prompt caching. Unset fields are
-omitted from the request. See
+cannot mark cache breakpoints, and per the Chat Completions reference an explicit-mode
+request without one "does not use prompt caching": a `Chat` with `mode="explicit"` throws
+`ArgumentError` when it is built, whatever its endpoint. Unset fields are omitted from the
+request. See
 [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 """
 @kwdef struct PromptCacheOptions
@@ -1453,8 +1454,9 @@ OpenAI options, omitted from the request when unset:
   `ttl` ([`PromptCacheOptions`](@ref)); supported for gpt-5.6 and later (gpt-5.4-mini
   answered HTTP 400 "prompt_cache_options is not supported on this model" on
   2026-09-22). A `Chat` sets no cache breakpoints (the API's `prompt_cache_breakpoint` on
-  a message content part), so `mode="explicit"` means the request does not use prompt
-  caching.
+  a message content part), and an explicit-mode request without one "does not use prompt
+  caching": `mode="explicit"` throws `ArgumentError` when the `Chat` is built, on every
+  endpoint.
 - `prompt_cache_retention::Union{String,Nothing}`: `"in_memory"` or `"24h"`, the prompt
   cache's retention policy, which OpenAI's Chat Completions reference still lists and
   deprecates ("Use `prompt_cache_options.ttl` instead"); "for `gpt-5.5`, `gpt-5.5-pro`, and
@@ -1572,6 +1574,14 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         !isnothing(presence_penalty) && !(-2.0 <= presence_penalty <= 2.0) && throw(ArgumentError("presence_penalty must be in [-2.0, 2.0]"))
         !isnothing(frequency_penalty) && !(-2.0 <= frequency_penalty <= 2.0) && throw(ArgumentError("frequency_penalty must be in [-2.0, 2.0]"))
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
+        # Explicit mode caches only the prefixes a request marks with `prompt_cache_breakpoint` on a content
+        # part, and a Chat's message content, plain text, marks none: "If there are no explicit breakpoints,
+        # the request does not use prompt caching" (Chat Completions reference, `prompt_cache_options.mode`).
+        isnothing(prompt_cache_options) || prompt_cache_options.mode != "explicit" || throw(ArgumentError(
+            "prompt_cache_options mode=\"explicit\" caches only the prefixes a request marks with cache " *
+            "breakpoints, and a Chat cannot mark one: the request would not use prompt caching. Use " *
+            "mode=\"implicit\" or leave mode unset, or a Respond, whose input_text(text; cache_breakpoint=true) " *
+            "marks one"))
         isnothing(logit_bias) || all(v -> -100 <= v <= 100, values(logit_bias)) ||
             throw(ArgumentError("logit_bias values must be in [-100, 100]"))
         efforts = _reasoning_efforts(service)

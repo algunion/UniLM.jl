@@ -610,9 +610,10 @@ end
 `GenericOpenAIEndpoint`, as given (vLLM's Responses API forwards it to its engine); OpenAI's
 Responses API has none, so `OPENAIServiceEndpoint`, the other OpenAI-wire endpoints (Azure,
 `GEMINIOpenAIServiceEndpoint`) and `OllamaEndpoint` throw `ArgumentError` for it before any
-request. On `GEMINIServiceEndpoint`, a `Respond`'s `service_tier` is `"standard"`, `"flex"`,
-`"priority"` or `"deferred"`; Google's Interactions API reference lists the first three, and UniLM sends
-`"deferred"` as given, its answer untested ([Request options](@ref gemini_interactions_options)). The
+request. On `GEMINIServiceEndpoint`, a `Respond`'s `service_tier` is `"standard"`, `"flex"` or
+`"priority"`, the tiers Google's Interactions API reference lists; `"deferred"` throws `ArgumentError`
+before any request, since the API answered it with HTTP 400 on 2026-10-26
+([Request options](@ref gemini_interactions_options)). The
 positional constructor takes all 32 fields in declaration order;
 build a `Respond` with keywords, which name each field.
 
@@ -636,7 +637,8 @@ build a `Respond` with keywords, which name each field.
     the top-level `response_format`; `verbosity` is rejected), `store`,
     `previous_response_id`, `background` (with `store=false` it is rejected: Google answers
     that with HTTP 400), `reasoning` (effort and automatic summaries
-    only), `service_tier` (`"standard"`, `"flex"`, `"priority"`, or `"deferred"`, sent as given),
+    only), `service_tier` (`"standard"`, `"flex"` or `"priority"`; `"deferred"` is rejected: the API
+    answers it with HTTP 400),
     `safety_identifier` (the request label `safety_identifier`) and `seed`
     (`generation_config.seed`). Every other field — `moderation`,
     `prompt_cache_options` (Gemini caches prompts implicitly; UniLM does not wrap its
@@ -1306,8 +1308,8 @@ The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
 September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
 UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) and
 hosted-tool fees are not included. A billed tier the provider's pricing page lists no price for
-(OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens; Gemini's
-`"deferred"`) is estimated at the standard rates with one warning per model and tier. OpenAI estimates bill cache writes at 1.25× input
+(OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens) is estimated at
+the standard rates with one warning per model and tier. OpenAI estimates bill cache writes at 1.25× input
 (`"30m"`) or 2.5× (`"12h"`, `cache_write_extended_tokens`) on GPT-6 and GPT-5.6, a prompt
 over 272K input tokens at 2× the input and cache rates and 1.5× the output rate, and the
 billed tier's multiple of every rate (Flex 0.5×; Fast 2× on GPT-6, GPT-5.6, `gpt-5.4`,
@@ -1343,7 +1345,7 @@ the downgrade) — input and output at half the standard rates on Flex
 and 1.8 times on Priority, a cache hit at the same multiple except where a model's table
 lists another cache-hit price (Flex's standard rate on 3.1 Pro Preview, 3 Flash Preview and
 the 2.5 models; \$0.02 on Flex and \$0.05 on Priority for 3.5 Flash-Lite's \$0.03),
-`"deferred"` at the standard rates with a warning; a long generation Gemini sends in several
+a tier the page does not price at the standard rates with a warning; a long generation Gemini sends in several
 requests is one turn whose usage is the requests' summed, priced at the last reply's tier. A
 streamed Chat turn accrues cost when its stream reports usage: OpenAI, DeepSeek and
 `GEMINIOpenAIServiceEndpoint` streams request it automatically, native Anthropic and Gemini report

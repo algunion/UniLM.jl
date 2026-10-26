@@ -84,10 +84,12 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
 
 # The service tiers a request names (https://ai.google.dev/gemini-api/docs/optimization):
 # generateContent takes standard, flex and priority (GenerateContentRequest.serviceTier, whose
-# "unspecified" is standard), and the Interactions API also takes deferred
-# (https://ai.google.dev/api/interactions-api). A reply reports the tier that billed it.
+# "unspecified" is standard), and so does the Interactions API, whose reference lists flex,
+# standard and priority (https://ai.google.dev/api/interactions-api). It no longer lists deferred,
+# which the API answered with HTTP 400 on 2026-10-26: "The value 'deferred' is not supported for
+# 'service_tier' on the Gemini API, it is allowed on the Gemini Enterprise Agent Platform."
+# A reply reports the tier that billed it.
 const _GEMINI_SERVICE_TIERS = ("standard", "flex", "priority")
-const _INTERACTIONS_SERVICE_TIERS = ("standard", "flex", "priority", "deferred")
 
 # GenerationConfig.seed is an int32 (its format in the API's discovery document,
 # https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta), so a seed outside
@@ -102,7 +104,8 @@ _gemini_service_tier(::Nothing, ::Tuple, ::String)::Nothing = nothing
 function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
     tier in tiers || throw(ArgumentError("$api takes service_tier $(join(repr.(tiers), ", ", " or ")) " *
         "(got $(repr(tier)))" * (tier == "deferred" ?
-        ": \"deferred\" is a Gemini Interactions tier, so send the request with respond on GEMINIServiceEndpoint" : "")))
+        ": the Gemini API answers \"deferred\" with HTTP 400, a tier \"allowed on the Gemini Enterprise Agent " *
+        "Platform\"" : "")))
     tier
 end
 
@@ -787,8 +790,8 @@ const _GEMINI_TIER_PRICES = Dict{String,@NamedTuple{multiple::Float64, cache::Di
 
 # The multiples of the standard rates that the tier a reply reports costs: of the input and
 # output rates, and of the cache-hit rate. "standard" (or "unspecified", its default) or no tier
-# is the standard rates; a tier the page gives no price for (Interactions' "deferred") is
-# estimated at them, and says so once per model and tier.
+# is the standard rates; a tier the page gives no price for is estimated at them, and says so
+# once per model and tier.
 function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTuple{2,Float64}
     (isnothing(tier) || tier in ("standard", "unspecified")) && return (1.0, 1.0)
     prices = get(_GEMINI_TIER_PRICES, tier, nothing)

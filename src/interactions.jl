@@ -102,7 +102,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.store)      || (body[:store] = r.store)
     isnothing(r.background) || (body[:background] = r.background)
     isnothing(r.stream)     || (body[:stream] = r.stream)
-    tier = _gemini_service_tier(r.service_tier, _INTERACTIONS_SERVICE_TIERS, "Gemini Interactions")
+    tier = _gemini_service_tier(r.service_tier, _GEMINI_SERVICE_TIERS, "Gemini Interactions")
     isnothing(tier) || (body[:service_tier] = tier)
     # Request labels carry an aggregator's end-user id under the key generateContent documents.
     isnothing(r.safety_identifier) ||

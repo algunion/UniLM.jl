@@ -844,8 +844,9 @@ Configuration struct for an OpenAI Responses API request.
   `"scale"`, `"fast"` (or its former name `"priority"`), or `"ultrafast"`, which OpenAI serves
   for `gpt-6-astra` and `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI
   model, throws `ArgumentError`. On Gemini Interactions (`GEMINIServiceEndpoint`),
-  `"standard"`, `"flex"`, `"priority"` or `"deferred"` (`"deferred"` is an Interactions tier
-  only: native Gemini Chat takes the other three); another value throws `ArgumentError`.
+  `"standard"`, `"flex"` or `"priority"`, as on native Gemini Chat; another value throws
+  `ArgumentError`, `"deferred"` among them: the API answered it with HTTP 400 on 2026-10-26, a
+  tier "allowed on the Gemini Enterprise Agent Platform", and its reference no longer lists it.
   [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)

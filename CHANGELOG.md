@@ -92,6 +92,14 @@
   `GET /v1beta/interactions/{id}/input_items`, a path the reference does not list, and returned what
   came back. It now throws `ArgumentError` before any request, as it does for an `OllamaEndpoint`.
   Upgrading: keep the `input` you sent with the interaction.
+- **Gemini Interactions refuses `service_tier="deferred"` before sending.** A `Respond` on
+  `GEMINIServiceEndpoint` sent `"deferred"` as given. The Interactions API reference no longer lists
+  it — its tiers are `flex`, `standard` and `priority` — and on 2026-10-26 the API answered a request
+  naming it with HTTP 400: "The value 'deferred' is not supported for 'service_tier' on the Gemini API,
+  it is allowed on the Gemini Enterprise Agent Platform." It now throws `ArgumentError` before any
+  request, as a `Chat` on either Gemini endpoint already did, whose message no longer sends such a
+  request to `respond`. Upgrading: send `"flex"`, `"standard"` or `"priority"`, or leave
+  `service_tier` unset.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

@@ -994,8 +994,9 @@ end
                                  "serviceTier" => tier)
     end
     @test !haskey(body(nothing), "serviceTier")
+    # The Interactions API refuses deferred too (HTTP 400 on 2026-10-26), so the refusal sends no one there.
     e = _gemini_caught(() -> body("deferred"))
-    @test e isa ArgumentError && occursin("Interactions", e.msg) && occursin("respond", e.msg)
+    @test e isa ArgumentError && occursin("Gemini Enterprise Agent Platform", e.msg) && !occursin("respond", e.msg)
     for bad in ("auto", "default", "fast", "scale", "Standard", "unspecified")
         e = _gemini_caught(() -> body(bad))
         @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) && occursin(repr(bad), e.msg)

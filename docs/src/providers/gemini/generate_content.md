@@ -361,8 +361,8 @@ The same ids are the ones a `Chat` may end with an assistant turn on ([Conversat
   refused before the request.
 - `n` is not sent: a request gets one candidate.
 
-`service_tier` takes `"standard"`, `"flex"` and `"priority"`, sent as `serviceTier`, and on a
-`Respond` also `"deferred"` ([The Interactions API](@ref gemini_interactions_options)). Flex costs
+`service_tier` takes `"standard"`, `"flex"` and `"priority"`, sent as `serviceTier`, as a `Respond`
+does ([The Interactions API](@ref gemini_interactions_options)). Flex costs
 half the standard rates and its latency is "Minutes (1--15 min target)"; Priority costs "75% to
 100% over Standard rates", and a request over its limits is downgraded: "Downgraded requests are
 billed at the standard rate"
@@ -466,8 +466,8 @@ in the output, and audio in a call that also hit the cache on one of those four 
 cached-audio price the usage cannot tell apart. On `GEMINIOpenAIServiceEndpoint`, a result's tier and its
 audio are priced as [The OpenAI-compatible endpoint](@ref gemini_compatible) says.
 
-A reply that names a tier other than standard, flex and priority — `"deferred"`, say — is estimated
-at the standard rates, with one warning per model and tier. A model with no row, any other id
+A reply that names a tier other than standard, flex and priority is estimated at the standard
+rates, with one warning per model and tier. A model with no row, any other id
 included, is estimated at `0.0`, with one warning per model id: pass [`estimated_cost`](@ref) a
 `pricing` table that holds its row, or add the row to [`DEFAULT_PRICING`](@ref). A failure costs
 `0.0`, since it carries no usage. How a stream reports its usage is on [Streaming](@ref gemini_streaming),

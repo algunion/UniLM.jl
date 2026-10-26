@@ -333,11 +333,11 @@ return a `ResponseCallError`.
 - `temperature`, `top_p` and `seed` follow the rules of a `Chat` ([Request options](@ref gemini_request_options)):
   sampling only for the earlier models, a seed in the int32 range.
 - `safety_identifier` becomes the request label `safety_identifier`, under the same rule as on a `Chat`.
-- `service_tier` takes `"standard"`, `"flex"`, `"priority"` and `"deferred"`. Google's Interactions
-  API reference lists `flex`, `standard` and `priority` as its tiers
-  ([Interactions API](https://ai.google.dev/api/interactions-api)), and not `deferred`, which UniLM
-  sends as given: what the API answers to it is untested, and a reply that reports it is estimated at
-  the standard rates, with a warning ([Cost and usage](@ref gemini_cost)).
+- `service_tier` takes `"standard"`, `"flex"` and `"priority"`, the tiers Google's Interactions API
+  reference lists ([Interactions API](https://ai.google.dev/api/interactions-api)). `"deferred"`, which
+  the reference no longer lists, is refused before sending: on 26 October 2026 the API answered it with
+  HTTP 400, "The value 'deferred' is not supported for 'service_tier' on the Gemini API, it is allowed
+  on the Gemini Enterprise Agent Platform."
 - `store` and `background` are sent as they are ([Background requests](@ref gemini_background)).
 
 A body that is not an interaction — a 200 without a non-empty `id` or `status`, which the API

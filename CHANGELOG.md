@@ -407,7 +407,8 @@
   call, which reads one whole reply, could not decode: a billed request that returned an
   `LLMCallError`. The request now leaves `stream` and `stream_options` out and is read whole; the
   `Chat` keeps both for `chatrequest!`. `prefix_complete` takes no callback, so nothing a stream
-  would deliver is lost.
+  would deliver is lost. A recording keys on the request's bytes, so one of such a request made
+  before does not replay: record it again.
 - **`prefix_complete` adds its turn's cost to `cumulative_cost`.** It appended the continued turn
   to the `Chat` but left its cost out of the `Chat`'s running total, which every `chatrequest!`
   turn adds. A successful prefix completion now adds its result's `estimated_cost`, with or without
@@ -426,17 +427,20 @@
   seed `random_seed`, "The seed to use for random sampling", and lists no `seed`, which the endpoint
   sent. A `Chat` on Mistral's host (`MistralEndpoint()`, or a `GenericOpenAIEndpoint` on
   `api.mistral.ai`) now sends its seed as `random_seed`; every other server's request is unchanged,
-  byte for byte.
+  byte for byte. A recording keys on the request's bytes, so one of such a request made before does
+  not replay: record it again.
 - **`MistralEndpoint()` sends an embedding size as `output_dimension`.** Mistral's embeddings
   reference names the vector size `output_dimension` and lists no `dimensions`, which the endpoint
   sent. An `Embeddings` request on Mistral's host now sends its `dimensions` as `output_dimension`;
-  every other server's request is unchanged, byte for byte.
+  every other server's request is unchanged, byte for byte. A recording keys on the request's bytes,
+  so one of such a request made before does not replay: record it again.
 - **Azure takes an earlier audio reply back by its id, as OpenAI does.** Azure's audio quickstart adds
   "a history message referencing the previous turn's audio by ID", but `AZUREServiceEndpoint` sent an
   audio turn back as its transcript alone, so the model lost the audio it had spoken. It now sends
   `"audio": {"id": …}` beside the transcript, until a minute before the reply's `expires_at`, and the
   transcript alone from then on, as `OPENAIServiceEndpoint` does. A recording of such a follow-up made
-  before keys on the old bytes: record it again (after the audio's expiry, as on OpenAI).
+  before still replays once the audio has expired, as a replayed reply's has; a turn whose reply named
+  no expiry (a stream cut before its last update) now goes by id, so record that follow-up again.
 - **`list_models` on an endpoint without a listing names that endpoint alone.** An endpoint with
   no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
   `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a

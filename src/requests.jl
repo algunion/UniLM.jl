@@ -852,7 +852,8 @@ end
 # DeepSeek's strict tool mode is a beta feature: "To use `strict` mode, you need to: Use
 # `base_url="https://api.deepseek.com/beta"` to enable Beta features"
 # (https://api-docs.deepseek.com/guides/tool_calls). A Chat with a strict tool goes there; the page
-# adds that every function must then be strict, which DeepSeek's answer checks.
+# adds that every function must then be strict, which UniLM does not check (DeepSeek answered a
+# request mixing strict and non-strict tools on 2026-10-26).
 get_url(s::DeepSeekEndpoint, chat::Chat)::String =
     (_strict_tools(chat) ? DEEPSEEK_BETA_BASE_URL : DEEPSEEK_BASE_URL) * CHAT_COMPLETIONS_PATH
 _strict_tools(chat::Chat)::Bool = !isnothing(chat.tools) && any(t -> t.func.strict === true, chat.tools)

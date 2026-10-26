@@ -609,7 +609,7 @@ JSON.omit_null(::Type{Message}) = true
 # The request wire form. provider_content is a decode-side round-trip cache for
 # provider-native blocks (same precedent as ToolCall.thought_signature) and
 # finish_reason is a response-only field: neither is sent; audio_output goes back by
-# its id on OpenAI's own wire only, until it expires (`_wire_messages`). A refusal travels under
+# its id on OpenAI's and Azure's wire only, until it expires (`_wire_messages`). A refusal travels under
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),

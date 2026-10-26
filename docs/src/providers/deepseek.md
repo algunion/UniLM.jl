@@ -5,12 +5,13 @@ using UniLM
 ```
 
 DeepSeek makes the DeepSeek models and serves them through an OpenAI-compatible API.
-`DeepSeekEndpoint()` speaks its Chat Completions API and two of its beta features, FIM completion and
-chat prefix completion: a `Chat` reaches DeepSeek through `chatrequest!`, `tool_loop!` and
-`prefix_complete`, and a `FIMCompletion` through `fim_complete`. The agentic verbs — `respond` and the
-`tool_loop` that takes an input or a `Respond` — refuse this endpoint before sending anything, and no
-verb of a capability the table below lists as not available sends a request through it. Of DeepSeek's
-API, UniLM does not use the Anthropic-format API or the Search and Fetch APIs either.
+`DeepSeekEndpoint()` speaks its Chat Completions API and three of its beta features: FIM completion,
+chat prefix completion and strict tool mode ([Tools](@ref deepseek_tools)). A `Chat` reaches DeepSeek
+through `chatrequest!`, `tool_loop!` and `prefix_complete`, and a `FIMCompletion` through
+`fim_complete`. The agentic verbs — `respond` and the `tool_loop` that takes an input or a `Respond` —
+refuse this endpoint before sending anything, and no verb of a capability the table below lists as not
+available sends a request through it. Of DeepSeek's API, UniLM does not use the Anthropic-format API or
+the Search and Fetch APIs either.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:deepseek)

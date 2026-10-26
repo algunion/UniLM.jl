@@ -67,7 +67,7 @@ The do-block form automatically disconnects when done:
 
 ```julia
 mcp_connect(`npx server`) do session
-    tools = mcp_tools(session)
+    tools = mcp_tools(session; service)
     # ... use tools ...
 end  # session is disconnected here
 ```
@@ -181,16 +181,18 @@ cancellation notice — is sent even inside a cancelled `with_cancel` scope.
 ### [Bridging to tool_loop! (Chat)](@id mcp_bridge_chat)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{Tool}}` for use with
-[`tool_loop!`](@ref). Each tool is advertised under its MCP name when that name is 1 to 128
-letters, digits, `_` and `-` (`^[a-zA-Z0-9_-]{1,128}$`); otherwise each other character
-(the dots in `admin.tools.list`, say) becomes `_`, and the name is cut to 128 characters —
-the bridged callable still calls the tool by its MCP name. Two tools that map to the same
-name raise an `ArgumentError`. A provider's own rule for tool names, where its entry states one, is in
-its tools section.
+[`tool_loop!`](@ref) on `service`, the endpoint the tools go to (the package's default endpoint when
+none is given). Each tool is advertised under its MCP name when that name is letters, digits, `_` and
+`-`, no longer than the provider takes: 64 characters, unless the provider's entry gives a longer
+limit in its tools section. Otherwise each other character (the dots in `admin.tools.list`, say)
+becomes `_`, and a name still too long is cut to the limit less 9 characters, followed by `_` and the
+first 8 hex digits of the SHA-256 of its MCP name, so names that agree up to the cut stay apart —
+the bridged callable still calls the tool by its MCP name. Two tools that map to the same name raise
+an `ArgumentError`.
 
 ```julia
 session = mcp_connect(`npx server`)
-tools = mcp_tools(session)
+tools = mcp_tools(session; service)
 
 chat = Chat(service=service, model=model, tools=tools)
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
@@ -203,11 +205,11 @@ mcp_disconnect!(session)
 ### [Bridging to tool_loop (respond)](@id mcp_bridge_respond)
 
 [`mcp_tools_respond`](@ref) converts MCP tools into `Vector{CallableTool{FunctionTool}}`
-for use with [`tool_loop`](@ref):
+for use with [`tool_loop`](@ref), under the same names for the same `service`:
 
 ```julia
 session = mcp_connect("https://mcp.example.com/mcp")
-tools = mcp_tools_respond(session)
+tools = mcp_tools_respond(session; service)
 result = tool_loop("List files in /tmp"; service, model, tools)
 mcp_disconnect!(session)
 ```

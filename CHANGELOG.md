@@ -90,6 +90,18 @@
   `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
   verb whose call offers a single option is refused too. Upgrading: add an option, such as a
   fallback `"other"`.
+- **Bridged MCP tool names fit the provider they go to.** `mcp_tools` and `mcp_tools_respond`
+  kept an MCP tool's name up to 128 characters, but OpenAI's Chat Completions takes a function
+  name of "a maximum length of 64", so a name of 65 to 128 characters went to OpenAI as it was.
+  Both now take `service`, the endpoint the tools go to (`OPENAIServiceEndpoint` unless given),
+  and keep each name within its provider's limit: 128 characters for `ANTHROPICServiceEndpoint`,
+  whose Messages API takes `^[a-zA-Z0-9_-]{1,128}$`, and `GEMINIServiceEndpoint`, whose
+  generateContent takes "a maximum length of 128", and 64 for any other endpoint. A longer name is
+  cut to the limit less 9 characters and followed by `_` and the first 8 hex digits of the
+  SHA-256 of its MCP name, so names that agree up to the cut stay apart; a name over 128
+  characters was cut to 128 before. Upgrading: pass `service=` the endpoint the tools go to, to
+  keep names of up to 128 characters on Anthropic and native Gemini; a `tool_choice` that names
+  a bridged tool takes the name the bridge now advertises.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

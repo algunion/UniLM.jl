@@ -3637,9 +3637,36 @@ end
 
 # ─── MCP → LLM bridge: provider-safe tool names ───────────────────────────────
 
+@testset "bridged MCP tool names fit the provider they go to, and stay distinct when cut" begin
+    # A function name is "a-z, A-Z, 0-9, or … underscores and dashes, with a maximum length of 64"
+    # on OpenAI's Chat Completions (and Azure's), `^[a-zA-Z0-9_-]{1,128}$` on Anthropic's Messages
+    # API and of "a maximum length of 128" on Gemini's generateContent, while an MCP tool name
+    # "SHOULD be between 1 and 128 characters"; every other endpoint gets OpenAI's 64. A longer name
+    # is cut to the limit less 9 characters, then `_` and the first 8 hex digits of its MCP name's
+    # SHA-256: two names that agree up to the cut stay apart.
+    t = _ScriptedTransport((m, id, p) -> [_ok_frame(id, Dict{String,Any}("content" =>
+        [Dict{String,Any}("type" => "text", "text" => p["name"])]))])
+    session = _scripted_session(t)
+    stem = "github_enterprise_repository_management_list_pull_request_review_"   # 65 characters
+    names = [stem * "comments", stem * "threads", "a"^100, "x.y"^50, "admin.tools.list", "plain_name"]
+    session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
+    cut(n, limit) = first(replace(n, '.' => '_'), limit - 9) * "_" * bytes2hex(UniLM.sha256(n))[1:8]
+    within(limit) = [length(n) <= limit ? replace(n, '.' => '_') : cut(n, limit) for n in names]
+    for (service, limit) in ((nothing, 64), (OPENAIServiceEndpoint, 64), (AZUREServiceEndpoint, 64), (OllamaEndpoint(), 64),
+                             (GEMINIOpenAIServiceEndpoint, 64), (ANTHROPICServiceEndpoint, 128),
+                             (ANTHROPICServiceEndpoint(inference_geo="us"), 128), (GEMINIServiceEndpoint, 128))
+        tools, rtools = isnothing(service) ? (mcp_tools(session), mcp_tools_respond(session)) :
+                                             (mcp_tools(session; service), mcp_tools_respond(session; service))
+        aliases = [ct.tool.func.name for ct in tools]
+        @test all(a -> occursin(Regex("^[a-zA-Z0-9_-]{1,$limit}\$"), a), aliases)
+        @test allunique(aliases) && aliases == within(limit) && [ct.tool.name for ct in rtools] == aliases
+        @test [ct.callable(a, Dict{String,Any}()) for (ct, a) in zip(tools, aliases)] == names
+    end
+end
+
 @testset "bridged MCP tools get provider-safe names that map back to the MCP name" begin
-    # MCP tool names may contain dots (e.g. admin.tools.list); OpenAI and Anthropic function
-    # names must match ^[a-zA-Z0-9_-]{1,128}$. The bridge advertises a safe alias, and its
+    # MCP tool names may contain dots (e.g. admin.tools.list); a function name takes letters,
+    # digits, `_` and `-` on every provider. The bridge advertises a safe alias, and its
     # callable still calls the tool by its MCP name.
     seen = String[]
     t = _ScriptedTransport((m, id, p) -> (m == "tools/call" && push!(seen, p["name"]);
@@ -3649,8 +3676,8 @@ end
     session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
     tools = mcp_tools(session)
     aliases = [ct.tool.func.name for ct in tools]
-    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^128]
-    @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,128}$", a), aliases)
+    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^55 * "_" * bytes2hex(UniLM.sha256("x"^130))[1:8]]
+    @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,64}$", a), aliases)
     @test tools[1].callable("admin_tools_list", Dict{String,Any}()) == "ok"
     rtools = mcp_tools_respond(session)
     @test [ct.tool.name for ct in rtools] == aliases

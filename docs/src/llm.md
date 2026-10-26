@@ -1609,13 +1609,16 @@ raise `content` as an error when `is_error` is set.
 ### Tool Bridge
 
 ```julia
-mcp_tools(session) -> Vector{CallableTool{Tool}}         # for tool_loop!
-mcp_tools_respond(session) -> Vector{CallableTool{FunctionTool}}  # for tool_loop
+mcp_tools(session; service=OPENAIServiceEndpoint) -> Vector{CallableTool{Tool}}         # for tool_loop!
+mcp_tools_respond(session; service=OPENAIServiceEndpoint) -> Vector{CallableTool{FunctionTool}}  # for tool_loop
 ```
 
-Bridged tool names are provider-safe: any character outside `[A-Za-z0-9_-]` becomes `_`
-and names are cut to 128 characters (the callable still calls the MCP name); two tools
-mapping to one name raise `ArgumentError`.
+Bridged tool names are provider-safe for `service`, the endpoint the tools go to: any character
+outside `[A-Za-z0-9_-]` becomes `_`, and a name longer than the provider takes — 128 characters on
+`ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint`, 64 on `OPENAIServiceEndpoint` and every other
+endpoint — is cut to the limit less 9 characters and followed by `_` and the first 8 hex digits of
+the SHA-256 of its MCP name, so names that agree up to the cut stay apart (the callable still calls
+the MCP name); two tools mapping to one name raise `ArgumentError`.
 
 ### Client Example
 

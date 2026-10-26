@@ -61,8 +61,9 @@ one option is `keep_alive`: the seconds the model stays loaded after the request
 (`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.
 
 Images go in the state. Ollama takes a request's images as one list, `images`
-(raw base64), shared by all its questions and shown to the model before the
-text, so the state is an image, or a vector or tuple of images then texts
+(raw base64), shared by all its questions and apart from the text — by Ollama's
+v0.40.11 source, Clef reads them before the state's text — so the state is an
+image, or a vector or tuple of images then texts
 (`[image, "What is in it?"]`). With images, the state's other entries must be
 texts; they become `state` — none: `""`, one: that string, several: an array —
 and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
@@ -213,8 +214,9 @@ function _ollama_system_one_keep_alive(options::NamedTuple, service)::Union{Noth
 end
 
 # The text state and the images an Ollama System One request sends. Ollama takes images as a list
-# shared by all questions and shows them before the text, so the forms that keep that order are an
-# image, or a vector or tuple whose images all come before its texts; the texts become the state
+# shared by all questions, apart from the text (Clef reads them before it: decision/clef.go of Ollama
+# v0.40.11), so the forms sent as written are an image, or a vector or tuple whose images all come
+# before its texts; the texts become the state
 # (none: "", one: that string, several: an array). An image anywhere else could only be moved, never
 # sent where the caller put it, and is refused. nl_dispatch sends its arguments inside an object, so
 # the fix it is given is its `state` keyword.
@@ -227,8 +229,8 @@ function _ollama_state_images(state)::Tuple{Any,Vector{ImageAttachment}}
             "write the other values as text, after the images"))
         first_text = findfirst(x -> x isa AbstractString, collect(state))
         isnothing(first_text) || all(x -> x isa AbstractString, collect(state)[first_text:end]) || throw(ArgumentError(
-            "Ollama shows a request's images before its text, so an image after a text cannot be sent where it is: " *
-            "put the images first, e.g. [image, \"What is in it?\"]"))
+            "Ollama takes a request's images in a list apart from its text, so an image after a text cannot be " *
+            "sent where it is (Clef reads the images first): put the images first, e.g. [image, \"What is in it?\"]"))
         texts = String[x for x in state if x isa AbstractString]
         return (isempty(texts) ? "" : length(texts) == 1 ? only(texts) : texts,
                 ImageAttachment[x for x in state if x isa ImageAttachment])

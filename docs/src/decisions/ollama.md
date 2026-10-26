@@ -300,7 +300,7 @@ checks before sending:
 | Text and schema, pictures excluded | 64 KiB for a local request | no: the server answers 413 |
 | The whole request | 32 MiB, base64 and JSON included, for a local request | no: the server answers 413 |
 | Context | "The complete input must fit the loaded context window"; "Input is never truncated" | no: the server answers 400 |
-| Pictures | in the state, before its texts; a vision model | yes, where they stand |
+| Pictures | one list, `images`, apart from the text and shared by all questions; a vision model | yes, where they stand |
 | A cloud model | 64 questions; names of up to 100 ASCII letters, digits, `_`, `.` or `-`; up to 4 pictures of at most 4 MiB and 16 megapixels each, 8 MiB in all; 13 MiB a request; its 65,536-token window | no |
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
@@ -326,7 +326,7 @@ not write.
 | a question type of your own, a subtype of `SystemOneQuestion` | `its System One route answers Choice, Score and Noul questions, and this wrapper sends a RawQuestion verbatim` | build it as a `RawQuestion` |
 | a picture in a question | `Ollama takes images in the state only, shared by all questions` | move it into the state, `[image, "…"]` |
 | a picture with a `detail` level | `sends a System One request's images without a detail level`: Ollama's `images` list holds each picture's base64 bytes alone | build the `ImageAttachment` without `detail` |
-| a picture after a text in the state | `Ollama shows a request's images before its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
+| a picture after a text in the state | `Ollama takes a request's images in a list apart from its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
 | pictures beside values that are not texts | `Ollama takes a state of images then texts, and this one mixes images with` | write the other values as text, after the pictures |
 | a picture inside a JSON object or array | `not inside a JSON object or array` | the pictures and texts as the state itself, or `state = [image, …texts]` to `nl_dispatch` |
 | a blank text state without pictures | `Ollama refuses a blank`: the state holds what the questions are about | send the content |

@@ -315,6 +315,14 @@
   backend takes it as the vector of its items: TypeSafe writes it as an array, Ollama takes it
   as array instructions, and OpenAI's Decisions API refuses it where it refuses a vector, in
   guidance that must be a string.
+- **Ollama's refusal of an image after a text says what Ollama does.** `ask` on an
+  `OllamaEndpoint` refused an image after a text in the state with "Ollama shows a request's
+  images before its text", of every model, and the `OllamaSystemOneProtocol` docstring said the
+  same. Ollama takes a request's images in a list apart from its text, and by its source
+  (v0.40.11) only Clef's encoder places them, before the state's text; the others that take
+  images leave their place to the runner. The message now says so: "Ollama takes a request's
+  images in a list apart from its text, so an image after a text cannot be sent where it is
+  (Clef reads the images first)". What is refused is unchanged.
 
 ## 0.26.0
 

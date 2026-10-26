@@ -662,7 +662,12 @@ end
     @test JSON.parse(enc([img, ""]).body)["state"] == ""                           # blank text, with images: allowed
     @test JSON.parse(enc((img, "Describe the photo.")).body)["state"] == "Describe the photo."   # a tuple, too
     e1 = _os1_caught(() -> enc(["Photo:", img]))
-    @test e1 isa ArgumentError && occursin("before", e1.msg)
+    # Ollama keeps a request's images apart from its text, and by its v0.40.11 source only Clef reads
+    # them before the text (decision/clef.go): neither the refusal nor the docstring says every model does.
+    @test e1 isa ArgumentError && contains(e1.msg, "an image after a text") &&
+          !occursin("shows a request's images before its text", e1.msg)
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    @test !occursin("shown to the model before the text", flat(@doc UniLM.OllamaSystemOneProtocol))
     e2 = _os1_caught(() -> enc(["", img]))                                          # any text before an image
     @test e2 isa ArgumentError && contains(e2.msg, "an image after a text")
     for nested in (Dict("photo" => img, "note" => "x"), [[img, "x"]])                # inside JSON

@@ -462,8 +462,9 @@ end
   `kev:0.8b-q8_0` (the installed GGUF Kev), `d1-omni:600m` and `tev1:0.8b`; by
   Ollama's source, a Kev model on Ollama's own runner gets 1 MiB instead
   (untested). A [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
-- **Images.** The state's images go in Ollama's `images` (raw base64), which the
-  model sees before the text and every question shares; the state's texts become
+- **Images.** The state's images go in Ollama's `images` (raw base64), which
+  every question shares, apart from the text (by Ollama's source, Clef reads them
+  before it); the state's texts become
   its `state` — none: `""`, one: that string, several: an array — and a blank text
   is allowed beside images. A recording keys and stores each image as
   `data:<mime>;sha256,<hex>`, never its bytes.

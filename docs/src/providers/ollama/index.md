@@ -120,6 +120,11 @@ cache", and `completion_tokens` its `eval_count`, the output tokens
 ([usage](https://docs.ollama.com/api/usage)), thinking included ([Reasoning](@ref ollama_thinking)
 shows a count). The result types are on [Results](@ref results_guide).
 
+`logprobs=true` asks for the "log probabilities of the output tokens", and `top_logprobs` for the
+"Number of most likely tokens to return at each token position" ([chat](https://docs.ollama.com/api/chat)):
+the reply's entries, "Log probability information for a generated token" each — its `token`, `logprob`,
+`bytes` and `top_logprobs` —, are `result.logprobs["content"]`, a stream's lines joined in order.
+
 A local model's results cost `0.0`, with no warning, unless you gave the model a price row
 ([Cost and usage](@ref ollama_cost)).
 
@@ -517,7 +522,7 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings`, `compact_response` or FIM request without a `model` | `model must be specified`: Ollama has no default model | an installed model's name, such as `"gemma4:e4b"` |
-| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation` or `prompt_cache_retention` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request (`/api/chat` takes `logprobs` and `top_logprobs`, but a result has no field for them) | remove it |
+| on a `Chat`: `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation` or `prompt_cache_retention` | `Ollama /api/chat does not support field(s)`: UniLM maps none of them to Ollama's request | remove it |
 | a `tool_choice` other than `"auto"`, on a `Chat` or a `Respond` | `Ollama has no tool_choice`: the model decides whether to call a tool | leave it unset, or send no tools to rule calls out |
 | a tool with `strict=true`, on a `Chat` or a `Respond` | `Ollama does not enforce strict tool schemas`: its tool definition has no `strict` flag | leave `strict` unset |
 | a `response_format`, or a `json_schema` text format, with a thinking effort | `Ollama applies a response_format only after the model's thinking ends`: a reply that skips thinking would be unconstrained | `reasoning_effort="none"` or unset, or no format |

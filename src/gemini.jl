@@ -727,7 +727,7 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
     d = extract_message(resp)
     tier = _gemini_header_tier(resp)
     usage = isnothing(tier) || isnothing(d.usage) ? d.usage : TokenUsage(; _usage_fields(d.usage)..., service_tier=tier)
-    (; d.message, usage, d.model)
+    merge(d, (; usage))
 end
 _chunk_tier!(::Type{GEMINIOpenAIServiceEndpoint}, state::StreamState, tier::String)::Nothing =
     (isnothing(state.service_tier) && (state.service_tier = tier); nothing)

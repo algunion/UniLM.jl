@@ -84,7 +84,7 @@ _billed_response(::OllamaEndpoint, requested::AbstractString, replied::AbstractS
 const _OLLAMA_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools, :tool_choice,
     :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop, :max_tokens,
     :max_completion_tokens, :presence_penalty, :response_format, :frequency_penalty, :seed,
-    :reasoning_effort, :_cumulative_cost)
+    :reasoning_effort, :logprobs, :top_logprobs, :_cumulative_cost)
 const _OLLAMA_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _OLLAMA_CHAT_MAPPED_FIELDS))
 
 # reasoning_effort → `think`: "none" turns thinking off; any other effort goes by name,
@@ -232,6 +232,10 @@ function encode_request(service::OllamaEndpoint, chat::Chat)::String
     isnothing(service.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(service.keep_alive))
     body["truncate"] = service.truncate
     isnothing(service.shift) || (body["shift"] = service.shift)
+    # ChatRequest's `logprobs`, "Whether to return log probabilities of the output tokens", and
+    # `top_logprobs` (https://docs.ollama.com/api/chat).
+    isnothing(chat.logprobs) || (body["logprobs"] = chat.logprobs)
+    isnothing(chat.top_logprobs) || (body["top_logprobs"] = chat.top_logprobs)
     _ollama_runner!(body, service)
     JSON.json(body)
 end
@@ -275,7 +279,12 @@ _ollama_finish(reason, has_calls::Bool) =
     has_calls ? _tool_finish_reason(reason isa AbstractString ? String(reason) : nothing) :
     reason isa AbstractString ? String(reason) : nothing
 
-# The reply names the "Model name used to generate this message" (https://docs.ollama.com/api/chat).
+# The reply names the "Model name used to generate this message", and its `logprobs` holds the
+# "Log probability information for the generated tokens" (https://docs.ollama.com/api/chat): the
+# result's `logprobs["content"]`, as an OpenAI-wire reply lists its output tokens.
+_ollama_logprobs(tokens::AbstractVector)::Dict{String,Any} = Dict{String,Any}("content" => tokens)
+_ollama_logprobs(_)::Nothing = nothing
+
 function decode_response(::OllamaEndpoint, resp::HTTP.Response)
     d = JSON.parse(resp.body; dicttype=Dict{String,Any})
     d isa AbstractDict || error("Ollama reply is not a JSON object")
@@ -292,7 +301,8 @@ function decode_response(::OllamaEndpoint, resp::HTTP.Response)
         Message(role=RoleAssistant, content=text, finish_reason=finish, provider_content=pc) :
         Message(role=RoleAssistant, content=(isempty(text) ? nothing : text), tool_calls=calls,
                 finish_reason=finish, provider_content=pc)
-    (; message=msg, usage=_ollama_usage(d), model=_wire_string(d, "model"))
+    (; message=msg, usage=_ollama_usage(d), model=_wire_string(d, "model"),
+       logprobs=_ollama_logprobs(get(d, "logprobs", nothing)))
 end
 
 # ─── Chat stream (newline-delimited JSON) ───────────────────────────────────
@@ -327,9 +337,11 @@ function handle_sse_event!(service::OllamaEndpoint, ::AbstractString, payload::A
         state.error = Dict{String,Any}("error" => err)
         return :error
     end
-    # Each line names the "Model name used for this stream event".
+    # Each line names the "Model name used for this stream event", and carries its tokens' log
+    # probabilities, which the unstreamed reply joins (Ollama v0.40.11, server/routes.go).
     model = _wire_string(d, "model")
     isnothing(model) || (state.model = model)
+    _logprobs_delta!(state, _ollama_logprobs(get(d, "logprobs", nothing)))
     m = get(d, "message", nothing)
     if m isa AbstractDict
         c = get(m, "content", nothing)

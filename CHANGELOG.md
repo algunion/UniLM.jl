@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **A `Chat`'s log probabilities and moderation results reach its result.** A `Chat` with
+  `logprobs=true` (and `top_logprobs`) or a `ModerationConfig` sent them and the request was billed,
+  but `LLMSuccess` had no field for what came back, so the reply's log probabilities (the choice's
+  `logprobs`) and its moderation results (the completion's `moderation`) were dropped. They are now
+  the result's `logprobs` and `moderation`, each the reply's object as it came: `"content"` lists the
+  output tokens, with `"refusal"` or DeepSeek's `"reasoning_content"` where the reply gives them, and
+  `"input"` and `"output"` hold the moderation results; a streamed reply's chunks are joined, and a
+  `prefix_complete` result keeps them too. On an `OllamaEndpoint`, `logprobs` and `top_logprobs` were
+  refused; Ollama's `/api/chat` takes both, so they are now sent, and the reply's token list is
+  `logprobs["content"]`. Native Gemini, Anthropic and Gemini Interactions still refuse them, having
+  no such field, and Ollama still refuses `moderation`. `LLMSuccess` gains the two fields last; built
+  positionally, its five earlier fields still build one.
+
 ## 0.27.1
 
 ### Added

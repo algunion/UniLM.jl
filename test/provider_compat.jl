@@ -690,6 +690,36 @@ end
         Respond(service=GEMINIServiceEndpoint, input="hi", moderation=full))
 end
 
+@testset "a Chat's logprobs, top_logprobs and moderation on each encoder: sent, or refused before sending" begin
+    mod = ModerationConfig(model="omni-moderation-latest")
+    asked = (logprobs=true, top_logprobs=2, moderation=mod)
+    # The OpenAI-wire encoders send all three as set; each reply's results reach the LLMSuccess.
+    for (service, model) in ((OPENAIServiceEndpoint, "gpt-6-luna"), (AZUREServiceEndpoint, "gpt-5.2"),
+                             (GEMINIOpenAIServiceEndpoint, "gemini-3.8-flash"), (DeepSeekEndpoint("k"), "deepseek-flash"),
+                             (GenericOpenAIEndpoint("http://x", ""), "m"), (MistralEndpoint(), "mistral-large-latest"))
+        c = Chat(; service, model, reasoning_effort=(service === OPENAIServiceEndpoint ? "none" : nothing), asked...)
+        w = JSON.parse(UniLM.encode_request(service, c))
+        @test (w["logprobs"], w["top_logprobs"], w["moderation"]) == (true, 2, JSON.parse(JSON.json(mod)))
+    end
+    # Ollama takes the log probabilities and has no moderation.
+    o = Chat(service=OllamaEndpoint(), model="gemma4:e2b", logprobs=true, top_logprobs=2)
+    @test JSON.parse(UniLM.encode_request(o.service, o))["top_logprobs"] == 2
+    # The native wires have no field for them: each is refused, naming the field.
+    for (service, model) in ((GEMINIServiceEndpoint, "gemini-3.8-flash"), (ANTHROPICServiceEndpoint, "claude-haiku-5-5"),
+                             (OllamaEndpoint(), "gemma4:e2b"))
+        for (f, v) in pairs(asked)
+            service isa OllamaEndpoint && f !== :moderation && continue
+            err = try UniLM.encode_request(service, Chat(; service, model, f => v)); nothing catch e; e end
+            @test err isa ArgumentError && occursin(String(f), err.msg)
+        end
+    end
+    for f in (:top_logprobs, :moderation)    # Gemini Interactions, a Respond's encoder
+        err = try UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(; service=GEMINIServiceEndpoint, input="hi",
+                                                                       f => asked[f])); nothing catch e; e end
+        @test err isa ArgumentError && occursin(String(f), err.msg)
+    end
+end
+
 @testset "ImageGeneration no longer carries the edit-only input_fidelity" begin
     @test !hasfield(ImageGeneration, :input_fidelity)
     @test hasfield(ImageEdit, :input_fidelity)

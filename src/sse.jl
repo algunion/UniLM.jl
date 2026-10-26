@@ -199,7 +199,10 @@ end
 # the billed `service_tier` on every chunk; the usage takes the stream's tier
 # (`_chunk_tier!`: the latest one named), so a usage chunk without one still carries
 # it. `delta.audio` updates assemble an audio reply (`_audio_delta!`), and a `delta.content` given
-# as a list of chunks is read chunk by chunk (`_content_delta!`). A `{"error": …}` payload is
+# as a list of chunks is read chunk by chunk (`_content_delta!`). A choice's `logprobs` extends
+# the stream's token lists, and a chunk's `moderation` adds its results (`_logprobs_delta!`,
+# `_moderation_delta!`): "moderation scores arrive after the full generated output is available"
+# (https://developers.openai.com/api/docs/guides/moderation). A `{"error": …}` payload is
 # terminal (`:error`): vLLM and OpenAI-compatible proxies report a mid-stream
 # failure that way on the HTTP-200 stream, usually followed by `[DONE]`, so the
 # partial text must not finalize. An error object is recorded as is — its numeric
@@ -220,10 +223,12 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     isnothing(tier) || _chunk_tier!(service, state, tier)
     u = get(parsed, "usage", nothing)
     u isa AbstractDict && (state.usage = _token_usage_from(u; service_tier=state.service_tier))
+    _moderation_delta!(state, get(parsed, "moderation", nothing))
     choices = get(parsed, "choices", nothing)
     choices isa AbstractVector || return :continue
     for cho in choices
         cho isa AbstractDict || continue
+        _logprobs_delta!(state, get(cho, "logprobs", nothing))
         delta = get(cho, "delta", nothing)
         delta isa AbstractDict && _content_delta!(state, get(delta, "content", nothing))
         fr = get(cho, "finish_reason", nothing)
@@ -339,6 +344,24 @@ function _audio_delta!(state::StreamState, a::AbstractDict)::Nothing
     isnothing(e) || (s.expires_at = _audio_expiry(e))
     nothing
 end
+
+# A chunk's log probabilities: each token list it names (`"content"`, `"refusal"`, …) extends the
+# stream's list of that name, in arrival order; a null list adds nothing.
+function _logprobs_delta!(state::StreamState, lists::AbstractDict)::Nothing
+    for (name, tokens) in lists
+        tokens isa AbstractVector || continue
+        kept = state.logprobs
+        isnothing(kept) && (kept = state.logprobs = Dict{String,Any}())
+        append!(get!(() -> Any[], kept, String(name))::Vector{Any}, tokens)
+    end
+    nothing
+end
+_logprobs_delta!(::StreamState, _)::Nothing = nothing
+
+# A chunk's moderation results, merged into those earlier chunks gave.
+_moderation_delta!(state::StreamState, results::AbstractDict)::Nothing =
+    (state.moderation = merge(something(state.moderation, Dict{String,Any}()), results); nothing)
+_moderation_delta!(::StreamState, _)::Nothing = nothing
 
 _streamed_audio!(state::StreamState)::_StreamedAudio =
     (s = state.audio; s isa _StreamedAudio ? s : (state.audio = _StreamedAudio()))

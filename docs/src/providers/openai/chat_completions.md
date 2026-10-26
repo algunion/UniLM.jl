@@ -206,8 +206,9 @@ of their own are on [Audio](@ref openai_audio).
   [Cost and usage](@ref openai_cost) prices.
 - **`logprobs`, `top_logprobs`.** Sent unless the model's row refuses them at the request's effort
   ([Limits and refusals](@ref openai_limits)), `logprobs=true` asking for "the log probabilities of each
-  output token"; a `Chat` result keeps no log probabilities, since an `LLMSuccess` holds the reply's
-  message and usage. A `Respond` with
+  output token". The choice's `logprobs` is the result's `logprobs`: its `"content"` lists the output
+  tokens, each with its `"token"`, `"logprob"`, `"bytes"` and the `"top_logprobs"` asked for, and its
+  `"refusal"` the tokens of a refusal; a streamed reply's chunks are joined in order. A `Respond` with
   `include=["message.output_text.logprobs"]` keeps them in its output items,
   `result.response.output`.
 - **`web_search_options`.** Sent as given; Chat Completions "supports only specialized search models
@@ -218,8 +219,9 @@ of their own are on [Audio](@ref openai_audio).
   estimate includes a fee OpenAI lists for web search apart from the token rates. The Responses API's
   `web_search()` tool works on the other models ([Hosted tools](@ref openai_hosted_tools)).
 - **`moderation`.** A [`ModerationConfig`](@ref) runs a moderation model over the request's input and the
-  generated output. OpenAI returns the results in the completion's `moderation`, which an `LLMSuccess`
-  does not keep: read them from a `Respond`'s result ([Request options](@ref openai_responses_options)).
+  generated output. OpenAI returns the results in the completion's `moderation`, "if moderated
+  completions were requested", and on a stream's moderation chunk: they are the result's `moderation`,
+  its `"input"` and its `"output"` results ([Create chat completion](https://developers.openai.com/api/reference/resources/chat)).
 - **`safety_identifier`.** "A stable identifier used to help detect users of your application", at most
   128 characters; `user`, which OpenAI replaces with it and `prompt_cache_key`, is refused
   ([Limits and refusals](@ref openai_limits)).

@@ -460,8 +460,9 @@ A [`ModerationResponse`](@ref) holds one [`ModerationResult`](@ref) per input â€
 `ModerationFailure` or a `ModerationCallError` rather than answering `false`, which would let
 unmoderated content through: check [`issuccess`](@ref) first, and decide what a missing verdict
 means. A `Chat` or a `Respond` can also moderate its own input and output with a
-[`ModerationConfig`](@ref), whose results only a `Respond`'s result keeps
-([Request options](@ref openai_responses_options), [Chat Completions](@ref openai_chat_options)):
+[`ModerationConfig`](@ref), whose results a `Chat`'s result keeps as its `moderation` and a `Respond`'s
+in `result.response.raw["moderation"]`
+([Chat Completions](@ref openai_chat_options), [Request options](@ref openai_responses_options)):
 `ModerationConfig(; model, input_mode, output_mode)` needs its `model`, and sends each mode set,
 `"score"` or `"block"`, as the `policy` of its side. The
 `moderation` of an image request is another setting, the filtering level of the image models

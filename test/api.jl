@@ -808,6 +808,12 @@ end
         @test isnothing(s.usage)
         @test isnothing(s.model)                     # the served model, when the endpoint reports one
         @test LLMSuccess(message=m, self=chat, model="gpt-6-sol-2026-09-14").model == "gpt-6-sol-2026-09-14"
+        # The reply's log probabilities and moderation results, when the request asked for them.
+        @test isnothing(s.logprobs) && isnothing(s.moderation)
+        lp = Dict{String,Any}("content" => Any[])
+        @test LLMSuccess(message=m, self=chat, logprobs=lp).logprobs === lp
+        # Built positionally, the five fields it had still build one.
+        @test LLMSuccess(m, chat, nothing, 0, "gpt-6-sol").model == "gpt-6-sol"
     end
 
     @testset "LLMSuccess with usage" begin

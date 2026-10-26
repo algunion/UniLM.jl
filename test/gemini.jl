@@ -1107,6 +1107,21 @@ end
     @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
 end
 
+@testset "compat — an unstreamed reply decodes as on the OpenAI wire, its log probabilities and moderation kept" begin
+    # Only the usage may differ, by the tier the response head names; every other decoded field is the wire's.
+    lp = Dict("content" => [Dict("token" => "OK", "logprob" => -0.1, "bytes" => [79, 75], "top_logprobs" => [])])
+    reply = HTTP.Response(200, ["x-gemini-service-tier" => "flex"], Vector{UInt8}(JSON.json(Dict(
+        "model" => "gemini-3.8-flash", "moderation" => Dict("output" => Dict("flagged" => false)),
+        "usage" => Dict("prompt_tokens" => 3, "completion_tokens" => 1, "total_tokens" => 4),
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "logprobs" => lp,
+                           "message" => Dict("role" => "assistant", "content" => "OK"))]))))
+    compat, wire = decode_response(GEMINIOpenAIServiceEndpoint, reply), UniLM.extract_message(reply)
+    @test keys(compat) == keys(wire)
+    @test all(k -> k === :usage || getfield(compat, k) == getfield(wire, k), keys(wire))
+    @test compat.logprobs == lp && compat.moderation == Dict("output" => Dict("flagged" => false))
+    @test compat.usage.service_tier == "flex"
+end
+
 @testset "compat — a function call's thought signature goes back with it, as Google requires" begin
     # The compatible endpoint returns a Gemini 3 function call's signature in
     # tool_calls[].extra_content.google.thought_signature — "Required and Validated" when the call goes back

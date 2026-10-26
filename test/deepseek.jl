@@ -43,6 +43,20 @@ const _DS_ANSWER_TURN = Dict("model" => "deepseek-flash", "choices" => [Dict("in
     @test_throws ErrorException decode_response(_DS, _ds_resp(Dict("choices" => [])))
 end
 
+@testset "decode — the reply's log probabilities are kept, with or without reasoning" begin
+    # DeepSeek's choice carries `logprobs` with `content` and `reasoning_content` token lists
+    # (https://api-docs.deepseek.com/api/create-chat-completion).
+    tok(t) = Dict{String,Any}("token" => t, "logprob" => -0.1, "bytes" => Int.(codeunits(t)), "top_logprobs" => Any[])
+    lp = Dict{String,Any}("content" => [tok("hi")], "reasoning_content" => [tok("ok")])
+    for rc in ("ok", nothing)
+        turn = Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+            "logprobs" => lp, "message" => Dict("role" => "assistant", "content" => "hi", "reasoning_content" => rc))])
+        dec = decode_response(_DS, _ds_resp(turn))
+        @test dec.logprobs == lp && dec.moderation === nothing
+        @test isnothing(rc) == isnothing(_ds_reasoning(dec.message))
+    end
+end
+
 @testset "encode — reasoning_content is passed back on assistant turns when the request carries tools" begin
     tc = ToolCall(id="call_1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))
     r(text) = ProviderContent(:deepseek, Any[Dict{String,Any}("reasoning_content" => text)])

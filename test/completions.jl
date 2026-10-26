@@ -356,6 +356,21 @@ UniLM.decode_response(s::_DSPrefixHere, resp::HTTP.Response) = UniLM.decode_resp
     end
 end
 
+@testset "prefix_complete keeps the reply's log probabilities" begin
+    lp = Dict{String,Any}("content" => [Dict{String,Any}("token" => "x", "logprob" => -0.1, "bytes" => [120],
+                                                         "top_logprobs" => Any[])])
+    reply = JSON.json(Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+        "logprobs" => lp, "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
+    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", logprobs=true,
+                messages=[Message(Val(:user), "Write it."), Message(role=UniLM.RoleAssistant, content="```python\n")])
+    r, seen = _with_scripted((_, _) -> _json(200, reply)) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
+        prefix_complete(chat)
+    end
+    @test JSON.parse(only(seen).body)["logprobs"] === true
+    @test r isa LLMSuccess && r.logprobs == lp && r.moderation === nothing
+end
+
 @testset "prefix_complete with tools sends DeepSeek's reasoning_content back, as chatrequest! does" begin
     # The same rule binds a prefix completion: it "follows the Chat Completion API"
     # (https://api-docs.deepseek.com/guides/chat_prefix_completion), and a request carrying tools

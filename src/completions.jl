@@ -339,7 +339,8 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            result = LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted))
+            result = LLMSuccess(; message=continuation, self=chat, usage=extracted.usage, model=_decoded_model(extracted),
+                                _decoded_results(extracted)...)
             _accumulate_cost!(chat, result)   # a billed turn joins the Chat's total, as a chatrequest! turn does
             return result
         else

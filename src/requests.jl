@@ -949,10 +949,11 @@ function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
 end
 
 """
-    extract_message(resp::HTTP.Response) -> (; message::Message, usage, model)
+    extract_message(resp::HTTP.Response) -> (; message::Message, usage, model, logprobs, moderation)
 
-Decode the first choice of an OpenAI-wire Chat Completions reply, its usage and the
-model the reply names (`nothing` when it names none). No part of the
+Decode the first choice of an OpenAI-wire Chat Completions reply, its usage, the
+model the reply names (`nothing` when it names none), the choice's `logprobs` and the
+completion's `moderation` results (each `nothing` when the reply has none). No part of the
 choice is dropped for its shape: tool calls are decoded whenever present, with any
 text kept alongside; content given as an array of parts is joined from its text
 parts; a refusal is kept; `""` tool arguments decode as an empty object; the audio of
@@ -991,8 +992,13 @@ function extract_message(resp::HTTP.Response)
         Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
                 refusal_message=refusal, finish_reason=finish, audio_output=audio)
     end
-    (; message=msg, usage=_parse_usage(received), model=_wire_string(received, "model"))
+    (; message=msg, usage=_parse_usage(received), model=_wire_string(received, "model"),
+       logprobs=_wire_object(choice, "logprobs"), moderation=_wire_object(received, "moderation"))
 end
+
+# A reply's JSON object under `key`, as parsed; `nothing` when the reply has none (or null).
+_wire_object(d::AbstractDict, key::String)::Union{Dict{String,Any},Nothing} =
+    (v = get(d, key, nothing); v isa Dict{String,Any} ? v : nothing)
 
 # A reply's `message.audio` (the Chat Completions reference's `ChatCompletionAudio`): its
 # id, base64 data and transcript, every one required, and the Unix time it expires at.
@@ -1077,7 +1083,9 @@ for a handler whose provider reports it apart from the usage, and `continuation_
 the token a provider returns for continuing a long generation in another request.
 `audio` is filled by the OpenAI-wire handler only, from a streamed audio reply's
 `delta.audio` updates, and becomes the message's [`AudioOutput`](@ref); a handler of
-another wire leaves it `nothing`.
+another wire leaves it `nothing`. `logprobs` and `moderation` become the result's fields of
+those names: each token list a chunk gives extends the list of its name (`"content"`, …), and
+each moderation object's results are merged in.
 Tool calls live in `tool_calls` by index as
 `Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
 `"complete" => true` on an entry tells the driver the call has finished streaming.
@@ -1128,6 +1136,9 @@ Public extension API (not exported); see the Custom Backends guide.
     audio::Union{_StreamedAudio,Nothing} = nothing
     # The latest token the reply carried for continuing the generation in another request.
     continuation_token::Union{String,Nothing} = nothing
+    # The reply's log probabilities and moderation results, as its chunks carry them.
+    logprobs::Union{Dict{String,Any},Nothing} = nothing
+    moderation::Union{Dict{String,Any},Nothing} = nothing
 end
 
 # The audio reply a stream assembled. Its id comes with its first update, so a reply
@@ -1250,7 +1261,9 @@ Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsa
 model::Union{String,Nothing})`: the reply, its token usage, and the model id the provider
 reports having served it (`nothing` when it reports none), which becomes the result's
 `model` and prices the call. `model` is optional: a decoder that returns
-`(; message, usage)` reports no model. The `OpenAIWireEndpoint` default reads OpenAI Chat
+`(; message, usage)` reports no model. So are `logprobs` and `moderation`, the reply's log
+probabilities and moderation results (`Dict{String,Any}` or `nothing`), which become the
+result's fields of those names. The `OpenAIWireEndpoint` default reads OpenAI Chat
 Completions (`extract_message`). A body that is not a valid reply should throw:
 [`chatrequest!`](@ref) reports the exception as an `LLMCallError` carrying it in `cause`,
 never as an empty success.
@@ -1262,6 +1275,9 @@ decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_
 # The served model a decoder reported; optional in the seam's contract, so a decoder that
 # returns only the message and usage reports none.
 _decoded_model(decoded)::Union{String,Nothing} = hasproperty(decoded, :model) ? decoded.model : nothing
+# The log probabilities and moderation results a decoder kept, as the result's keywords; optional too.
+_decoded_results(decoded) = (; logprobs=(hasproperty(decoded, :logprobs) ? decoded.logprobs : nothing),
+                               moderation=(hasproperty(decoded, :moderation) ? decoded.moderation : nothing))
 
 # ─── Long generations sent in several requests ───────────────────────────────
 # A provider may stop a long generation at its per-request cap and return a token that continues
@@ -1559,10 +1575,11 @@ end
 # Shared by the clean end-of-stream path and the teardown-recovery path, so a
 # turn recovered from teardown noise is committed exactly like a clean one.
 function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing},
-                         sse_dropped::Int, model::Union{String,Nothing})
+                         sse_dropped::Int, state::StreamState)
     update!(chat, msg)
     result = LLMSuccess(; message=msg, self=chat, usage=_result_usage(chat.service, chat, usage), sse_dropped,
-                        model=_billed_response(chat.service, chat.model, model))
+                        model=_billed_response(chat.service, chat.model, state.model),
+                        logprobs=state.logprobs, moderation=state.moderation)
     _accumulate_cost!(chat, result)
     return result
 end
@@ -1784,7 +1801,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             hop = next[]
             isnothing(hop) || return (; result=_StreamHop(state, hop), resp)
             return (; result=_stream_success(chat, m[]::Message, _add_usage(turn.usage, state.usage),
-                                             turn.sse_dropped + state.sse_dropped, state.model), resp)
+                                             turn.sse_dropped + state.sse_dropped, state), resp)
         else
             return (; result=LLMFailure(status=resp.status, response=takestring!(raw_buffer),
                                         self=chat, request_id=_get_request_id(resp),
@@ -1837,7 +1854,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             isnothing(hop) || return (; result=_StreamHop(state, hop), resp=nothing)
             fin = _finalize_stream_message!(state, cb, otc, ctl.close, m)
             return (; result=_stream_success(chat, fin.msg, _add_usage(turn.usage, fin.usage),
-                                             turn.sse_dropped + state.sse_dropped, state.model),
+                                             turn.sse_dropped + state.sse_dropped, state),
                     resp=nothing)
         end
         # Stopped before the turn completed: whatever surfaced (HTTP.jl's rendering
@@ -2175,8 +2192,9 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
             billed, hop = nothing, hop + 1
         end
         update!(chat, extracted.message)
-        result = LLMSuccess(message=extracted.message, self=chat, usage=_result_usage(chat.service, chat, extracted.usage),
-                            model=_billed_response(chat.service, chat.model, _decoded_model(extracted)))
+        result = LLMSuccess(; message=extracted.message, self=chat, usage=_result_usage(chat.service, chat, extracted.usage),
+                            model=_billed_response(chat.service, chat.model, _decoded_model(extracted)),
+                            _decoded_results(extracted)...)
         _accumulate_cost!(chat, result)
         return result
     catch e

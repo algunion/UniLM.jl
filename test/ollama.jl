@@ -244,10 +244,15 @@ end
     @test _wire(_ochat(OllamaEndpoint(keep_alive=0)))["keep_alive"] == 0
     @test _wire(_ochat(OllamaEndpoint(keep_alive=90.5)))["keep_alive"] == 90.5
     @test _wire(_ochat(OllamaEndpoint(); stream=true))["stream"] === true
+    # Ollama's ChatRequest takes `logprobs` and `top_logprobs` beside `messages` (https://docs.ollama.com/api/chat).
+    lw = _wire(_ochat(e; logprobs=true, top_logprobs=3))
+    @test (lw["logprobs"], lw["top_logprobs"]) == (true, 3)
+    @test _wire(_ochat(e; logprobs=false))["logprobs"] === false
+    @test !haskey(w, "logprobs") && !haskey(w, "top_logprobs")
     # Every Chat field without an /api/chat counterpart is refused before any I/O.
     for (f, v) in (:logit_bias => Dict("1" => 1), :user => "u", :stream_options => Dict("include_usage" => true),
                    :verbosity => "low", :store => true, :metadata => Dict("a" => "b"), :service_tier => "auto",
-                   :logprobs => true, :top_logprobs => 2, :prediction => Dict("type" => "content"),
+                   :prediction => Dict("type" => "content"),
                    :modalities => ["text"], :audio => Dict("voice" => "x"), :web_search_options => Dict(),
                    :prompt_cache_key => "k", :safety_identifier => "s",
                    :prompt_cache_options => PromptCacheOptions(mode="implicit"),
@@ -256,7 +261,7 @@ end
         @test err isa ArgumentError && occursin(String(f), err.msg)
     end
     @test Set(UniLM._OLLAMA_CHAT_UNMAPPED_FIELDS) == Set([:logit_bias, :user, :stream_options, :verbosity, :store,
-        :metadata, :service_tier, :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
+        :metadata, :service_tier, :prediction, :modalities, :audio, :web_search_options,
         :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention])
     @test_throws ArgumentError chatrequest!(_ochat(e; user="u"))     # thrown before any network I/O
 end
@@ -436,6 +441,38 @@ end
         @test text(s) == "Hello" && reasoning_text(s) == "Think."
         @test s.usage == TokenUsage(prompt_tokens=5, completion_tokens=3, total_tokens=8)
         @test JSON.parse(bodies[2])["messages"][3] == Dict("role" => "assistant", "content" => "Hello", "thinking" => "Think.")
+    finally
+        close(server)
+    end
+end
+
+@testset "a Chat with logprobs gets the reply's log probabilities, streamed or not" begin
+    # Ollama's ChatResponse carries `logprobs`, one entry per generated token — its `token`, `logprob`,
+    # `bytes` and the `top_logprobs` asked for (https://docs.ollama.com/api/chat); a stream carries each
+    # chunk's tokens on its line, which the unstreamed reply joins (Ollama v0.40.11, server/routes.go).
+    tok(t, lp) = Dict{String,Any}("token" => t, "logprob" => lp, "bytes" => Int.(codeunits(t)),
+        "top_logprobs" => [Dict{String,Any}("token" => t, "logprob" => lp, "bytes" => Int.(codeunits(t)))])
+    tokens = [tok("Hel", -0.5), tok("lo", -0.25)]
+    whole = JSON.parse(_reply(content="Hello", p=5, c=2); dicttype=Dict{String,Any})
+    whole["logprobs"] = tokens
+    dec(s) = UniLM.decode_response(OllamaEndpoint(), HTTP.Response(200, [], Vector{UInt8}(s)))
+    @test dec(JSON.json(whole)).logprobs == Dict{String,Any}("content" => tokens)
+    @test dec(_reply(content="Hello")).logprobs === nothing
+    line(content, lp) = _oline(Dict{String,Any}("model" => "gemma4:e2b", "done" => false, "logprobs" => lp,
+                                                "message" => Dict("role" => "assistant", "content" => content)))
+    server, base, bodies = _ollama_mock() do n, body
+        JSON.parse(body)["stream"] === true ?
+            (200, [line("Hel", [tokens[1]]), line("lo", [tokens[2]]), _final(p=5, c=2)]) : (200, [JSON.json(whole)])
+    end
+    try
+        e = OllamaEndpoint(base_url=base)
+        r = chatrequest!(_ochat(e; logprobs=true, top_logprobs=1))
+        @test r isa LLMSuccess && text(r) == "Hello" && r.logprobs == Dict{String,Any}("content" => tokens)
+        @test JSON.parse(bodies[1])["logprobs"] === true && JSON.parse(bodies[1])["top_logprobs"] == 1
+        s = fetch(chatrequest!(_ochat(e; logprobs=true, top_logprobs=1, stream=true)))
+        @test s isa LLMSuccess && text(s) == "Hello"
+        @test s.logprobs == Dict{String,Any}("content" => tokens)
+        @test s.moderation === nothing
     finally
         close(server)
     end

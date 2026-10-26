@@ -1402,8 +1402,8 @@ generated output. The optional `input_mode` / `output_mode` set the policy per s
 `"score"` or `"block"`. Serialized as
 `{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with unset
 policy parts omitted. A [`respond`](@ref) result carries the outcome in
-`r.response.raw["moderation"]` (`"input"` and `"output"` moderation results);
-[`LLMSuccess`](@ref) keeps no raw body, so Chat results do not expose it. See the
+`r.response.raw["moderation"]` (`"input"` and `"output"` moderation results), and a
+[`chatrequest!`](@ref) result in its `moderation` ([`LLMSuccess`](@ref)). See the
 `moderation` parameter of
 [Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create).
 """
@@ -1775,7 +1775,7 @@ cost of the call, not a surcharge.
 function _billed_cost end
 
 """
-    LLMSuccess(; message, self, usage=nothing, sse_dropped=0, model=nothing)
+    LLMSuccess(; message, self, usage=nothing, sse_dropped=0, model=nothing, logprobs=nothing, moderation=nothing)
 
 Successful Chat Completions API response.
 
@@ -1793,6 +1793,23 @@ Successful Chat Completions API response.
   report it. From an [`OllamaEndpoint`](@ref), a cloud model whose reply names it without its
   cloud tag keeps the name requested, so it is priced as the cloud model it is.
   [`estimated_cost`](@ref) prices the call at this model when it is set, else at `self.model`.
+- `logprobs::Union{Dict{String,Any},Nothing}`: The log probabilities a `Chat` with
+  `logprobs=true` asked for, as the reply gives them: `"content"` lists the output tokens, each
+  with its `"token"`, `"logprob"`, `"bytes"` and the `"top_logprobs"` asked for, and a provider
+  may add lists of its own (OpenAI's `"refusal"`, DeepSeek's `"reasoning_content"`). A streamed
+  reply's chunks are joined in order, list by list; [`OllamaEndpoint`](@ref)'s token list is the
+  `"content"`. `nothing` when the reply carries none.
+- `moderation::Union{Dict{String,Any},Nothing}`: The moderation results a `Chat` with a
+  [`ModerationConfig`](@ref) asked for, as the reply gives them: its `"input"` and `"output"`
+  results, each a moderation result or an error (OpenAI's moderated completions); a stream's
+  moderation chunks merged. `nothing` when the reply carries none.
+
+The OpenAI-wire endpoints (OpenAI, within the model's rules, Azure,
+`GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic endpoints) send `logprobs`,
+`top_logprobs` and `moderation` as set and keep what the reply returns; `OllamaEndpoint` sends
+the first two and refuses `moderation`; native Gemini and `ANTHROPICServiceEndpoint` refuse all
+three before any request. Built positionally, the first five fields build one, the last two
+`nothing`.
 """
 @kwdef struct LLMSuccess <: LLMRequestResponse
     message::Message
@@ -1800,6 +1817,10 @@ Successful Chat Completions API response.
     usage::Union{TokenUsage, Nothing} = nothing
     sse_dropped::Int = 0
     model::Union{String,Nothing} = nothing
+    logprobs::Union{Dict{String,Any},Nothing} = nothing
+    moderation::Union{Dict{String,Any},Nothing} = nothing
+    LLMSuccess(message, self, usage, sse_dropped, model, logprobs=nothing, moderation=nothing) =
+        new(message, self, usage, sse_dropped, model, logprobs, moderation)
 end
 
 # The provider's id for the request: `x-request-id` (OpenAI and most compatible

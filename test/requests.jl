@@ -1785,6 +1785,61 @@ UniLM._billed_cost(::_OpenAIBilledWire, model::String, u::TokenUsage, rates::Uni
     end
 end
 
+@testset "a Chat result keeps the log probabilities and the moderation results its request asked for" begin
+    # Chat Completions returns "Log probability information for the choice" as the choice's
+    # `logprobs` (`content`, `refusal`), and "Moderation results for the request input and generated
+    # output, if moderated completions were requested" as the completion's `moderation`; a stream
+    # carries the log probabilities on its chunks' choices and the results on its moderation chunk.
+    tok(t, lp) = Dict{String,Any}("token" => t, "logprob" => lp, "bytes" => Int.(codeunits(t)),
+        "top_logprobs" => [Dict{String,Any}("token" => t, "logprob" => lp, "bytes" => Int.(codeunits(t)))])
+    verdict = Dict{String,Any}("type" => "moderation_result", "model" => "omni-moderation-latest",
+        "results" => [Dict{String,Any}("flagged" => false, "categories" => Dict("violence" => false),
+                                       "category_scores" => Dict("violence" => 0.001))])
+    moderation = Dict{String,Any}("input" => verdict, "output" => verdict)
+    logprobs = Dict{String,Any}("content" => [tok("Hi", -0.25), tok(" there", -0.5)], "refusal" => nothing)
+    usage = Dict("prompt_tokens" => 9, "completion_tokens" => 2, "total_tokens" => 11)
+    body = JSON.json(Dict("id" => "c1", "object" => "chat.completion", "model" => "mock", "usage" => usage,
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "logprobs" => logprobs,
+                           "message" => Dict("role" => "assistant", "content" => "Hi there"))],
+        "moderation" => moderation))
+    x = UniLM.extract_message(HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test x.logprobs == logprobs && x.moderation == moderation
+    none = UniLM.extract_message(HTTP.Response(200, [], Vector{UInt8}(_REPLY)))   # none asked, none kept
+    @test none.logprobs === nothing && none.moderation === nothing
+
+    chunk(d) = "data: " * JSON.json(merge(Dict{String,Any}("id" => "c1", "object" => "chat.completion.chunk",
+                                                           "model" => "mock"), d)) * "\n\n"
+    choice(delta, lp, finish=nothing) =
+        Dict{String,Any}("choices" => [Dict("index" => 0, "delta" => delta, "logprobs" => lp, "finish_reason" => finish)])
+    stream = chunk(choice(Dict("role" => "assistant", "content" => ""), nothing)) *
+             chunk(choice(Dict("content" => "Hi"), Dict("content" => [tok("Hi", -0.25)], "refusal" => nothing))) *
+             chunk(choice(Dict("content" => " there"), Dict("content" => [tok(" there", -0.5)]), "stop")) *
+             chunk(Dict{String,Any}("choices" => [], "moderation" => Dict("input" => verdict))) *
+             chunk(Dict{String,Any}("choices" => [], "moderation" => Dict("output" => verdict))) *
+             chunk(Dict{String,Any}("choices" => [], "usage" => usage)) * "data: [DONE]\n\n"
+    plain, sse = _json_reply_server(body), _sse_reply_server(stream)
+    try
+        mk(url; kw...) = Chat(service=GenericOpenAIEndpoint(url, ""), model="mock", logprobs=true, top_logprobs=1,
+                              moderation=ModerationConfig(model="omni-moderation-latest"),
+                              messages=[Message(Val(:user), "Say hi.")]; kw...)
+        cfg = RequestConfig(max_attempts=1)
+        r = chatrequest!(mk(plain.url); config=cfg)
+        @test r isa LLMSuccess && r.logprobs == logprobs && r.moderation == moderation
+        rs = fetch(chatrequest!(mk(sse.url; stream=true); config=cfg))
+        @test rs isa LLMSuccess && text(rs) == "Hi there"
+        # A stream's tokens in the order its chunks gave them; the results of every chunk that carried some.
+        @test rs.logprobs == Dict{String,Any}("content" => [tok("Hi", -0.25), tok(" there", -0.5)])
+        @test rs.moderation == moderation
+    finally
+        close(plain.server); close(sse.server)
+    end
+    # A refusal's tokens stay under the key the reply gives them.
+    st = UniLM.StreamState()
+    UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("refusal" => "No."),
+        Dict("content" => nothing, "refusal" => [tok("No.", -0.1)]), "stop")), st)
+    @test st.logprobs == Dict{String,Any}("refusal" => [tok("No.", -0.1)])
+end
+
 # An OpenAI-wire endpoint whose encoder refuses every request.
 struct _RefusingEncoder <: UniLM.OpenAIWireEndpoint
     url::String

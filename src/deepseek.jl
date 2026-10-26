@@ -50,9 +50,11 @@ function decode_response(service::DeepSeekEndpoint, resp::HTTP.Response)
     # The OpenAI decoder read choices[1] already, so it is there.
     message = get(data["choices"][1], "message", nothing)
     rc = message isa AbstractDict ? get(message, "reasoning_content", nothing) : nothing
-    rc isa AbstractString && !isempty(rc) || return (; decoded.message, usage, decoded.model)
+    rc isa AbstractString && !isempty(rc) ||
+        return (; decoded.message, usage, decoded.model, decoded.logprobs, decoded.moderation)
     pc = ProviderContent(:deepseek, Any[Dict{String,Any}("reasoning_content" => rc)])
-    (; message=_message_with(decoded.message, :provider_content, pc), usage, decoded.model)
+    (; message=_message_with(decoded.message, :provider_content, pc), usage, decoded.model, decoded.logprobs,
+       decoded.moderation)
 end
 
 # DeepSeek's Chat Completions reference lists the token cap as `max_tokens` and no

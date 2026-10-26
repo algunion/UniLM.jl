@@ -297,14 +297,14 @@ See the [MCP Guide](@ref mcp_guide) for full details.
 ```julia
 # A Chat + MCP
 session = mcp_connect(`npx server`)
-tools = mcp_tools(session)
+tools = mcp_tools(session; service)
 chat = Chat(service=service, model=model, tools=map(t -> t.tool, tools))
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 
 # A Respond + MCP
-tools = mcp_tools_respond(session)
+tools = mcp_tools_respond(session; service)
 result = tool_loop("Do something"; service, model, tools=tools)
 ```
 

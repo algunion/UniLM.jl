@@ -31,8 +31,8 @@ Each `Tool` in `tools` goes out as a `function` tool with its `name` and, where 
 sets them, its `description`, `parameters` and `strict` flag. A function's name "Must be a-z, A-Z, 0-9, or
 contain underscores and dashes, with a maximum length of 64"
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat)); UniLM sends a name
-as given, and [`mcp_tools`](@ref) and `mcp_tools_respond`, for this endpoint or with no `service`, advertise
-an MCP tool under a name of at most 64 characters, a longer one cut and marked with a hash of its MCP name
+as given, and [`mcp_tools`](@ref), for this endpoint or with no `service`, advertises an MCP tool under a
+name of at most 64 characters, a longer one cut and marked with a hash of its MCP name
 ([MCP](@ref mcp_guide)). `tool_choice` is sent as
 given: `"auto"`, `"none"`, `"required"`, or `UniLM.GPTToolChoice(func=:get_weather)` for
 `{"type": "function", "function": {"name": "get_weather"}}`. Strict mode makes the calls "reliably adhere

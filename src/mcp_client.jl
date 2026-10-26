@@ -1798,6 +1798,9 @@ end
 Convert all tools from an MCP session into `CallableTool{FunctionTool}` instances
 that work directly with [`tool_loop`](@ref) (Responses API) on `service`, the endpoint the
 tools go to. Tool names are advertised provider-safe for `service`, as in [`mcp_tools`](@ref).
+OpenAI's Responses API and Gemini's Interactions API state no function-name limit of their
+own: the limit applied is the provider's Chat one (64 on OpenAI, 128 on Gemini), unwitnessed on
+those two APIs.
 
 # Example
 ```julia

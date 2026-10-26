@@ -83,6 +83,13 @@
   their place, answered it. Such a question, a `noul` of `yes`/`no` criteria alone included, is
   now an `ArgumentError` before anything is sent. Upgrading: give each question its
   instructions, the first argument of `choice`, `score` or `noul`.
+- **Ollama's decision Choice takes two options or more.** Ollama's API reference gives a
+  Choice's `criteria` `minProperties: 2`, and `ask` on an `OllamaEndpoint` sent a Choice of one
+  option: on Ollama 0.40.6 the MLX decision models answered it with their own HTTP 400, and the
+  models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it. It is now an
+  `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
+  verb whose call offers a single option is refused too. Upgrading: add an option, such as a
+  catch-all `"anything else"`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

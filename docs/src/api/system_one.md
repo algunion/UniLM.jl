@@ -424,13 +424,13 @@ end
   described by an object, and `tev1:0.8b` refused it) — and, a rule of UniLM's
   own, blank (whitespace-only) `instructions`, which Ollama would read as none. It
   refuses a Choice, Noul or Score question without `instructions`, which the API
-  reference requires.
+  reference requires, and a Choice of one option, below the two it requires.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
 | `instructions` | required on a Choice, Noul and Score, as the route's API reference lists them: a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
-| Choice options | at most 255 (one is sent), each described by a string or `nothing` |
+| Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
 | `state` | a text that is not blank, unless images come with it |
@@ -441,10 +441,10 @@ end
 - **A model's own limits.** A model may take less than the route, and its HTTP 400
   says so, in its own words, as a [`SystemOneFailure`](@ref) carrying Ollama's
   message. Measured on Ollama 0.40.6 (an Apple M4 Max, 21 October 2026): Tev1
-  takes at most 24 options, Nimble and Clef Flash 26. A Choice of one option is
-  sent: the models on the llama.cpp path (`kev:0.8b-q8_0`, `kev:9b-q4_K_M`,
-  `d1-omni:600m`, `d1:3b`) answered it, and `tev1:0.8b`, `tev1:4b`, `nimble:9b`
-  and `clef-flash:9b` answered 400
+  takes at most 24 options, Nimble and Clef Flash 26. A Choice of one option,
+  which [`ask`](@ref) refuses, the models on the llama.cpp path (`kev:0.8b-q8_0`,
+  `kev:9b-q4_K_M`, `d1-omni:600m`, `d1:3b`) answered, and `tev1:0.8b`,
+  `tev1:4b`, `nimble:9b` and `clef-flash:9b` answered 400
   `question "pick": criteria must contain 2–26 candidates`, `strands-decider:2b`
   `question "pick": criteria must contain 2–255 candidates` (for a question named
   `pick`). A question without `instructions`, which [`ask`](@ref) refuses as the

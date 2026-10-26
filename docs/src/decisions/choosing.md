@@ -119,7 +119,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
 | Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
-| Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
+| Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
 | Guidance | strings, objects, arrays and pictures, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
 | Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state only: an image, or a `Vector` of strings and images | the state only, the images before the texts; vision models only |
 | Box | Jev 1.14 | refused | refused |

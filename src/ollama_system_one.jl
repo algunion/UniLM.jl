@@ -45,11 +45,12 @@ question without `instructions`, which Ollama's API reference requires (measured
 Ollama 0.40.6, `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered one with HTTP
 400 `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` with
 400 `questions.intent: "instructions" must be provided` for a question named
-`intent`, and `clef-flash:9b` answered it). A Choice of one option is sent: the
-models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it, and the MLX models
-answer their own 400 (`criteria must contain 2–26 candidates`; `strands-decider:2b`
-2–255). A model that takes fewer options (Tev1: at most 24; Nimble and Clef
-Flash: 26) says so in its own HTTP 400 too, which comes back as a
+`intent`, and `clef-flash:9b` answered it), and a Choice of one option, below the
+two its API reference requires (on Ollama 0.40.6 the models on the llama.cpp path,
+`kev`, `d1` and `d1-omni`, answered one, and the MLX models their own 400,
+`criteria must contain 2–26 candidates`; `strands-decider:2b` 2–255). A model that
+takes fewer options (Tev1: at most 24; Nimble and Clef Flash: 26) says so in its own
+HTTP 400 too, which comes back as a
 [`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
 images excluded, at 64 KiB (measured on Ollama 0.40.6 with `kev:0.8b-q8_0`,
 `d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB for a Kev model on Ollama's own
@@ -121,9 +122,9 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
-# The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options up to 255, the
-# documented maximum, and as few as one (the decision models on the llama.cpp path answered a single option;
-# the generic surface already requires one); score levels 2–10, its shared check (decision ValidateLimits);
+# The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options 2–255, the
+# documented bounds (on Ollama 0.40.6 the decision models on the llama.cpp path answered a single option);
+# score levels 2–10, its shared check (decision ValidateLimits);
 # `instructions` required, as its API reference lists them (on Ollama 0.40.6 tev1, nimble, strands-decider and
 # kev refused a question without them, and clef-flash answered it). A model that takes less says so in its own
 # HTTP 400, which reaches the caller as a SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options,
@@ -154,6 +155,10 @@ function _ollama_carries(name::String, q::ChoiceQuestion)::Nothing
             "$(repr(name)) has $(typeof(d)). Describe it in words, or pass `nothing`"))
     end
     n = length(q.criteria)
+    # The reference's `criteria` of a Choice: `minProperties: 2`, `maxProperties: 255`.
+    n >= 2 || throw(ArgumentError(
+        "Ollama's API reference gives a Choice 2 to $(_OLLAMA_MAX_OPTIONS) options; $(repr(name)) has $(n). " *
+        "Add one, such as \"other\""))
     n <= _OLLAMA_MAX_OPTIONS || throw(ArgumentError(
         "Ollama accepts at most $(_OLLAMA_MAX_OPTIONS) options per question; $(repr(name)) has $(n). " *
         "Split it, or narrow the options"))

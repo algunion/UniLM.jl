@@ -221,7 +221,7 @@ What reaches the model depends on the model, since each family has its own promp
   Instructions may be a string, an object or an array; an option's description, a Score level and a Noul's `yes` and
   `no` are strings.
 
-The route takes 1 to 64 questions, a Choice of up to 255 options and a Score of 2 to 10 levels, and a model may take
+The route takes 1 to 64 questions, a Choice of 2 to 255 options and a Score of 2 to 10 levels, and a model may take
 fewer: the limits, and what each model measured takes, are on [Limits and refusals](@ref ollama_decisions_limits).
 Reading the answers and the decision rules on them are on [Route and Decide](@ref system_one_guide).
 
@@ -293,7 +293,7 @@ checks before sending:
 | Limit | Value | Checked before sending |
 | :--- | :--- | :--- |
 | Questions | 1 to 64 per request | yes |
-| Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | at most 255; one option is sent |
+| Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | yes |
 | Score levels | 2 to 10 per question | yes |
 | Instructions | required, a string, an object or an array that is not blank | yes |
 | State | a string, a JSON object or array, or pictures then texts; a blank string only with pictures | yes |
@@ -313,6 +313,7 @@ not write.
 | :--- | :--- | :--- |
 | a call that names no model, unless it names no `service` inside a scope that names one | `has no default System One model`: Ollama has no default | `model = "tev1:0.8b"`, or a `with_system_one(OllamaEndpoint(); model = …)` scope |
 | more than 64 questions | `Ollama accepts at most 64 questions per request` | split them across requests |
+| a Choice of one option | `Ollama's API reference gives a Choice 2 to 255 options` | add an option, such as `"anything else"` |
 | a Choice of more than 255 options | `Ollama accepts at most 255 options per question` | split it, or narrow the options |
 | an option described by anything but a string or `nothing` | `Ollama reads a Choice option's description as a string or` | describe it in words, or pass `nothing` |
 | a Score of fewer than 2 or more than 10 levels | `Ollama accepts 2 to 10 levels per question` | offer at least two, or merge levels into a coarser rubric |
@@ -351,8 +352,8 @@ end
 
 A model may take less than the route, and says so with its own HTTP 400, which comes back as a
 [`SystemOneFailure`](@ref) carrying Ollama's message. Measured on Ollama 0.40.6 (21 October 2026), the nine models
-answered as below; the messages begin with the question's name, `question "pick": …`, and a Choice of one option
-is sent too:
+answered as below; the messages begin with the question's name, `question "pick": …`, and the one-option Choice,
+which UniLM refuses before sending, was sent past that check:
 
 | Model | Runner | Options per Choice | One option came back as | 27 options came back as |
 | :--- | :--- | :--- | :--- | :--- |
@@ -558,7 +559,7 @@ r.error
 | :--- | :--- | :--- |
 | a `SystemOneCallError` whose `error` holds `no Ollama server answered at` | no server at the endpoint's address | start Ollama, or point `OLLAMA_HOST` or `base_url` at it |
 | a `SystemOneFailure` with status 404, `model '…' not found`, then `pull it first` | the model is not installed | `ollama pull` it, or [`pull_model`](@ref) |
-| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: fewer or more options than it takes, a picture it cannot see | see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
+| a `SystemOneFailure` with status 400 and the model's own words | the model takes less than the route: more options than it takes, a picture it cannot see | see what each model takes ([Limits and refusals](@ref ollama_decisions_limits)); a vision model for pictures |
 | status 400, `no compatible manifest found for runners: <runner>` | the endpoint pins a runner the model has no build for | leave `runner` unset, or pin the runner the listing names ([Options](@ref ollama_decisions_options)) |
 | status 400 about the loaded context | the input does not fit the window the model is loaded with, and Ollama never truncates it | shorten the state, or ask fewer questions at once |
 | status 413 (`text and schema must not exceed 64 KiB` for the first) | the text and the questions of a local request over 64 KiB, or the whole request over 32 MiB | shorten the state, or split the questions |

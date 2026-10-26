@@ -253,6 +253,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "object noul criterion" => (a("s", noul("Is it?"; no=Dict("d" => "no"))), "Noul criterion as a string"),
             "object score level"    => (a("s", score("How?", ["low", Dict("d" => "high")])), "Score level as a string"),
             "256 options"           => (a("s", choice("Which?", many(256))), "255 options per question"),
+            "one option"            => (a("s", choice("Which?", ["a"])), "Ollama's API reference gives a Choice 2 to 255 options"),
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
             "blank state"           => (a(" \n ", q), "blank `state`"),
@@ -269,17 +270,19 @@ struct _Os1Odd <: SystemOneQuestion end
         end
         # Passing none is no fix: most local decision models answer a question without instructions with a 400.
         @test !contains(_os1_caught(a("s", choice("  ", ["a", "b"]))).msg, "pass none")
+        # A natural-language verb whose call offers one option asks such a Choice, and is refused too.
+        e = _os1_caught(() -> nl_classify("s", (refund = "the customer wants a refund",); service=ep, model="tev1:0.8b",
+                                          config=_OS1_CFG))
+        @test e isa ArgumentError && contains(e.msg, "Ollama's API reference gives a Choice 2 to 255 options")
         @test isempty(seen)                               # nothing reached the server
         # What the route leaves to the model is sent: the mock's models, like the generic MLX
-        # encoder, take 2–26 options, and say so in their own 400. One option is the model's call
-        # too: the llama.cpp path (kev, d1, d1-omni) answered it on Ollama 0.40.6.
-        served = ["27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates"),
-                  "one option"         => (a("s", choice("Which?", ["a"])), "criteria must contain 2–26 candidates")]
+        # encoder, take 2–26 options, and say so in their own 400.
+        served = ["27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates")]
         @testset "$what reaches the server" for (what, (f, needle)) in served
             r = f()
             @test r isa SystemOneFailure && r.status == 400 && contains(r.message, needle)
         end
-        @test length(seen) == 2
+        @test length(seen) == 1
     end
     # What the wrapper refuses for its shape, the mock (above) rejects too, as the generic MLX encoder
     # does: the local check saves the round trip. Beyond that encoder it refuses blank `instructions`,
@@ -576,7 +579,8 @@ end
     e = OllamaEndpoint(base_url="http://box:11434")
     enc(qs...; state="The sky is blue.") = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, collect(qs); model="kev:0.8b-q8_0"))
     @test enc("q" => choice("Which?", ["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire # 255: route bound
-    @test enc("q" => choice("Which?", ["a" => "A"])) isa UniLM.SystemOneWire           # one: the llama.cpp path answers it
+    @test _os1_caught(() -> enc("q" => choice("Which?", ["a" => "A"]))) isa ArgumentError            # one: under the reference's 2
+    @test enc("q" => choice("Which?", ["a" => "A", "b" => nothing])) isa UniLM.SystemOneWire          # two: its minimum
     @test _os1_caught(() -> enc("q" => choice("Which?", ["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
     @test enc("q" => noul("Is it?")) isa UniLM.SystemOneWire
     @test _os1_caught(() -> enc("q" => choice(["a" => "A", "b" => "B"]))) isa ArgumentError           # no instructions: required

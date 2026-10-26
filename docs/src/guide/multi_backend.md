@@ -89,11 +89,23 @@ Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :limits)
   provider's endpoints declare — chat, tools, embeddings, images, the platform APIs —, and which requests
   UniLM sends to a server without knowing whether it serves them.
 - **The API its endpoint speaks.** Some endpoints speak their provider's native API, and others the
-  OpenAI wire that many providers serve; each start page says which. A server with an OpenAI-compatible API is
-  reached with a `GenericOpenAIEndpoint`, and any other with an endpoint of your own
+  OpenAI wire that many providers serve; the table below says which, and which APIs UniLM's release gate
+  runs its live tests against before every release. A server with an OpenAI-compatible API is reached with
+  a `GenericOpenAIEndpoint`, and any other with an endpoint of your own
   ([Write your own backend](@ref custom_backends_guide)).
 - **Its models.** Each entry names the models UniLM holds rules and prices for, and the next section says
   how UniLM keeps up with what the providers list.
+
+| Provider | The API its endpoint speaks | Live tests before every release |
+| :--- | :--- | :--- |
+| OpenAI | its own: Chat Completions and Responses | against the API |
+| Anthropic | its own: Messages | against the API |
+| Google Gemini | its own: generateContent and Interactions; `GEMINIOpenAIServiceEndpoint`, Google's OpenAI-compatible endpoint | against the API |
+| Ollama | its own, and its OpenAI-compatible routes for `respond`, compaction, FIM and transcription | against a local server |
+| vLLM, LM Studio & llama.cpp | OpenAI-compatible | — |
+| Azure OpenAI | Azure OpenAI's Chat Completions, in the dated `api-version` form | — |
+| DeepSeek | OpenAI-compatible, with its beta FIM and prefix completion | — |
+| Mistral & OpenAI-compatible services | OpenAI-compatible | — |
 
 ## [Keep up with provider models](@id backends_provider_models)
 

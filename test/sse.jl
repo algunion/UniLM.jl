@@ -184,6 +184,49 @@ end
     end
 end
 
+# Mistral's reasoning stream (https://docs.mistral.ai/studio/conversations/reasoning, "Streaming"):
+# "1. Thinking phase: `delta.content` is a list containing a `ThinkChunk` 2. Transition: a single list
+# containing both a closing `ThinkChunk` and the first `TextChunk` 3. Answer phase: `delta.content` is a
+# plain string". A ThinkChunk is `{"type": "thinking", "thinking": [TextChunk…]}`, a TextChunk
+# `{"type": "text", "text": …}`.
+_mi_think(t) = Dict("type" => "thinking", "thinking" => [Dict("type" => "text", "text" => t)])
+_mi_chunk(content; finish=nothing) = JSON.json(Dict("id" => "cmpl-1", "model" => "mock",
+    "choices" => [Dict("index" => 0, "delta" => Dict("content" => content), "finish_reason" => finish)]))
+const _MI_REASONING_STREAM = [
+    _mi_chunk([_mi_think("17 × 23: 17 × 20 = 340")]),                                    # thinking
+    _mi_chunk([_mi_think(", plus 51."), Dict("type" => "text", "text" => "The answer")]),  # transition
+    _mi_chunk(" is 391."; finish="stop"),                                                  # answer
+]
+
+@testset "handle_sse_event! (OpenAI wire) — a content list: Mistral's reasoning stream" begin
+    st = StreamState()
+    for payload in _MI_REASONING_STREAM
+        @test UniLM.handle_sse_event!(GenericOpenAIEndpoint("https://api.mistral.ai", ""), "", payload, st) === :continue
+    end
+    @test String(take!(copy(st.pending_delta))) == "The answer is 391."   # the callback's text, in order
+    m = _build_stream_message(st)
+    @test m.content == "The answer is 391."                              # no text chunk lost, no thinking in it
+    @test reasoning_text(m) == "17 × 23: 17 × 20 = 340, plus 51."        # the thinking chunks, as reasoning
+    @test st.sse_dropped == 0
+end
+
+@testset "driver — Mistral's reasoning stream reaches the callback and the message whole" begin
+    server, base = fragmented_sse_server(["data: " .* _MI_REASONING_STREAM .* "\n\n"; "data: [DONE]\n\n"]; gap=0.05)
+    try
+        chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
+        push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "What is 17 * 23?"))
+        received = Any[]
+        res = fetch(chatrequest!(chat; callback=(c, _) -> push!(received, c)))
+        @test res isa LLMSuccess && res.sse_dropped == 0
+        @test res.message.content == "The answer is 391."
+        @test [x for x in received if x isa String] == ["The answer", " is 391."]
+        @test reasoning_text(res) == "17 × 23: 17 × 20 = 340, plus 51."
+        @test last(chat).content == "The answer is 391."
+    finally
+        close(server)
+    end
+end
+
 # Reads one HTTP request off `sock` — its headers, then a chunked or Content-Length body —
 # so a raw-socket server answers only once the client has sent all of it.
 function _sse_drain_request!(sock)

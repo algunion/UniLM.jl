@@ -88,10 +88,11 @@ The reply is read as a Chat Completions reply: `result.model` is the model the s
 price row, so the first `chatrequest!` logs a warning and the call costs `0.0`
 ([Cost and usage](@ref openai_compatible_cost)).
 
-A reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's reasoning
-models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text` chunks
-([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text` chunks
-joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`.
+An unstreamed reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's
+reasoning models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text`
+chunks ([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text`
+chunks joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`. A
+streamed reply keeps them ([Streaming](@ref openai_compatible_streaming)).
 
 Fields go out under the names of the `Chat`, and a field Mistral names otherwise does not reach it as
 Mistral's: a `seed` goes out as `seed`, while Mistral's chat reference names the seed `random_seed`;
@@ -109,8 +110,8 @@ push!(chat, Message(Val(:user), "And a composite number?"))
 text(chatrequest!(chat))
 ```
 
-A reply's reasoning is not kept ([First call](@ref openai_compatible_first_call)), so none goes back
-with a later turn. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+A reply's reasoning never goes back with a later turn: an unstreamed reply keeps none
+([First call](@ref openai_compatible_first_call)), and the reasoning a streamed one keeps is not sent. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
 
 ## [Streaming](@id openai_compatible_streaming)
 
@@ -132,12 +133,14 @@ at `data: [DONE]`, or, without one, when the HTTP body ends after the finish rea
 runs once per call whose arguments decode, as the next call begins or at the end of the stream; and
 setting `close[] = true` stops it ([Stopping a Stream Early](@ref streaming_stop)).
 
-A delta whose `content` is a list is dropped whole: UniLM reads a streamed delta's content only when it
-is a string. Mistral streams a reasoning reply's thinking in such lists, then "a single list containing
-both a closing `ThinkChunk` and the first `TextChunk`"
-([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)), so a streamed reasoning reply
-loses the answer's first chunk, in the callback and in the final `Message`; unstreamed, the reply keeps
-it. The concepts every provider shares are on [Streaming](@ref streaming_guide).
+A delta whose `content` is a list of chunks is read chunk by chunk. Mistral streams a reasoning reply's
+thinking in such lists, then "a single list containing both a closing `ThinkChunk` and the first
+`TextChunk`", then the answer as strings
+([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)): the `text` chunks reach the
+callback and the final `Message` in order, and the `thinking` chunks are kept apart as the turn's
+reasoning, which [`reasoning_text`](@ref) reads once the finish reason or `data: [DONE]` has arrived; a
+stream cut before then keeps none. No thinking reaches the callback. The concepts every provider shares
+are on [Streaming](@ref streaming_guide).
 
 ## [Tools](@id openai_compatible_tools)
 

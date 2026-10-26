@@ -252,10 +252,13 @@ flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
 `signature` must be echoed unmodified or tool round-trips on thinking models
 are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, DeepSeek
 `reasoning_content` and Ollama `thinking`. `provider` tags the wire dialect
-(`:anthropic`, `:gemini`, `:deepseek` or `:ollama`); `blocks` is the provider's
+(`:anthropic`, `:gemini`, `:deepseek`, `:ollama` or `:mistral`); `blocks` is the provider's
 content/parts array exactly as decoded (String-keyed JSON) — for `:deepseek`,
 `[Dict("reasoning_content" => text)]`, echoed only on requests that carry tools; for
-`:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`.
+`:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`; for
+`:mistral`, the thinking chunks of a streamed reply joined into one Mistral `ThinkChunk`,
+`[Dict("type" => "thinking", "thinking" => [Dict("type" => "text", "text" => text)])]`, which
+no encoder sends.
 
 Encoders ignore a `ProviderContent` tagged for a different provider — a
 conversation moved across providers falls back to the neutral reconstruction
@@ -538,7 +541,7 @@ Represents a single message in a Chat Completions conversation.
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
-- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`), `nothing` otherwise. Never serialized on the OpenAI wire.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`) and by the OpenAI-wire stream handler for the thinking chunks of a streamed Mistral reply (`:mistral`), `nothing` otherwise. Never serialized on the OpenAI wire.
 - `attachments::Union{Nothing,Vector{Attachment}}`: Images, sound clips and PDF documents sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref), [`DocumentAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends or refuses them.
 - `audio_output::Union{Nothing,AudioOutput}`: The audio an OpenAI model answered with ([`AudioOutput`](@ref)), set by the OpenAI-wire decoders; `nothing` otherwise. Its docstring says how each encoder sends the turn back.
 
@@ -1910,8 +1913,9 @@ text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
 The reasoning ("thinking") text a provider returned with an assistant turn, read
 from its [`ProviderContent`](@ref): Ollama's `thinking`, DeepSeek's
 `reasoning_content`, Anthropic `thinking` blocks (separate blocks joined by a blank
-line; redacted blocks carry no text) and Gemini thought parts. `nothing` when the
-turn carries none — the provider returned no reasoning, or the model did not think.
+line; redacted blocks carry no text), Gemini thought parts and the thinking chunks of a
+streamed Mistral reply. `nothing` when the turn carries none — the provider returned no
+reasoning, or the model did not think.
 Like [`text`](@ref), it throws an [`LLMResultError`](@ref) on a failure result.
 
 ```julia
@@ -1943,8 +1947,17 @@ function _reasoning_in(provider::Symbol, b)::Union{String,Nothing}
         provider === :deepseek  ? get(b, "reasoning_content", nothing) :
         provider === :anthropic ? (get(b, "type", nothing) == "thinking" ? get(b, "thinking", nothing) : nothing) :
         provider === :gemini    ? (get(b, "thought", false) === true ? get(b, "text", nothing) : nothing) :
+        provider === :mistral   ? _think_chunk_text(b) :
         nothing
     t isa AbstractString && !isempty(t) ? String(t) : nothing
+end
+
+# The text of a Mistral ThinkChunk, `{"type": "thinking", "thinking": [TextChunk…]}`: its text
+# chunks joined (https://docs.mistral.ai/studio/conversations/reasoning).
+function _think_chunk_text(b::AbstractDict)::Union{String,Nothing}
+    parts = get(b, "type", nothing) == "thinking" ? get(b, "thinking", nothing) : nothing
+    parts isa AbstractVector || return nothing
+    join(String(p["text"]) for p in parts if p isa AbstractDict && get(p, "text", nothing) isa AbstractString)
 end
 
 # The status and the body/message text of a non-success result: every `*Failure`

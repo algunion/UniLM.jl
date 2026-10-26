@@ -326,6 +326,14 @@
 - **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
   called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
   available". No behaviour changes.
+- **A streamed reply whose content arrives as a list of chunks loses no text.** Mistral streams
+  a reasoning reply's thinking as a list holding a `ThinkChunk`, then "a single list containing
+  both a closing `ThinkChunk` and the first `TextChunk`", then the answer as strings. The
+  OpenAI-wire stream handler read a delta's `content` only when it was a string and dropped a
+  list whole, so a streamed reasoning reply lost the answer's first chunk, in the callback and in
+  the final message, which the same reply unstreamed kept. A list is now read chunk by chunk:
+  its text chunks reach the callback and the message in order, and its thinking chunks are kept
+  apart as the turn's reasoning (`ProviderContent(:mistral, …)`), which `reasoning_text` reads.
 
 ## 0.26.0
 

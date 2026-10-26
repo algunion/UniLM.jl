@@ -183,14 +183,15 @@ end
 # index [1]; `usage` is captured from any chunk. OpenAI names the served `model` and
 # the billed `service_tier` on every chunk; the usage takes the stream's tier
 # (`_chunk_tier!`: the latest one named), so a usage chunk without one still carries
-# it. `delta.audio` updates assemble an audio reply (`_audio_delta!`). A `{"error": …}` payload is
+# it. `delta.audio` updates assemble an audio reply (`_audio_delta!`), and a `delta.content` given
+# as a list of chunks is read chunk by chunk (`_content_delta!`). A `{"error": …}` payload is
 # terminal (`:error`): vLLM and OpenAI-compatible proxies report a mid-stream
 # failure that way on the HTTP-200 stream, usually followed by `[DONE]`, so the
 # partial text must not finalize. An error object is recorded as is — its numeric
 # `code`, where one is given, is the server's status for the failure.
 function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
-    payload == "[DONE]" && return :done
+    payload == "[DONE]" && return (_finalize_thinking!(state); :done)
     parsed = JSON.parse(payload; dicttype=Dict{String,Any})
     parsed isa AbstractDict || return :continue
     err = get(parsed, "error", nothing)
@@ -208,15 +209,11 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     choices isa AbstractVector || return :continue
     for cho in choices
         cho isa AbstractDict || continue
-        fr = get(cho, "finish_reason", nothing)
-        fr isa AbstractString && (state.finish_reason = fr)
         delta = get(cho, "delta", nothing)
+        delta isa AbstractDict && _content_delta!(state, get(delta, "content", nothing))
+        fr = get(cho, "finish_reason", nothing)
+        fr isa AbstractString && (state.finish_reason = fr; _finalize_thinking!(state))
         delta isa AbstractDict || continue
-        c = get(delta, "content", nothing)
-        if c isa AbstractString
-            print(state.content, c)
-            print(state.pending_delta, c)
-        end
         r = get(delta, "refusal", nothing)
         r isa AbstractString && print(state.refusal, r)
         audio = get(delta, "audio", nothing)
@@ -248,6 +245,57 @@ end
 # The tier a chunk names becomes the stream's, which the usage takes. An endpoint whose
 # response head names the tier first (`_stream_head!`) may keep that one.
 _chunk_tier!(_, state::StreamState, tier::String)::Nothing = (state.service_tier = tier; nothing)
+
+# A streamed `delta.content`. A string is the answer's next text. A list of chunks is the shape
+# Mistral's reasoning models stream: "1. Thinking phase: `delta.content` is a list containing a
+# `ThinkChunk` 2. Transition: a single list containing both a closing `ThinkChunk` and the first
+# `TextChunk` 3. Answer phase: `delta.content` is a plain string"
+# (https://docs.mistral.ai/studio/conversations/reasoning). Its text chunks are the answer, in
+# order, read as the unstreamed reply's are (`_content_text`); the text chunks inside a thinking
+# chunk are the reasoning, kept apart in one pending ThinkChunk (`_thinking_buffer!`).
+_content_delta!(state::StreamState, text::AbstractString)::Nothing =
+    (print(state.content, text); print(state.pending_delta, text); nothing)
+function _content_delta!(state::StreamState, chunks::AbstractVector)::Nothing
+    for chunk in chunks
+        chunk isa AbstractDict || continue
+        kind = get(chunk, "type", "text")
+        if kind == "text"
+            t = get(chunk, "text", nothing)
+            t isa AbstractString && _content_delta!(state, t)
+        elseif kind == "thinking"
+            parts = get(chunk, "thinking", nothing)
+            for p in (parts isa AbstractVector ? parts : Any[])
+                t = p isa AbstractDict && get(p, "type", "text") == "text" ? get(p, "text", nothing) : nothing
+                t isa AbstractString && print(_thinking_buffer!(state), t)
+            end
+        end
+    end
+    nothing
+end
+_content_delta!(::StreamState, _)::Nothing = nothing
+
+# The pending ThinkChunk a stream's thinking text accumulates in. The finish reason or `[DONE]`
+# closes it (`_finalize_thinking!`) into Mistral's own shape, `{"type": "thinking", "thinking":
+# [{"type": "text", "text": …}]}`, which the message carries as `ProviderContent(:mistral, …)` for
+# `reasoning_text`; a block still pending marks the capture incomplete, so a stream cut before then
+# keeps no partial reasoning.
+function _thinking_buffer!(state::StreamState)::IOBuffer
+    blk = get!(state.raw_pending, 0) do
+        state.raw_provider = :mistral
+        Dict{String,Any}("type" => "thinking", "thinking" => IOBuffer())
+    end
+    blk["thinking"]::IOBuffer
+end
+
+# Close the pending ThinkChunk, if this stream holds one; another wire's pending capture (DeepSeek's
+# `reasoning_content`, whose handler runs this one first) is that handler's to close.
+function _finalize_thinking!(state::StreamState)::Nothing
+    state.raw_provider === :mistral || return nothing
+    blk = pop!(state.raw_pending, 0, nothing)
+    isnothing(blk) || push!(state.raw_blocks, Dict{String,Any}("type" => "thinking",
+        "thinking" => Any[Dict{String,Any}("type" => "text", "text" => takestring!(blk["thinking"]))]))
+    nothing
+end
 
 # One update of a streamed audio reply: "Audio chunks may carry an ID, base64 data, or
 # transcript text; the final audio update contains only its expiry timestamp" (Chat

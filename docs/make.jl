@@ -38,7 +38,7 @@ RECORD && LIVE && error("UNILM_DOCS_RECORD=1 and UNILM_DOCS_LIVE=1 exclude each 
 const ANSWERS_MODE = LIVE ? nothing : RECORD ? :record_missing : :replay
 
 const PROVIDER_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
-                       "MISTRAL_API_KEY", "AZURE_OPENAI_API_KEY", "TYPESAFE_API_KEY")
+                       "MISTRAL_API_KEY", "AZURE_OPENAI_API_KEY", "TYPESAFE_API_KEY", "OLLAMA_API_KEY")
 # Replay contacts no server: the builder's OLLAMA_HOST must not show up in the examples' output.
 hidden(mode::Symbol) = mode === :replay ? [k => nothing for k in (PROVIDER_KEYS..., "OLLAMA_HOST")] :
                                           Pair{String,Nothing}[]

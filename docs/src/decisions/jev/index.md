@@ -18,19 +18,19 @@ Main.ProviderFacts.at_a_glance(:jev)
 | I want to… | Use | You get |
 | :--- | :--- | :--- |
 | [make a first decision](@ref jev_first_decision) | `ask(state, "name" => choice(…))` | the chosen option, its probability, and the model that answered |
-| [set the key, the API root or the default model](@ref jev_setup__next) | `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL` | every call that names no other provider, on Jev |
-| [pin the version a threshold was tuned on](@ref jev_models__next) | `model = "jev-1.13.0"`, or `TYPESAFE_DEFAULT_MODEL` | answers from that version, wherever the alias moves |
+| [set the key, the API root or the default model](@ref jev_setup) | `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL` | every call that names no other provider, on Jev |
+| [pin the version a threshold was tuned on](@ref jev_models) | `model = "jev-1.13.0"`, or `TYPESAFE_DEFAULT_MODEL` | answers from that version, wherever the alias moves |
 | [ask several kinds of question at once](@ref jev_questions) | `choice`, `score`, `noul` and `box` in one `ask` | every answer from one request, the state read once |
-| [know what is refused before a request is sent](@ref jev_limits__next) | the table of refusals | the words of the `ArgumentError`, and the fix |
-| [judge a picture, or find something in it](@ref jev_images__next) | an `ImageAttachment` in the state; a `box` question | answers about the picture; a box's edges |
-| [send a state longer than 32k tokens](@ref jev_long_context__next) | `long_context = true` | 262k tokens of context, at the same price per token |
+| [know what is refused before a request is sent](@ref jev_limits) | the table of refusals | the words of the `ArgumentError`, and the fix |
+| [judge a picture, or find something in it](@ref jev_images) | an `ImageAttachment` in the state; a `box` question | answers about the picture; a box's edges |
+| [send a state longer than 32k tokens](@ref jev_long_context) | `long_context = true` | 262k tokens of context, at the same price per token |
 | [act only when Jev is sure enough](@ref jev_confidence) | `min_confidence` and `fallback`, or a `decide` policy | the answer, or a hand-over to a person |
-| [know what a decision cost](@ref jev_cost__next) | `token_usage`, `estimated_cost` | the input tokens billed and their USD estimate |
+| [know what a decision cost](@ref jev_cost) | `token_usage`, `estimated_cost` | the input tokens billed and their USD estimate |
 | [test without a key](@ref jev_testing) | `with_recorded_answers` | answers recorded once, replayed with no key and no network |
 | [decide about many texts at once](@ref jev_throughput) | `ask_each(texts, questions...)` | one result per text, in input order |
-| [handle a failure](@ref jev_errors__next) | the result's type | the status and TypeSafe's message, never an empty success |
+| [handle a failure](@ref jev_errors) | the result's type | the status and TypeSafe's message, never an empty success |
 
-## [Setup](@id jev_setup__next)
+## [Setup](@id jev_setup)
 
 Get an API key from the [TypeSafe console](https://console.typesafe.ai/keys) and set it in the environment
 Julia starts from:
@@ -43,7 +43,7 @@ export TYPESAFE_API_KEY="..."
 | :--- | :--- | :--- |
 | `TYPESAFE_API_KEY` | a call sends nothing and returns a `SystemOneCallError` whose `error` reads `TYPESAFE_API_KEY is not set` | the key, sent as `Authorization: Bearer …` |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | the API root: a proxy or a gateway in front of TypeSafe, or a server of your own in tests ([Testing and recordings](@ref jev_testing)) |
-| `TYPESAFE_DEFAULT_MODEL` | the default model at the top of this page | the model of a call that names none ([Models](@ref jev_models__next)) |
+| `TYPESAFE_DEFAULT_MODEL` | the default model at the top of this page | the model of a call that names none ([Models](@ref jev_models)) |
 
 UniLM reads the three when each request is sent, so a value exported after `using UniLM` takes effect, and a
 blank value counts as unset. A call goes to Jev when it names no `service` and no [`with_system_one`](@ref)
@@ -51,7 +51,7 @@ scope around it names another provider; `service = TYPESAFEServiceEndpoint` name
 `TYPESAFEServiceEndpoint()` returns that same type. A call's model is its own `model = …`; else, when it names
 no `service`, the model of the scope around it; else `TYPESAFE_DEFAULT_MODEL`, and the default model at the top
 of this page when that is unset. The endpoint has no options of its own, and its one request option, `long_context`, has a section of
-its own ([Long context](@ref jev_long_context__next)).
+its own ([Long context](@ref jev_long_context)).
 
 ## [First decision](@id jev_first_decision)
 
@@ -73,21 +73,21 @@ a = r["team"]
 `a.choice` is the most probable option, `a.probabilities` holds one probability per option, and `a.confidence`
 says how peaked they are ([Confidence and tuning](@ref jev_confidence)). A failed call has no answers:
 `r["team"]` throws a `SystemOneError` on it, so a decision is never read from a call that did not happen
-([When something fails](@ref jev_errors__next)).
+([When something fails](@ref jev_errors)).
 
 ```@example jev
 r.response.model, token_usage(r).prompt_tokens
 ```
 
 The call named no model, so it was sent with the default model at the top of this page, an alias, and
-`r.response.model` is the versioned id that answered ([Models](@ref jev_models__next)). [`nl_classify`](@ref) makes the same kind of decision in one call
+`r.response.model` is the versioned id that answered ([Models](@ref jev_models)). [`nl_classify`](@ref) makes the same kind of decision in one call
 and returns the key whose description fits ([Dispatch on Meaning](@ref nl_dispatch_guide)):
 
 ```@example jev
 nl_classify(message, TEAM)
 ```
 
-## [Models](@id jev_models__next)
+## [Models](@id jev_models)
 
 TypeSafe serves Jev under aliases and versioned ids, and a call sends either as its `model`
 ([Models](https://docs.typesafe.ai/models)):
@@ -128,7 +128,8 @@ TypeSafe publishes the failure modes it knows of Jev 1.13
 ([Jev 1.13 jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13)); on 25 October 2026 its
 documentation index lists no such page for Jev 1.14. Jev 1.13 reads a question literally, does not count,
 compute or compare dates reliably, loses accuracy as unrelated material grows around the decision, and is not
-trained to generate text.
+trained to generate text. Nor does it treat its state as hostile by default: text written to steer it, such as an
+injected instruction, can move its answer.
 Compute in Julia, send only what the decision needs, and leave text to a language model;
 [Designing good questions](@ref jev_designing_questions) turns these into rules for writing questions.
 
@@ -136,7 +137,7 @@ Compute in Julia, send only what the decision needs, and leave text to a languag
 
 Jev answers four kinds of question, in any mix in one request: a [`choice`](@ref) picks one option of a set, a
 [`score`](@ref) places the state on levels you describe, lowest first, a [`noul`](@ref) gives the probability that
-a statement holds, and a [`box`](@ref) locates something in a picture ([Locate with Box](@ref jev_box__next)). A
+a statement holds, and a [`box`](@ref) locates something in a picture ([Locate with Box](@ref jev_box)). A
 [`RawQuestion`](@ref) goes out as you wrote it, for a kind UniLM does not model. Each question is evaluated against
 the same state on its own: one answer is never context for another
 ([Primitives](https://docs.typesafe.ai/primitives)).
@@ -163,11 +164,13 @@ What reaches the model:
 
 A Choice takes up to 255 options and a Score up to 10 levels, and TypeSafe advises at least two levels
 ([Score](https://docs.typesafe.ai/primitives/score)); a question over either limit is refused before the request
-is sent ([Limits and refusals](@ref jev_limits__next)). A request may hold any number of questions as long as it
-fits the context. Reading the answers and the decision rules on them are on
+is sent ([Limits and refusals](@ref jev_limits)). Jev judges each Score level on its own against the state,
+without its number or its neighbours, so a level such as "worse than the previous level" gives it nothing to
+match ([Score](https://docs.typesafe.ai/primitives/score)). A request may hold any number of questions as long as
+it fits the context. Reading the answers and the decision rules on them are on
 [Route and Decide](@ref system_one_guide).
 
-## [Limits and refusals](@id jev_limits__next)
+## [Limits and refusals](@id jev_limits)
 
 What a request meets on TypeSafe ([Models](https://docs.typesafe.ai/models),
 [Request rules and errors](https://docs.typesafe.ai/api/errors), [Images](https://docs.typesafe.ai/images)), and
@@ -175,7 +178,7 @@ which of it UniLM checks before sending:
 
 | Limit | Value | Checked before sending |
 | :--- | :--- | :--- |
-| Context | 64k tokens for the state and every question, 32k for the state with any one question; 262k for both with `long_context = true` ([Long context](@ref jev_long_context__next)) | no: the service answers 400 with `max_tokens_exceeded` |
+| Context | 64k tokens for the state and every question, 32k for the state with any one question; 262k for both with `long_context = true` ([Long context](@ref jev_long_context)) | no: the service answers 400 with `max_tokens_exceeded` |
 | Questions | no limit of their own: the request must fit the context | — |
 | Choice options | 1 to 255 per question | yes |
 | Score levels | 1 to 10 per question | yes |
@@ -184,7 +187,7 @@ which of it UniLM checks before sending:
 | Request body | 32 MiB, multipart framing included | yes |
 | Each image | PNG or JPEG, a still image; 16 MiB per file; 280 to 1568 pixels on each side | yes |
 | All images together, as TypeSafe re-encodes them; the request with every picture in place of each reference to it | 32 MiB each | no: the service answers 413 |
-| Rate limits | per organization, in tokens and in requests per second | no ([When something fails](@ref jev_errors__next)) |
+| Rate limits | per organization, in tokens and in requests per second | no ([When something fails](@ref jev_errors)) |
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
 A wrapper refuses rather than adapts: a request changed to fit would ask a question you did not write, and its
@@ -195,7 +198,7 @@ answer would carry no sign of the change.
 | a Choice of more than 255 options | `TypeSafe accepts at most 255 options per Choice question`: the service answers 422 for more | split it, or narrow the options |
 | a Score of more than 10 levels | `TypeSafe accepts at most 10 levels per Score question`: the service answers 422 for more | merge levels into a coarser rubric |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its wire carries Choice, Score, Noul and Box questions`: TypeSafe's request has no other kind | build it as a `RawQuestion`, which is sent as written |
-| a `box` question in a request that holds no image | `locates something in an image, and this request carries none`: a box drawn on no picture means nothing | put an `ImageAttachment` in the state ([Locate with Box](@ref jev_box__next)) |
+| a `box` question in a request that holds no image | `locates something in an image, and this request carries none`: a box drawn on no picture means nothing | put an `ImageAttachment` in the state ([Locate with Box](@ref jev_box)) |
 | a provider option other than `long_context`, or a `long_context` that is not `true` or `false` | `TypeSafe does not accept the request option`, `option is`: the one option TypeSafe takes is `long_context`, a Boolean | `long_context = true`, or no option |
 | a state, instructions or criteria nested more than 64 levels deep | `TypeSafe accepts at most 64 levels of nested objects and arrays`: the service answers 400 | flatten it |
 | a request body over 32 MiB | `TypeSafe accepts a request body of at most 32 MiB`: the service answers 413 | shorten the state, send fewer or smaller images, or split the request |

@@ -20,7 +20,7 @@ protocol of its own; a service with a wire of its own needs one.
 
 A server that speaks TypeSafe's wire needs no code at all to receive [`TYPESAFEServiceEndpoint`](@ref)'s requests:
 set `TYPESAFE_BASE_URL` to its root, and every request goes there, read when each is sent
-([Setup](@ref jev_setup__next)). To give such a server an endpoint of its own, beside TypeSafe's, declare
+([Setup](@ref jev_setup)). To give such a server an endpoint of its own, beside TypeSafe's, declare
 `:system_one`, its root and its credentials; an endpoint without a
 [`system_one_protocol`](@ref UniLM.system_one_protocol) method speaks
 [`TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol), TypeSafe's wire. `_api_base_url` is an internal hook

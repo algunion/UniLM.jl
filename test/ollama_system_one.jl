@@ -242,7 +242,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "another scope's model" => (() -> with_system_one(() -> ask("s", q; service=ep), TYPESAFEServiceEndpoint;
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
-            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank: say what it asks (most local decision models require instructions)"),
+            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "its API reference requires them not blank (`pattern: \\S`)"),
             "no instructions"       => (a("s", choice(["a", "b"])), "Ollama's API reference requires `instructions` on every Choice, Noul and Score question"),
             "criteria-only noul"    => (a("s", noul(; yes="It is")), "\"q1\" has none: say what it asks"),
             "score, no instructions" => (a("s", score(["low", "high"])), "requires `instructions`"),
@@ -285,10 +285,10 @@ struct _Os1Odd <: SystemOneQuestion end
         @test length(seen) == 1
     end
     # What the wrapper refuses for its shape, the mock (above) rejects too, as the generic MLX encoder
-    # does: the local check saves the round trip. Beyond that encoder it refuses blank `instructions`,
-    # which Ollama would read as none, and a question without `instructions`, which Ollama's API
-    # reference requires though Clef reads the question's name in their place. The shapes the wrapper
-    # leaves to the model (27 options, one option) the mock rejects too.
+    # does: the local check saves the round trip. Blank or missing `instructions` and a one-option
+    # Choice, which Ollama's API reference rules out, are refused for every model, though some
+    # encoders take them (Clef reads the question's name in place of missing instructions). The shape
+    # the wrapper leaves to the model (27 options) the mock rejects too.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),

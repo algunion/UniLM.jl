@@ -39,22 +39,21 @@ though some models read it: `instructions` given as anything but a string, an ob
 or an array; an option described by anything but a string or `nothing`; a Score level
 or a Noul criterion that is not a string (on Ollama 0.40.6, `kev:0.8b-q8_0` and
 `d1:3b`, on the llama.cpp path, answered an option described by an object, and
-`tev1:0.8b` refused it) — and, a rule of UniLM's own, blank (whitespace-only)
-`instructions`, which Ollama would read as none. It refuses a Choice, Noul or Score
-question without `instructions`, which Ollama's API reference requires (measured on
-Ollama 0.40.6, `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered one with HTTP
-400 `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` with
-400 `questions.intent: "instructions" must be provided` for a question named
-`intent`, and `clef-flash:9b` answered it), and a Choice of one option, below the
-two its API reference requires (on Ollama 0.40.6 the models on the llama.cpp path,
-`kev`, `d1` and `d1-omni`, answered one, and the MLX models their own 400,
-`criteria must contain 2–26 candidates`; `strands-decider:2b` 2–255). A model that
-takes fewer options (Tev1: at most 24; Nimble and Clef Flash: 26) says so in its own
-HTTP 400 too, which comes back as a
-[`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
-images excluded, at 64 KiB (measured on Ollama 0.40.6 with `kev:0.8b-q8_0`,
-`d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB for a Kev model on Ollama's own
-runner, untested): that limit is the server's to count, by its own measure, and is
+`tev1:0.8b` refused it). It refuses blank (whitespace-only) `instructions`, which
+Ollama would read as none: not blank, as the reference's `pattern: \\S` requires; and
+a Choice, Noul or Score question without `instructions`, which the reference requires
+too (measured on Ollama 0.40.6, `tev1:4b`, `nimble:9b` and `strands-decider:2b`
+answered one with HTTP 400 `instructions must be a nonempty string, object, or
+array`, `kev:0.8b-q8_0` with 400 `questions.intent: "instructions" must be provided`
+for a question named `intent`, and `clef-flash:9b` answered it), and a Choice of one
+option, below the two its API reference requires (on Ollama 0.40.6 the models on the
+llama.cpp path, `kev`, `d1` and `d1-omni`, answered one, and the MLX models their own
+400, `criteria must contain 2–26 candidates`; `strands-decider:2b` 2–255). A model
+that takes fewer options (Tev1: at most 24; Nimble and Clef Flash: 26) says so in its
+own HTTP 400 too, which comes back as a [`SystemOneFailure`](@ref). Ollama also caps
+a local request's text and schema, images excluded, at 64 KiB (measured on Ollama
+0.40.6 with `kev:0.8b-q8_0`, `d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB
+for a Kev model on Ollama's own runner, untested): that limit is the server's to count, by its own measure, and is
 not checked here; a request over it comes back as a [`SystemOneFailure`](@ref)
 carrying Ollama's 413, `text and schema must not exceed 64 KiB`. A [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
 one option is `keep_alive`: the seconds the model stays loaded after the request
@@ -141,8 +140,8 @@ function _ollama_instructions(name::String, instructions)::Nothing
         "Ollama's API reference requires `instructions` on every Choice, Noul and Score question; " *
         "$(repr(name)) has none: say what it asks, as the first argument of `choice`, `score` or `noul`"))
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
-        "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks " *
-        "(most local decision models require instructions)"))
+        "Ollama reads blank `instructions` as none, and its API reference requires them not blank " *
+        "(`pattern: \\S`); those of $(repr(name)) are blank: say what it asks"))
     instructions isa Union{AbstractString,AbstractDict,AbstractVector,Tuple,NamedTuple} || throw(ArgumentError(
         "Ollama reads `instructions` as a string, object or array; $(repr(name)) has $(typeof(instructions))"))
     nothing

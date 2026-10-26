@@ -305,22 +305,22 @@ checks before sending:
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
 UniLM refuses what Ollama's route refuses in its shared checks or documents as its maximum, and what its API
-reference does not list, though some models read it; blank instructions are a refusal of UniLM's own, as Ollama
-would read them as none. A wrapper refuses rather than adapts: a request changed to fit would ask a question you did
-not write.
+reference does not list, though some models read it; blank instructions too, which Ollama would read as none: not
+blank, as the reference's `pattern: \S` requires. A wrapper refuses rather than adapts: a request changed to fit
+would ask a question you did not write.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | a call that names no model, unless it names no `service` inside a scope that names one | `has no default System One model`: Ollama has no default | `model = "tev1:0.8b"`, or a `with_system_one(OllamaEndpoint(); model = …)` scope |
 | more than 64 questions | `Ollama accepts at most 64 questions per request` | split them across requests |
-| a Choice of one option | `Ollama's API reference gives a Choice 2 to 255 options` | add an option, such as `"anything else"` |
+| a Choice of one option | `Ollama's API reference gives a Choice 2 to 255 options` | add an option, such as `"other"` |
 | a Choice of more than 255 options | `Ollama accepts at most 255 options per question` | split it, or narrow the options |
 | an option described by anything but a string or `nothing` | `Ollama reads a Choice option's description as a string or` | describe it in words, or pass `nothing` |
 | a Score of fewer than 2 or more than 10 levels | `Ollama accepts 2 to 10 levels per question` | offer at least two, or merge levels into a coarser rubric |
 | a Score level that is not a string | `Ollama reads a Score level as a string` | write the level as text |
 | a Noul `yes` or `no` that is not a string | `Ollama reads a Noul criterion as a string` | write it as text |
 | a Choice, Noul or Score without instructions | `Ollama's API reference requires`: a question's `instructions` are among its required fields | say what it asks, as the first argument of `choice`, `score` or `noul` |
-| blank instructions | `Ollama reads blank`: Ollama would read them as none | say what the question asks |
+| blank instructions | `Ollama reads blank`: Ollama would read them as none, and its reference requires them not blank (`pattern: \S`) | say what the question asks |
 | instructions that are not a string, an object or an array | `as a string, object or array` | write them as text |
 | a `box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its System One route answers Choice, Score and Noul questions, and this wrapper sends a RawQuestion verbatim` | build it as a `RawQuestion` |

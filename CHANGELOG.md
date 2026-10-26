@@ -89,7 +89,7 @@
   models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it. It is now an
   `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
   verb whose call offers a single option is refused too. Upgrading: add an option, such as a
-  catch-all `"anything else"`.
+  fallback `"other"`.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

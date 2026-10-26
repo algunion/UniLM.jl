@@ -421,15 +421,16 @@ end
   an object or an array; an option described by anything but a string or
   `nothing`; a Score level or a Noul criterion that is not a string (on Ollama
   0.40.6, `kev:0.8b-q8_0` and `d1:3b`, on the llama.cpp path, answered an option
-  described by an object, and `tev1:0.8b` refused it) — and, a rule of UniLM's
-  own, blank (whitespace-only) `instructions`, which Ollama would read as none. It
-  refuses a Choice, Noul or Score question without `instructions`, which the API
-  reference requires, and a Choice of one option, below the two it requires.
+  described by an object, and `tev1:0.8b` refused it). It refuses blank
+  (whitespace-only) `instructions`, which Ollama would read as none: not blank, as
+  the reference's `pattern: \S` requires; a Choice, Noul or Score question without
+  `instructions`, which the API reference requires; and a Choice of one option,
+  below the two it requires.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
-| `instructions` | required on a Choice, Noul and Score, as the route's API reference lists them: a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
+| `instructions` | required on a Choice, Noul and Score, as the route's API reference lists them: a string, an object or an array — and not blank, as the reference's `pattern: \S` requires |
 | Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |

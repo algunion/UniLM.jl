@@ -17,7 +17,7 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 | `tool` messages | `functionResponse` parts, consecutive ones in one `user` turn | [Tools](@ref gemini_tools) |
 | `tools`, `tool_choice` | `tools[].functionDeclarations`, `toolConfig.functionCallingConfig` | [Tools](@ref gemini_tools) |
 | `response_format` | `generationConfig.responseFormat` | [Structured output](@ref gemini_structured_output) |
-| `reasoning_effort` | `generationConfig.thinkingConfig.thinkingLevel` | [Reasoning](@ref gemini_reasoning) |
+| `reasoning_effort` | `generationConfig.thinkingConfig.thinkingLevel`, with `includeThoughts: true` | [Reasoning](@ref gemini_reasoning) |
 | `model` | the URL's `models/{model}` | the [thinking table](@ref gemini_reasoning) |
 | `max_completion_tokens`, else `max_tokens` | `generationConfig.maxOutputTokens` | [Setup](@ref gemini_setup) |
 | `temperature`, `top_p`, `stop`, `seed` | `generationConfig.temperature`, `topP`, `stopSequences`, `seed` | [Request options](@ref gemini_request_options) |
@@ -27,7 +27,8 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 
 ## [Reasoning](@id gemini_reasoning)
 
-`reasoning_effort` sets the request's thinking level, `thinkingConfig.thinkingLevel`, and a
+`reasoning_effort` sets the request's thinking level, `thinkingConfig.thinkingLevel`, and asks for the
+thought summaries, `includeThoughts: true` (below); a
 [`Reasoning`](@ref)'s `effort` sets a `Respond`'s, `thinking_level` on the Interactions API
 ([Thinking on the Interactions API](@ref gemini_interactions_thinking)). A `reasoning_effort` of `"minimal"`,
 `"low"`, `"medium"` or `"high"` is checked against the table below; `"none"`, `"xhigh"` and
@@ -69,13 +70,16 @@ u = result.usage
 (; u.completion_tokens, u.reasoning_tokens, summary = reasoning_text(result))
 ```
 
-The model thought, and `reasoning_tokens` counts it, but the reply holds no text of the thinking.
-Google returns thought summaries to a request that enables them — "You can enable thought summaries
-by setting `includeThoughts` to `true` in your request configuration"
-([thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries)) —
-and a `Chat` does not, so [`reasoning_text`](@ref) gives `nothing` for a generateContent reply. A
-`Respond` asks for them with `Reasoning(summary="auto")`, and [`reasoning_summaries`](@ref) reads
-them ([Thinking on the Interactions API](@ref gemini_interactions_thinking)).
+The model thought, and `reasoning_tokens` counts it. A `Chat` that sets `reasoning_effort` also asks
+for the thought summaries — "You can enable thought summaries by setting `includeThoughts` to `true`
+in your request configuration"
+([thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries)) — which
+come back as parts marked `thought`, and [`reasoning_text`](@ref) reads them; a `Chat` without
+`reasoning_effort` asks for none, so `reasoning_text` gives `nothing`. They add nothing to the bill:
+"pricing is based on the full thought tokens the model needs to generate to create a summary,
+despite only the summary being output from the API" (the same page). A `Respond` asks for them with
+`Reasoning(summary="auto")`, and [`reasoning_summaries`](@ref) reads them
+([Thinking on the Interactions API](@ref gemini_interactions_thinking)).
 
 The thinking is billed as output — Google lists each model's "Output price (including thinking
 tokens)" ([pricing](https://ai.google.dev/gemini-api/docs/pricing)) — and `maxOutputTokens` bounds
@@ -295,8 +299,9 @@ stops the stream ([Stopping a Stream Early](@ref streaming_stop)).
   in the `provider_content` of the final `Message`: the text parts are not merged, as Google asks
   ("Don't combine two `Parts` that both contain signatures"), so the streamed turn goes back on the
   next request as an unstreamed one does.
-- **Thinking.** No thinking reaches the callback, only the answer's text: a `Chat` asks for no thought
-  summaries ([Reasoning](@ref gemini_reasoning)).
+- **Thinking.** No thinking reaches the callback, only the answer's text: the thought summaries a `Chat`
+  that sets `reasoning_effort` asks for stay on the final `Message`, where `reasoning_text` reads them
+  ([Reasoning](@ref gemini_reasoning)).
 - **Tool calls.** UniLM takes each `functionCall` part as a whole call: `on_tool_call(tc)` runs once
   per call as soon as its chunk arrives, before the turn ends, and the final `Message` holds every
   call.

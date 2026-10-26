@@ -271,8 +271,14 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.top_p)       || (gen[:topP] = chat.top_p)
     isnothing(chat.stop)        || (gen[:stopSequences] = chat.stop isa String ? [chat.stop] : chat.stop)
     isnothing(chat.seed)        || (gen[:seed] = _gemini_seed(chat.seed))
+    # A thinking level also asks for the thought summaries ("You can enable thought summaries by
+    # setting `includeThoughts` to `true`", https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries),
+    # which come back as parts marked `thought` for `reasoning_text`. They add nothing to the bill:
+    # "pricing is based on the full thought tokens the model needs to generate to create a summary,
+    # despite only the summary being output from the API" (the same page).
     if (effort = chat.reasoning_effort) !== nothing
-        gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)))
+        gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)),
+                                    :includeThoughts => true)
     end
     (fmt = _gemini_response_format(chat.response_format)) === nothing || (gen[:responseFormat] = fmt)
     isempty(gen) || (body[:generationConfig] = gen)

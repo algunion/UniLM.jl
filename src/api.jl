@@ -1970,8 +1970,9 @@ text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
 The reasoning ("thinking") text a provider returned with an assistant turn, read
 from its [`ProviderContent`](@ref): Ollama's `thinking`, DeepSeek's
 `reasoning_content`, Anthropic `thinking` blocks (separate blocks joined by a blank
-line; redacted blocks carry no text), Gemini thought parts and the thinking chunks of a
-streamed Mistral reply. `nothing` when the turn carries none — the provider returned no
+line; redacted blocks carry no text), the thought summaries of a native Gemini reply (a
+`Chat` that sets `reasoning_effort` asks for them) and the thinking chunks of a streamed
+Mistral reply. `nothing` when the turn carries none — the provider returned no
 reasoning, or the model did not think.
 Like [`text`](@ref), it throws an [`LLMResultError`](@ref) on a failure result.
 

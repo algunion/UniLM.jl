@@ -5,7 +5,7 @@ using Test, HTTP, JSON, UniLM
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low")
     body = JSON.parse(UniLM.encode_request(chat.service, chat))
     @test get(get(body, "generationConfig", Dict()), "thinkingConfig", nothing) ==
-          Dict("thinkingLevel" => "LOW")
+          Dict("thinkingLevel" => "LOW", "includeThoughts" => true)
     r = Respond(service=GEMINIServiceEndpoint, model=chat.model, input="hi",
                 reasoning=Reasoning(effort="low", summary="auto"))
     body = JSON.parse(UniLM.encode_agentic(r.service, r))

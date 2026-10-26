@@ -638,7 +638,8 @@ end
     # TextResponseFormat.mimeType is an enum on this wire: "application/json" is a 400.
     @test JSON.parse(encode_request(GEMINIServiceEndpoint, chat)) == Dict(
         "contents" => [Dict("role" => "user", "parts" => [Dict("text" => "Give the capital of Norway as JSON.")])],
-        "generationConfig" => Dict("maxOutputTokens" => 1024, "thinkingConfig" => Dict("thinkingLevel" => "LOW"),
+        "generationConfig" => Dict("maxOutputTokens" => 1024,
+            "thinkingConfig" => Dict("thinkingLevel" => "LOW", "includeThoughts" => true),
             "responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON", "schema" => schema))))
 
     gen(rf) = get(JSON.parse(encode_request(GEMINIServiceEndpoint,
@@ -738,6 +739,26 @@ end
             @test err isa ArgumentError && occursin(model, err.msg) && occursin(three, err.msg)
         end
     end
+end
+
+@testset "thinking — a Chat that sets reasoning_effort asks for the thought summaries reasoning_text reads" begin
+    # "You can enable thought summaries by setting `includeThoughts` to `true` in your request
+    # configuration" (ai.google.dev/gemini-api/docs/generate-content/thinking#summaries); a reply then
+    # carries them as parts marked `thought`.
+    body(; kw...) = JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint,
+        messages=[Message(role=RoleUser, content="Is 391 prime?")]; kw...)))
+    @test body(reasoning_effort="low")["generationConfig"]["thinkingConfig"] ==
+          Dict("thinkingLevel" => "LOW", "includeThoughts" => true)
+    @test !haskey(body(), "generationConfig")      # no effort: no thinking config, the model's own default
+    reply = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("role" => "model", "parts" => [
+        Dict("text" => "391 = 17 × 23, so it is not prime.", "thought" => true),
+        Dict("text" => "No.", "thoughtSignature" => "c2ln")]))])
+    m = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply)))).message
+    @test m.content == "No." && reasoning_text(m) == "391 = 17 × 23, so it is not prime."
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(reply), state)
+    streamed = _build_stream_message(state)
+    @test streamed.content == "No." && reasoning_text(streamed) == reasoning_text(m)
 end
 
 @testset "thinking levels — a row matches its exact id; any other id gets the generic check" begin

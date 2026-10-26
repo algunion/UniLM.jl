@@ -90,6 +90,14 @@
   `url_citation`s. Google counts `start_index` and `end_index` in bytes of the text, so an annotation of a
   part joined after other text is moved by that text's bytes; the steps an unstreamed interaction keeps in
   `response.raw` stay as Google sent them.
+- **A Gemini `Chat` that sets `reasoning_effort` returns its thought summaries.** `reasoning_text` named
+  Gemini's thought parts, but a native `Chat` never asked for them, so it gave `nothing`. Such a `Chat` now
+  sends `includeThoughts: true` beside its thinking level, as Google's thinking page asks: the reply's
+  summaries, parts marked `thought`, stay out of the answer's text and go back with the next request like
+  the reply's other parts, and `reasoning_text` reads them, streamed or not. They add nothing to the bill:
+  Google prices the thinking, "despite only the summary being output from the API". A `Chat` without
+  `reasoning_effort` sends no thinking config, as before. A recording of such a request made before keys on
+  the old bytes: record it again.
 
 ## 0.27.1
 

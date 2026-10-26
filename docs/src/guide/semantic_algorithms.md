@@ -154,9 +154,7 @@ state and the questions are yours to build, as here.
 
 !!! details "Evidence"
     Measured on jev-1.13.0 (September 2026): a request with 1 question took
-    0.30 s, and one with 22 questions 0.31 s. TypeSafe bills only input tokens
-    ([Models](https://docs.typesafe.ai/models)), and reads the state once per
-    request, however many questions it carries.
+    0.30 s, and one with 22 questions 0.31 s.
 
 The same six tickets go out in one request:
 

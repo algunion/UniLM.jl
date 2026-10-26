@@ -275,9 +275,9 @@ declines only the shaky side of it. A table's order moves answers the same way.
 
 ## [How it works](@id natural_language_dispatch_how)
 
-Both pathways build the same request. A recording scope files each request it
-sees under its exact bytes, so recording the two calls of the sixty-second
-version shows it: they make one file, and that file holds the body they sent
+Both pathways build the same request. A recording scope files each request under
+a key made of its method, path and body, so recording the two calls of the
+sixty-second version shows it: they make one file, and that file holds the body they sent
 (in this manual's build, the scope records the answers the build replays: [How
 this manual runs its examples](@ref jev_testing_manual)):
 
@@ -903,8 +903,8 @@ Coverage needs no service either: [`meaning_gaps`](@ref) is the check
 order, the state on the wire, the policy — needs one real answer, recorded once
 and replayed in the test by [`with_recorded_answers`](@ref), which throws
 [`ReplayMissError`](@ref) instead of reaching the network for a request it has no
-recording of. [Test and Develop](@ref jev_testing_guide) walks through recording,
-replaying, and crafting edge cases with a local server.
+recording of. [Test and Develop](@ref jev_testing_guide) walks through recording and
+replaying, and links each provider's recipe for edge cases from a local server.
 
 ## [See also](@id natural_language_dispatch_see_also)
 

@@ -207,7 +207,7 @@ offered options makes the call a `SystemOneCallError`, so `nl_dispatch` throws a
 runs.
 
 - **A pipeline with a language model.** A test that also calls a language model records each request with its
-  own provider's key and replays with none ([Test a Jev + LLM pipeline offline](@ref jev_testing_pipeline)).
+  own provider's key and replays with none ([Test a decision + LLM pipeline offline](@ref jev_testing_pipeline)).
 
 Previews of what a call sends, tests of the methods and of the judgment, and an audit trail are on
 [Test and Develop](@ref jev_testing_guide).

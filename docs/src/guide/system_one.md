@@ -65,6 +65,10 @@ else
 end
 ```
 
+The Noul's `yes` and `no` describe its two outcomes. A provider whose API has no
+place for them refuses them before sending: fold what they say into the question
+there ([Limits and refusals](@ref openai_decisions_limits)).
+
 The output under each block is the docs build's own: it replays an answer
 recorded from a live call ([Test and Develop](@ref jev_testing_guide)). The rest
 of what came back:
@@ -276,9 +280,9 @@ A provider may round the numbers it sends, so a distribution need not sum to
 exactly 1: [`ask`](@ref) accepts a sum within a tolerance set per provider, which
 its entry's Confidence section gives, and returns a reply further off as a
 [`SystemOneCallError`](@ref). A Score answer is held to its own numbers the same
-way: its `score` must be the expected level its probabilities give, within that
-tolerance, and its `legend` must repeat each level you asked as a string,
-unchanged. A reply that breaks either, chooses an option that was not offered,
+way: its `score` must be the expected level its probabilities give, within n − 1
+times that tolerance plus one rounding step for a Score of n levels, and its
+`legend` must repeat each level you asked as a string, unchanged. A reply that breaks either, chooses an option that was not offered,
 leaves a question unanswered, or names no model is a `SystemOneCallError` too: no
 success is built from a malformed answer.
 

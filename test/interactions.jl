@@ -114,6 +114,15 @@ end
     @test b2["generation_config"]["top_p"] == 0.9
     @test b2["generation_config"]["max_output_tokens"] == 128
     @test b2["background"] == true
+
+    # Background execution "requires `store=True` (the default) … Passing `background=True` with
+    # `store=False` returns a `400` error" (Gemini's background-execution guide): refused before sending.
+    unstored() = Respond(service=GEMINIServiceEndpoint, input="x", background=true, store=false)
+    err = try UniLM.encode_agentic(GEMINIServiceEndpoint, unstored()); nothing catch e; e end
+    @test err isa ArgumentError && startswith(err.msg, "background=true requires a stored response")
+    @test_throws ArgumentError respond(unstored())
+    @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", background=true, store=true)))["store"] == true
 end
 
 @testset "Interactions stream decode — carry-over + malformed handling" begin

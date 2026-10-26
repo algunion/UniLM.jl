@@ -41,6 +41,16 @@ function _consteq(a::AbstractString, b::AbstractString)
     r == 0
 end
 
+# A Standard Webhooks signing secret is base64 behind its `whsec_` prefix ("Secret serialization:
+# base64 encoded, prefixed with `whsec_`",
+# https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md), read
+# strictly: "Implementations MUST reject the encoded data if it contains characters outside the base
+# alphabet" (RFC 4648, section 3.3) — `base64decode` skips them, so such a secret would decode to
+# another key. Whole groups of four, then a last group of two or three characters, padded or not
+# (the Standard Webhooks reference library pads an unpadded secret before decoding it). Anchored
+# with \A and \z: `$` would also match before a final line break.
+const _BASE64_SECRET = r"\A(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?\z"
+
 _header_dict(headers::AbstractDict)::Dict{String,String} = Dict(lowercase(string(k)) => string(v) for (k, v) in headers)
 _header_dict(headers)::Dict{String,String} = Dict(lowercase(string(first(p))) => string(last(p)) for p in headers)
 
@@ -49,17 +59,22 @@ _header_dict(headers)::Dict{String,String} = Dict(lowercase(string(first(p))) =>
 
 Verify an OpenAI webhook signature (Standard Webhooks). `payload` is the raw request body;
 `headers` is a Dict or iterable of pairs containing `webhook-id`, `webhook-timestamp`, and
-`webhook-signature`; `secret` is the endpoint signing secret (with or without the `whsec_`
-prefix). Returns `true` iff a fresh, validly-signed `v1` signature is present.
+`webhook-signature`; `secret` is the endpoint signing secret, with or without the `whsec_`
+prefix: without it, the secret is read as base64 too, as the Standard Webhooks libraries read
+it (OpenAI's SDKs take an unprefixed secret's raw bytes as the key). Returns `true` iff a
+fresh, validly-signed `v1` signature is present.
 
 Replay protection: timestamps outside `±tolerance_seconds` of now are rejected, as are
 timestamps that are not finite numbers — pass `tolerance_seconds=Inf` to skip the time
 check (e.g. when replaying a stored fixture). Uses a constant-time digest compare.
 Negative or NaN tolerances throw `ArgumentError`.
 
-Throws `ArgumentError` when `secret` is not valid base64: that is a misconfiguration
-of this endpoint, and reporting it as an unverified signature would silently drop
-every webhook. A `false` return therefore always means the message failed verification.
+Whitespace around `secret` is ignored. Throws `ArgumentError` when the rest is not valid
+base64 — a character outside `A-Z`, `a-z`, `0-9`, `+` and `/` (whitespace inside it
+included), or `=` padding anywhere but at its end or more than its last group lacks — for a
+delivery that reaches the signature check: that is a misconfiguration of this endpoint, and
+reporting it as an unverified signature would silently drop every webhook. A `false` return
+therefore always means the message failed verification.
 """
 function verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds::Real=300)
     !isnan(tolerance_seconds) && tolerance_seconds >= 0 || throw(ArgumentError(
@@ -76,16 +91,17 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
         # the replay window. Reject it as the malformed message it is.
         (isnothing(ts) || !isfinite(ts) || abs(time() - ts) > tolerance_seconds) && return false
     end
-    sec = startswith(secret, "whsec_") ? secret[7:end] : secret
-    # A secret that will not base64-decode is a configuration error on this side,
-    # not a forged message. Returning false here would silently reject every
-    # inbound webhook forever, indistinguishable from an attacker's bad signature.
-    key = try
-        base64decode(sec)
-    catch e
-        e isa InterruptException && rethrow()
-        throw(ArgumentError("webhook signing secret is not valid base64"))
-    end
+    # Whitespace around the secret — the line break a file or an env file ends it with — is
+    # no part of it, and every decoder that accepts it yields the intended key (OpenAI's SDKs
+    # decode with Python's non-validating `b64decode` and Node's `Buffer.from`, which skip it).
+    trimmed = strip(secret)
+    sec = startswith(trimmed, "whsec_") ? trimmed[7:end] : trimmed
+    # A secret that is not base64 is a configuration error on this side, not a forged
+    # message. Returning false here would silently reject every inbound webhook forever,
+    # indistinguishable from an attacker's bad signature.
+    occursin(_BASE64_SECRET, sec) || throw(ArgumentError("webhook signing secret is not valid base64: the secret " *
+        "(after its whsec_ prefix, if any) holds only A-Z, a-z, 0-9, + and /, with = padding at its end only"))
+    key = base64decode(sec)
     # `string(...)` is a single `::String` method, so the signed base is concretely a
     # `String` regardless of how the header-map value types infer at this call.
     signed = string(wid, ".", wts, ".", payload)

@@ -180,8 +180,8 @@ and 2026-10-20 — that locates nothing. A Box answer turned inside out
 
 An [`ImageAttachment`](@ref) may stand anywhere in the `state`, the instructions
 or the criteria — a Choice whose options are example pictures, a Score whose
-levels are. TypeSafe marks images and Box questions experimental: their request
-format, answers and limits may change between releases
+levels are. TypeSafe marks images and Box questions "Dreamer-ready", not yet ready for
+production: their request format, answers and limits "can change between releases"
 ([Images](https://docs.typesafe.ai/images)). Each distinct image is sent once, as
 a part of a `multipart/form-data` request, and every place it stood holds its
 reference, `<image:…>` with the first 32 hex digits of the SHA-256 of its bytes;
@@ -232,13 +232,13 @@ whichever arrived, and `error_type` is filled in only by the object shape.
 | 413 | Over a size limit: an image file over 16 MiB, a body over 32 MiB (after decompression too), references too long | `"api_usage_error"` with `"Request exceeds size limits."` or `"Request body of at least … bytes exceeds the hard maximum of 33554432 bytes."` |
 | 415 | An unsupported `Content-Encoding` — never one [`ask`](@ref) sends, which compresses nothing; a proxy's | `"api_usage_error"` with `"Unsupported Content-Encoding '…'; supported: gzip, zstd."` |
 | 422 | Schema validation failed, including more than 255 Choice options or 10 Score levels | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` or `questions.pick.choice.criteria: Dictionary should have at most 255 items after validation, not 256` |
-| 429 | Over the organization's rate limit, in tokens or requests per second (shown in TypeSafe's developer console) | `"api_usage_error"` with `"Rate limit exceeded. Please retry shortly."`, sent live (2026-10-19) with both `retry-after` and `retry-after-ms` headers; retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
+| 429 | Over the organization's rate limit, in tokens or requests per second (shown in TypeSafe's developer console) | `"api_usage_error"` with `"Rate limit exceeded. Please retry shortly."`, sent live (2026-10-19) with both `retry-after` and `retry-after-ms` headers; retried by the seam up to `max_attempts` honouring `retry-after-ms`, else `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
 | 500, 502, 503, 504, 520–524, 529 | Service-side failure, including the non-standard `529 Overloaded` and the origin errors 520–524 of a service behind Cloudflare | retried by the request seam, 520–524 like 502 and 504; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
 
 [`ask`](@ref) and [`list_models`](@ref) ride the shared retry seam, so
 [`RequestConfig`](@ref) governs them as it governs a chat call: 408, 429, 500,
 502, 503, 504, 520–524 and 529 are retried up to `max_attempts` within
-`total_deadline`, honouring `Retry-After`; 400, 401, 403, 404, 413, 415 and 422
+`total_deadline`, honouring `retry-after-ms`, else `Retry-After`; 400, 401, 403, 404, 413, 415 and 422
 come back as they are, because an identical retry cannot fix them. While you set
 no `RequestConfig` of your own, a call is bounded by 60 s per attempt and 150 s
 in all: TypeSafe answers a typical request in about 0.3 s, and the slowest call

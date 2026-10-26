@@ -1327,7 +1327,13 @@ end
 @testset "Respond construction-time validation" begin
     @test_throws ArgumentError Respond(input="hi", conversation="conv_1", previous_response_id="resp_1")
     @test Respond(input="hi", conversation="conv_1").conversation == "conv_1"
-    @test_throws ArgumentError Respond(input="hi", background=true, store=false)
+    # OpenAI's background guide: "Background requests can use `store=false`, but response data is
+    # temporarily stored to support asynchronous execution and polling." Sent as set.
+    wire(r) = JSON.parse(UniLM.encode_agentic(r.service, r))
+    @test wire(Respond(input="hi", background=true, store=false))["store"] == false
+    @test wire(Respond(input="hi", background=true, store=false))["background"] == true
+    @test wire(Respond(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="m", input="hi",
+                       background=true, store=false))["store"] == false
     @test Respond(input="hi", background=true, store=true).background == true
     @test isnothing(Respond(input="hi", background=true).store)
     @test Respond(input="hi", background=false, store=false).store == false
@@ -2573,6 +2579,38 @@ end
         @test raw["metadata"]["run"] == "r-7"
     finally
         close(srv)
+    end
+end
+
+@testset "get_response and cancel_response read a failed generation as a failure, as respond does" begin
+    # A background response that failed is polled with get_response; the result type must not
+    # depend on the verb that read it.
+    failed = JSON.json(Dict(
+        "id" => "resp_f2", "status" => "failed", "model" => "gpt-5.5", "output" => [],
+        "error" => Dict("code" => "server_error", "message" => "the model failed")))
+    srv, url = _canned_http_server(200, failed,
+        ["Content-Type" => "application/json", "x-request-id" => "req_f2"])
+    try
+        ep = GenericOpenAIEndpoint(url, "sk-x")
+        for r in (get_response("resp_f2"; service=ep), cancel_response("resp_f2"; service=ep))
+            @test r isa ResponseFailure
+            @test !issuccess(r) && response_status(r) == "failed"
+            @test r isa ResponseFailure && r.status == 200 && r.request_id == "req_f2" && r.response == failed
+        end
+    finally
+        close(srv)
+    end
+    for st in ("completed", "in_progress", "queued", "requires_action", "cancelled", "incomplete")
+        body = JSON.json(Dict("id" => "resp_$st", "status" => st, "model" => "gpt-5.5", "output" => []))
+        srv, url = _canned_http_server(200, body, ["Content-Type" => "application/json"])
+        try
+            ep = GenericOpenAIEndpoint(url, "sk-x")
+            for r in (get_response("resp_$st"; service=ep), cancel_response("resp_$st"; service=ep))
+                @test r isa ResponseSuccess && response_status(r) == st
+            end
+        finally
+            close(srv)
+        end
     end
 end
 

@@ -58,8 +58,8 @@ for summaries of its reasoning, where the provider gives them, which [`reasoning
 Which roles, parts and media a provider takes, the efforts and summaries its models take, and the
 `Respond` fields it refuses before the request, are on its entry. The `Respond` constructor itself throws
 `ArgumentError`, whatever the provider, for `temperature` outside 0.0 to 2.0, `top_p` outside 0.0 to 1.0
-or both of them set, `max_output_tokens` below 1, `top_logprobs` outside 0 to 20, `conversation` together
-with `previous_response_id`, and `background=true` with `store=false`. [`UniLM.encode_agentic`](@ref) returns
+or both of them set, `max_output_tokens` below 1, `top_logprobs` outside 0 to 20, and `conversation` together
+with `previous_response_id`. [`UniLM.encode_agentic`](@ref) returns
 the body `respond` sends, with no key and no request:
 
 ```@example agentic

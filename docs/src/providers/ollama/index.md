@@ -33,6 +33,7 @@ Main.ProviderFacts.at_a_glance(:ollama)
 | [embed texts, images and sound](@ref ollama_embeddings) | `Embeddings` with a `task`, and `embeddingrequest!` | one unit-length vector per item, written for its task |
 | [transcribe a recording](@ref ollama_transcription) | `transcribe(path; service=OllamaEndpoint(), model=…)` | the words the model heard |
 | [use respond, or fill in the middle](@ref ollama_respond) | `respond`, `fim_complete` | answers from Ollama's OpenAI-compatible routes |
+| [know what a call cost](@ref ollama_cost) | `estimated_cost`, `cumulative_cost` | `0.0` for a local model; a cloud model priced by its name |
 | [set the context window, keep a model loaded, or pin its runner](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | every request of the endpoint carrying them |
 | [install, inspect, load or delete models](@ref ollama_models) | `list_models`, `model_info`, `pull_model`, `load_model`, … | typed model cards and results |
 | [decide about a text or a picture](@ref ollama_decisions_start) | `ask(…; service=OllamaEndpoint(), model=…)` | typed answers with probabilities |
@@ -82,7 +83,7 @@ inference request is not sent: the call returns a call error whose `cause` is an
 `OLLAMA_API_KEY`; [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
 [`pull_model`](@ref) and [`delete_model`](@ref) go without it. No request was sent to the cloud for this
 page (its requests bill). A cloud model runs through the local server once you sign in with
-`ollama signin`, under a cloud tag such as `gemma4:cloud`; [First call](@ref ollama_first) says how
+`ollama signin`, under a cloud tag such as `gemma4:cloud`; [Cost and usage](@ref ollama_cost) says how
 UniLM prices it.
 
 ## [First call](@id ollama_first)
@@ -118,20 +119,7 @@ cache", and `completion_tokens` its `eval_count`, the output tokens
 ([usage](https://docs.ollama.com/api/usage)), thinking included ([Reasoning](@ref ollama_thinking)
 shows a count). The result types are on [Results](@ref results_guide).
 
-A local model has no price, so `estimated_cost` gives `0.0` for a chat, embeddings, `respond` or FIM
-result, without the missing-price warning other unlisted models get; pass `model=` to price one as if
-it had run elsewhere. A cloud model reached through the same server — one whose tag is `cloud` or
-ends in `-cloud`, such as `gemma4:cloud` or `gpt-oss:120b-cloud` — runs in
-[Ollama's cloud](https://docs.ollama.com/cloud), and UniLM prices each of its results by the requested
-name, like any other model, never as a free local call; a name missing from the price table gets the
-missing-price warning. So does every model a request to Ollama's cloud itself names — an endpoint whose
-server is `https://ollama.com` ([Setup](@ref ollama_setup)) — whose names carry no cloud tag, "such as
-`gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)). A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
-0.40.6's source, which sends the cloud the name without it; untested, as no cloud call was made): a
-System One, `respond` or FIM result keeps the requested name, and the server's stays in its `raw`,
-while a chat or embeddings result is priced by the model its request names. Through your own server,
-UniLM recognises a cloud model by its tag alone, so one copied under a name without it (`ollama cp`) is
-priced as local, at `0.0`, with no warning.
+A local model's results cost `0.0`, with no warning ([Cost and usage](@ref ollama_cost)).
 
 The first request to a model also loads it into memory: about 1.7 s for Gemma 4 E4B on an Apple M4
 Max with 64 GB (Ollama 0.40.6), after which a short answer took about 0.1 s. [`load_model`](@ref) loads
@@ -483,8 +471,28 @@ The completions route takes `suffix` among its fields
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and a FIM request has no
 default model. These routes carry none of the endpoint's `keep_alive`, options or `runner`
 ([Options](@ref ollama_options)). A local model's `respond` and FIM results cost `0.0`, as its chats
-do ([First call](@ref ollama_first)); the verbs every provider shares are on
+do ([Cost and usage](@ref ollama_cost)); the verbs every provider shares are on
 [Agentic respond](@ref agentic_guide) and [FIM & Prefix Completion](@ref completions_guide).
+
+## [Cost and usage](@id ollama_cost)
+
+A local model has no price, so `estimated_cost` gives `0.0` for a chat, embeddings, `respond` or FIM
+result, without the missing-price warning other unlisted models get, and before it reads a price: a
+`pricing=` row for the model, or one in [`DEFAULT_PRICING`](@ref), changes nothing, and
+[`cumulative_cost`](@ref) adds `0.0` for each turn; pass `model=` to price one as if it had run elsewhere,
+at that model's row. A cloud model reached through the same server — one whose tag is `cloud` or
+ends in `-cloud`, such as `gemma4:cloud` or `gpt-oss:120b-cloud` — runs in
+[Ollama's cloud](https://docs.ollama.com/cloud), and UniLM prices each of its results by the requested
+name, like any other model, never as a free local call; a name missing from the price table gets the
+missing-price warning. So does every model a request to Ollama's cloud itself names — an endpoint whose
+server is `https://ollama.com` ([Setup](@ref ollama_setup)) — whose names carry no cloud tag, "such as
+`gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)). A cloud reply may name the model without its tag, `gpt-oss:120b` (by Ollama
+0.40.6's source, which sends the cloud the name without it; untested, as no cloud call was made): a
+System One, `respond` or FIM result keeps the requested name, and the server's stays in its `raw`,
+while a chat or embeddings result is priced by the model its request names. Through your own server,
+UniLM recognises a cloud model by its tag alone, so one copied under a name without it (`ollama cp`) is
+priced as local, at `0.0`, with no warning. How a call is priced on every provider is on
+[Cost Tracking](@ref cost_guide).
 
 ## [Limits and refusals](@id ollama_limits)
 

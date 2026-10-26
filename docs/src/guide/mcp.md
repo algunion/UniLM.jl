@@ -17,11 +17,20 @@ using UniLM
 using JSON
 ```
 
+```@example mcp
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model the
+bridged tool loops run on: bind your own there. The table [at the end](@ref mcp_providers) links each
+provider's tool rules.
+
 ---
 
-## MCP Client
+## [MCP Client](@id mcp_client)
 
-### Transports
+### [Transports](@id mcp_transports)
 
 Two transport types are available:
 
@@ -38,7 +47,7 @@ t2 = HTTPTransport("https://mcp.example.com/mcp";
 println("HTTP transport for: ", t2.url)
 ```
 
-### Connecting to an MCP Server
+### [Connecting to an MCP Server](@id mcp_connecting)
 
 Use [`mcp_connect`](@ref) with a `Cmd` (stdio), URL string (HTTP), or transport object:
 
@@ -81,7 +90,7 @@ timeout or crash, or because its transport is not connected — throws the typed
 [`MCPSessionClosedError`](@ref), whose `cause` is `:disconnected`, `:timeout` or
 `:crash` (see [Timeouts](@ref mcp_timeouts) for `auto_respawn`).
 
-### Discovering Tools, Resources, and Prompts
+### [Discovering Tools, Resources, and Prompts](@id mcp_discovery)
 
 After connecting, the session auto-populates tool/resource/prompt caches. You can also
 refresh them manually:
@@ -122,7 +131,7 @@ println("Description: ", info.description)
 println("Schema: ", JSON.json(info.input_schema, 2))
 ```
 
-### Calling Tools Directly
+### [Calling Tools Directly](@id mcp_calling)
 
 ```julia
 result = call_tool(session, "read_file", Dict{String,Any}("path" => "/tmp/data.txt"))
@@ -169,20 +178,21 @@ session open. A stdio exchange does not observe the token; it is bounded by
 `mcp_request_timeout` alone. Teardown — `mcp_disconnect!`'s `DELETE`, a
 cancellation notice — is sent even inside a cancelled `with_cancel` scope.
 
-### Bridging to tool_loop! (Chat Completions)
+### [Bridging to tool_loop! (Chat)](@id mcp_bridge_chat)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{Tool}}` for use with
-[`tool_loop!`](@ref). Tool names are advertised provider-safe: OpenAI and Anthropic
-accept only `^[a-zA-Z0-9_-]{1,128}$`, so any other character of an MCP tool name
-(the dots in `admin.tools.list`, say) becomes `_`, cut to 128 characters — the
-bridged callable still calls the tool by its MCP name. Two tools that map to the same
-name raise an `ArgumentError`.
+[`tool_loop!`](@ref). Each tool is advertised under its MCP name when that name is 1 to 128
+letters, digits, `_` and `-` (`^[a-zA-Z0-9_-]{1,128}$`); otherwise each other character
+(the dots in `admin.tools.list`, say) becomes `_`, and the name is cut to 128 characters —
+the bridged callable still calls the tool by its MCP name. Two tools that map to the same
+name raise an `ArgumentError`. A provider's own rule for tool names, where its entry states one, is in
+its tools section.
 
 ```julia
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
 
-chat = Chat(model="gpt-5.2", tools=tools)
+chat = Chat(service=service, model=model, tools=tools)
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "List files in /tmp"))
 result = tool_loop!(chat; tools)
@@ -190,7 +200,7 @@ result = tool_loop!(chat; tools)
 mcp_disconnect!(session)
 ```
 
-### Bridging to tool_loop (Responses API)
+### [Bridging to tool_loop (respond)](@id mcp_bridge_respond)
 
 [`mcp_tools_respond`](@ref) converts MCP tools into `Vector{CallableTool{FunctionTool}}`
 for use with [`tool_loop`](@ref):
@@ -198,28 +208,22 @@ for use with [`tool_loop`](@ref):
 ```julia
 session = mcp_connect("https://mcp.example.com/mcp")
 tools = mcp_tools_respond(session)
-result = tool_loop("List files in /tmp"; tools=tools)
+result = tool_loop("List files in /tmp"; service, model, tools)
 mcp_disconnect!(session)
 ```
 
-!!! tip "Check it with Jev"
-    Each bridged tool's `callable` takes `(name, args)`, as a tool-loop dispatcher does, so
-    it can be wrapped the way [Approve tool calls](@ref jev_llm_tool_calls) wraps one:
-    before the MCP server runs a call, a Jev question reads it against the user's own
-    words, and the call runs, waits for a confirmation, or is refused.
-
 ---
 
-## MCP Server
+## [MCP Server](@id mcp_server)
 
-### Creating a Server
+### [Creating a Server](@id mcp_server_create)
 
 ```@example mcp
 server = MCPServer("calc", "1.0.0"; description="A calculator server")
 println("Server: ", server.name, " v", server.version)
 ```
 
-### Registering Tools
+### [Registering Tools](@id mcp_register_tools)
 
 Register tools with explicit JSON Schema or auto-inferred schema:
 
@@ -261,14 +265,14 @@ println("greet schema: ", JSON.json(server.tools["greet"].input_schema))
 You can also register existing [`CallableTool`](@ref) instances:
 
 ```julia
-# From Chat Completions tool
+# From a Chat tool (CallableTool{Tool})
 register_tool!(server, my_callable_gpt_tool)
 
-# From Responses API tool
+# From a respond tool (CallableTool{FunctionTool})
 register_tool!(server, my_callable_function_tool)
 ```
 
-### Registering Resources
+### [Registering Resources](@id mcp_register_resources)
 
 ```@example mcp
 # Static resource
@@ -289,7 +293,7 @@ register_resource_template!(server, "file://{path}", "File Reader",
 println("Templates: ", length(server.resource_templates))
 ```
 
-### Registering Prompts
+### [Registering Prompts](@id mcp_register_prompts)
 
 ```@example mcp
 register_prompt!(server, "review", (args::Dict{String,Any}) ->
@@ -302,14 +306,14 @@ register_prompt!(server, "review", (args::Dict{String,Any}) ->
 println("Prompts: ", collect(keys(server.prompts)))
 ```
 
-### Macros
+### [Macros](@id mcp_macros)
 
 The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` macros provide a more ergonomic
 registration API with automatic JSON Schema generation from Julia type annotations.
 The examples below are executed at doc-build time and call the registered handlers
 directly to prove the wiring works.
 
-#### `@mcp_tool` — typed args become JSON Schema
+#### [`@mcp_tool` — typed args become JSON Schema](@id mcp_macro_tool)
 
 A named typed function becomes a tool whose `inputSchema` is inferred from the argument
 types (typed args are `required`, untyped ones optional). The generated handler binds
@@ -336,7 +340,7 @@ println("schema: ", JSON.json(srv.tools["add"].input_schema))
 println("add(2, 3) = ", srv.tools["add"].handler(Dict{String,Any}("a" => 2.0, "b" => 3.0)))
 ```
 
-#### `@mcp_resource` — static and URI-templated
+#### [`@mcp_resource` — static and URI-templated](@id mcp_macro_resource)
 
 A `function()` registers a static resource; a URI with `{param}` placeholders registers
 a template whose handler arguments are bound from the matched path params.
@@ -361,7 +365,7 @@ resp = UniLM._dispatch_mcp(srv, req)
 println("note://42 -> ", resp["result"]["contents"][1]["text"])
 ```
 
-#### `@mcp_prompt` — args bound from the request
+#### [`@mcp_prompt` — args bound from the request](@id mcp_macro_prompt)
 
 The anonymous `function(arg::String) … end` form registers a prompt; declared args are
 bound from the `prompts/get` request arguments.
@@ -380,7 +384,7 @@ gresp = UniLM._dispatch_mcp(srv, greq)
 println("review -> ", gresp["result"]["messages"][1]["content"]["text"])
 ```
 
-### Serving
+### [Serving](@id mcp_serving)
 
 Start the server with [`serve`](@ref):
 
@@ -432,31 +436,27 @@ to the server is accepted without an answer (HTTP `202`).
 
 ---
 
-## MCP Tool in Responses API
+## [MCP servers a provider reaches](@id mcp_hosted)
 
-Separately from the client/server above, OpenAI's Responses API has a built-in
-[`MCPTool`](@ref) type for server-side MCP integration. This tells the model to connect
-to an external MCP server during response generation:
-
-```@example mcp
-tool = mcp_tool("my-server", "https://mcp.example.com/sse";
-    require_approval="never",
-    allowed_tools=["read_file", "list_dir"])
-println("Type: ", typeof(tool))
-println("Label: ", tool.server_label)
-println("URL: ", tool.server_url)
-println("JSON: ", JSON.json(JSON.lower(tool)))
-```
-
-This is distinct from the UniLM.jl MCP client — `MCPTool` delegates tool execution to
-OpenAI's servers, while `mcp_connect` runs tools locally.
+Separately from the client and server above, a provider may call an MCP server itself, as a hosted tool
+of a request: the model calls the server's tools during the response and the provider calls the server,
+while with `mcp_connect` your process does. Some entries name such a tool, and where UniLM sends one, the
+provider's entry says how to give it one.
 
 ---
 
-## See Also
+## [See also](@id mcp_see_also)
 
 - [Tool Calling Guide](@ref tools_guide) — function tools and automated tool loop
 - [MCP API Reference](@ref mcp_api) — full type and function reference
 - [Timeouts & Retries](@ref timeouts_guide) — MCP bounds, the `:queue` phase and `auto_respawn`
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sessions under fan-out, server handler concurrency
 - [`CallableTool`](@ref), [`tool_loop!`](@ref), [`tool_loop`](@ref) — tool loop integration
+- [Decisions with LLMs](@ref jev_llm_guide) — approve a bridged tool's call before the MCP server runs it:
+  [Approve tool calls](@ref jev_llm_tool_calls)
+
+## [On your provider](@id mcp_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :tools)
+```

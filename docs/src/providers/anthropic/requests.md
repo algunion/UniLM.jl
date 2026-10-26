@@ -35,7 +35,12 @@ Each `Tool` in `tools` goes out with its `name`, its `description` when it has o
 name and input against the tool's schema. The Messages API takes tool names of 1 to 128 letters, digits,
 `_` and `-`. UniLM sends a name as given, and [`mcp_tools`](@ref) advertises each tool of an MCP server
 under such a name: its own, or that name with each character outside that set replaced by `_`, cut to
-128 characters ([MCP](@ref mcp_guide)).
+128 characters ([MCP](@ref mcp_guide)). Anthropic's MCP connector, a beta (`mcp-client-2025-11-20`), allows
+you to "connect to remote MCP servers directly from the Messages API without a separate MCP client", the
+servers named in an `mcp_servers` array of the request
+([MCP connector](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector)). UniLM sends no
+`mcp_servers`: an MCP server's tools reach Claude through `mcp_tools`, which calls the server from your
+process.
 
 `tool_choice` becomes the API's own: `"auto"` sends `{"type": "auto"}`, `"none"` sends
 `{"type": "none"}`, `"required"` sends `{"type": "any"}`, and `UniLM.GPTToolChoice(func=:get_weather)`

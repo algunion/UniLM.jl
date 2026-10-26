@@ -749,8 +749,7 @@ end
     # Header forms, one per case. Milliseconds are read first and keep sub-second
     # precision — rounding 250 ms up to a whole second is a quarter of a second of
     # throughput given away on every rate limit. These pin the REPORTED field; the
-    # seam's own backoff between attempts reads `Retry-After` alone, so a response
-    # sending only the millisecond header hands the caller the finer of the two.
+    # seam's own backoff between attempts reads the same headers the same way.
     function hint(hdrs::Vector{Pair{String,String}})
         r, _ = _ts_mock(; status=429, body=rl_body, headers=hdrs) do
             ask(_ts_request_02(); config=_TS_MOCK_CFG)
@@ -798,4 +797,18 @@ end
     # The hint belongs to the failure type, and "no hint" is its default.
     @test :retry_after in fieldnames(SystemOneFailure)
     @test SystemOneFailure(response="", status=429).retry_after === nothing
+end
+
+@testset "the TypeSafe docstrings say what TypeSafe's pages say" begin
+    # A docstring's source text, its whitespace runs as one space (`@doc` gives the raw `DocStr`
+    # unless Markdown is loaded).
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    # "Dreamer-ready. Images and Box questions aren't yet up to our standards to call ready for
+    # production" (https://docs.typesafe.ai/images): TypeSafe's word, not "experimental".
+    proto = flat(@doc UniLM.TypeSafeProtocol)
+    @test !occursin("experimental", proto)
+    # "If you have tuned confidence thresholds against one version, send that version's ID instead of
+    # the alias", and `jev-latest` points to `jev-1.14.0` (https://docs.typesafe.ai/models).
+    alias = flat(@doc UniLM.TYPESAFE_DEFAULT_MODEL)
+    @test !occursin("pin `jev-1.13.0`", alias)
 end

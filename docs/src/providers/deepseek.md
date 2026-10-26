@@ -354,8 +354,8 @@ lists none of them.
 cache at the input rate, cache hits at the cached rate, and `completion_tokens`, thinking included,
 at the output rate. [`cumulative_cost`](@ref) adds up the turns `chatrequest!` and `tool_loop!` sent
 on a `Chat`; a `prefix_complete` turn is appended to the `Chat` and not added. The rows are DeepSeek's
-peak rates. "Off-peak rates are half of the peak rates", and peak hours are "01:00 - 04:00 and 06:00 -
-10:00 UTC, Monday through Friday, excluding Chinese public holidays"
+peak rates, as checked on 25 October 2026. "Off-peak rates are half of the peak rates", and peak hours
+are "01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays"
 ([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)), so an estimate of a call made
 off-peak is twice what DeepSeek bills. The legacy names `deepseek-v4-flash` and
 `deepseek-v4-flash-vision-exp` are "billed at the Flash price".

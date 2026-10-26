@@ -199,8 +199,9 @@ is not every provider's body.
 ## [Retries and failures](@id chat_completions_retries)
 
 `chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with
-exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent
-callers that received the same header do not retry in lockstep. A 429 whose error names spent credit or
+exponential backoff and jitter; the wait a reply asks for — its `retry-after-ms` header, else
+`Retry-After` — is a floor under the jittered wait, so concurrent callers that received the same header
+do not retry in lockstep. A 429 whose error names spent credit or
 a reached spend, usage or quota limit is returned at once, since no retry clears it; each provider's
 failure section names the codes it sends. Attempts and total time are bounded by the resolved
 [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass

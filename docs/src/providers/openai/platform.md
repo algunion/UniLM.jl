@@ -51,7 +51,7 @@ These calls are not recorded, so their output on this page is quoted from dated 
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
   `:fine_tuning`, `:moderation`, `:transcription` (which `:audio` implies) or `:realtime` —, all
   of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
-  a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime__next)),
+  a result and does not observe the token, is on [Realtime sessions](@ref timeout_realtime)),
   and refuses an endpoint that declares its capabilities without it
   ([Limits and refusals](@ref openai_platform_limits)); an endpoint that declares none is not
   dispatched to, a `MethodError` ([Capabilities by provider](@ref capabilities_guide)).
@@ -520,10 +520,9 @@ doesn't respond within a few seconds, the webhook request will be retried. OpenA
 attempt delivery for up to 72 hours with exponential backoff", and it "may deliver duplicate copies
 of the same webhook event. You can use the `webhook-id` header as an idempotency key to
 deduplicate" ([webhooks](https://developers.openai.com/api/docs/guides/webhooks#handling-webhook-requests-on-a-server)).
-A negative or `NaN` tolerance is refused, and so is a secret that `base64decode` cannot decode
-([Limits and refusals](@ref openai_platform_limits)). `base64decode` skips characters outside the
-base64 alphabet, so a secret with stray characters, such as `whsec_***`, decodes to another key, and
-every delivery then returns `false`.
+A negative or `NaN` tolerance is refused, and so is a secret that is not base64 after its `whsec_`
+prefix, such as a placeholder like `whsec_***` or misplaced padding; whitespace around the secret is
+ignored ([Limits and refusals](@ref openai_platform_limits)).
 
 ## [Long-running jobs](@id openai_long_jobs)
 
@@ -571,12 +570,20 @@ response_status(cancel_response(id)), response_status(cancel_response(id))
 it has reached a final (terminal) state", and "Cancelling twice is idempotent - subsequent calls
 simply return the final `Response` object"
 ([background mode](https://developers.openai.com/api/docs/guides/background)). A background response
-that failed comes back from `get_response` and `cancel_response` as a `ResponseSuccess` whose
-[`response_status`](@ref) is `"failed"`, while `respond` returns a failed response as a
-`ResponseFailure`. `background=true` with `store=false` is refused, a rule of UniLM's, not OpenAI's,
-whose guide says "Background requests can use `store=false`"
-([background mode](https://developers.openai.com/api/docs/guides/background)); the row is in
-[Limits and refusals](@ref openai_limits).
+that failed comes back from `get_response` and `cancel_response` as a `ResponseFailure`, as `respond`
+returns a failed response: its `status` is 200, its `response` the response's JSON with OpenAI's
+`error`, and [`response_status`](@ref) reads `"failed"`.
+
+A background request may set `store=false`: "Background requests can use `store=false`, but response
+data is temporarily stored to support asynchronous execution and polling", and `get_response` reads
+such a response while OpenAI holds it. A stored response (`store=true`, the default) is kept "for at
+least 30 days, subject to the data retention exceptions"
+([Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)),
+and the background guide names two for background requests: in a Zero Data Retention project they
+"run with `store=false`", their data kept "for roughly 10 minutes"; in a Modified Abuse Monitoring
+project, "Background responses are retained after the polling period only when `store=true` is
+explicitly provided. If `store` is omitted or set to `false` for a background request, the response is
+deleted after roughly 10 minutes" ([background mode](https://developers.openai.com/api/docs/guides/background)).
 
 ## [Limits and refusals](@id openai_platform_limits)
 
@@ -595,4 +602,4 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |
 | `verify_webhook` with a negative or `NaN` `tolerance_seconds` | `tolerance_seconds must be nonnegative`: only `Inf` turns the replay check off | a number of seconds, or `Inf` |
-| `verify_webhook` with a secret that `base64decode` cannot decode, such as `whsec_A` | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide; a secret with characters outside the base64 alphabet, such as `whsec_***`, decodes, to another key, and is not refused: every delivery then returns `false` | the signing secret OpenAI gave the endpoint |
+| `verify_webhook`, for a delivery with its three headers and a fresh timestamp, with a secret that is not base64 after its `whsec_` prefix: a character other than `A-Z`, `a-z`, `0-9`, `+` and `/`, such as `whsec_***` or a space inside it (whitespace around it is ignored), or `=` padding that is misplaced or more than its last group lacks, such as `whsec_YQ=` | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide | the signing secret OpenAI gave the endpoint, as it is |

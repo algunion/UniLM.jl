@@ -78,14 +78,18 @@ The columns:
   22 October 2026, and again on the default model on 25 October 2026, so their Chat Completions cells
   end at `"xhigh"`.
 - **Sampling and log probabilities at**: the efforts at which UniLM sends `temperature`, `top_p` and
-  log probabilities, refusing them at the others; "—": at none; "any": UniLM checks no effort for the
-  model, OpenAI's answer being the check. OpenAI's GPT-6 guide: "When reasoning effort is not `none`,
-  remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also remove `logprobs`. For
-  Responses, remove `message.output_text.logprobs` from `include`"
+  log probabilities, refusing them at the others; "—": at none. OpenAI's GPT-6 guide: "When reasoning
+  effort is not `none`, remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also
+  remove `logprobs`. For Responses, remove `message.output_text.logprobs` from `include`"
   ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra#update-api-and-model-parameters)).
-  OpenAI's pages state no such rule for the GPT-5.6 models, whose cells are "any"; on 25 October 2026 the
-  API refused `temperature` on one of them at an effort other than `"none"`, and took it at `"none"`
-  (the evidence below).
+  The GPT-5.6 pages state no such rule, but OpenAI states it for the GPT-5 models before them:
+  `temperature`, `top_p` and `logprobs` are "only supported" at effort `none`, and "Requests that
+  include these fields will raise an error for GPT-5.4 or GPT-5.2 with any other reasoning effort
+  setting, or for older GPT-5 models"
+  ([GPT-5.4 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.4); the
+  [GPT-5.2 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.2) says the same).
+  The GPT-5.6 cells follow it, and the API: on 25 October 2026 it refused `temperature` on one of
+  them at an effort other than `"none"` and took it at `"none"` (the evidence below).
 - **Chat Completions tools at**: the efforts at which a `Chat` may carry `tools`; "—": the model takes
   tools only on the Responses API ([Tools on Chat Completions](@ref openai_chat_tools)).
 - **Ultrafast tier**: whether a `Respond` may ask for `service_tier="ultrafast"`
@@ -291,7 +295,6 @@ no row names meets only the other rules.
 | `prompt_cache_retention` on a `Chat` or a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` on a `Respond` |
 | `seed` on a `Respond` | `Responses API takes no seed`: the Responses API has no seed, while Chat Completions has one | a `Chat`, or no seed |
 | `conversation` and `previous_response_id` together on a `Respond` | `conversation and previous_response_id cannot be combined`: `previous_response_id` "Cannot be used in conjunction with `conversation`" | one of them |
-| `background=true` with `store=false` on a `Respond` | `background=true requires a stored response`: a rule of UniLM's, stricter than OpenAI's [background guide](https://developers.openai.com/api/docs/guides/background), which lets a background request use `store=false` | omit `store`, or `store=true` |
 | an `ImageAttachment`, `AudioAttachment` or `DocumentAttachment` in a `Respond`'s input | `cannot be written as JSON`: the Responses API takes an image as an `input_image` part and a document as an `input_file` part, and UniLM sends it no audio | `input_image` with a data URL, `input_file(document)`; audio on a `Chat` ([Input](@ref openai_responses_input)) |
 | an `InputMessage` `phase` other than `"commentary"` and `"final_answer"`, or a phase on a message that is not the assistant's | `InputMessage phase must be`, `InputMessage phase labels an assistant message`: a phase labels "an `assistant` message" and is "Not used for user messages" | the phase the model gave the message, on that assistant message |
 | `input_text` with a `cache_ttl` other than `"30m"` and `"12h"`, or without `cache_breakpoint=true` | `input_text cache_ttl must be`, `input_text cache_ttl applies to a cache breakpoint`: a lifetime belongs to a breakpoint | `cache_breakpoint=true` and one of the two |

@@ -177,6 +177,10 @@ MCP and every other verb behave inside a scope exactly as outside it.
 
 A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced; one recorded answer, replayed, can.
+A request's bytes can depend on the clock: a follow-up that sends an OpenAI audio reply
+back by its id sends it as text from a minute before the audio's `expires_at`
+([`AudioOutput`](@ref)), so its recording, made while the audio was live, replays only
+until then; record such a follow-up after the expiry.
 
 - `:replay` (the default): no recorded verb reaches the network or needs an API
   key; a verb the scope does not record — images, audio, files, MCP, … — behaves

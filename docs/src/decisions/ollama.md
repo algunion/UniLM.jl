@@ -531,7 +531,8 @@ offered, probabilities that are no distribution within the rounding above — is
 an answer of a failed call (`r["name"]`, [`answer`](@ref), [`answers`](@ref)) throws a [`SystemOneError`](@ref).
 
 UniLM sends a request again after a 408, 429, 500, 502, 503, 504, 520 to 524 or 529, up to `max_attempts` times
-within `total_deadline`, waiting at least what a `Retry-After` header asks for; any other status comes back as it is.
+within `total_deadline`, waiting at least what a `retry-after-ms` header asks for, else a `Retry-After`; any other
+status comes back as it is.
 Ollama brings no bounds of its own, since loading a model on a CPU can take minutes: with no
 [`RequestConfig`](@ref) of yours, a call has the field defaults, 600 s per attempt and 900 s in all
 ([Timeouts & Retries](@ref timeouts_guide)).

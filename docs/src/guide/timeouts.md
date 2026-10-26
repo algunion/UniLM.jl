@@ -1,17 +1,26 @@
 # [Timeouts & Retries](@id timeouts_guide)
 
-Every UniLM operation — a provider request, a stream, an MCP exchange, or a
-Realtime WebSocket — waits on a peer only under a bounded, configurable limit, and
-reports a breach as a **typed** error. This guide covers the bounds, how to change
-them, and the typed failures you get when one fires.
+```@setup timeouts
+using UniLM
+```
 
-One deliberate exception: an open Realtime session's *lifetime* is the caller's to
-decide, so nothing bounds it (see [Realtime sessions](@ref timeout_realtime)).
+Every UniLM operation — a provider request, a stream, an MCP exchange — waits on a
+peer only under a bounded, configurable limit, and reports a breach as a **typed**
+error. This guide covers the bounds, how to change them, the retries they bound, and
+the typed failures you get when one fires.
 
-## The one config struct
+```@example timeouts
+service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+nothing # hide
+```
+
+The examples use only the names bound above. `service` and `model` are the provider and model they run
+on: bind your own there. The table [at the end](@ref timeouts_providers) links each provider's rules.
+
+## [The one config struct](@id timeouts_config)
 
 All bounds live on a single [`RequestConfig`](@ref), resolved per call on every
-request verb (and captured at connect time by the MCP and Realtime sessions):
+request verb (and captured at connect time by an MCP session):
 
 | Field | Default | Bounds |
 |---|---|---|
@@ -30,9 +39,7 @@ and requires `max_attempts ≥ 1` — a silently-`NaN` bound would compare false
 against every check and reintroduce an unbounded wait, and a finite value too large
 for a timer would fail deep inside a call instead of at construction.
 
-```julia
-using UniLM
-
+```@example timeouts
 cfg = RequestConfig(request_timeout = 120.0, max_attempts = 5)
 
 # Copy-with-overrides — change one field, keep the rest:
@@ -40,49 +47,61 @@ patient = RequestConfig(cfg; total_deadline = 3600.0)
 
 # Disable the stream idle bound entirely (never idle-kill a stream):
 no_idle = RequestConfig(stream_idle_timeout = Inf)
+
+(cfg.request_timeout, patient.total_deadline, patient.max_attempts, no_idle.stream_idle_timeout)
 ```
 
-### Why these defaults
+### [Why these defaults](@id timeouts_defaults)
 
-The defaults mirror the official provider SDKs, with headroom for HTTP.jl's
-heavier connect path:
+The defaults mirror those of the official provider SDKs the Evidence note below names, with headroom for
+HTTP.jl's heavier connect path:
 
-- **`request_timeout = 600s`** matches the OpenAI and Anthropic Python SDKs
-  (`Timeout(600.0, connect=5.0)`) and the OpenAI Node SDK (10-minute default).
-- **`max_attempts = 3`** matches those SDKs' two automatic retries (two retries
+- **`request_timeout = 600s`** matches their 10-minute request timeout.
+- **`max_attempts = 3`** matches their two automatic retries (two retries
   after the first attempt = three attempts).
 - **`connect_timeout = 10s`** is 2× the SDKs' 5s connect, headroom for HTTP.jl's
   heavier connect; a false connect-timeout costs one retry and has no side
   effects.
 - **`stream_idle_timeout = 120s`** is stricter than the reference SDK stack's
   600s streaming read timeout. It is provisional, backed by the per-provider gap
-  measurement under **Measured stream gaps** below, and the per-call override is
+  measurement under [Measured stream gaps](@ref timeouts_gaps) below, and the per-call override is
   the escape hatch for unusually silent
   reasoning streams.
 - **`total_deadline = 900s`** and the **`120s` MCP** bounds cap cold starts (a
   cold `npx` MCP server on a slow link can legitimately approach the connect
   bound — the timeout message names the override to raise).
 
-### Measured stream gaps
+!!! details "Evidence: the SDK defaults"
+    Read on 25 October 2026 (UTC) from the default branches of the SDKs' repositories: the Python SDKs of
+    OpenAI and Anthropic set
+    `DEFAULT_TIMEOUT = httpx2.Timeout(timeout=600, connect=5.0)` (Anthropic's as `10 * 60`) and
+    `DEFAULT_MAX_RETRIES = 2` in their `_constants.py`; OpenAI's Node SDK
+    says "Requests time out after 10 minutes by default" and "Certain errors will be automatically retried
+    2 times by default" (its README).
+
+### [Measured stream gaps](@id timeouts_gaps)
 
 The `120s` idle default is provisional and backed by a measurement
 (`scripts/measure_stream_gaps.jl`) of the maximum inter-byte gap per provider —
-the exact quantity the idle guard watches, which provider keep-alives (SSE
-comments, Anthropic `ping`s) reset. The table was last measured on 2026-07-18, on
-models that are no longer the defaults:
+the exact quantity the idle guard watches, which keep-alive bytes (SSE comments,
+a provider's ping events) reset. Both measured maxima sit well under the `60s`
+raise-the-default threshold. A healthy gap above `60s` in a future measurement
+raises the default.
 
-| Provider | Model | Max inter-byte gap | Headroom vs 120s |
-|---|---|---|---|
-| OpenAI (reasoning) | `gpt-5.5` | 8.5s (504 chunks, 16.1s stream) | 14× |
-| Anthropic (extended thinking) | — | not measured this release | — |
-| Gemini | `gemini-3.5-flash`, measured 2026-07-18 (Google has routed that id to `gemini-3.6-flash` since 2026-10-08) | 15.9s (55 chunks, 19.8s stream) | 7.5× |
+!!! details "Evidence: the stream gaps measured on 2026-07-18"
+    Measured with `scripts/measure_stream_gaps.jl` on 2026-07-18, on models that are no longer the
+    defaults:
 
-The Gemini stream held a healthy ~16-second silent gap mid-thinking — the class
-of pause the byte-gap default must tolerate; both measured maxima sit well under
-the `60s` raise-the-default threshold. A healthy gap above `60s` in a future
-measurement raises the default.
+    | Provider | Model | Max inter-byte gap | Headroom vs 120s |
+    |---|---|---|---|
+    | OpenAI (reasoning) | `gpt-5.5` | 8.5s (504 chunks, 16.1s stream) | 14× |
+    | Anthropic (extended thinking) | — | not measured this release | — |
+    | Gemini | `gemini-3.5-flash`, routed to `gemini-3.6-flash` since 2026-10-08 ([Models](@ref gemini_models)) | 15.9s (55 chunks, 19.8s stream) | 7.5× |
 
-## The four channels
+    The Gemini stream held a healthy ~16-second silent gap mid-thinking — the class
+    of pause the byte-gap default must tolerate.
+
+## [The four channels](@id timeouts_channels)
 
 A config is resolved, in precedence order:
 
@@ -93,14 +112,14 @@ A config is resolved, in precedence order:
 
 `current_config()` returns whatever is in force right now.
 
-### 1. Per call
+### [1. Per call](@id timeouts_per_call)
 
 ```julia
 chatrequest!(chat; config = RequestConfig(request_timeout = 60.0))
-respond("summarize this"; config = RequestConfig(max_attempts = 1))
+respond("summarize this"; service, model, config = RequestConfig(max_attempts = 1))
 ```
 
-### 2. A dynamic scope
+### [2. A dynamic scope](@id timeouts_scope)
 
 `with_request_config` merges the given keywords over the current config for the
 duration of the block, and propagates into tasks spawned inside it (including the
@@ -113,7 +132,7 @@ with_request_config(request_timeout = 30.0, max_attempts = 1) do
 end
 ```
 
-### 3. The process default (notebooks)
+### [3. The process default (notebooks)](@id timeouts_process_default)
 
 A notebook cell cannot hold a dynamic scope open across cells, so set a process
 default once:
@@ -127,22 +146,13 @@ current_config().request_timeout    # 45.0
 `set_default_config!(cfg)` replaces the default with `cfg`; the keyword form
 merges over the current default.
 
-### 4. Defaults
+### [4. Defaults](@id timeouts_builtin_defaults)
 
-Do nothing and you get the table above — except on the System One verbs, whose
-backend may bring its own: [`ask`](@ref), [`ask_each`](@ref) and the
-natural-language verbs on TypeSafe and on OpenAI's Decisions API, and
-[`list_models`](@ref) on TypeSafe, use `request_timeout = 60` and
-`total_deadline = 150` until one of the three channels above is set
-([Request Configuration & Timeouts](@ref timeouts_api)) — and except a
-[`chatrequest!`](@ref) or [`respond`](@ref) call to a Gemini 4 model (an id starting
-`gemini-4-`, on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`), which uses
-`request_timeout`, `stream_idle_timeout` and `total_deadline` of `1200` s until one of
-the channels is set. Gemini 4 Argon thinks for minutes on hard problems: Google ends a
-non-streamed call after 10 minutes and a stream after 20, and advises "Set your HTTP
-read timeout to 20 minutes"
-([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)).
-A config you set in any channel replaces either default as a whole.
+Do nothing and you get the table above — except where a provider brings defaults of
+its own for some of its calls, which its entry states, such as a decision provider's
+bounds on `ask` or longer bounds for a model that thinks for minutes. They hold
+until one of the three channels above is set: a config you set in any channel
+replaces them as a whole ([Request Configuration & Timeouts](@ref timeouts_api)).
 
 ## [Stream semantics](@id timeout_streams)
 
@@ -161,8 +171,8 @@ Streams are governed differently from single-shot requests:
   starts fails typed like any other request.
 - **After the first byte**, only the **idle** bound runs: `stream_idle_timeout`
   is the maximum gap between raw byte chunks off the socket — NOT between parsed
-  events. SSE comment lines and Anthropic `ping` events are real bytes, so they
-  reset the idle clock. The bound measures **wire** idleness only: time the stream
+  events. Keep-alive bytes — SSE comment lines, a provider's ping events — are real
+  bytes, so they reset the idle clock. The bound measures **wire** idleness only: time the stream
   task spends inside your `callback` or `on_tool_call` is not counted, and the clock
   restarts when the callback returns, so a slow consumer never idle-kills a healthy
   stream. A stream that keeps delivering bytes within the bound runs as long as it
@@ -184,8 +194,8 @@ Streams are governed differently from single-shot requests:
   same holds for a stop or cancel that lands then: the turn is committed, the
   final-message callback runs, and usage may be missing. Trailing bytes past the
   breach (a late usage frame) may be lost — accepted. This holds on every
-  provider and on both the Chat and agentic stream drivers. Gemini is the
-  clearest case, since its stream has no sentinel at all and simply ends at EOF.
+  provider and on both the Chat and agentic stream drivers, a stream that has no
+  end-of-stream sentinel and simply ends when its body does among them.
   Failures that are *not* teardown-shaped — a throwing callback, a decoding bug
   — still surface as failures.
 
@@ -197,53 +207,7 @@ task = chatrequest!(chat; config = RequestConfig(stream_idle_timeout = 300.0),
 result = fetch(task)
 ```
 
-## [Realtime sessions](@id timeout_realtime)
-
-The Realtime WebSocket surface takes the same `config=` keyword and resolves it
-the same four ways. Two phases are bounded, and one deliberately is not:
-
-```julia
-realtime_connect(model = "gpt-realtime-2.1",
-                 config = RequestConfig(connect_timeout = 5.0,
-                                        stream_idle_timeout = 30.0)) do session
-    realtime_send(session, response_create())
-    event = realtime_receive(session)     # bounded by stream_idle_timeout
-end
-```
-
-- **Opening** is bounded by `connect_timeout`. A peer that accepts the TCP
-  connection but never finishes the upgrade throws
-  `UniLMTimeout(:connect, …)` instead of blocking; an open that fails for another
-  reason (a 401 upgrade response, say) throws that error, even when it fails just
-  before the bound. An upgrade that completes only after the caller received the
-  timeout is closed without running the handler.
-- **`realtime_receive`** is bounded by `stream_idle_timeout`, taken from the
-  config the session captured at connect time. A breach throws
-  `UniLMTimeout(:stream_idle, …)`. A parked socket read cannot be polled out of,
-  so the guard ends the read and the connection to unblock it, without a close
-  handshake and without HTTP.jl's send lock: the breach surfaces just after the limit
-  on `ws://` (on `wss://` up to about 5 s later, the time the TLS close may wait to
-  send its close notice), even while a `realtime_send` on another task is parked on a
-  peer that stopped reading (that send throws too), and the session is closed
-  afterwards. On a WebSocket opened over your own stream (`HTTP.WebSockets.open(io)`)
-  the stream stays yours: the breach ends the read, and a parked send waits until you
-  close the stream. `Inf` disables the bound and parks indefinitely.
-- **The session's lifetime is not bounded.** Once your handler is running, how
-  long it stays connected is your decision, not a timeout's — a Realtime session
-  is *meant* to sit idle waiting for the user to speak. Bound the conversation
-  yourself if you need to.
-
-The unlike-HTTP shapes here are that Realtime **throws** rather than returning a
-typed result value, and that `realtime_connect` makes a single attempt —
-`max_attempts` does not apply to it. It also throws `ArgumentError` before any I/O
-for a `service` other than `OPENAIServiceEndpoint`: the Realtime WebSocket is served
-by `api.openai.com`, and another endpoint's credentials must not be sent there.
-Neither phase observes a [`CancelToken`](@ref). [`mint_realtime_secret`](@ref) is an
-ordinary HTTP verb: a single bounded attempt returning `RealtimeSecretSuccess`,
-`RealtimeFailure`, or `RealtimeCallError` — the latter also for a `200` that carries
-no non-empty secret.
-
-## Typed failures
+## [Typed failures](@id timeouts_failures)
 
 A timeout is never a silent stall and never a fabricated HTTP status.
 
@@ -282,7 +246,7 @@ result = fetch(task)     # LLMSuccess, or a call-error carrying the UniLMTimeout
 - **MCP** surfaces are throw-based: a timeout throws [`MCPTimeoutError`](@ref),
   whose message names the override to raise.
 
-## Retries
+## [Retries](@id timeouts_retries)
 
 Automatic retries apply to the inference verbs — `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
@@ -296,16 +260,15 @@ that timed out or drew a gateway 5xx may already have stored the file. The polli
 helpers [`poll_batch`](@ref) and [`poll_file_batch`](@ref) instead poll through
 retryable statuses and per-attempt timeouts until their own wall-clock `timeout`.
 
-`max_attempts` (default 3) caps the total attempts. All attempts share the single
-`total_deadline` — per request: a long generation Gemini continues in several requests
-(see [Multi-Backend Support](@ref backend_guide)) gives each request the whole budget,
-timeouts and retries alike:
+`max_attempts` (default 3) caps the total attempts. All attempts of a request share
+its single `total_deadline`, timeouts and retries alike:
 
 - A retryable outcome (HTTP `408`/`429`/`500`/`502`–`504`/`520`–`524`/`529`, a
   per-attempt connect/request timeout, or a transport-level IO error) is retried
   with full-jitter exponential backoff.
-- **`Retry-After` is a floor, not a replacement.** The pause is the header's wait
-  plus a random spread above it — at most the exponential backoff, and at most half
+- **The asked wait is a floor, not a replacement.** The pause is the wait the
+  response asks for — its `retry-after-ms` header, else `Retry-After` — plus a
+  random spread above it — at most the exponential backoff, and at most half
   the budget left after the floor — so clients that received the same header do not
   retry in lockstep, and the next attempt keeps at least half of what remains.
 - **A retry that could not finish inside the remaining deadline is not
@@ -317,10 +280,10 @@ timeouts and retries alike:
 
 ```julia
 # Three attempts, but give up entirely after 30s of wall-clock:
-respond("…"; config = RequestConfig(max_attempts = 3, total_deadline = 30.0))
+respond("…"; service, model, config = RequestConfig(max_attempts = 3, total_deadline = 30.0))
 ```
 
-## MCP timeouts
+## [MCP timeouts](@id timeouts_mcp)
 
 ```julia
 # Per-connection bounds captured at connect time:
@@ -384,7 +347,7 @@ matter for the bounds themselves:
   connection cap by default, so a wide streaming fan-out does not queue for
   connections below the reach of `RequestConfig`.
 
-## Migrating from `retries`
+## [Migrating from `retries`](@id timeouts_migrating)
 
 The `retries` keyword is **removed** (no compatibility alias). It was a recursion
 seed that counted toward a 30-attempt ceiling, so its direction is the inverse of
@@ -405,11 +368,16 @@ result = respond("…"; config = RequestConfig(max_attempts = 1))
 
 A removed keyword raises `MethodError` — there is no silent behavior change.
 
-## See also
+## [See also](@id timeouts_see_also)
 
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out,
   cancellation and the thread layout.
 - [Streaming](@ref streaming_guide) — the callback / do-block streaming API.
 - [MCP (Model Context Protocol)](@ref mcp_guide) — the MCP client and server.
-- [Realtime API](@ref realtime_api) — the WebSocket type/function reference.
 - [Timeouts & Request Configuration](@ref timeouts_api) — the type/function reference.
+
+## [On your provider](@id timeouts_providers)
+
+```@eval
+Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :failures)
+```

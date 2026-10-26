@@ -230,7 +230,7 @@ rates ([pricing](https://developers.openai.com/api/docs/pricing#transcription-an
 on an audio model answers in speech too ([Audio replies](@ref chat_audio_output)), and every
 type is in the [Audio API](@ref audio_api) reference.
 
-## [Realtime sessions](@id timeout_realtime__next)
+## [Realtime sessions](@id timeout_realtime)
 
 [`realtime_connect`](@ref)`(handler; model="gpt-realtime-2.1")` opens a WebSocket to OpenAI's
 Realtime API, `wss://api.openai.com/v1/realtime`, and runs `handler(session)` once it is open.

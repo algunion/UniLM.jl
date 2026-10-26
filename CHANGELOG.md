@@ -357,6 +357,13 @@
   the same statuses and transport failures under its `RequestConfig` (`max_attempts`,
   `total_deadline`, the wait a reply asks for), and each attempt sends the whole file again, as an
   image edit does; a 429 that no retry can serve is returned at once.
+- **A DeepSeek `Chat` with a strict tool goes to DeepSeek's beta base URL.** DeepSeek's strict mode
+  is a beta feature: "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"`".
+  `DeepSeekEndpoint()` sent every `Chat` to `https://api.deepseek.com/v1/chat/completions`, so a
+  tool's `strict` never reached the URL where it applies. A `Chat` whose tools include a strict one
+  now goes to `https://api.deepseek.com/beta/v1/chat/completions`, streamed or not; one without
+  goes where it went. A recording keys on the request's path, so one of such a request made before
+  does not replay: record it again.
 
 ## 0.26.0
 

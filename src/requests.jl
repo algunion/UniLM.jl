@@ -845,7 +845,13 @@ end
 
 # ─── DeepSeekEndpoint dispatch ───────────────────────────────────────────────
 
-get_url(s::DeepSeekEndpoint, ::Chat)::String = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
+# DeepSeek's strict tool mode is a beta feature: "To use `strict` mode, you need to: Use
+# `base_url="https://api.deepseek.com/beta"` to enable Beta features"
+# (https://api-docs.deepseek.com/guides/tool_calls). A Chat with a strict tool goes there; the page
+# adds that every function must then be strict, which DeepSeek's answer checks.
+get_url(s::DeepSeekEndpoint, chat::Chat)::String =
+    (_strict_tools(chat) ? DEEPSEEK_BETA_BASE_URL : DEEPSEEK_BASE_URL) * CHAT_COMPLETIONS_PATH
+_strict_tools(chat::Chat)::Bool = !isnothing(chat.tools) && any(t -> t.func.strict === true, chat.tools)
 get_url(s::DeepSeekEndpoint, ::Embeddings)::String = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
 _resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 

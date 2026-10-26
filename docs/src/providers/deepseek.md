@@ -42,8 +42,9 @@ before the key is set; a call without it returns a call-error result whose `caus
 naming it. `DeepSeekEndpoint(api_key="sk-…")` sends the key it is given instead. Neither prints its
 key: the first shows as `DeepSeekEndpoint(#= DEEPSEEK_API_KEY =#)`, the second with the key cut to
 its first four characters and `…[redacted]`. A `Chat` goes to
-`https://api.deepseek.com/v1/chat/completions` with the key as `Authorization: Bearer`, and with no
-`model` it takes the default model named at the top of this page, as FIM does.
+`https://api.deepseek.com/v1/chat/completions`, or to the beta base URL when a tool is `strict`
+([Tools](@ref deepseek_tools)), with the key as `Authorization: Bearer`, and with no `model` it takes
+the default model named at the top of this page, as FIM does.
 
 ## [First call](@id deepseek_first_call)
 
@@ -187,8 +188,12 @@ supported in thinking mode; the API returns a `400` error. Disable thinking mode
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)), which
 `reasoning_effort="none"` does ([Reasoning](@ref deepseek_reasoning)). A tool's `strict` is a beta
 feature that needs `base_url="https://api.deepseek.com/beta"`
-([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)), while a `Chat` goes to the non-beta
-URL, so `strict` through this endpoint is untested. The loop every provider shares is on
+([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)), so a `Chat` with a strict tool goes to
+`https://api.deepseek.com/beta/v1/chat/completions`, and one without to the usual URL. In strict mode
+"all `function` need to set the `strict` property to `true`", and "The server will validate the JSON
+Schema of the Function provided by the user"; UniLM checks neither, and DeepSeek's answer is the check.
+On 26 October 2026 it answered a request there with one strict tool, and one with a strict and a
+non-strict tool, each with a call of the strict one. The loop every provider shares is on
 [Tool Calling](@ref tools_guide).
 
 ## [Structured output](@id deepseek_structured_output)

@@ -356,6 +356,11 @@
   with the missing-price warning. Its row holds the rates OpenAI's pricing page lists on
   2026-10-26: \$21.00 input and \$168.00 output per 1M tokens, and no cached-input rate, so a
   cache read bills as input, as on the other pro models.
+- **`score` refuses levels that are not a vector with an `ArgumentError`, as `choice` refuses its
+  criteria.** `score("q", ("a", "b"))`, a tuple of levels, threw a `MethodError`, while `choice`
+  with a tuple of options throws an `ArgumentError` that names the forms it takes. `score` now
+  throws an `ArgumentError`, "Score `levels` must be a vector of levels, lowest first", for a
+  tuple or any other container, and for a call that gives instructions alone.
 
 ## 0.26.0
 

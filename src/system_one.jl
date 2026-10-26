@@ -327,11 +327,19 @@ score("How urgent is this ticket?",
       ["Can wait", "Needs attention this week", "Needs attention today"])
 ```
 
+`levels` is a vector: a tuple, or any other container, throws `ArgumentError`, as a
+[`choice`](@ref) `criteria` outside its forms does.
+
 The returned `score` is a probability-weighted expectation, so it falls between
 integer levels. Threshold it; do not read a magnitude into the fractional part.
 """
-score(instructions, levels::AbstractVector) = ScoreQuestion(instructions, Any[v for v in levels])
-score(levels::AbstractVector) = ScoreQuestion(nothing, Any[v for v in levels])
+score(instructions, levels) = ScoreQuestion(instructions, _score_levels(levels))
+score(levels) = ScoreQuestion(nothing, _score_levels(levels))
+
+# A Score's levels are ordered, lowest first, and come as a vector; any other container is
+# refused by name, as a Choice's criteria outside its forms are, never by a MethodError.
+_score_levels(levels::AbstractVector)::Vector{Any} = Any[v for v in levels]
+_score_levels(x) = throw(ArgumentError("Score `levels` must be a vector of levels, lowest first; got $(typeof(x))"))
 
 _noul_criteria(yes, no) = isnothing(yes) && isnothing(no) ? nothing : NoulCriteria(yes, no)
 

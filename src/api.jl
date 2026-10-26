@@ -1420,8 +1420,10 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 
 On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
-both throws `ArgumentError`), `user` throws (use `safety_identifier` or
-`prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
+both throws `ArgumentError`); `DeepSeekEndpoint` and `GenericOpenAIEndpoint` (`MistralEndpoint()`
+among them) send `max_completion_tokens` as `max_tokens`, the name their references give the
+cap, taken over a `max_tokens` also set. On the native OpenAI endpoint `user` throws (use
+`safety_identifier` or `prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
 `"scale"`, `"priority"` or `"fast"`. Native Gemini and `GEMINIOpenAIServiceEndpoint` take
 `service_tier` `"standard"`, `"flex"` or `"priority"`, and native Gemini sends `seed` (an
 int32) and `store`; `ANTHROPICServiceEndpoint` takes `"auto"`, `"standard_only"` or

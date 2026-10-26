@@ -480,6 +480,31 @@ end
     @test JSON.parse(UniLM.encode_agentic(r.service, r))["user"] == "u1"
 end
 
+@testset "DeepSeek, Mistral and generic servers get a Chat's token cap as max_tokens, the name their references give" begin
+    # DeepSeek's Chat Completions reference, Mistral's chat reference and LM Studio's list `max_tokens` and
+    # no `max_completion_tokens`; vLLM (deprecating `max_tokens`) and llama.cpp take either name.
+    for service in (DeepSeekEndpoint(api_key="k"), MistralEndpoint(api_key="k"), GenericOpenAIEndpoint("http://localhost:9999", ""))
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
+        @test b["max_tokens"] == 32 && !haskey(b, "max_completion_tokens")
+        # Set beside max_tokens, max_completion_tokens is taken over it, as the native encoders take it.
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_tokens=64, max_completion_tokens=32)))
+        @test b["max_tokens"] == 32 && !haskey(b, "max_completion_tokens")
+        # A Chat that sets no max_completion_tokens is its own JSON, byte for byte (recordings key on the bytes).
+        c = Chat(; service, model="m", max_tokens=64, temperature=0.2, messages=[Message(Val(:user), "u")])
+        @test UniLM.encode_request(service, c) == JSON.json(c)
+    end
+    # A prefix completion is built by the same encoder.
+    chat = Chat(service=DeepSeekEndpoint(api_key="k"), max_completion_tokens=16,
+                messages=[Message(Val(:user), "u"), Message(role=UniLM.RoleAssistant, content="```")])
+    @test JSON.parse(UniLM._prefix_encode(chat.service, chat))["max_tokens"] == 16
+    # OpenAI sends the cap as max_completion_tokens; Azure and Gemini's OpenAI-compatible endpoint send it as set.
+    @test _oa_chat(model="gpt-6-luna", max_completion_tokens=32)["max_completion_tokens"] == 32
+    for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+        b = JSON.parse(UniLM.encode_request(service, Chat(; service, model="m", max_completion_tokens=32)))
+        @test b["max_completion_tokens"] == 32 && !haskey(b, "max_tokens")
+    end
+end
+
 @testset "prompt_cache_retention: refused as deprecated on GPT-5.6 and later, combinable elsewhere" begin
     # The API still answered gpt-6-luna with prompt_cache_retention="24h" (HTTP 200, 2026-10-22): the refusal
     # follows OpenAI's deprecation ("Use prompt_cache_options.ttl instead"), not an API rejection.

@@ -1216,6 +1216,24 @@ Public extension API (not exported); see the Custom Backends guide.
 """
 encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
 
+# `chat`'s Chat Completions body with each field `from => to` it sets sent under the provider's
+# name `to`, which then holds that field's value; a body that renames nothing is the Chat's own
+# JSON, byte for byte.
+function _renamed_json(chat::Chat, renames::Pair{Symbol,Symbol}...)::String
+    set = [r for r in renames if !isnothing(getfield(chat, first(r)))]
+    isempty(set) && return JSON.json(chat)
+    body = JSON.lower(chat)
+    foreach(((from, to),) -> body[to] = pop!(body, from), set)
+    JSON.json(body)
+end
+
+# DeepSeek's Chat Completions reference, Mistral's chat reference and LM Studio's list the token
+# cap as `max_tokens` and no `max_completion_tokens`; vLLM and llama.cpp take either name. These
+# endpoints send `max_completion_tokens` as `max_tokens`, taken over a `max_tokens` also set, as
+# the native encoders take it (https://api-docs.deepseek.com/api/create-chat-completion,
+# https://docs.mistral.ai/api/endpoint/chat, https://lmstudio.ai/docs/developer/openai-compat/chat-completions).
+encode_request(::GenericOpenAIEndpoint, chat::Chat)::String = _renamed_json(chat, :max_completion_tokens => :max_tokens)
+
 """
     decode_response(service, resp::HTTP.Response)
 

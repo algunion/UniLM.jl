@@ -52,7 +52,7 @@ function decode_response(service::DeepSeekEndpoint, resp::HTTP.Response)
 end
 
 function encode_request(service::DeepSeekEndpoint, chat::Chat)::String
-    body = invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, service, chat)
+    body = _renamed_json(chat, :max_completion_tokens => :max_tokens)   # DeepSeek's name for the cap
     isnothing(chat.tools) && return body
     echo = Pair{Int,String}[]
     for (i, m) in pairs(chat.messages)

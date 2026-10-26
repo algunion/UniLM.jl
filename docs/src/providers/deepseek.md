@@ -246,9 +246,9 @@ depends on the model ([Thinking Mode](https://api-docs.deepseek.com/guides/think
 thinking is output: it counts in `completion_tokens` and bills at the output rate, and a request that
 sets no `max_tokens` may generate "8K in non-thinking mode, 64K in thinking mode (128K with
 `reasoning_effort` set to `max`)"
-([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). Set `max_tokens`,
-DeepSeek's name for the cap: a `Chat`'s `max_completion_tokens` goes out under that name, which
-DeepSeek's reference does not list.
+([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). A `Chat`'s
+`max_completion_tokens`, else its `max_tokens`, goes out as `max_tokens`, DeepSeek's name for the cap;
+its reference lists no `max_completion_tokens`.
 
 ## [Attachments](@id deepseek_media)
 
@@ -316,7 +316,8 @@ DeepSeek's models take a context of "1M" tokens and generate at most "384K"
 "between 1 and 384K (393216)"
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). UniLM checks none of
 these limits, and no rule of DeepSeek's: every field a `Chat` sets goes out as it is — `user`,
-`max_tokens`, a JSON Schema format, the prompt-cache fields — and DeepSeek's answer is the check
+`max_tokens`, a JSON Schema format, the prompt-cache fields —, `max_completion_tokens` under DeepSeek's
+name `max_tokens` ([Reasoning](@ref deepseek_reasoning)), and DeepSeek's answer is the check
 ([When something fails](@ref deepseek_failures)). It refuses before anything is sent what the table
 below lists, and the checks every `Chat` gets, such as a `temperature` from 0 to 2 or an `n` of 1;
 the verbs of the capabilities the table at the top of this page lists as not available refuse the

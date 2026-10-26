@@ -90,6 +90,16 @@
   `ArgumentError` before anything is sent, as on OpenAI's Decisions API, so a natural-language
   verb whose call offers a single option is refused too. Upgrading: add an option, such as a
   fallback `"other"`.
+- **`DeepSeekEndpoint` and generic endpoints send a `Chat`'s `max_completion_tokens` as
+  `max_tokens`.** DeepSeek's Chat Completions reference, Mistral's chat reference and LM Studio's
+  name the cap `max_tokens` and list no `max_completion_tokens`, so a `Chat` that set only
+  `max_completion_tokens` sent a cap those services do not read. `DeepSeekEndpoint` and
+  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) now send it as `max_tokens`, taken over a
+  `max_tokens` also set, as the native encoders take it; vLLM and `llama-server` take either name. A
+  `Chat` that sets no `max_completion_tokens` sends the same bytes as before; Azure and Gemini's
+  OpenAI-compatible endpoint send both names as set. Upgrading: a server that takes only
+  `max_completion_tokens` (an OpenAI reasoning model behind a pass-through proxy) is reached with an
+  endpoint type of your own whose `encode_request` sends that name.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and

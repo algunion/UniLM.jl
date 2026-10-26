@@ -10,8 +10,9 @@ Mistral's host, `https://api.mistral.ai`: UniLM speaks Mistral's chat, embedding
 transcription routes as OpenAI-compatible ones, and a hosted service of another vendor with an
 OpenAI-compatible API is reached the same way, with `GenericOpenAIEndpoint(base_url, key)`. The rules
 on this page are that endpoint's; the facts marked as Mistral's are Mistral's alone. UniLM holds no
-rule of Mistral's or of any other service: it sends every field a request sets as it is, and sends the
-requests of the capabilities the table below lists without knowing whether the service serves them. A
+rule of Mistral's or of any other service: it sends every field a request sets as it is, under its own
+name but for those [First call](@ref openai_compatible_first_call) lists, and sends the requests of the
+capabilities the table below lists without knowing whether the service serves them. A
 verb that needs a capability the table lists as not available refuses the endpoint, and so does `ask`;
 `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes `transcription` or
 `audio`, are sent. Of Mistral's API, UniLM does not use the Agents and Conversations APIs, OCR or the
@@ -94,8 +95,11 @@ chunks ([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) —
 chunks joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`. A
 streamed reply keeps them ([Streaming](@ref openai_compatible_streaming)).
 
-Fields go out under the names of the `Chat`, and a field Mistral names otherwise does not reach it as
-Mistral's: a `seed` goes out as `seed`, while Mistral's chat reference names the seed `random_seed`;
+Fields go out under the names of the `Chat`, but a `max_completion_tokens` goes out as `max_tokens`,
+taken over a `max_tokens` also set, the name Mistral's chat reference gives the cap
+([chat completions](https://docs.mistral.ai/api/endpoint/chat)), on every service this endpoint
+reaches. A field Mistral names otherwise does not reach it as Mistral's: a `seed` goes out as `seed`,
+while Mistral's chat reference names the seed `random_seed`;
 Mistral's `safe_prompt`, `min_tokens`, `prompt_mode` and `guardrails` are not `Chat` fields
 ([chat completions](https://docs.mistral.ai/api/endpoint/chat)). What Mistral does with a field its
 reference does not list, such as `seed`, is untested.

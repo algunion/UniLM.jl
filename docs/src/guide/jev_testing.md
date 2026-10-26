@@ -172,8 +172,8 @@ through a directory of recordings:
   requests under a path of its own — `/ollama/v1/systemone` for an Ollama
   server, `/openai-decisions/v1/decisions` for OpenAI's Decisions API — so the
   same question asked of two backends is two recordings, and a replay never
-  answers one backend with another's answer ([Backends](@ref
-  backends_recordings)). TypeSafe's `long_context = true` is part of the key too.
+  answers one backend with another's answer ([What each provider takes](@ref
+  backends_table)). TypeSafe's `long_context = true` is part of the key too.
   The options that change how a request is served but never what it is answered
   — OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`,
   Ollama's `keep_alive` —

@@ -4,7 +4,7 @@ Synthesize speech from text, transcribe audio to text, and translate speech into
 another language. [`speak`](@ref) runs on OpenAI's Realtime API or on Gemini TTS and
 returns 24 kHz, 16-bit mono audio, as a WAV file or as raw PCM. [`transcribe`](@ref)
 uploads an audio file to OpenAI and, with a local model that hears audio, to Ollama
-([Local Models with Ollama](@ref ollama_transcription)). [`translate`](@ref) streams a
+([Audio](@ref ollama_transcription)). [`translate`](@ref) streams a
 WAV file through an OpenAI Realtime translation session and returns the translated
 text.
 

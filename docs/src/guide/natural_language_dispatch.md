@@ -684,8 +684,8 @@ derives such a policy from what each mistake costs. `decide` together with a non
 anything runs, and a policy that returns anything else is an `ArgumentError`:
 neither the method nor `fallback` runs.
 
-A backend may also decline a question itself: OpenAI's Decisions API answers it
-with a [`RefusalAnswer`](@ref) ([Backends](@ref backends_openai)). That is a
+A backend may also decline a question itself: [OpenAI's Decisions API](@ref openai_decisions_start) answers it
+with a [`RefusalAnswer`](@ref). That is a
 decline whatever the policy, which never sees it: `fallback` runs, or
 [`DecisionDeclinedError`](@ref) is thrown with the refusal as its `answer`.
 

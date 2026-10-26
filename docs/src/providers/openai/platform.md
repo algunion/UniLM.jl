@@ -9,7 +9,7 @@ conversations, code-interpreter containers — and that run work beside it: batc
 jobs, moderation, and the webhooks that report on them. UniLM wraps each with verbs of its own, on
 `OPENAIServiceEndpoint` unless a call names another `service`; `OPENAIServiceEndpoint()` returns
 that same type. The vector stores of file search
-are on [Retrieval & file search](@ref retrieval_guide__next), and images, speech and the Realtime
+are on [Retrieval & file search](@ref retrieval_guide), and images, speech and the Realtime
 API on [Images, audio & realtime](@ref openai_media_page); which of these APIs other providers serve
 is on [Capabilities by provider](@ref capabilities_guide). Every verb, type and keyword is in the
 API reference: [Files](@ref files_api), [Uploads](@ref uploads_api),

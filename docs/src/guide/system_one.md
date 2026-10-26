@@ -789,7 +789,7 @@ image's bytes into the JSON as numbers.
   before you send it.
 - **Other backends.** OpenAI's Decisions API takes images in the state only, and
   so do Ollama's vision decision models, the images before the texts
-  ([Pictures](@ref backends_ollama_images)).
+  ([Images](@ref ollama_decisions_images)).
 
 !!! details "Evidence"
     Observed on 19 October 2026 (`jev-1.13.0`): an image of W × H pixels was

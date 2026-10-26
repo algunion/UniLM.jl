@@ -23,7 +23,7 @@ Every provider answers [`ask`](@ref) and the verbs built on it with the same res
 provider takes every question kind or option. A call names its provider with
 `service = …`, a [`with_system_one`](@ref) scope names one for every call inside it, and a call that names
 neither goes to Jev. What each provider takes, and why a confidence threshold is tuned for each, is on
-[Choosing a decision provider](@ref system_one_backends__next).
+[Choosing a decision provider](@ref system_one_backends).
 
 ## [Concepts](@id decisions_concepts)
 
@@ -40,7 +40,7 @@ neither goes to Jev. What each provider takes, and why a confidence threshold is
 
 ## [Across providers](@id decisions_across)
 
-- [Choosing a decision provider](@ref system_one_backends__next) — the same call on each provider, per call or
+- [Choosing a decision provider](@ref system_one_backends) — the same call on each provider, per call or
   per scope, what each one takes, and a threshold tuned per provider.
 - [Write your own decision provider](@ref decisions_custom) — a gateway that speaks TypeSafe's wire, or a
   protocol of your own.

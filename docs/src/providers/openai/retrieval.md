@@ -1,4 +1,4 @@
-# [Retrieval & file search](@id retrieval_guide__next)
+# [Retrieval & file search](@id retrieval_guide)
 
 ```@setup openai
 using UniLM

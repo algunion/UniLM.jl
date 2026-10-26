@@ -178,7 +178,7 @@ sends at most 200 questions per request, where OpenAI's guide now takes up to 40
 ([Ask multiple questions](https://developers.openai.com/api/docs/guides/decisions#ask-multiple-questions)); a
 request outside these is refused before it is sent ([Limits and refusals](@ref openai_decisions_limits)). A picture
 goes in the state only, as the table shows; where each provider takes one is on
-[Choosing a decision provider](@ref system_one_backends__next). Reading the answers and the decision rules on them
+[Choosing a decision provider](@ref system_one_backends). Reading the answers and the decision rules on them
 are on [Route and Decide](@ref system_one_guide).
 
 ## [Declined questions](@id openai_decisions_refusals)
@@ -315,7 +315,7 @@ to a person here. Tune `min_confidence` on messages of your own, on this provide
 than others, price each one and let a `decide` policy choose the cheapest action
 ([When mistakes have different prices](@ref jev_loss_matrix)), once you have checked that the probabilities are
 calibrated. The decision rules on every provider are on [Act on the answer](@ref jev_act_on_answer), and the same
-messages on each provider are on [Choosing a decision provider](@ref system_one_backends__next).
+messages on each provider are on [Choosing a decision provider](@ref system_one_backends).
 
 !!! details "Evidence"
     Measured on 20 October 2026 on our 129 labelled support tickets (60 clear, 32 borderline, 15 adversarial, 22 out

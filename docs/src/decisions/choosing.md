@@ -1,4 +1,4 @@
-# [Choosing a decision provider](@id system_one_backends__next)
+# [Choosing a decision provider](@id system_one_backends)
 
 ```@setup choosing
 using UniLM
@@ -7,20 +7,20 @@ using UniLM
 UniLM has one decision surface. The questions — [`choice`](@ref), [`score`](@ref), [`noul`](@ref), [`box`](@ref) —
 the verbs — [`ask`](@ref), [`ask_each`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref) —
 and the typed results are the same whichever model answers. Three providers answer them, each with an entry of its
-own: [Jev (TypeSafe)](@ref jev_start__next), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
+own: [Jev (TypeSafe)](@ref jev_start), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
 [Local decision models](@ref ollama_decisions_start) served by Ollama on your own machine. Each provider has a
 wrapper that knows its rules. What a provider cannot carry is refused with an `ArgumentError` before anything is
 sent, so a request never reaches a provider in a form that provider would read differently.
 
 | I want to… | Use | You get |
 | :--- | :--- | :--- |
-| [ask another provider in one call](@ref backends_same_call__next) | `service = …`, and `model = …` where it has no default | the same typed results, from that provider |
-| [move a block of code to another provider](@ref backends_choose__next) | [`with_system_one`](@ref)`(service; …) do … end` | every decision call inside asks it |
-| [know what a provider takes before I send](@ref backends_table__next) | the comparison table | questions, limits, pictures, Box, price, status |
-| [see what each provider refuses](@ref backends_refusals__next) | the same requests on each | the `ArgumentError` that names the provider, the rule and the fix |
-| [reuse a confidence threshold on another provider](@ref backends_confidence__next) | a new measurement: `min_confidence` is tuned per provider | a bar that means what you tuned it for |
+| [ask another provider in one call](@ref backends_same_call) | `service = …`, and `model = …` where it has no default | the same typed results, from that provider |
+| [move a block of code to another provider](@ref backends_choose) | [`with_system_one`](@ref)`(service; …) do … end` | every decision call inside asks it |
+| [know what a provider takes before I send](@ref backends_table) | the comparison table | questions, limits, pictures, Box, price, status |
+| [see what each provider refuses](@ref backends_refusals) | the same requests on each | the `ArgumentError` that names the provider, the rule and the fix |
+| [reuse a confidence threshold on another provider](@ref backends_confidence) | a new measurement: `min_confidence` is tuned per provider | a bar that means what you tuned it for |
 
-## [The same call on three providers](@id backends_same_call__next)
+## [The same call on three providers](@id backends_same_call)
 
 **The job:** route the support desk's inbox on the provider that suits it — a hosted model, or one on your own
 machine — without rewriting the router. **Without one surface:** a client per provider, each with its own request
@@ -70,9 +70,9 @@ Jev, at a confidence of only 0.49, and to `other` on the other two; the cracked 
 refund request in one message — goes to `shipping` on Jev, at 0.98, and to `billing` on the other two, both times
 at a confidence below 0.5. The code around the call did not change: whichever provider answered, the result is a key of
 `TEAM`. The confidences of different providers are not the same currency
-([One formula, calibrated per model](@ref backends_confidence__next)).
+([One formula, calibrated per model](@ref backends_confidence)).
 
-## [Choose per call or per scope](@id backends_choose__next)
+## [Choose per call or per scope](@id backends_choose)
 
 A call takes its provider from the first of these that is set:
 
@@ -110,14 +110,14 @@ and `tev1:0.8b` means nothing to TypeSafe.
 - `with_system_one` checks its endpoint before running anything: one that does not declare `:system_one`, such as
   a chat-only endpoint, is an `ArgumentError`, and so is a blank model.
 
-## [What each provider takes](@id backends_table__next)
+## [What each provider takes](@id backends_table)
 
 | | Jev (TypeSafe) | OpenAI's Decisions API | Local models (Ollama) |
 | :--- | :--- | :--- | :--- |
 | `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
 | Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1/systemone` |
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
-| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start__next) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
+| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 200 questions (OpenAI takes 400) | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
 | Guidance | strings, objects, arrays and pictures, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`; strings elsewhere |
@@ -158,7 +158,7 @@ refuses a picture after a text on every model. Each entry has the rest: [Jev's I
 A timeout you set yourself — `config =`, [`with_request_config`](@ref) or [`set_default_config!`](@ref) — replaces
 a provider's default.
 
-### [Refused before sending](@id backends_refusals__next)
+### [Refused before sending](@id backends_refusals)
 
 **The job:** move a program to another provider and learn, before a request is paid for, what it uses that the
 provider cannot carry. **Without a wrapper:** the provider answers 400 — or accepts the request and reads it
@@ -192,7 +192,7 @@ question types themselves set no limit, so a program built for one provider is c
 only when it is sent there. Each entry's Limits and refusals section lists its refusals:
 [Jev](@ref jev_limits__next), [OpenAI](@ref openai_decisions_limits), [Ollama](@ref ollama_decisions_limits).
 
-## [One formula, calibrated per model](@id backends_confidence__next)
+## [One formula, calibrated per model](@id backends_confidence)
 
 **The job:** act on an answer only when the provider is sure enough, on whichever provider answers. **Without a
 shared definition:** each provider's "confidence" is its own number. **With one:** TypeSafe sends `confidence` by one

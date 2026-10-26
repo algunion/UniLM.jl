@@ -14,9 +14,7 @@
             "Models & request rules" => "providers/openai/models.md",
             "Chat Completions" => "providers/openai/chat_completions.md",
             "Responses & hosted tools" => "providers/openai/responses.md",
-            "Responses API" => "guide/responses_api.md",
             "Retrieval & file search" => "providers/openai/retrieval.md",
-            "Retrieval & File Search" => "guide/retrieval.md",
             "Images, audio & realtime" => "providers/openai/media.md",
             "Platform APIs" => "providers/openai/platform.md",
         ],
@@ -33,7 +31,6 @@
         ],
         "Local models" => [
             "Ollama" => "providers/ollama/index.md",
-            "Local Models with Ollama" => "guide/ollama.md",
             "Embeddings" => "providers/ollama/embeddings.md",
             "Runtime & model management" => "providers/ollama/runtime.md",
             "vLLM, LM Studio & llama.cpp" => "providers/local_servers.md",
@@ -70,7 +67,6 @@
         "Start here" => ["Overview" => "decisions/index.md"],
         "Jev (TypeSafe)" => [
             "Start here" => "decisions/jev/index.md",
-            "Start Here: Decisions in Five Minutes" => "guide/jev_start.md",
             "Images, Box, long context, structured guidance" => "decisions/jev/abilities.md",
             "Confidence, errors, cost & testing" => "decisions/jev/operations.md",
         ],
@@ -85,7 +81,6 @@
         ],
         "Across decision providers" => [
             "Choosing a decision provider" => "decisions/choosing.md",
-            "Backends: Jev, OpenAI and Local Models" => "guide/system_one_backends.md",
             "Write your own decision provider" => "decisions/custom.md",
         ],
     ],

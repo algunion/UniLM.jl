@@ -239,6 +239,11 @@
   backoff without it, which can be shorter, while `ask_each` and a `SystemOneFailure`'s
   `retry_after` already read it. Every verb, streamed or not, now waits at least what
   `retry-after-ms` asks for, else `Retry-After`.
+- **A retry wait no timer can hold is capped.** With `total_deadline = Inf`, a `Retry-After` or
+  `retry-after-ms` asking for more than 1e9 seconds threw `InexactError` from the backoff's timer
+  instead of waiting. The asked wait is now capped at 1e9 seconds, as `ask_each` caps its shared
+  wait, and a cancel ends it as it ends any backoff; a finite `total_deadline` still returns the
+  last response at once.
 - **The TypeSafe docstrings use TypeSafe's words.** `TypeSafeProtocol`'s said TypeSafe marks
   images and Box questions experimental; TypeSafe calls them "Dreamer-ready", not yet "ready for
   production". `TYPESAFE_DEFAULT_MODEL`'s advised pinning `jev-1.13.0`, while `jev-latest` now

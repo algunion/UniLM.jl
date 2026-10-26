@@ -142,6 +142,9 @@ function _retry_delay(retry::Integer, resp::HTTP.Response, remaining::Float64=In
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
     ra = _retry_after(resp)
     isnothing(ra) && return rand() * computed
+    # No timer holds an absurd wait (Timer counts whole milliseconds in a UInt64), so the asked
+    # wait is capped as `ask_each` caps its shared one; a finite deadline reports it as :budget.
+    ra = min(ra, _MAX_FINITE_TIMEOUT)
     return ra + rand() * min(computed, max(remaining - ra, 0.0) / 2)
 end
 

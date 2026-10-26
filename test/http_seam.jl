@@ -414,6 +414,34 @@ end
     end
 end
 
+@testset "retry budget: an asked wait is capped at the longest finite timeout" begin
+    # No timer holds a wait of 1e297 s (Timer counts whole milliseconds in a UInt64: InexactError),
+    # so the seam caps the asked wait at _MAX_FINITE_TIMEOUT, as ask_each caps its shared wait.
+    cap = UniLM._MAX_FINITE_TIMEOUT
+    for h in (["retry-after-ms" => "1e300"], ["Retry-After" => "9223372036854775807"])
+        @test UniLM._retry_delay(0, HTTP.Response(429, h)) <= cap + 1.0
+    end
+    # With no deadline the capped wait is slept, and a cancel ends it as any other backoff.
+    tok = CancelToken()
+    server, base = _seam_server(req -> begin
+        # The cancel comes 2 s after the 429, when the client is in the wait it asked for.
+        errormonitor(Threads.@spawn (sleep(2.0); cancel!(tok)))
+        HTTP.Response(429, ["retry-after-ms" => "1e300"], Vector{UInt8}("{}"))
+    end)
+    try
+        err = try
+            UniLM._http_with_retries(RequestConfig(max_attempts=2, total_deadline=Inf), time_ns(), "GET",
+                                     base * "/"; cancel=tok)
+            nothing
+        catch e
+            e
+        end
+        @test err isa UniLMCancelled
+    finally
+        close(server)
+    end
+end
+
 @testset "retry budget: the jitter above a Retry-After floor leaves the next attempt half of what remains" begin
     # 10 s left, a 9 s floor and attempt 4's 8 s backoff. Spread over the WHOLE 1 s
     # left after the floor, a pause could end just short of the deadline, and the next

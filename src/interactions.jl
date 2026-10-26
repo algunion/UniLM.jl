@@ -49,11 +49,22 @@ function _interactions_validate_output_limit(r::Respond)::Nothing
     nothing
 end
 
+# Background execution "requires `store=True` (the default) so the server can store the
+# interaction while you poll or stream results. Passing `background=True` with `store=False`
+# returns a `400` error" (https://ai.google.dev/gemini-api/docs/background-execution).
+function _interactions_validate_background(r::Respond)::Nothing
+    r.background === true && r.store === false && throw(ArgumentError(
+        "background=true requires a stored response on Gemini Interactions, which answers " *
+        "store=false with HTTP 400: omit store or set store=true"))
+    nothing
+end
+
 function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     _gemini_refuse_cache_options(r.prompt_cache_options)
     _interactions_reject_unmapped(r)
     _gemini_validate_sampling(r.model, r.temperature, r.top_p)
     _interactions_validate_output_limit(r)
+    _interactions_validate_background(r)
     body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input, r.model))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])

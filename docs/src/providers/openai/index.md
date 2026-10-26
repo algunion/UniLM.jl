@@ -328,8 +328,9 @@ of the exception as `error` and the exception as `cause`. A failure of a `Chat` 
 the reply's `x-request-id` header, when one came, as `request_id`.
 
 UniLM sends a request again after a transient status — 408, 429, 500, 502 to 504, 520 to 524 and
-529 — as often as the call's [`RequestConfig`](@ref) allows, waiting at least as long as a
-`Retry-After` header asks, and then returns the last answer ([Timeouts & Retries](@ref timeouts_guide)).
+529 — as often as the call's [`RequestConfig`](@ref) allows, waiting at least as long as the reply asks,
+by its `retry-after-ms` header, else `Retry-After`, and then returns the last answer
+([Timeouts & Retries](@ref timeouts_guide)).
 A 429 whose `error.code` is `credit_balance_exhausted`, `organization_spend_limit_exceeded`,
 `project_spend_limit_exceeded` or `organization_usage_limit_exceeded`, or whose `error.type` or
 `error.code` is `insufficient_quota`, is returned at once: "Retrying billing, spend, or quota errors

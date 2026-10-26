@@ -469,7 +469,7 @@ function _decisions_failure(resp::HTTP.Response)::SystemOneFailure
     SystemOneFailure(response=body, status=resp.status, request_id=_decisions_request_id(resp),
                      error_type=something(field("code"), field("type"), Some(nothing)),
                      message=something(field("message"), _truncate_body(body)),
-                     retry_after=_typesafe_retry_after(resp))
+                     retry_after=_retry_after(resp))
 end
 
 # ─── Cost ────────────────────────────────────────────────────────────────────

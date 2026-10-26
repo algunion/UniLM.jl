@@ -28,7 +28,7 @@ end
 
 function _back_off!(b::_SharedBackoff, attempt::Int, resp::HTTP.Response)::Nothing
     resp.status == 429 || resp.status == 529 || return nothing
-    asked = something(_typesafe_retry_after(resp), min(_RETRY_BASE * _RETRY_FACTOR^(attempt - 1), _RETRY_MAX_DELAY))
+    asked = something(_retry_after(resp), min(_RETRY_BASE * _RETRY_FACTOR^(attempt - 1), _RETRY_MAX_DELAY))
     @atomic b.until max time_ns() + round(UInt64, min(asked, _MAX_FINITE_TIMEOUT) * 1e9)
     nothing
 end

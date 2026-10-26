@@ -7,11 +7,18 @@ Describes a function that can be called by the model in the Chat Completions API
 - `name::String`: The name of the function.
 - `description::Union{String,Nothing}`: A description of what the function does.
 - `parameters::Union{AbstractDict,Nothing}`: JSON Schema object describing the function parameters.
-- `strict::Union{Bool,Nothing}`: Enable strict schema adherence for function arguments
-  (structured outputs). `nothing` (default) omits the field from the request — the API
-  default, non-strict. `true` requires `parameters` to be a strict-valid schema
-  (`additionalProperties: false` on every object, all properties `required`); UniLM does
-  not validate this — the API rejects strict-invalid schemas with a 400.
+- `strict::Union{Bool,Nothing}`: Strict schema adherence for the function's arguments.
+  `nothing` (default) sends no `strict`, so the API's default applies: OpenAI's Chat
+  Completions call the function non-strict, while its Responses API, which a `Chat`
+  [`Tool`](@ref) reaches through [`Respond`](@ref), "will attempt to normalize your schema
+  into strict mode when possible" and falls back to non-strict function calling where it
+  cannot ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+  `true` asks for adherence: OpenAI's strict mode needs `additionalProperties: false` on
+  every object and every property `required`, which UniLM does not check, and OpenAI
+  rejects a request whose strict schema misses them "with details about the missing
+  constraints". The native Anthropic encoder sends the flag on the tool; native Gemini and
+  Gemini Interactions, which have no such flag, ask for validated function calling when
+  `tool_choice` is unset or `"auto"`; [`OllamaEndpoint`](@ref) refuses `strict=true`.
 
 # Example
 ```julia
@@ -386,12 +393,13 @@ AudioAttachment(path::AbstractString) = AudioAttachment(read(_attachment_file(pa
     DocumentAttachment(data::AbstractVector{UInt8}; filename="document.pdf")
 
 A PDF document for a user [`Message`](@ref), recognised from its leading bytes
-(`%PDF-`). `mime` is `"application/pdf"`; `filename` is the name the provider is
-given for it: the file's own name (`basename(path)`) or, for bytes, the keyword.
-Endpoints on the OpenAI Chat Completions wire send it as a `file` part
+(`%PDF-`). `mime` is `"application/pdf"`; `filename` is the file's own name
+(`basename(path)`) or, for bytes, the keyword. Endpoints on the OpenAI Chat Completions
+wire send the document as a `file` part with its `filename`
 ([file inputs](https://developers.openai.com/api/docs/guides/file-inputs)); for the
-Responses API, [`input_file`](@ref) turns it into an `input_file` part, and the native
-Anthropic encoder sends it as a base64 `document` block. See
+Responses API, [`input_file`](@ref) turns it into an `input_file` part with its
+`filename`. The native Anthropic encoder (a base64 `document` block), native Gemini
+(`inlineData`) and Gemini Interactions (a `document` part) send the document without it. See
 [`Attachment`](@ref) for the endpoints that refuse it. Throws `ArgumentError` for
 bytes that are not PDF, whatever the file is called, and for a blank `filename`.
 
@@ -471,11 +479,11 @@ that speaks, such as `gpt-audio-1.5`
   `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
   bytes that begin with none, such as `"pcm16"`'s raw samples.
 - `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
-  audio for later turns; after it, OpenAI answers a turn that sends the id back with HTTP
-  400 `audio_not_found`, the answer observed for an id it never issued. `nothing` when it
-  is unknown: the reply names none, or a streamed reply's expiry, which comes alone in its
-  last update after the turn's finish, was lost to a connection that closed between the
-  two; the turn is kept either way.
+  audio for later turns; from a minute before then on the turn goes back without its id
+  (below): OpenAI no longer holds the audio when the request arrives, and it answered an id it
+  never issued with HTTP 400 `audio_not_found`. `nothing` when it is unknown: the reply names none, or a streamed
+  reply's expiry, which comes alone in its last update after the turn's finish, was lost to
+  a connection that closed between the two; the turn is kept either way.
 - `transcript::String`: what the audio says; the turn's `content` too, unless the turn
   holds other text.
 
@@ -484,7 +492,11 @@ assembles it from its `delta.audio` chunks, and the transcript reaches the strea
 callback as text. When the conversation goes on, the OpenAI Chat encoder
 (`OPENAIServiceEndpoint`) sends the turn back as
 `{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
-beside the id. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+beside the id, until a minute before `expires_at`, and always when `expires_at` is
+`nothing`; from then on it sends the content alone. Such a follow-up's request bytes
+therefore depend on the clock: one recorded with [`with_recorded_answers`](@ref) while the
+audio was live replays only until a minute before `expires_at`, then throws
+[`ReplayMissError`](@ref); record it after the expiry. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
 DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
 the turn's content alone, the neutral form it also sends for another provider's
 [`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.
@@ -589,7 +601,7 @@ JSON.omit_null(::Type{Message}) = true
 # The request wire form. provider_content is a decode-side round-trip cache for
 # provider-native blocks (same precedent as ToolCall.thought_signature) and
 # finish_reason is a response-only field: neither is sent; audio_output goes back by
-# its id on OpenAI's own wire only (`_wire_messages`). A refusal travels under
+# its id on OpenAI's own wire only, until it expires (`_wire_messages`). A refusal travels under
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),
@@ -1608,20 +1620,27 @@ _asks_stream_usage(_) = false
 
 # The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the
 # audio of an audio reply and takes it back by id, `"audio": {"id": …}` beside the turn's
-# content (the assistant message of the Chat Completions reference); every other endpoint
-# gets the content alone, the transcript unless the turn holds other text. A conversation
-# without an audio reply goes out as it is.
+# content (the assistant message of the Chat Completions reference), until the reply's
+# `expires_at`, "when this audio response will no longer be accessible on the server for use
+# in multi-turn conversations" (the reply's `audio`): from a minute before then on, and on
+# every other endpoint, the turn goes as its content alone, the transcript unless the turn
+# holds other text. The minute covers a request built just before the expiry, which could
+# reach OpenAI after it, and a server clock ahead of this one. A turn whose expiry is unknown
+# goes by id. A conversation without an audio reply goes out as it is.
 _wire_messages(_, messages::Conversation) = messages
 _wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
     any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages
 
 function _audio_turn(m::Message)
     audio = m.audio_output
-    isnothing(audio) && return m
+    (isnothing(audio) || _audio_expired(audio)) && return m
     d = JSON.lower(m)
     d[:audio] = Dict(:id => audio.id)
     d
 end
+
+const _AUDIO_EXPIRY_MARGIN = 60.0   # seconds before `expires_at` from which the id is no longer sent
+_audio_expired(a::AudioOutput)::Bool = !isnothing(a.expires_at) && time() >= a.expires_at - _AUDIO_EXPIRY_MARGIN
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)

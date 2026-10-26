@@ -48,6 +48,33 @@
         # A well-formed secret with a wrong signature is still a plain `false`: only
         # genuine verification failures return, so `false` keeps one meaning.
         @test verify_webhook(payload, bad_headers, secret) == false
+        # `base64decode` skips characters outside the alphabet, so these decoded to another key
+        # (`whsec_***` to the empty one) and every delivery verified `false`. RFC 4648 §3.3:
+        # "Implementations MUST reject the encoded data if it contains characters outside the
+        # base alphabet"; a space inside the secret counts as one.
+        body = "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+        for bad in ("whsec_***", "whsec_" * body * "*", "whsec_MfKQ 9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+                    "whsec_MfKQ9r8G\nKYqrTwjUPD8ILPZIo2LaLaSw", "whsec_MfKQ9r8G-YqrTwjUPD8ILPZIo2LaLaSw", body * "_")
+            err = try verify_webhook(payload, bad_headers, bad); nothing catch e; e end
+            @test err isa ArgumentError && startswith(err.msg, "webhook signing secret is not valid base64")
+        end
+        # Whitespace around the secret is no part of it: a secret read with its line break from a file
+        # or an env file verifies with the right key, as OpenAI's SDKs, whose decoders skip it, verify it.
+        key = UniLM.base64decode(body)
+        signed = Dict(bad_headers..., "webhook-signature" => "v1," * UniLM.base64encode(UniLM._hmac_sha256(key,
+            Vector{UInt8}(string(bad_headers["webhook-id"], ".", bad_headers["webhook-timestamp"], ".", payload)))))
+        for around in ("whsec_" * body * "\n", "whsec_" * body * "\r\n", " whsec_" * body * " ", "\t" * body * "\n")
+            @test verify_webhook(payload, signed, around) == true
+        end
+        # Padding goes at the end only, and only as much as the last group lacks.
+        for bad in ("whsec_YQ=", "whsec_YWJj=", "whsec_YQ===", "whsec_=YWJj", "whsec_YW=j", "whsec_Y", "whsec_YWJjZ")
+            @test_throws ArgumentError verify_webhook(payload, bad_headers, bad)
+        end
+        # A last group of two or three characters may come without its padding, as the Standard
+        # Webhooks reference library pads an unpadded secret before decoding it.
+        for good in ("whsec_YQ", "whsec_YQ==", "whsec_YWI", "whsec_YWI=", "whsec_YWJj", "YWJj")
+            @test verify_webhook(payload, bad_headers, good) == false
+        end
     end
 
     @testset "non-finite timestamps do not slip past the replay window" begin

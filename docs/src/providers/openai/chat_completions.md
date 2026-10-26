@@ -35,6 +35,9 @@ to the function schema", and OpenAI recommends "always enabling" it; its schema 
 `additionalProperties: false` on every object and every field `required`, and a request whose strict
 schema misses them "will be rejected with details about the missing constraints"
 ([function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)).
+A `Tool` whose `FunctionSignature` sets no `strict` goes without one, and "Chat Completions requests
+remain non-strict by default"; the same tool given to a `Respond` meets the Responses default instead
+([Tools](@ref openai_tools)).
 
 A `Chat` with `tools` sends `parallel_tool_calls: false` unless it sets another value: the model may
 otherwise "call multiple functions in a single turn", and `false` "ensures exactly zero or one tool is
@@ -157,11 +160,16 @@ spoken = chatrequest!(chat).message.audio_output
 ```
 
 The next request sends the audio turn back as its text and `"audio": {"id": …}`, "Data about a previous
-audio response from the model". UniLM sends that id whatever the turn's `expires_at`, the Unix time "for
-when this audio response will no longer be accessible on the server for use in multi-turn conversations"
+audio response from the model", until a minute before the turn's `expires_at`, the Unix time "for when
+this audio response will no longer be accessible on the server for use in multi-turn conversations"
 ([Create chat completion](https://developers.openai.com/api/reference/resources/chat), the assistant
-message's `audio` and the reply's `audio`): a conversation that goes on after that time sends the id of
-audio that is no longer accessible.
+message's `audio` and the reply's `audio`). From then on it sends the turn as its text alone, so that a
+request built just before the expiry does not arrive after it; a turn whose `expires_at` is `nothing`
+goes by its id. The request's bytes therefore depend on the clock, and so does a recording of it
+([Testing and recordings](@ref testing_guide)): recorded while the audio was live, it sends the id and
+replays only until a minute before the expiry. This page replays recorded replies, and the request below
+was recorded after the first one's `expires_at`, so it sends that reply as its transcript and replays at
+any later time:
 
 ```@example openai
 push!(chat, Message(Val(:user), "Now say it in French."))
@@ -172,8 +180,8 @@ u = result.usage
 ```
 
 The usage counts the audio apart, `prompt_audio_tokens` of the input and `completion_audio_tokens` of the
-output: here the input's audio is the first reply, sent back by its id. [`estimated_cost`](@ref) bills
-them at the model's audio rates
+output: here the input holds no audio, its first reply having gone back as text, while a reply sent back
+by its id counts as input audio. [`estimated_cost`](@ref) bills them at the model's audio rates
 ([Cost and usage](@ref openai_cost)). A streamed reply assembles the same `audio_output` from its chunks,
 the transcript reaching the callback as text and the expiry coming in the last update; a stream cut
 between the finish and that update keeps the turn with `expires_at == nothing`. Speech and transcription

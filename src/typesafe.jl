@@ -101,7 +101,9 @@ from `{"model", "answers", "usage"}`, the request id read from the
 shapes. Recordings are keyed under the plain path (no namespace). It sends a
 [`RawQuestion`](@ref) verbatim and never expects a refusal.
 
-TypeSafe marks images and Box questions experimental. Each distinct
+TypeSafe marks images and Box questions "Dreamer-ready": they "aren't yet up to our
+standards to call ready for production", and their request format, answers and limits "can
+change between releases" ([Images](https://docs.typesafe.ai/images)). Each distinct
 [`ImageAttachment`](@ref) of a request — in the state, an instruction, a
 criterion or a raw question's fields — is sent once, as a part of a
 `multipart/form-data` request whose first part, `request`, holds the JSON body;
@@ -167,7 +169,7 @@ _system_one_concurrency(::TypeSafeProtocol, service)::Int = 16
 # service (422), so they are refused here, before a round trip.
 const _TYPESAFE_MAX_OPTIONS = 255
 const _TYPESAFE_MAX_LEVELS = 10
-# Its request rules (https://docs.typesafe.ai/api#request-rules): a body over 32 MiB,
+# Its request rules (https://docs.typesafe.ai/api/errors#request-rules): a body over 32 MiB,
 # multipart framing included, is answered 413, and more than 64 levels of objects and
 # arrays in the state, an instruction or a criterion 400.
 const _TYPESAFE_MAX_BODY = 32 * 1024 * 1024
@@ -521,36 +523,11 @@ _typesafe_request_id(resp::HTTP.Response)::Union{Nothing,String} =
     (v = HTTP.header(resp, "x-typesafe-request-id", ""); isempty(v) ? nothing : String(v))
 _typesafe_request_id(::Nothing) = nothing
 
-"""
-    _typesafe_retry_after(resp) -> Union{Nothing,Float64}
-
-The wait a rate-limited or overloaded response asked for, in seconds.
-
-`retry-after-ms` is read first and `retry-after` second: a server that sends both
-means the millisecond form, and reading only the coarse one rounds a sub-second
-hint up to a whole second of idle client. `retry-after` itself takes either
-delta-seconds or an HTTP-date, both left to `_retry_after_seconds` — the seam's
-own reader, so the two forms are not parsed twice by two rules that could drift
-apart. `nothing` when neither header arrived or neither parsed: a value
-that is absent, malformed or not a finite number must leave the client's own
-backoff in charge, never make it throw or sleep forever.
-"""
-function _typesafe_retry_after(resp::HTTP.Response)::Union{Nothing,Float64}
-    ms = strip(HTTP.header(resp, "retry-after-ms", ""))
-    if !isempty(ms)
-        v = tryparse(Float64, ms)
-        if !isnothing(v) && isfinite(v)
-            return max(0.0, v / 1000)
-        end
-    end
-    return _retry_after_seconds(resp)
-end
-
 _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
     body = String(resp.body)
     SystemOneFailure(response=body, status=resp.status, request_id=_typesafe_request_id(resp),
                      error_type=_typesafe_error_type(body), message=_typesafe_error_message(body),
-                     retry_after=_typesafe_retry_after(resp))
+                     retry_after=_retry_after(resp))
 end
 
 # Two failures say less than the request they answer explains: a request over its context

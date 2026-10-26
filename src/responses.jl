@@ -822,8 +822,12 @@ Configuration struct for an OpenAI Responses API request.
   a Chat [`Tool`](@ref) is converted to the equivalent `FunctionTool`
 - `previous_response_id::String`: Chain to a previous response for multi-turn; cannot
   be combined with `conversation`
-- `background::Bool`: Run in the background; requires a stored response (`store=false`
-  throws `ArgumentError`)
+- `background::Bool`: Run in the background: [`get_response`](@ref) reads the response
+  and [`cancel_response`](@ref) stops it. OpenAI takes `store=false` with it: "response
+  data is temporarily stored to support asynchronous execution and polling"
+  ([background mode](https://developers.openai.com/api/docs/guides/background)). Gemini
+  Interactions (`GEMINIServiceEndpoint`) answers `store=false` with HTTP 400, so there it
+  throws `ArgumentError` before any request
 - `reasoning::Reasoning`: Reasoning effort, summary, persisted context and mode ([`Reasoning`](@ref))
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
@@ -941,8 +945,6 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
             "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
-        background === true && store === false && throw(ArgumentError(
-            "background=true requires a stored response: omit store or set store=true"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
@@ -1034,7 +1036,9 @@ end
 """
     ResponseFailure <: LLMRequestResponse
 
-HTTP-level failure from the Responses API. Contains the response body, status code, and optional request ID.
+A failure from the Responses API: an HTTP status other than 200, or a response whose `status`
+is `"failed"` (read by [`respond`](@ref), [`get_response`](@ref) or [`cancel_response`](@ref)),
+whose `status` field is then 200. Contains the response body, status code, and optional request ID.
 """
 @kwdef struct ResponseFailure <: LLMRequestResponse
     response::String
@@ -1745,7 +1749,9 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
 """
     respond(r::Respond; config=nothing, callback=nothing, cancel=nothing)
 
-Send a request to the OpenAI Responses API.
+Send `r` to the agentic API of `r.service`: the Responses API of OpenAI, of an
+[`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or of an endpoint
+type of your own, or Gemini Interactions on `GEMINIServiceEndpoint`.
 
 Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings,
@@ -1818,17 +1824,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         end
         if resp.status == 200
             decoded = _billed_response(r.service, r.model, decode_agentic(r.service, resp))
-            # A generation that came back `failed` is a failure, whichever way it was
-            # requested. The streamed limb already routes `response.failed` (OpenAI)
-            # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
-            # outcome in ResponseSuccess here made `issuccess` depend on `stream`.
-            # ONLY "failed": cancelled, expired, in_progress, requires_action and
-            # incomplete are legitimate terminals of the background, tool-action and
-            # truncated-output flows — a truncated generation still carries usable
-            # partial output, and says so in `status`/`incomplete_details`.
-            decoded.status == "failed" && return ResponseFailure(
-                response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            return ResponseSuccess(response=decoded, service=r.service)
+            return _response_result(r.service, decoded, resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1838,6 +1834,21 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing; service=r.service)
     end
+end
+
+# The result for a response read back with HTTP 200, by `respond`, `get_response` or
+# `cancel_response`: a generation whose `status` is `failed` is a failure, whichever verb
+# read it and whichever way it was requested. The streamed limb already routes
+# `response.failed` (OpenAI) and a failed interaction (Gemini) to ResponseFailure; wrapping
+# the same outcome in ResponseSuccess made `issuccess` depend on `stream`, or on the verb
+# that read it. ONLY "failed": cancelled, expired, queued, in_progress, requires_action and
+# incomplete are legitimate terminals or states of the background, tool-action and
+# truncated-output flows — a truncated generation still carries usable partial output, and
+# says so in `status`/`incomplete_details`.
+function _response_result(service, decoded::ResponseObject, resp::HTTP.Response)
+    decoded.status == "failed" && return ResponseFailure(
+        response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
+    ResponseSuccess(response=decoded, service=service)
 end
 
 # The result for an exception that ended a non-streaming Responses call (`respond`
@@ -1922,11 +1933,22 @@ end
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Retrieve an existing response by its ID. An endpoint whose Responses API stores no
-responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a
-[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
-scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
-be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
+Retrieve an existing response by its ID: a `ResponseSuccess`, or a `ResponseFailure` when
+the response's `status` is `"failed"`, as [`respond`](@ref) returns it. OpenAI keeps a
+stored response (`store=true`, the default) "for at least 30 days, subject to the data
+retention exceptions"; the data of a background request made with `store=false` is
+"temporarily stored to support asynchronous execution and polling", and OpenAI's background
+guide names two exceptions: a Zero Data Retention project's "Background requests … run with
+`store=false`", their data kept "for roughly 10 minutes", and in a Modified Abuse
+Monitoring project "Background responses are retained after the polling period only when
+`store=true` is explicitly provided"
+([background mode](https://developers.openai.com/api/docs/guides/background)).
+`get_response` reads a response while OpenAI holds it, and not once it is deleted. An
+endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+request passes through the recordings: one the scope cannot replay throws
+[`ReplayMissError`](@ref), and an answer whose recording cannot be written throws
+[`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -1945,7 +1967,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _lifecycle_request(service, "GET", url, cfg, t0)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
+            return _response_result(service, decode_agentic(service, resp), resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -2044,12 +2066,13 @@ end
 """
     cancel_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success. An endpoint
-whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
-before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
-through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
-an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
-of returning a `ResponseCallError`.
+Cancel an in-progress response by its ID. Returns `ResponseSuccess` with the response it
+read back, or a `ResponseFailure` when that response's `status` is `"failed"`, as
+[`respond`](@ref) does. An endpoint whose Responses API stores no responses
+([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a
+[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
+scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
+be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -2071,7 +2094,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
         resp = _lifecycle_request(service, "POST", url, cfg, t0)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
+            return _response_result(service, decode_agentic(service, resp), resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end

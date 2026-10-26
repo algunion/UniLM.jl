@@ -138,7 +138,7 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([What a model takes](@ref backends_ollama_limits)) |
 | Guidance | strings, objects, arrays and images, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, when given; strings elsewhere |
-| Images | anywhere in the request; experimental | in the state only | in the state, before its texts; vision models only |
+| Images | anywhere in the request; "Dreamer-ready" | in the state only | in the state, before its texts; vision models only |
 | Box | Jev 1.14 or later | refused | refused |
 | Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |

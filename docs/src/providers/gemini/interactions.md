@@ -56,7 +56,7 @@ prices; `token_usage` reads the interaction's `usage` in the shape every result 
 generateContent ([Cost and usage](@ref gemini_cost)). `respond` returns an interaction whose `status`
 is `"failed"` as a `ResponseFailure`, and one that is `"completed"`, `"requires_action"`,
 `"incomplete"`, `"in_progress"` or `"cancelled"` as a `ResponseSuccess`, whose `status` says which;
-`get_response` and `cancel_response` return every interaction they read as a `ResponseSuccess`
+`get_response` and `cancel_response` return an interaction they read the same way
 ([Background requests](@ref gemini_background)).
 
 ## [Conversations](@id gemini_interactions_conversations)
@@ -309,7 +309,7 @@ cancel_response(id; service=GEMINIServiceEndpoint)
 
 A background request needs a stored interaction — "Passing `background=True` with `store=False`
 returns a `400` error" ([background execution](https://ai.google.dev/gemini-api/docs/background-execution))
-— so `Respond` refuses the pair ([Limits and refusals](@ref gemini_limits)). Gemini 4 Argon writes
+— so `respond` refuses the pair before sending it ([Limits and refusals](@ref gemini_limits)). Gemini 4 Argon writes
 more than 65,536 output tokens only in the background: Google's limit with `background: false` is
 "65,536 tokens. Values greater than 65,536 return a 400 error", and a background request takes "Your
 `max_output_tokens`, up to 1,048,576 minus your input"

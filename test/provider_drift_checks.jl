@@ -25,9 +25,14 @@ _drift_provider(id::AbstractString)::Union{Symbol,Nothing} =
 # A model id as source quotes it: lower-case words joined by single dots or hyphens.
 const _DRIFT_QUOTED_ID = r"\"([a-z0-9]+(?:[.\-][a-z0-9]+)*)\""
 
-# The ids of a provider's models that `text` quotes.
+# A prefix that code tests ids against, as in `startswith(m.id, "gpt-6")`: it names a family, not
+# a model.
+const _DRIFT_PREFIX_TEST = r"startswith\([^,()]*,\s*\"[^\"]*\"\)"
+
+# The ids of a provider's models that `text` quotes, prefix tests aside.
 _drift_quoted_ids(text::AbstractString)::Vector{String} =
-    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID, text)) if !isnothing(_drift_provider(id))]
+    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID, replace(text, _DRIFT_PREFIX_TEST => "")))
+           if !isnothing(_drift_provider(id))]
 
 # The models UniLM uses when a call names none: the default-model functions, the speech and
 # Decisions defaults, and the keyword defaults its source writes as `model::String="…"`.

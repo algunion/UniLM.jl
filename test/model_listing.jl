@@ -451,7 +451,7 @@ end
 
 # Refuted if: a model id in a docs page's Julia code — a ```julia, ```@example or ```@repl block, at
 # any indentation — goes unchecked, or one in prose (migration notes name retired models on purpose)
-# or in another block is checked.
+# or in another block is checked, or a prefix that a `startswith` test names is taken for a model.
 @testset "drift checks: the models the docs' Julia code names are checked, not those of their prose" begin
     mktempdir() do dir
         mkpath(joinpath(dir, "guide"))
@@ -460,6 +460,7 @@ end
 
             ```julia
             chat = Chat(model="gpt-6-sol")
+            ids = [m.id for m in ms if startswith(m.id, "gpt-6") || startswith(m.id, "gemini-3.8")]
             ```
 
             ```@example page

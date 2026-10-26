@@ -211,6 +211,79 @@
   endpoints send it as given; native Gemini, Anthropic and Ollama refuse it, having no such
   field. Built positionally, a `Chat` takes it as the 38th argument.
 
+### Changed
+- **The language-model documentation is a chapter organised by provider.** The manual's *Guide*
+  is now the *Language models* chapter: an overview of when to use a language model and which
+  providers UniLM reaches, an entry for each provider, the concept pages every provider shares and
+  the pages across providers. An entry holds what is its provider's own — setup, a first call, the
+  rules and limits UniLM applies to it, its failures — and each concept page ends in a table that
+  links the providers' entries. *Attachments*, *Results* and *Testing and recordings* are new
+  concept pages. The API reference follows as *Reference*, the LLM reference for coding agents at
+  its end.
+- **OpenAI has an entry of its own.** Seven pages: *Start here* (setup, Chat Completions or
+  Responses, a first call, conversations, streaming, embeddings, failures), *Models & request
+  rules* (models, reasoning, prompt caching, cost, limits), *Chat Completions*, *Responses & hosted
+  tools*, which holds the Responses API guide, *Retrieval & file search*, which holds the Retrieval
+  & File Search guide, *Images, audio & realtime* and *Platform APIs* (files, conversations,
+  containers, batches, fine-tuning, moderation, webhooks).
+- **Anthropic has an entry of its own.** Three pages: *Start here* (setup, the endpoint's options, a
+  first call, conversations, streaming), *Thinking, tools & output* (tools, structured output,
+  reasoning, attachments, request options, limits) and *Caching, cost & limits* (prompt caching,
+  cost, rate limits and failures, models, Anthropic's OpenAI-compatible endpoint).
+- **Google Gemini has an entry of its own.** Four pages: *Start here* (setup, which of Google's APIs
+  serves what, a first call, conversations, models, limits, failures), *The generateContent API*,
+  which `chatrequest!` reaches, *The Interactions API*, which `respond` reaches, and *Images,
+  speech, embeddings & the compatible endpoint*.
+- **Ollama has an entry of its own.** Three pages: *Ollama* (setup, conversations, streaming, tools,
+  structured output, reasoning, attachments, transcription, `respond` and FIM, cost, limits),
+  *Embeddings* (EmbeddingGemma 2, images and sound, long inputs, local retrieval) and *Runtime &
+  model management* (the endpoint's options, runners, models, failures). It holds the Local Models
+  with Ollama guide.
+- **vLLM, LM Studio and llama.cpp have an entry.** One page, on `GenericOpenAIEndpoint` against a
+  server of your own: setup, a first call, streaming, tools, structured output, the embeddings,
+  `respond`, FIM and transcription routes, limits and failures.
+- **Azure OpenAI has an entry.** One page, on `AZUREServiceEndpoint` and a deployment of yours:
+  setup, conversations, streaming, tools, structured output, reasoning, attachments, prompt caching,
+  cost, models, limits and failures, and Azure's v1 API through a generic endpoint.
+- **DeepSeek has an entry.** One page, on `DeepSeekEndpoint()`: setup, conversations, streaming,
+  tools and DeepSeek's strict mode, structured output, reasoning, FIM and prefix completion, prompt
+  caching, cost, models, limits and failures.
+- **Mistral and other OpenAI-compatible services have an entry.** One page, on `MistralEndpoint()`
+  and on `GenericOpenAIEndpoint` for a hosted service: setup, conversations, streaming, tools,
+  structured output, attachments, embeddings, transcription, FIM, cost, models, limits and failures,
+  with the facts that are Mistral's alone marked as Mistral's.
+- **Jev (TypeSafe) has an entry of its own.** Three pages in the Decisions chapter: *Start here*
+  (setup, a first decision, the models, the questions, limits), *Images, Box, long context,
+  structured guidance* and *Confidence, errors, cost & testing*. It holds *Start Here: Decisions in
+  Five Minutes*.
+- **OpenAI's Decisions API has an entry of its own.** One page, on `ask` with
+  `OPENAIServiceEndpoint`: setup and options, a first decision, the models and questions, declined
+  questions, limits, confidence, cost, recordings and failures.
+- **Local decision models have an entry of their own.** One page, on `ask` with `OllamaEndpoint()`,
+  which Ollama's System One route answers: setup and options, a first decision, the models,
+  questions and images, limits, confidence, recordings, throughput and failures.
+- **Decisions is a chapter of its own.** The *Decisions (Jev)* section is now the *Decisions*
+  chapter: an overview of when a decision model serves better than a language model and which
+  providers answer `ask`, the three providers' entries, the concept pages every decision provider
+  shares — *Route and Decide*, *Dispatch on Meaning*, *Many Items at Once*, *Decisions with LLMs*
+  and *Test and Develop*, each ending in a table that links the providers' entries — and, across
+  providers, *Choosing a decision provider*, which holds *Backends: Jev, OpenAI and Local Models*,
+  and *Write your own decision provider*, a new page.
+- **One API across providers says what every provider shares and where they differ.** The
+  Multi-Backend guide, at its address, is now *One API across providers*: what every provider
+  shares, how to switch providers, where they differ and how to keep up with their models, ending
+  in a table that links each provider's entry. Beside it, *Capabilities by provider*, a new page,
+  shows what each provider's endpoints serve, and *Write your own backend* is the Custom Backends
+  guide.
+- **Every page address and declared section id of the v0.26.0 manual still resolves.** The five
+  pages that moved — the Responses API, Retrieval & File Search and Local Models with Ollama guides,
+  *Start Here: Decisions in Five Minutes* and *Backends: Jev, OpenAI and Local Models* — each leave
+  a page at their old address that forwards the reader to the page that replaced it, at the section
+  the link named where the site still defines it; every other page keeps its address, and the API
+  pages keep every docstring they held. Every section id the v0.26.0 pages declared still resolves,
+  the six that were retired to their successors. The Documentation workflow writes the forwarding
+  pages and fails when an address or a declared section id of v0.26.0 resolves to nothing.
+
 ### Fixed
 - **A replayed Gemini reply keeps its service tier.** A recording now keeps the reply's
   `x-gemini-service-tier` header, which names the tier Gemini billed it at (Gemini 4 Argon
@@ -233,8 +306,10 @@
   `TaskFailedException` (or a `CompositeException`, a `CapturedException`). The tool loops
   took it for a tool error and went on, an MCP server answered a tool handler's as tool
   content, and a resource or prompt handler's it logged and answered `-32603`. Now each
-  throws it as it was thrown, as for a bare `InterruptException`; any other error inside
-  such a wrapper is still a tool error.
+  throws it as it was thrown, as for a bare `InterruptException`. Any other error inside
+  such a wrapper goes where it went: a tool loop still takes it for a tool error, an MCP
+  server still answers a tool handler's as tool content, and a resource or prompt
+  handler's it still logs and answers `-32603`.
 - **A streamed turn interrupted during a later reply keeps the earlier replies' cost.** When
   an `InterruptException` ended a streamed turn the provider continued over several requests
   (a long Gemini generation), `cumulative_cost` left out the replies already received; they

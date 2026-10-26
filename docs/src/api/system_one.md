@@ -8,7 +8,7 @@ says *whether to act on it*.
 
 UniLM has one System One surface — [`ask`](@ref), [`ask_each`](@ref), the
 question builders and the typed answers below — over three backends: TypeSafe's
-Jev (the default), OpenAI's Decisions API (a public beta) and local decision
+Jev (the default), OpenAI's Decisions API (generally available) and local decision
 models served by Ollama. [Route and Decide](@ref system_one_guide) is the how-to
 and [Choosing a decision provider](@ref system_one_backends) compares
 the three. This page gives what every backend shares, then each backend's setup,
@@ -21,7 +21,7 @@ rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 | Backend | `service` | Model when a call names none | Credentials |
 | :--- | :--- | :--- | :--- |
 | [TypeSafe's Jev](@ref system_one_typesafe) (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` |
-| [OpenAI's Decisions API](@ref system_one_openai) (public beta) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| [OpenAI's Decisions API](@ref system_one_openai) (generally available) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
 | [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:4b` (`clef-flash:9b` for pictures) | none |
 
 A call takes its backend from `service = …`; without one, from the enclosing
@@ -301,8 +301,8 @@ the alias the request named: a `jev-X.Y.Z` id without its own row at the
 
 ## [OpenAI Decisions](@id system_one_openai)
 
-OpenAI's Decisions API (`POST /v1/decisions`, a public beta since
-October 6, 2026) answers predicate, choice and score questions, and
+OpenAI's Decisions API (`POST /v1/decisions`, a public beta from October 6,
+2026, now generally available) answers predicate, choice and score questions, and
 [`OPENAIServiceEndpoint`](@ref) speaks it: name the endpoint as the `service` of
 [`ask`](@ref) or of a [`with_system_one`](@ref) scope, and set `OPENAI_API_KEY`.
 The model is `gpt-6-luna`, the only one the API serves, unless the call names

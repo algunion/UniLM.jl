@@ -112,6 +112,9 @@ _od_sent(request::SystemOneRequest; service=_ODMock) =
 # ─── The trait and its hooks ─────────────────────────────────────────────────
 
 @testset "OpenAI Decisions — OPENAIServiceEndpoint speaks the Decisions protocol" begin
+    # "The Decisions API is now generally available" (https://developers.openai.com/api/docs/guides/decisions).
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    @test !occursin("a public beta", flat(@doc UniLM.OpenAIDecisionsProtocol))
     @test UniLM.system_one_protocol(OPENAIServiceEndpoint) === _OD
     @test has_capability(OPENAIServiceEndpoint, :system_one)
     @test UniLM._system_one_default_model(_OD, OPENAIServiceEndpoint) == "gpt-6-luna"

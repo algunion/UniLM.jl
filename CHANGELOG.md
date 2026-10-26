@@ -323,6 +323,9 @@
   images leave their place to the runner. The message now says so: "Ollama takes a request's
   images in a list apart from its text, so an image after a text cannot be sent where it is
   (Clef reads the images first)". What is refused is unchanged.
+- **`OpenAIDecisionsProtocol`'s docstring calls OpenAI's Decisions API generally available.** It
+  called the API a public beta; OpenAI's guide opens "The Decisions API is now generally
+  available". No behaviour changes.
 
 ## 0.26.0
 

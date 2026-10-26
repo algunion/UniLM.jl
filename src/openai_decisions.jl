@@ -2,8 +2,8 @@
 # OpenAI's Decisions API — the OpenAI wrapper of the System One surface.
 #
 # POST /v1/decisions answers predicate, choice and score questions about an
-# `input` (https://developers.openai.com/api/docs/guides/decisions; a public beta
-# whose only model is gpt-6-luna). Its wire is not TypeSafe's: questions are an
+# `input` (https://developers.openai.com/api/docs/guides/decisions; generally
+# available, and its only model is gpt-6-luna). Its wire is not TypeSafe's: questions are an
 # array of typed objects whose `name` each answer echoes, answers come back as an
 # array in question order, any question may be refused, and probabilities and
 # confidences are rounded to two decimals. This file maps the generic surface
@@ -13,7 +13,7 @@
 """
     OpenAIDecisionsProtocol <: SystemOneProtocol
 
-OpenAI's Decisions API (a public beta) as a System One backend, and the protocol
+OpenAI's Decisions API, generally available, as a System One backend, and the protocol
 of [`OPENAIServiceEndpoint`](@ref): `ask(state, questions...; service =
 OPENAIServiceEndpoint)`, a [`with_system_one`](@ref)`(OPENAIServiceEndpoint)`
 scope and the natural-language verbs send `POST https://api.openai.com/v1/decisions`

@@ -211,12 +211,15 @@ end
     @test mixed[1]["text"] == "first" && mixed[3]["text"] == ""
     @test startswith(mixed[2]["image_url"], "data:image/png;base64,") && startswith(mixed[4]["image_url"], "data:image/jpeg;base64,")
     @test length(parts(fill(_OD_PNG, 128))) == 128
+    # A tuple is taken as a vector is: its strings and images are the message, in order.
+    @test parts((_OD_PNG, "What is it?")) == parts(Any[_OD_PNG, "What is it?"])
+    @test [p["type"] for p in parts(("first", _OD_PNG, "", _OD_JPEG))] == ["input_text", "input_image", "input_text", "input_image"]
 
     # An image anywhere but there has no form on the wire: refused before any I/O.
     refusals, seen = _od_serve(_od_valid) do
         [_od_caught(() -> ask(Dict("photo" => _OD_PNG), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any[Dict("photo" => _OD_PNG), "text"], "q" => noul("Is it?"); service=_ODMock)),
-         _od_caught(() -> ask((_OD_PNG, "text"), "q" => noul("Is it?"); service=_ODMock)),
+         _od_caught(() -> ask(("text", [_OD_PNG]), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask((photo = _OD_PNG,), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any["text", [_OD_PNG]], "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(fill(_OD_PNG, 129), "q" => noul("Is it?"); service=_ODMock)),
@@ -230,14 +233,14 @@ end
     end
     @test isempty(seen)
     @test all(e -> e isa ArgumentError, refusals)
-    @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector of strings and ImageAttachments"),
+    @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector or Tuple of strings and ImageAttachments"),
               refusals[1:5])
     @test contains(refusals[6].msg, "at most 128 images") && contains(refusals[6].msg, "129")
     @test contains(refusals[7].msg, "must be a string") && contains(refusals[8].msg, "description of its option \"a\"")
     @test all(e -> contains(e.msg, "an image belongs in the state") &&
-                   contains(e.msg, "Vector of strings and ImageAttachments"), refusals[[7, 8, 12]])
+                   contains(e.msg, "Vector or Tuple of strings and ImageAttachments"), refusals[[7, 8, 12]])
     @test contains(refusals[12].msg, "level 1 must be a string")
-    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector of strings")
+    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector or Tuple of strings")
     @test contains(refusals[10].msg, "10485760 characters") && contains(refusals[10].msg, "10485761")
     @test contains(refusals[11].msg, "JSON")
     @test length(input("x"^10_485_760)) == 10_485_760

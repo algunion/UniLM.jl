@@ -323,7 +323,7 @@ end
 | Generic surface | Decisions wire |
 | :--- | :--- |
 | `state`: a string, or a JSON value | `input`: the string, or the value's JSON text |
-| `state`: an image, or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
+| `state`: an image, or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
 | [`noul`](@ref) | `predicate` |
 | [`choice`](@ref) | `choice` of 2–255 options: the name is the `value`, a string description the `description` |
 | [`score`](@ref) | `score` of 2–10 levels, each a string: its `label` |

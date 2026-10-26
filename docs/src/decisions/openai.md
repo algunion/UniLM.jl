@@ -147,7 +147,7 @@ The state becomes the request's `input`:
 | :--- | :--- |
 | a string | the string |
 | a JSON value: a dictionary, an array, a tuple, a `NamedTuple` | the value's JSON text, a string |
-| an [`ImageAttachment`](@ref), or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts in their order, each image a base64 data URL, with its `detail` level when it sets one |
+| an [`ImageAttachment`](@ref), or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts in their order, each image a base64 data URL, with its `detail` level when it sets one |
 
 ```@example openai_decisions
 q = ask("The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
@@ -249,7 +249,7 @@ answer would carry no sign of the change.
 | a question type of your own, a subtype of `SystemOneQuestion` | `the API answers predicate, choice and score questions; a RawQuestion is sent verbatim` | build it as a `RawQuestion` |
 | a `RawQuestion` that holds a picture | `it holds an image, and images go in the state only` | put the picture in the state |
 | a `RawQuestion` whose `"name"` field differs from its name | `and the answer is matched to the question by the name it echoes` | drop the field, or name the question as it does |
-| a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a `Vector` of strings and images |
+| a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a vector or tuple of strings and images |
 | a text over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
 | a name, instructions, an option or a level over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
 | more than 128 pictures | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |

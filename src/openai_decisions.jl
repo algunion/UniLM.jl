@@ -23,8 +23,8 @@ when the call names none.
 The request:
 
 - `state` is the `input`: a string as it is; a JSON value (object, array, tuple,
-  `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a `Vector` of
-  strings and images, as one user message of `input_text` and `input_image`
+  `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a vector or
+  tuple of strings and images, as one user message of `input_text` and `input_image`
   parts (base64 data URLs, each with its `detail` when the image sets one), in
   order. Images go there and nowhere else, at most
   128 of them; each text — the input, or each text part of the message — is at
@@ -132,8 +132,8 @@ function _decisions_field(text::AbstractString, what::String)::String
     String(text)
 end
 
-const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector of strings and ImageAttachments, which is sent as " *
-                               "one user message of text and image parts in order"
+const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector or Tuple of strings and ImageAttachments, which is " *
+                               "sent as one user message of text and image parts in order"
 
 # The fix for guidance that is not text: write it as text, and move an image to the state.
 _decisions_as_text(x)::String = "Write it as text" *
@@ -233,7 +233,8 @@ _decisions_question(name::String, q::SystemOneQuestion) = _decisions_refuse(name
 # messages, so a JSON state is sent as its JSON text, which is what the model reads.
 _decisions_input(state::AbstractString) = _decisions_text(String(state), "the state")
 _decisions_input(state::ImageAttachment) = _decisions_message(Any[state])
-_decisions_input(state::AbstractVector) =
+# A tuple is taken as a vector is, as every System One backend takes it.
+_decisions_input(state::Union{AbstractVector,Tuple}) =
     all(x -> x isa Union{AbstractString,ImageAttachment}, state) && any(x -> x isa ImageAttachment, state) ?
         _decisions_message(state) : _decisions_json_input(state)
 _decisions_input(state) = _decisions_json_input(state)
@@ -252,7 +253,7 @@ function _decisions_text(text::String, what::String)::String
     text
 end
 
-function _decisions_message(items::AbstractVector)::Vector{Any}
+function _decisions_message(items::Union{AbstractVector,Tuple})::Vector{Any}
     n = count(x -> x isa ImageAttachment, items)
     n <= _DECISIONS_MAX_IMAGES || throw(ArgumentError(
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_IMAGES) images per request; the state has $n. " *

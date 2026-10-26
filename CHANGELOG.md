@@ -303,6 +303,11 @@
   checked only the 10,485,760 characters of a text input, so a longer field went out though the
   schema rules it out. Each is now an `ArgumentError` before anything is sent, naming the field
   and its length, counted in characters as the reference counts them.
+- **OpenAI's Decisions API takes a tuple of strings and images as a state, as the other backends
+  do.** `ask` on `OPENAIServiceEndpoint` sent a vector of strings and images as one user message
+  of text and image parts, but refused the same items in a tuple, as an image "nested in JSON",
+  while TypeSafe and Ollama take a tuple as they take the vector. A tuple is now sent as the
+  vector is.
 
 ## 0.26.0
 

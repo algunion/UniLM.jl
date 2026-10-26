@@ -632,6 +632,20 @@ end
     @test e isa ArgumentError && contains(e.msg, "its `instructions` must be a string, not Tuple{String, String}")
 end
 
+@testset "System One — score refuses levels that are not a vector with an ArgumentError, as choice refuses its criteria" begin
+    # The builders' containers: a Choice's options come as a NamedTuple, a dictionary or a vector, a
+    # Score's levels, lowest first, as a vector. A tuple is neither, and both builders say so.
+    @test _s1_caught(() -> choice("Which?", ("a", "b"))) isa ArgumentError
+    for f in (() -> score("How urgent?", ("low", "high")), () -> score(("low", "high")),
+              () -> score("How urgent?", (low = "Can wait", high = "Today")), () -> score("How urgent?", Dict("low" => 0)),
+              () -> score("How urgent?"))
+        e = _s1_caught(f)
+        @test e isa ArgumentError && startswith(e.msg, "Score `levels` must be a vector")
+    end
+    @test contains(_s1_caught(() -> score("How urgent?", ("low", "high"))).msg, "Tuple{String, String}")
+    @test score("How urgent?", ["low", "high"]).criteria == Any["low", "high"]
+end
+
 @testset "System One — malformed local input is an ArgumentError before any I/O" begin
     q = noul("Is it?")
     table = (refund = "the customer wants a refund", other = "anything else")

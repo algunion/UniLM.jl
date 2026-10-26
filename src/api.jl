@@ -1189,8 +1189,11 @@ without one ([cloud](https://docs.ollama.com/cloud)). With the variable unset or
 inference request (chat, embeddings, `respond`, compaction, FIM, transcription, System One, a
 model's load or unload) is not sent — the call error's `cause` is an `ArgumentError` naming it —
 and [`list_models`](@ref), [`model_info`](@ref), [`running_models`](@ref),
-[`pull_model`](@ref) and [`delete_model`](@ref) go without it. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
-for a chat, embeddings, `respond` or FIM result without a missing-price warning.
+[`pull_model`](@ref) and [`delete_model`](@ref) go without it. Local models cost nothing unless you
+price them: [`estimated_cost`](@ref) reports `0.0` for a chat, embeddings, `respond` or FIM result,
+without a missing-price warning, unless you gave the model's exact name a row, in `pricing=` or added
+to [`DEFAULT_PRICING`](@ref); a row UniLM ships for a hosted model never prices a local model that
+bears its name.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
 `-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by the
 name requested, never as a free local call: a System One, `respond` or FIM result whose
@@ -1200,7 +1203,7 @@ name missing from the price table logs the missing-price warning. Every model a 
 Ollama's cloud itself (`https://ollama.com`) names is priced the same way: the cloud bills it,
 and names its models without a tag, "such as `gemma4:31b`" ([cloud](https://docs.ollama.com/cloud)).
 Through a local server a model is recognised as cloud by that tag alone, so a cloud model copied
-under a name without it (`ollama cp`) is priced as local, at `0.0`.
+under a name without it (`ollama cp`) is priced as local: `0.0` unless you gave it a row.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)

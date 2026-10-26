@@ -1717,17 +1717,32 @@ function _mcp_tool_dispatch(r::MCPToolResult)::String
     (isempty(r.content) && !isnothing(r.structured)) ? JSON.json(r.structured) : r.content
 end
 
-# Function names OpenAI and Anthropic accept. MCP tool names may also contain dots
-# (e.g. `admin.tools.list`) — or, from servers predating the naming guidance, anything.
-const _PROVIDER_TOOL_NAME = r"^[a-zA-Z0-9_-]{1,128}$"
+# The characters of a function name every provider accepts. MCP tool names may also contain
+# dots (e.g. `admin.tools.list`) — or, from servers predating the naming guidance, anything.
+# Anchored with \A and \z: `$` would also match before a final line break.
+const _PROVIDER_TOOL_NAME = r"\A[a-zA-Z0-9_-]+\z"
 
-"""Provider-safe aliases for MCP tool names, position for position: a conforming name is
-kept; any other has each non-conforming character replaced with `_` and is cut to 128
-characters. Two tools that map to one alias raise an `ArgumentError` naming both — a
-bridged tool set cannot tell them apart."""
-function _provider_tool_aliases(names::Vector{String})::Vector{String}
-    aliases = [occursin(_PROVIDER_TOOL_NAME, n) ? n :
-               first(replace(isempty(n) ? "_" : n, r"[^a-zA-Z0-9_-]" => "_"), 128) for n in names]
+# The longest function name the API of the endpoint the tools go to accepts: "a maximum length
+# of 64" on OpenAI's Chat Completions (https://developers.openai.com/api/reference/resources/chat),
+# `^[a-zA-Z0-9_-]{1,128}$` on Anthropic's Messages API
+# (https://platform.claude.com/docs/en/api/messages), and "a maximum length of 128" on Gemini's
+# generateContent (https://ai.google.dev/api/generate-content) and DeepSeek's Chat Completions
+# (https://api-docs.deepseek.com/api/create-chat-completion). Any other endpoint gets OpenAI's 64.
+_tool_name_limit(::ServiceEndpointSpec)::Int = 64
+_tool_name_limit(::_AnthropicEndpoint)::Int = 128
+_tool_name_limit(::Type{GEMINIServiceEndpoint})::Int = 128
+_tool_name_limit(::DeepSeekEndpoint)::Int = 128
+
+"""Provider-safe aliases for MCP tool names, position for position, of at most `limit`
+characters: a conforming name is kept; any other has each non-conforming character replaced
+with `_`, and one still longer than `limit` is cut to `limit - 9` characters followed by `_` and
+the first 8 hex digits of the SHA-256 of its MCP name, so names that agree up to the cut stay
+apart. Two tools that map to one alias raise an `ArgumentError` naming both — a bridged tool set
+cannot tell them apart."""
+function _provider_tool_aliases(names::Vector{String}, limit::Int)::Vector{String}
+    safe(n) = occursin(_PROVIDER_TOOL_NAME, n) ? n : replace(isempty(n) ? "_" : n, r"[^a-zA-Z0-9_-]" => "_")
+    cut(n, s) = length(s) <= limit ? s : first(s, limit - 9) * "_" * bytes2hex(sha256(n))[1:8]
+    aliases = [cut(n, safe(n)) for n in names]
     owner = Dict{String,String}()
     for (n, a) in zip(names, aliases)
         prev = get!(owner, a, n)
@@ -1742,16 +1757,22 @@ _mcp_bridge_callable(session::MCPSession, name::String) =
     (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(session, name, args))
 
 """
-    mcp_tools(session::MCPSession) -> Vector{CallableTool{Tool}}
+    mcp_tools(session::MCPSession; service=OPENAIServiceEndpoint) -> Vector{CallableTool{Tool}}
 
 Convert all tools from an MCP session into `CallableTool{Tool}` instances
-that work directly with [`tool_loop!`](@ref) (Chat Completions API).
+that work directly with [`tool_loop!`](@ref) (Chat Completions API) on `service`, the
+endpoint the tools go to.
 
 Each tool's callable invokes `call_tool(session, name, args)` under the hood. Tool
-names are advertised provider-safe: OpenAI and Anthropic accept only
-`^[a-zA-Z0-9_-]{1,128}\$`, so any other character of an MCP name (e.g. the dots in
-`admin.tools.list`) becomes `_` — the callable still calls the tool by its MCP name.
-Two tools whose names map to the same alias raise an `ArgumentError`.
+names are advertised provider-safe: a function name takes letters, digits, `_` and `-`,
+so any other character of an MCP name (e.g. the dots in `admin.tools.list`) becomes `_`,
+and at most the length `service`'s provider gives — 128 characters for
+`ANTHROPICServiceEndpoint` (`^[a-zA-Z0-9_-]{1,128}\$`), `GEMINIServiceEndpoint` and
+`DeepSeekEndpoint` ("a maximum length of 128"), 64 for `OPENAIServiceEndpoint` (its Chat
+Completions reference: "a maximum length of 64") and for any other endpoint. A longer name is cut to that limit less 9
+characters, followed by `_` and the first 8 hex digits of the SHA-256 of its MCP name, so
+names that agree up to the cut stay apart. The callable still calls the tool by its MCP
+name. Two tools whose names map to the same alias raise an `ArgumentError`.
 
 # Example
 ```julia
@@ -1763,20 +1784,23 @@ push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 ```
 """
-function mcp_tools(session::MCPSession)::Vector{CallableTool{Tool}}
+function mcp_tools(session::MCPSession; service::ServiceEndpointSpec=OPENAIServiceEndpoint)::Vector{CallableTool{Tool}}
     infos = session.tools
     [CallableTool(Tool(func=FunctionSignature(name=alias, description=info.description,
                                               parameters=info.input_schema)),
                   _mcp_bridge_callable(session, info.name))
-     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos]))]
+     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos], _tool_name_limit(service)))]
 end
 
 """
-    mcp_tools_respond(session::MCPSession) -> Vector{CallableTool{FunctionTool}}
+    mcp_tools_respond(session::MCPSession; service=OPENAIServiceEndpoint) -> Vector{CallableTool{FunctionTool}}
 
 Convert all tools from an MCP session into `CallableTool{FunctionTool}` instances
-that work directly with [`tool_loop`](@ref) (Responses API). Tool names are
-advertised provider-safe, as in [`mcp_tools`](@ref).
+that work directly with [`tool_loop`](@ref) (Responses API) on `service`, the endpoint the
+tools go to. Tool names are advertised provider-safe for `service`, as in [`mcp_tools`](@ref).
+OpenAI's Responses API and Gemini's Interactions API state no function-name limit of their
+own: the limit applied is the provider's Chat one (64 on OpenAI, 128 on Gemini), unwitnessed on
+those two APIs.
 
 # Example
 ```julia
@@ -1785,12 +1809,13 @@ tools = mcp_tools_respond(session)
 result = tool_loop("Do something"; tools=tools)
 ```
 """
-function mcp_tools_respond(session::MCPSession)::Vector{CallableTool{FunctionTool}}
+function mcp_tools_respond(session::MCPSession;
+                           service::ServiceEndpointSpec=OPENAIServiceEndpoint)::Vector{CallableTool{FunctionTool}}
     infos = session.tools
     [CallableTool(FunctionTool(name=alias, description=info.description,
                                parameters=info.input_schema),
                   _mcp_bridge_callable(session, info.name))
-     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos]))]
+     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos], _tool_name_limit(service)))]
 end
 
 # Extend to_tool protocol

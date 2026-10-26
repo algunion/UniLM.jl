@@ -1710,6 +1710,20 @@ end
     @test !occursin("Ultrafast, `prompt_cache_retention`", doc)
 end
 
+@testset "the Respond docstring states the max_output_tokens and top_logprobs checks its constructor makes" begin
+    flat(x) = replace(x isa Base.Docs.DocStr ? join(map(string, x.text)) : string(x), r"\s+" => " ")
+    doc = flat(@doc Respond)
+    @test occursin("`max_output_tokens::Int64`: Max tokens in the response, at least 1", doc)
+    @test occursin("`top_logprobs::Int64`: How many of the most likely tokens to return at each position, " *
+                   "each with its log probability: 0 to 20", doc)
+    # The checks it states, at their bounds.
+    @test Respond(input="x", max_output_tokens=1).max_output_tokens == 1
+    @test Respond(input="x", top_logprobs=0).top_logprobs == 0 && Respond(input="x", top_logprobs=20).top_logprobs == 20
+    for kw in ((max_output_tokens=0,), (top_logprobs=-1,), (top_logprobs=21,))
+        @test_throws ArgumentError Respond(; input="x", kw...)
+    end
+end
+
 @testset "compact_response and count_input_tokens send OpenAI's default model when none is named" begin
     # Both answered gpt-6-sol live on 2026-10-22 (a compaction and a token count).
     bodies = String[]

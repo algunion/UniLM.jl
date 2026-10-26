@@ -327,11 +327,19 @@ score("How urgent is this ticket?",
       ["Can wait", "Needs attention this week", "Needs attention today"])
 ```
 
+`levels` is a vector: a tuple, or any other container, throws `ArgumentError`, as a
+[`choice`](@ref) `criteria` outside its forms does.
+
 The returned `score` is a probability-weighted expectation, so it falls between
 integer levels. Threshold it; do not read a magnitude into the fractional part.
 """
-score(instructions, levels::AbstractVector) = ScoreQuestion(instructions, Any[v for v in levels])
-score(levels::AbstractVector) = ScoreQuestion(nothing, Any[v for v in levels])
+score(instructions, levels) = ScoreQuestion(instructions, _score_levels(levels))
+score(levels) = ScoreQuestion(nothing, _score_levels(levels))
+
+# A Score's levels are ordered, lowest first, and come as a vector; any other container is
+# refused by name, as a Choice's criteria outside its forms are, never by a MethodError.
+_score_levels(levels::AbstractVector)::Vector{Any} = Any[v for v in levels]
+_score_levels(x) = throw(ArgumentError("Score `levels` must be a vector of levels, lowest first; got $(typeof(x))"))
 
 _noul_criteria(yes, no) = isnothing(yes) && isnothing(no) ? nothing : NoulCriteria(yes, no)
 
@@ -1699,7 +1707,9 @@ id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13); any other
 unpriced name returns
 `0.0`. An answer from a local model through an [`OllamaEndpoint`](@ref) costs
-`0.0`, without a missing-price warning, unless `model` is passed; a cloud model
+`0.0`, without a missing-price warning, unless `pricing` holds a row you gave the model's
+exact name (a row UniLM ships for a hosted model of that name does not count) or `model` is
+passed; a cloud model
 reached through it (a tag of `cloud` or ending in `-cloud`) is priced by the name
 requested, which an answer whose reply drops the tag keeps.
 A backend that bills otherwise is priced its own way: an
@@ -1713,7 +1723,9 @@ rate, 2.5 times for a 12-hour lifetime, and every rate twice above 272K).
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     service = result.response.service
-    isnothing(model) && _is_local(service, result.response.model) && return 0.0
+    # A local model is free unless the caller gave its name a row, as in `estimated_cost(::LLMRequestResponse)`.
+    isnothing(model) && _is_local(service, result.response.model) &&
+        isnothing(_callers_row(pricing, result.response.model)) && return 0.0
     _system_one_cost(isnothing(service) ? nothing : system_one_protocol(service)::SystemOneProtocol,
                      result, model, pricing)
 end

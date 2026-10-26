@@ -832,7 +832,11 @@ Configuration struct for an OpenAI Responses API request.
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
 - `top_p::Float64`: Nucleus sampling (0.0–1.0), mutually exclusive with `temperature`
-- `max_output_tokens::Int64`: Max tokens in the response
+- `max_output_tokens::Int64`: Max tokens in the response, at least 1; a smaller value throws
+  `ArgumentError`
+- `top_logprobs::Int64`: How many of the most likely tokens to return at each position, each
+  with its log probability: 0 to 20, as OpenAI's reference gives; another value throws
+  `ArgumentError`
 - `stream::Bool`: Enable streaming
 - `truncation::String`: `"auto"` or `"disabled"`
 - `store::Bool`: Whether to store the response for later retrieval
@@ -1023,8 +1027,8 @@ Successful response from the Responses API. Access the parsed response via `.res
 - `response`: the parsed response ([`ResponseObject`](@ref))
 - `sse_dropped`: undecodable SSE `data:` payloads dropped while assembling a streamed turn;
   0 for a non-streamed call and for a clean stream
-- `service`: the endpoint that answered, used to price the call (a local model costs 0.0);
-  `nothing` for a result built by hand, priced by its model name
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0
+  unless you gave it a price row); `nothing` for a result built by hand, priced by its model name
 """
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject

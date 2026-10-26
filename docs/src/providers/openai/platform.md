@@ -522,7 +522,9 @@ of the same webhook event. You can use the `webhook-id` header as an idempotency
 deduplicate" ([webhooks](https://developers.openai.com/api/docs/guides/webhooks#handling-webhook-requests-on-a-server)).
 A negative or `NaN` tolerance is refused, and so is a secret that is not base64 after its `whsec_`
 prefix, such as a placeholder like `whsec_***` or misplaced padding; whitespace around the secret is
-ignored ([Limits and refusals](@ref openai_platform_limits)).
+ignored. An empty secret — `""`, as an unset variable read with a default gives, or `whsec_` alone —
+is refused whatever the delivery, since anyone can sign with an empty key
+([Limits and refusals](@ref openai_platform_limits)).
 
 ## [Long-running jobs](@id openai_long_jobs)
 
@@ -602,4 +604,5 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |
 | `verify_webhook` with a negative or `NaN` `tolerance_seconds` | `tolerance_seconds must be nonnegative`: only `Inf` turns the replay check off | a number of seconds, or `Inf` |
+| `verify_webhook` with an empty secret (`""`, whitespace, or `whsec_` alone), whatever the delivery | `webhook signing secret is empty`: anyone can sign with an empty key | the signing secret OpenAI gave the endpoint |
 | `verify_webhook`, for a delivery with its three headers and a fresh timestamp, with a secret that is not base64 after its `whsec_` prefix: a character other than `A-Z`, `a-z`, `0-9`, `+` and `/`, such as `whsec_***` or a space inside it (whitespace around it is ignored), or `=` padding that is misplaced or more than its last group lacks, such as `whsec_YQ=` | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide | the signing secret OpenAI gave the endpoint, as it is |

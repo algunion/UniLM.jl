@@ -133,9 +133,9 @@
   while the other providers' results carry the model they report. It now holds the reply's name,
   streamed or not. A cloud model whose reply names it without its cloud tag keeps the requested
   name, as its `respond`, FIM and System One results do, so it is still priced as the cloud model
-  it is; a local model's result still costs `0.0`. Upgrading: code that read `nothing` from an
-  Ollama chat result's `model` reads the reply's model name, or a cloud model's requested name; its
-  price is unchanged.
+  it is; a local model's result still costs `0.0` unless you gave the model a price row. Upgrading:
+  code that read `nothing` from an Ollama chat result's `model` reads the reply's model name, or a
+  cloud model's requested name; its price is unchanged.
 - **A DeepSeek `Chat` with a strict tool goes to DeepSeek's beta base URL.** DeepSeek's strict mode
   is a beta feature: "To use `strict` mode, you need to: Use `base_url="https://api.deepseek.com/beta"`".
   `DeepSeekEndpoint()` sent every `Chat` to `https://api.deepseek.com/v1/chat/completions`, so a
@@ -151,6 +151,29 @@
   record it again. Upgrading: give a strict tool a schema DeepSeek's strict mode takes (every
   property `required`, `additionalProperties: false`, the types its tool-calls page lists), or leave
   `strict` unset.
+- **Bridged MCP tool names fit the provider they go to.** `mcp_tools` and `mcp_tools_respond`
+  kept an MCP tool's name up to 128 characters, but OpenAI's Chat Completions takes a function
+  name of "a maximum length of 64", so a name of 65 to 128 characters went to OpenAI as it was.
+  Both now take `service`, the endpoint the tools go to (`OPENAIServiceEndpoint` unless given),
+  and keep each name within its provider's limit: 128 characters for `ANTHROPICServiceEndpoint`,
+  whose Messages API takes `^[a-zA-Z0-9_-]{1,128}$`, and for `GEMINIServiceEndpoint` and
+  `DeepSeekEndpoint`, whose generateContent and Chat Completions take "a maximum length of 128",
+  and 64 for any other endpoint. A longer name is cut to the limit less 9 characters and followed
+  by `_` and the first 8 hex digits of the SHA-256 of its MCP name, so names that agree up to the
+  cut stay apart; a name over 128 characters was cut to 128 before. Upgrading: pass `service=` the
+  endpoint the tools go to, to keep names of up to 128 characters on Anthropic, native Gemini and
+  DeepSeek; a `tool_choice` that names a bridged tool takes the name the bridge now advertises.
+- **A price row you give a local Ollama model is used.** `estimated_cost` returned `0.0` for a result
+  of a local model on an `OllamaEndpoint` before it read any price row, so a row you gave the model,
+  in `pricing=` or added to `DEFAULT_PRICING`, which `cumulative_cost` reads, was ignored without a
+  word; so was one for a local model's System One answer. A row you give the model's exact name now
+  prices its results as any model's row does. The rows UniLM ships price hosted models only: a local
+  model that bears a hosted model's name, as Ollama suggests for tools that expect OpenAI's names
+  (`ollama cp llama3.2 gpt-3.5-turbo`), still costs `0.0`, also when a copy of those rows such as
+  `merge(DEFAULT_PRICING, …)` is passed; a row equal to a shipped one counts as the shipped one. A
+  local model with no row of yours still costs `0.0`, with no missing-price warning, and `model=`
+  still prices a result at the row of the model it names. Upgrading: to keep a local model's
+  estimates at `0.0`, remove the row you gave its name.
 
 ### Added
 - **`with_recorded_answers` records streamed calls, the Responses lifecycle calls and
@@ -458,6 +481,26 @@
   voice is now sent as given, and Gemini answers a name it does not have: one of the 30 as
   `prebuiltVoiceConfig.voiceName`, as before, any other as `voiceConfig.voice`, the field Google's
   reference gives for a stored voice's id and a replication key. A blank voice still throws.
+- **`verify_webhook` refuses an empty signing secret.** A secret with nothing after its
+  `whsec_` prefix and the whitespace around it — `""`, as an unset variable read with a default
+  gives, whitespace, or `whsec_` alone — was used as an empty HMAC key, with which anyone can
+  sign: a delivery signed with it verified `true`, and every delivery OpenAI signed `false`. It
+  now throws `ArgumentError` before any check, whatever the delivery, as the Standard Webhooks
+  libraries refuse an empty secret ("webhook secret may not be empty").
+- **`gpt-5.2-pro` is priced.** It had no row in `DEFAULT_PRICING`, so `estimated_cost` and
+  `cumulative_cost` read its calls, and those of its snapshot `gpt-5.2-pro-2025-12-11`, as `0.0`,
+  with the missing-price warning. Its row holds the rates OpenAI's pricing page lists on
+  2026-10-26: \$21.00 input and \$168.00 output per 1M tokens, and no cached-input rate, so a
+  cache read bills as input, as on the other pro models.
+- **`score` refuses levels that are not a vector with an `ArgumentError`, as `choice` refuses its
+  criteria.** `score("q", ("a", "b"))`, a tuple of levels, threw a `MethodError`, while `choice`
+  with a tuple of options throws an `ArgumentError` that names the forms it takes. `score` now
+  throws an `ArgumentError`, "Score `levels` must be a vector of levels, lowest first", for a
+  tuple or any other container, and for a call that gives instructions alone.
+- **`Respond`'s docstring states its constructor's checks of `max_output_tokens` and
+  `top_logprobs`.** The constructor throws `ArgumentError` for a `max_output_tokens` below 1 and a
+  `top_logprobs` outside 0 to 20, the range OpenAI's reference gives ("An integer between 0 and
+  20"); the docstring stated neither and did not list `top_logprobs`. No behaviour changes.
 
 ## 0.26.0
 

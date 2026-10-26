@@ -560,7 +560,7 @@ end
     end
 end
 
-@testset "an Ollama cloud model is priced by name, a local one is free" begin
+@testset "an Ollama cloud model is priced by name, a local one only by a row the caller gave it" begin
     cloud = UniLM._ollama_cloud_model
     @test cloud("clef:cloud") && cloud("gpt-oss:120b-cloud") && cloud("registry.ollama.ai/library/clef:cloud")
     @test !cloud("gemma4:e4b") && !cloud("clef-cloud") && !cloud("cloudy:7b") && !cloud("kev")
@@ -577,14 +577,60 @@ end
                               usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)))
     @test (@test_logs estimated_cost(succ("gemma4:e4b"))) == 0.0          # local: free, no warning
     @test (@test_logs (:warn, r"no price row") estimated_cost(succ("zz-unpriced:7b-cloud"))) == 0.0
-    # With a row for each, the cloud model is charged and the local one is still free.
+    # With a row for each, both are charged: a local model's row is the caller's price for it.
     row = UniLM._price(1.0, 0.1, 2.0)
     table = Dict("zz-priced:cloud" => row, "zz-priced:7b" => row)
     @test (@test_logs estimated_cost(succ("zz-priced:cloud"); pricing=table)) ≈ 10 * 1e-6 + 5 * 2e-6
-    @test (@test_logs estimated_cost(succ("zz-priced:7b"); pricing=table)) == 0.0
+    @test (@test_logs estimated_cost(succ("zz-priced:7b"); pricing=table)) ≈ 10 * 1e-6 + 5 * 2e-6
     s1 = SystemOneSuccess(SystemOneResponse("zz-unpriced-s1:cloud", Dict{String,SystemOneAnswer}(),
                           TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
     @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+end
+
+@testset "a local model is priced at a row that names it, and is free, silently, without one" begin
+    # A model on the caller's machine bills no one, so with no row it costs 0.0 and warns nothing; a row
+    # for it, passed as `pricing=` or held in DEFAULT_PRICING (which `cumulative_cost` reads), is the
+    # caller's price for it, and was ignored: `estimated_cost` returned 0.0 before it read a row.
+    ep = OllamaEndpoint(base_url="http://box:11434")
+    row = UniLM._price(1.0, 0.1, 2.0)
+    u = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    chat() = (c = Chat(service=ep, model="zz-local-row:7b"); push!(c, Message(Val(:system), "s"));
+              push!(c, Message(Val(:user), "hi")); c)
+    llm = LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=chat(), usage=u)
+    emb = EmbeddingSuccess(embeddings=Embeddings("x"; service=ep, model="zz-local-row:7b", task=:none),
+                           usage=TokenUsage(prompt_tokens=10, total_tokens=10), raw=Dict{String,Any}())
+    resp = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model="zz-local-row:7b",
+        output=Any[], usage=Dict{String,Any}("input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15),
+        raw=Dict{String,Any}()), service=ep)
+    fim = FIMSuccess(response=FIMResponse(choices=[FIMChoice(text="x")], model="zz-local-row:7b", usage=u), service=ep)
+    s1 = SystemOneSuccess(SystemOneResponse("zz-local-row:7b", Dict{String,SystemOneAnswer}(),
+                          TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
+    priced = (llm => 10e-6 + 5 * 2e-6, emb => 10e-6, resp => 10e-6 + 5 * 2e-6, fim => 10e-6 + 5 * 2e-6, s1 => 10e-6)
+    for (r, cost) in priced
+        @test (@test_logs estimated_cost(r; pricing=Dict("zz-local-row:7b" => row))) ≈ cost
+        @test (@test_logs estimated_cost(r)) == 0.0                       # no row: free, and no warning
+    end
+    DEFAULT_PRICING["zz-local-row:7b"] = row
+    try
+        for (r, cost) in priced
+            @test (@test_logs estimated_cost(r)) ≈ cost
+        end
+        c = chat()
+        UniLM._accumulate_cost!(c, llm)
+        @test cumulative_cost(c) ≈ 10e-6 + 5 * 2e-6
+    finally
+        delete!(DEFAULT_PRICING, "zz-local-row:7b")
+    end
+    # `model` still prices a result at the row of the model it names, with the warning when it has none.
+    @test (@test_logs (:warn, r"no price row") estimated_cost(llm; model="zz-local-row:7b")) == 0.0
+    # A row UniLM ships prices the hosted model of that name, never a local one: by the exact id, a dated snapshot
+    # or a Jev version, a local model with no row of the caller's costs 0.0, silently.
+    for name in ("gpt-4.1", "gpt-5.2-2025-12-11", "jev-1.99.0")
+        c = Chat(service=ep, model=name); push!(c, Message(Val(:system), "s")); push!(c, Message(Val(:user), "hi"))
+        @test (@test_logs estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c, usage=u))) == 0.0
+        @test (@test_logs estimated_cost(SystemOneSuccess(SystemOneResponse(name, Dict{String,SystemOneAnswer}(),
+            TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep)))) == 0.0
+    end
 end
 
 @testset "a call made directly to Ollama's cloud is priced by name, as a cloud model is" begin
@@ -754,6 +800,25 @@ _oa_result(model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x
     u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=200_000, completion_tokens=100_000, total_tokens=1_100_000)
     @test isapprox((@test_logs estimated_cost(_oa_result("gpt-5-search-api", u))),
                    800_000 * 1.25e-6 + 200_000 * 0.125e-6 + 100_000 * 10.0e-6; rtol=1e-12)
+end
+
+@testset "gpt-5.2-pro has its price row" begin
+    # OpenAI's pricing page (2026-10-26), Standard: "| gpt-5.2-pro | $21.00 | $168.00 | - |" per 1M tokens —
+    # input, output, and no cached-input rate, so a cache read bills as input, as on the other pro models.
+    # Without a row its cost read 0.0, with the missing-price warning.
+    @test haskey(DEFAULT_PRICING, "gpt-5.2-pro")
+    @test DEFAULT_PRICING["gpt-5.2-pro"] == UniLM._price(21.0, 21.0, 168.0)
+    u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=200_000, completion_tokens=100_000, total_tokens=1_100_000)
+    for model in ("gpt-5.2-pro", "gpt-5.2-pro-2025-12-11")   # the snapshot OpenAI's models list names
+        @test isapprox((@test_logs estimated_cost(_oa_result(model, u))), 1_000_000 * 21e-6 + 100_000 * 168e-6; rtol=1e-12)
+    end
+    # The model is served on the Responses API alone ("Chat Completions | `v1/chat/completions` | Not supported", its
+    # model page), so its results come as a ResponseSuccess.
+    resp = ResponseSuccess(response=UniLM.ResponseObject(id="resp_1", status="completed", model="gpt-5.2-pro", output=Any[],
+        usage=Dict{String,Any}("input_tokens" => 1_000_000, "output_tokens" => 100_000, "total_tokens" => 1_100_000,
+                               "input_tokens_details" => Dict{String,Any}("cached_tokens" => 200_000)),
+        raw=Dict{String,Any}()), service=OPENAIServiceEndpoint)
+    @test isapprox((@test_logs estimated_cost(resp)), 1_000_000 * 21e-6 + 100_000 * 168e-6; rtol=1e-12)
 end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 

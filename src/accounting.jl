@@ -28,8 +28,8 @@ Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 
 Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
-`gpt-5-search-api` on 2026-10-25), TypeSafe rows on 2026-10-25, DeepSeek rows on 2026-09-24 (prices
-drift — re-verify before relying on them).
+`gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26), TypeSafe rows on 2026-10-25,
+DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
@@ -78,6 +78,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-5.4-mini"  => _price(0.75, 0.075, 4.5),
     "gpt-5.4-nano"  => _price(0.20, 0.02, 1.25),   # shuts down 2027-04-01
     "gpt-5.2"       => _price(1.75, 0.175, 14.0),
+    "gpt-5.2-pro"   => _price(21.0, 21.0, 168.0),  # no cached-input rate: a cache read bills as input; page of 2026-10-26
     "chat-latest"   => _price(5.0,  0.50, 30.0),
     "gpt-5-search-api" => _price(1.25, 0.125, 10.0),  # the Chat Completions search model; page of 2026-10-25
     "gpt-audio-1.5" => _price(2.5,  2.5,  10.0),   # text tokens; no cached-input rate: a cache read bills as input
@@ -147,6 +148,12 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "text-embedding-ada-002" => _price(0.10, 0.10, 0.0),
 ))
 
+# The rows UniLM ships, as they are when the package loads: the list prices of hosted models. A local model may
+# bear such a name — Ollama documents `ollama cp llama3.2 gpt-3.5-turbo` for tools that expect OpenAI's names
+# (https://docs.ollama.com/api/openai-compatibility) — and a hosted model's list price does not bill a run on the
+# caller's machine.
+const _SHIPPED_PRICES = Dict{String,PriceRow}(DEFAULT_PRICING)
+
 """
     token_usage(result::LLMRequestResponse) -> TokenUsage
 
@@ -197,6 +204,12 @@ Returns `0.0` for failures, which carry no billable usage, for an unpriced model
 tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices) and for an
 embeddings reply that reported no usage (Gemini's OpenAI-compatible endpoint reports none);
 the last three also log a warning, once per model id (for audio, per model and endpoint). A
+local model — one an [`OllamaEndpoint`](@ref) serves from a server of your own, its name
+carrying no cloud tag — bills no one: unless `model` is given, it costs `0.0`, without the
+warning, unless `pricing` holds a row you gave its exact name. The rows UniLM ships price hosted
+models, never a local model that bears one's name (Ollama's `ollama cp llama3.2 gpt-3.5-turbo`),
+in [`DEFAULT_PRICING`](@ref) or copied into a table such as `merge(DEFAULT_PRICING, …)`; a row
+equal to a shipped one counts as the shipped one. A
 billed service tier the provider's pricing page lists no price for is estimated at the standard
 rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
@@ -226,7 +239,9 @@ function estimated_cost(result::LLMRequestResponse;
     mdl = isnothing(model) ? _priced_model(result) : model
     isnothing(mdl) && return 0.0                   # a failure: nothing was billed
     service = _result_service(result)
-    isnothing(model) && _is_local(service, mdl) && return 0.0
+    # A model on the caller's own machine bills no one: it costs 0.0, and warns nothing since no price is
+    # missing, unless the caller gave its name a row of their own.
+    isnothing(model) && _is_local(service, mdl) && isnothing(_callers_row(pricing, mdl)) && return 0.0
     _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
@@ -292,8 +307,17 @@ function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Unio
     rates
 end
 
-# The endpoint a result came from, where the result records it; a model local to it prices
-# at 0.0 (`_is_local`, defined with the endpoint).
+# The row the caller gave a local model: the one `pricing` holds for its exact name — no snapshot or Jev
+# fallback, which are hosted models' naming rules — unless it is the row UniLM ships for that name, in
+# DEFAULT_PRICING or in a copy of it such as `merge(DEFAULT_PRICING, …)`. A row equal to the shipped one
+# counts as the shipped one.
+function _callers_row(pricing::AbstractDict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
+    row = get(pricing, model, nothing)
+    isnothing(row) || row == get(_SHIPPED_PRICES, model, nothing) ? nothing : row
+end
+
+# The endpoint a result came from, where the result records it; a model local to it costs 0.0
+# unless the caller gave it a row (`_is_local`, defined with the endpoint; `_callers_row`).
 _result_service(r::LLMSuccess) = r.self.service
 _result_service(r::EmbeddingSuccess) = r.embeddings.service
 _result_service(r::ResponseSuccess) = r.service
@@ -309,7 +333,9 @@ _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += 
 
 Return the estimated cost, in USD, that [`chatrequest!`](@ref) and [`prefix_complete`](@ref)
 calls on this `Chat` have accrued, priced with [`DEFAULT_PRICING`](@ref) as
-[`estimated_cost`](@ref) prices a result. A committed turn adds its result's cost. A call that ends without committing one adds what
+[`estimated_cost`](@ref) prices a result: a local model's turns add `0.0` unless you added a row
+for its exact name to the table (a row UniLM ships for a hosted model of that name does not
+count). A committed turn adds its result's cost. A call that ends without committing one adds what
 its provider reported billing it, a lower bound: the replies of a continued Gemini turn
 received before the failure or stop, and the usage a stream had reported when it was stopped,
 cancelled, timed out, cut off or ended by an exception from its `callback` or `on_tool_call`

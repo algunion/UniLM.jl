@@ -33,9 +33,11 @@ Each `Tool` in `tools` goes out with its `name`, its `description` when it has o
 `input_schema` — `{"type": "object", "properties": {}}` for a function without parameters — and its
 `strict` flag when its `FunctionSignature` sets one: `strict=true` makes the API validate each call's
 name and input against the tool's schema. The Messages API takes tool names of 1 to 128 letters, digits,
-`_` and `-`. UniLM sends a name as given, and [`mcp_tools`](@ref) advertises each tool of an MCP server
-under such a name: its own, or that name with each character outside that set replaced by `_`, cut to
-128 characters ([MCP](@ref mcp_guide)). Anthropic's MCP connector, a beta (`mcp-client-2025-11-20`), allows
+`_` and `-`. UniLM sends a name as given, and [`mcp_tools`](@ref)`(session; service)`, with `service`
+this endpoint, advertises each tool of an MCP server under such a name: its own, or that name with each
+character outside that set replaced by `_`, one over 128 characters cut and marked with a hash of its MCP
+name; with no `service`, the names it gives are at most 64 characters ([MCP](@ref mcp_guide)).
+Anthropic's MCP connector, a beta (`mcp-client-2025-11-20`), allows
 you to "connect to remote MCP servers directly from the Messages API without a separate MCP client", the
 servers named in an `mcp_servers` array of the request
 ([MCP connector](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector)). UniLM sends no

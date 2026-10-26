@@ -491,6 +491,45 @@ end
     @test (@test_logs estimated_cost(emb)) == 0.0
 end
 
+# Refuted if: a local model that bears a hosted model's name is priced at the row UniLM ships for that hosted model.
+# Ollama documents the copy for tools that expect OpenAI's names, "ollama cp llama3.2 gpt-3.5-turbo"
+# (https://docs.ollama.com/api/openai-compatibility); a run on the caller's machine bills no one.
+@testset "a local model named like a hosted one is priced only by a row the caller gave it" begin
+    server, base, _ = _ollama_mock() do n, body
+        req = JSON.parse(body)
+        haskey(req, "messages") ? (200, [JSON.json(Dict("model" => req["model"], "done" => true, "done_reason" => "stop",
+            "message" => Dict("role" => "assistant", "content" => "ok"), "prompt_eval_count" => 1_000_000,
+            "eval_count" => 500_000))]) :
+        (200, [JSON.json(Dict("model" => req["model"], "embeddings" => [[0.1, 0.2]], "prompt_eval_count" => 1_000_000))])
+    end
+    try
+        ep = OllamaEndpoint(base_url=base)
+        @test haskey(DEFAULT_PRICING, "gpt-4.1") && haskey(DEFAULT_PRICING, "text-embedding-3-small")   # shipped rows
+        send(model) = (c = Chat(service=ep, model=model, messages=[Message(Val(:user), "Hi")]); (chatrequest!(c), c))
+        r, c = send("gpt-4.1")
+        @test r isa LLMSuccess && r.model == "gpt-4.1"
+        @test (@test_logs estimated_cost(r)) == 0.0 && cumulative_cost(c) == 0.0
+        e = embeddingrequest!(Embeddings("x"; service=ep, model="text-embedding-3-small", task=:none))
+        @test e isa EmbeddingSuccess && (@test_logs estimated_cost(e)) == 0.0
+        # A copy of the shipped table, as `merge(DEFAULT_PRICING, …)` makes, holds the hosted row too: not the caller's.
+        @test (@test_logs estimated_cost(r; pricing=merge(DEFAULT_PRICING, Dict("zz-own:7b" => UniLM._price(1.0, 0.1, 2.0))))) == 0.0
+        # A row the caller gives the name prices the local model: passed as `pricing=`, or set in DEFAULT_PRICING,
+        # which `cumulative_cost` reads.
+        row = UniLM._price(1.0, 0.1, 2.0)
+        @test (@test_logs estimated_cost(r; pricing=Dict("gpt-4.1" => row))) ≈ 1.0 + 1.0
+        shipped = DEFAULT_PRICING["gpt-4.1"]
+        DEFAULT_PRICING["gpt-4.1"] = row
+        try
+            r2, c2 = send("gpt-4.1")
+            @test (@test_logs estimated_cost(r2)) ≈ 2.0 && cumulative_cost(c2) ≈ 2.0
+        finally
+            DEFAULT_PRICING["gpt-4.1"] = shipped
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "record and replay the native wire" begin
     server, base, bodies = _ollama_mock((n, b) -> (200, [_reply(content="Recorded", thinking="t")]))
     dir = mktempdir()

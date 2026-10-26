@@ -94,7 +94,9 @@ gives a declaration's name "Must be a-z, A-Z, 0-9, or contain underscores, colon
 with a maximum length of 128", and the name a call and its response carry "Must be a-z, A-Z, 0-9, or
 contain underscores and dashes, with a maximum length of 128"
 ([generateContent reference](https://ai.google.dev/api/generate-content)); UniLM sends a name as
-given, so a name of letters, digits, `_` and `-` holds for both. `tool_choice` becomes the request's
+given, so a name of letters, digits, `_` and `-` holds for both. [`mcp_tools`](@ref)`(session; service)`,
+with `service` this endpoint, advertises an MCP server's tools under such names, one over 128 characters
+cut and marked with a hash of its MCP name ([MCP](@ref mcp_guide)). `tool_choice` becomes the request's
 function-calling mode:
 
 | `tool_choice` | `toolConfig.functionCallingConfig` | With a tool marked `strict=true` |

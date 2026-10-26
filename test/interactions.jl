@@ -1076,11 +1076,12 @@ end
     end
     # The reference no longer lists deferred, and the API answered it with HTTP 400 on 2026-10-26: "The value
     # 'deferred' is not supported for 'service_tier' on the Gemini API, it is allowed on the Gemini Enterprise
-    # Agent Platform". It is refused before any request: a sent one would come back as a result.
+    # Agent Platform". It is refused before any request; with no key, a call that got past the refusal
+    # would come back as a call error (a KeyError) and send nothing.
     for call in (() -> body(service_tier="deferred"),
                  () -> respond(Respond(service=GEMINIServiceEndpoint, input="hi", service_tier="deferred");
                                config=RequestConfig(max_attempts=1)))
-        e = withenv(() -> _ix_caught(call), "GEMINI_API_KEY" => "k")
+        e = withenv(() -> _ix_caught(call), "GEMINI_API_KEY" => nothing)
         @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) &&
               occursin("Gemini Enterprise Agent Platform", e.msg)
     end
@@ -1153,8 +1154,9 @@ end
 @testset "list_input_items — Gemini Interactions lists no input items, so nothing is sent" begin
     # The Interactions API creates, gets, cancels and deletes an interaction; neither its reference nor its
     # OpenAPI spec has a method that lists one's input items (https://ai.google.dev/api/interactions-api).
-    # A sent request would come back as a result (here a call error: no key, no network); a refusal throws.
-    e = withenv("GEMINI_API_KEY" => "k") do
+    # With no key, a call that got past the refusal would come back as a call error (a KeyError) and send
+    # nothing; a refusal throws.
+    e = withenv("GEMINI_API_KEY" => nothing) do
         _ix_caught(() -> list_input_items("v1_abc"; service=GEMINIServiceEndpoint, config=RequestConfig(max_attempts=1)))
     end
     @test e isa ArgumentError && startswith(e.msg, "list_input_items is not supported by GEMINIServiceEndpoint")

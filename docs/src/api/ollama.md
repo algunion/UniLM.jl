@@ -1,7 +1,7 @@
 # [Ollama](@id ollama_api)
 
 A local Ollama server: the endpoint, its runtime options, and the model-management
-verbs. [Local Models with Ollama](@ref ollama_guide) shows them at work.
+verbs. The [Ollama](@ref ollama_guide) entry shows them at work.
 
 ## Endpoint
 

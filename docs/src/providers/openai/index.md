@@ -38,7 +38,7 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [generate or edit images](@ref openai_images) | `generate_image`, `edit_image` | images from OpenAI's Images API |
 | [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, audio from text |
 | [hold a Realtime session](@ref timeout_realtime) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
-| [answer from my own files](@ref retrieval_guide__next) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
+| [answer from my own files](@ref retrieval_guide) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
 | [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |
 | [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)` | each model's id, creation time and shutdown date |
 | [handle a failure](@ref openai_failures) | the result's type | the status or the exception, never an empty success |
@@ -176,7 +176,7 @@ A Responses result holds the response as OpenAI sent it: `result.response` is a
 [`ResponseObject`](@ref) with its `id`, `status`, `model`, `output` items, `usage` and the whole body
 as `raw`, and [`token_usage`](@ref) reads its usage into the same [`TokenUsage`](@ref) a `Chat` result
 carries. What else a `Respond` takes is on
-[Responses & hosted tools](@ref responses_guide__next).
+[Responses & hosted tools](@ref responses_guide).
 
 ## [Conversations](@id openai_conversations)
 

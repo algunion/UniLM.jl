@@ -67,7 +67,7 @@ image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits__n
   32 MiB ([Limits and refusals](@ref jev_limits__next)). TypeSafe applies no EXIF
   rotation, so turn a photo's pixels upright before you send it.
 - **Other providers.** Where a picture may stand differs per provider
-  ([Choosing a decision provider](@ref system_one_backends__next)).
+  ([Choosing a decision provider](@ref system_one_backends)).
 
 !!! details "Evidence"
     Observed on 19 October 2026 (`jev-1.13.0`): an image of W × H pixels was
@@ -222,7 +222,7 @@ a.choice, a.confidence
 
 The field names `what`, `not_for` and `examples` are yours, not the API's. The model reads them with the values,
 so keep them short and the same on every option ([Choice](https://docs.typesafe.ai/primitives/choice)). Not every
-decision provider takes structure everywhere ([Choosing a decision provider](@ref system_one_backends__next)).
+decision provider takes structure everywhere ([Choosing a decision provider](@ref system_one_backends)).
 
 Recorded on 19 October 2026 on `jev-1.13.0` and `jev-1.14.0` with UniLM's development branch after 0.23.0, and on
 25 October 2026 on `jev-1.14.0` with UniLM's development branch after 0.26.0, through TypeSafe's API at `/v1`.

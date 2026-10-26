@@ -10,7 +10,7 @@ UniLM has one System One surface — [`ask`](@ref), [`ask_each`](@ref), the
 question builders and the typed answers below — over three backends: TypeSafe's
 Jev (the default), OpenAI's Decisions API (a public beta) and local decision
 models served by Ollama. [Route and Decide](@ref system_one_guide) is the how-to
-and [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) compares
+and [Choosing a decision provider](@ref system_one_backends) compares
 the three. This page gives what every backend shares, then each backend's setup,
 rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 [`nl_dispatch`](@ref) and [`@branch`](@ref) have a page of their own,
@@ -55,7 +55,7 @@ a confidence can be trusted is a property of the model, not of the formula.
     of 0.016, and OpenAI's `gpt-6-luna` for 94.6%, with 0.080 — in every bin
     above 0.5 its accuracy was at least its mean top probability: it is
     under-confident. Tune a threshold on the backend, and the model version, it
-    will run on ([Backends: Jev, OpenAI and Local Models](@ref
+    will run on ([Choosing a decision provider](@ref
     system_one_backends)).
 
 While you set no [`RequestConfig`](@ref) of your own — no `config`, no
@@ -452,7 +452,7 @@ end
   local models. A model without vision answers an image with its own 400:
   `image inputs are not supported by this decision model` from `tev1:0.8b`,
   `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
-  `kev:0.8b-q8_0` ([What a model takes](@ref backends_ollama_limits)). Ollama
+  `kev:0.8b-q8_0` ([Limits and refusals](@ref ollama_decisions_limits)). Ollama
   caps a request's text and schema, images excluded, at 64 KiB for the models
   measured, which [`ask`](@ref) does not check: a 76,284-byte state came back as a
   413 [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`, from
@@ -487,7 +487,7 @@ end
 - **Speed.** On 129 labelled tickets (21 October 2026, Ollama 0.40.6, an Apple M4
   Max, one request at a time), a warm call took from 0.025 s (`d1-omni:600m`) to
   0.64 s (`clef-flash:9b`) at the median, and a first call, which loads the model,
-  0.69 s to 3.44 s; [Which model](@ref backends_ollama_models) has each model's
+  0.69 s to 3.44 s; [Models](@ref ollama_decisions_models) has each model's
   accuracy, calibration and latency. The server's decision runners answer one
   request at a time, so [`ask_each`](@ref) keeps one in flight unless its
   `ntasks` says otherwise.

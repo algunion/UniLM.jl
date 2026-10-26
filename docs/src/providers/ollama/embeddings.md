@@ -10,9 +10,9 @@ It holds one item or several — a text, an [`EmbeddingInput`](@ref), an image o
 names an installed embedding model, since Ollama has no default; `embeddingrequest!` fills its vectors
 in place. The usage counts the input tokens, Ollama's `prompt_eval_count`, and a local model's
 embeddings cost `0.0`, as its chats do ([Cost and usage](@ref ollama_cost)). The request carries the
-endpoint's `keep_alive`, options and `runner` ([Options](@ref ollama_options__next)).
+endpoint's `keep_alive`, options and `runner` ([Options](@ref ollama_options)).
 
-## [Embeddings with EmbeddingGemma 2](@id ollama_embeddings__next)
+## [Embeddings with EmbeddingGemma 2](@id ollama_embeddings)
 
 EmbeddingGemma reads a short prompt that says what a text is for, and Ollama adds none: the
 Modelfile template of `embeddinggemma-2:740m-q8_0` is the text alone, `{{ .Prompt }}`, as
@@ -153,7 +153,7 @@ embeds text, and refuses media before the request.
 
 EmbeddingGemma 2 has an "8K token context window" ([its page](https://ollama.com/library/embeddinggemma-2)),
 and UniLM asks Ollama for that window with each of its requests unless the endpoint sets `num_ctx` or
-`num_batch` itself ([Options](@ref ollama_options__next)). An input longer than the window is an
+`num_batch` itself ([Options](@ref ollama_options)). An input longer than the window is an
 [`EmbeddingFailure`](@ref) with HTTP 400, not a vector of part of it: split long documents into
 chunks.
 

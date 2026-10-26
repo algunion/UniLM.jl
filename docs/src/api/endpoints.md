@@ -61,7 +61,7 @@ Each endpoint reads its configuration from environment variables:
 A registration made with [`add_azure_deploy_name!`](@ref) wins over the variable; a
 model with neither fails the call with an `ArgumentError` (in the result's `cause`)
 naming the variable to set. Azure's newer v1 API (no `api-version`) is not wrapped by
-`AZUREServiceEndpoint`; see [Multi-Backend Support](@ref backend_guide) for reaching it
+`AZUREServiceEndpoint`; see [The v1 API](@ref azure_compatible) for reaching it
 through `GenericOpenAIEndpoint` (untested).
 
 ### Google Gemini
@@ -120,7 +120,7 @@ println("Model: ", chat.model)
 
 The functions a new backend adds methods to, and the stream-state types its handlers
 mutate. They are declared `public` but not exported: qualify them (`UniLM.get_url`)
-when adding methods. [Custom Backends](@ref custom_backends_guide) walks through both
+when adding methods. [Write your own backend](@ref custom_backends_guide) walks through both
 cases — an OpenAI-compatible provider (routing and authentication only) and a provider
 with its own wire (the chat and agentic seams). Pre-1.0, this contract can still change
 in a minor release, under the CHANGELOG's **Breaking** heading.

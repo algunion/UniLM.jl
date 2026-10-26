@@ -19,6 +19,10 @@ UniLM._model_listing(::Type{ListingProbe{W}}) where {W} = W()
 UniLM._models_url(::Type{<:ListingProbe}) = _url_probe_base[] * "/v1/models"
 UniLM.auth_header(::Type{<:ListingProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
 
+# An endpoint type of the caller's own that declares no capabilities: the documented way to reach an
+# OpenAI-compatible server UniLM does not ship.
+struct _MLUndeclared <: UniLM.ServiceEndpoint end
+
 const _ML_OPENAI = ListingProbe{UniLM._OpenAIModels}
 const _ML_ANTHROPIC = ListingProbe{UniLM._AnthropicModels}
 const _ML_GEMINI = ListingProbe{UniLM._GeminiModels}
@@ -240,7 +244,7 @@ end
     for (service, name) in (GEMINIOpenAIServiceEndpoint => "GEMINIOpenAIServiceEndpoint",
                             AZUREServiceEndpoint => "AZUREServiceEndpoint", DeepSeekEndpoint() => "DeepSeekEndpoint",
                             GenericOpenAIEndpoint("http://127.0.0.1:9/v1", "") => "GenericOpenAIEndpoint",
-                            MistralEndpoint() => "GenericOpenAIEndpoint")
+                            MistralEndpoint() => "GenericOpenAIEndpoint", _MLUndeclared => "_MLUndeclared")
         e = try list_models(; service); nothing catch x; x end
         @test e isa ArgumentError && startswith(e.msg, "Model listing is not supported by $name") &&
               !occursin("TypeSafe", e.msg)

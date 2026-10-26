@@ -355,9 +355,11 @@
   no model listing of its own reaches TypeSafe's, its fallback System One protocol's, so
   `list_models` on `GEMINIOpenAIServiceEndpoint`, `AZUREServiceEndpoint`, `DeepSeekEndpoint`, a
   `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) or an endpoint type of your own that
-  declares no `:models` threw "TypeSafe models listing is not supported by …", naming a provider
-  the call had nothing to do with. The `ArgumentError` now reads "Model listing is not supported
-  by" the endpoint, then lists its capabilities, as before.
+  declares capabilities without `:models` threw "TypeSafe models listing is not supported by …",
+  naming a provider the call had nothing to do with, and on an endpoint type of your own that
+  declares no capabilities it threw a `MethodError`. Each now throws an `ArgumentError` that reads
+  "Model listing is not supported by" the endpoint, then lists its capabilities, as before, or says
+  that it declares none, as `ask` does.
 - **`speak` on Gemini takes the Extended Voice Library and designed and replicated voices.** Gemini
   3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
   (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)", yet

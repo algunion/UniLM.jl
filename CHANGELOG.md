@@ -21,6 +21,12 @@
   `prompt_cache_options`, Gemini's OpenAI-compatible endpoint answers them with HTTP 400, and only
   OpenAI's `Respond` sends a breakpoint. On those three endpoints the message now says to unset
   `prompt_cache_options`; it names a `Respond` on `OPENAIServiceEndpoint` only.
+- **A file object without a field the Files reference requires is a `FileCallError`, not a file with
+  a size, time or name made up for it.** `upload_file`, `retrieve_file`, `list_files` and
+  `complete_upload` decoded a file whose reply lacked `bytes` as 0 bytes, one without `created_at`
+  as created at 0, and one without `filename` or `purpose` as named `""`, each a success. Such a
+  reply now makes the call a `FileCallError` (from `complete_upload`, an `UploadCallError`), as a
+  reply without an `id` already did; a `bytes` given as null is still `nothing`.
 
 ## 0.28.0
 

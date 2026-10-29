@@ -181,7 +181,9 @@ end
 A file stored by the Files API: `id`, `bytes`, `created_at`, `filename`,
 `purpose`, and `status`; `raw` holds the unparsed JSON response. `bytes` is `nothing`
 when the reply gives the size as null, which OpenAI's Files reference allows "In a completed
-file upload response, … when the file size is not yet available".
+file upload response, … when the file size is not yet available". A reply without `id`, `bytes`,
+`created_at`, `filename` or `purpose`, each of which the reference requires, is no file: the call
+returns a [`FileCallError`](@ref).
 """
 @kwdef struct FileObject
     id::String
@@ -207,8 +209,7 @@ end
 
 function _parse_file_object(d::AbstractDict)
     FileObject(
-        id=d["id"], bytes=get(d, "bytes", 0), created_at=get(d, "created_at", 0),
-        filename=get(d, "filename", ""), purpose=get(d, "purpose", ""),
+        id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=d["filename"], purpose=d["purpose"],
         status=get(d, "status", nothing), raw=Dict{String,Any}(d))
 end
 

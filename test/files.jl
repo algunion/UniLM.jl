@@ -162,6 +162,26 @@ end
     @test del("""{"id": "file-1", "object": "file", "deleted": false}""") isa FileCallError
 end
 
+@testset "a file object without a field the Files reference requires is a FileCallError" begin
+    # OpenAI's File object has an `id`, `bytes` ("this can be null when the file size is not yet
+    # available"), `created_at`, `filename` and `purpose`: a reply missing one is no File object, never a
+    # FileSuccess whose size, time or name was made up for it.
+    full = Dict{String,Any}("id" => "file-1", "object" => "file", "bytes" => 3, "created_at" => 1,
+                            "filename" => "a.jsonl", "purpose" => "batch")
+    page(f) = JSON.json(Dict("object" => "list", "data" => [f], "has_more" => false))
+    @test _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=JSON.json(full)) isa FileSuccess
+    @test _answered(() -> list_files(; service=URLProbe), 200; body=page(full)) isa FileListSuccess
+    for key in ("bytes", "created_at", "filename", "purpose")
+        partial = delete!(copy(full), key)
+        r = _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=JSON.json(partial))
+        @test r isa FileCallError && occursin(key, r.error)
+        @test _answered(() -> list_files(; service=URLProbe), 200; body=page(partial)) isa FileCallError
+        done = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "completed", "file" => partial))
+        @test _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=done) isa
+              UniLM.UploadCallError
+    end
+end
+
 @testset "upload_file: a create is sent once, never retried" begin
     # A create is not idempotent. A POST the client stopped waiting for, or a gateway
     # 5xx sent after the backend stored the file, may already have created the file,

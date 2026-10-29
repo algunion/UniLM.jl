@@ -29,11 +29,12 @@ conversation_id(c::ConversationObject) = c.id
 """
     ConversationItem
 
-A single item in a conversation: `id` and optional `type`; `raw` holds the
-unparsed JSON response.
+A single item in a conversation: its `id` and optional `type`; `raw` holds the
+unparsed JSON response. `id` is `nothing` for an item that has none: OpenAI's Conversations
+reference gives every item one except a custom tool call and its output, whose `id` is optional.
 """
 @kwdef struct ConversationItem
-    id::String
+    id::Union{String,Nothing}
     type::Union{String,Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
 end
@@ -69,7 +70,7 @@ end
 
 _parse_conversation(d::AbstractDict) = ConversationObject(id=d["id"], created_at=get(d, "created_at", nothing),
     metadata=get(d, "metadata", nothing), raw=Dict{String,Any}(d))
-_parse_conv_item(d::AbstractDict) = ConversationItem(id=get(d, "id", ""), type=get(d, "type", nothing), raw=Dict{String,Any}(d))
+_parse_conv_item(d::AbstractDict) = ConversationItem(id=get(d, "id", nothing), type=get(d, "type", nothing), raw=Dict{String,Any}(d))
 
 function _conv_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64; body::Union{String,Nothing}=nothing)
     headers = auth_header(service)

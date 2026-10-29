@@ -2,6 +2,13 @@
 
 ## 0.29.0
 
+### Breaking
+- **A conversation item without an `id` has `id === nothing`, not `""`.** OpenAI's Conversations
+  reference gives every item an `id` except a custom tool call and its output, whose `id` is optional.
+  `list_conversation_items` and `retrieve_conversation_item` decoded such an item with the id `""`,
+  which names no item. `ConversationItem.id` is now `Union{String,Nothing}`, and `nothing` for an
+  item that has none. Upgrading: code that compared an item's id with `""` checks `isnothing`.
+
 ### Fixed
 - **A streamed `Chat`'s log probabilities have the shape of an unstreamed one's.** A token list the
   reply gives as null, such as `"refusal"` beside an answer's tokens or `"content"` on a refusal, is

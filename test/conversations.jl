@@ -52,6 +52,19 @@ end
                         UniLM.ConversationCallError)
 end
 
+@testset "a conversation item without an id decodes with id nothing, never \"\"" begin
+    # OpenAI's Conversations reference gives every item an `id` except a custom tool call and its output,
+    # whose `id` is optional.
+    call = """{"type": "custom_tool_call", "call_id": "call_1", "name": "grep", "input": "TODO"}"""
+    r = _answered(() -> retrieve_conversation_item("conv_1", "call_1"; service=URLProbe), 200; body=call)
+    @test r isa ConversationItemSuccess && r.response.id === nothing && r.response.type == "custom_tool_call"
+    out = """{"type": "custom_tool_call_output", "call_id": "call_1", "output": "3 matches"}"""
+    msg = """{"type": "message", "id": "msg_1", "role": "user", "content": []}"""
+    page = """{"object": "list", "data": [$call, $out, $msg], "has_more": false, "first_id": "msg_1", "last_id": "msg_1"}"""
+    l = _answered(() -> list_conversation_items("conv_1"; service=URLProbe), 200; body=page)
+    @test l isa ConversationItemListSuccess && [i.id for i in l.response.data] == [nothing, nothing, "msg_1"]
+end
+
 @testset "Conversations API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_conversation("conv_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_conv"])

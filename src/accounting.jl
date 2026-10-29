@@ -66,6 +66,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     # bills an audio model's audio tokens at its audio-token rates.
     "gpt-6-astra"   => _price(10.0, 1.0,  50.0),
     "gpt-6.1-sol"   => _price(2.0,  0.10, 10.0),
+    "gpt-6.1-terra" => _price(1.0,  0.05, 5.0),    # listed 2026-10-29
     "gpt-6-sol"     => _price(2.0,  0.20, 10.0),
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
     "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, at least through 2026-11-21

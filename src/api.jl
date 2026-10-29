@@ -1460,7 +1460,7 @@ OpenAI options, omitted from the request when unset:
   deprecates ("Use `prompt_cache_options.ttl` instead"); "for `gpt-5.5`, `gpt-5.5-pro`, and
   future models, only `24h` is supported". `OPENAIServiceEndpoint` sends it, and throws
   `ArgumentError` for any value on the models whose cache lifetime `prompt_cache_options`
-  sets — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+  sets — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
   `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) — as a [`Respond`](@ref) does.
   Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic endpoints (Mistral
   among them) send it as given, the server's answer the check; native Gemini,

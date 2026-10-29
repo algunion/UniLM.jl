@@ -2,6 +2,18 @@
 
 ## 0.27.1
 
+### Added
+- **`gpt-6.1-terra` is priced and ruled.** OpenAI lists GPT-6.1 Terra, "a fast, efficient model for
+  visual reasoning, precise computer use, and clear, natural writing" (its model page, 29 October
+  2026). Its row in `DEFAULT_PRICING` holds the page's standard rates — \$1.00 input, \$0.05 cached
+  input and \$5.00 output per 1M tokens —, with GPT-6's cache-write and long-context rates, Flex at
+  half and Fast at twice; it serves no Ultrafast. The native endpoint checks its requests as the page
+  and OpenAI's GPT-6 guide state: reasoning efforts `"none"` to `"max"` (Chat Completions without
+  `"max"`), sampling controls and log probabilities only at `"none"`, and `prompt_cache_retention`
+  refused as on the other GPT-6 models. Chat Completions function tools work at `"none"` only: the
+  model page says "Tool calling requires the Responses API", but on 29 October 2026 the API took
+  them at `"none"` and refused them at any other effort, as on GPT-6 Sol and Luna.
+
 ### Fixed
 - **A tool loop on `GEMINIOpenAIServiceEndpoint` works, streamed or not.** Gemini 3 returns
   a function call's thought signature on the OpenAI-compatible wire, in the call's

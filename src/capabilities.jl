@@ -174,6 +174,10 @@ const _OPENAI_MODEL_RULES = let
                             chat_efforts=["low", "medium", "high", "xhigh"], sampling_efforts=String[],
                             chat_tool_efforts=String[], ultrafast=true, prompt_cache_retention=false)
     # GPT-6 Sol and Luna take sampling controls, log probabilities and Chat tools only at "none".
+    # So does GPT-6.1 Terra: its model page says "Tool calling requires the Responses API", but on
+    # 2026-10-29 Chat Completions took function tools at effort "none" and refused them at "low"
+    # and by default ("To use function tools, use /v1/responses or set reasoning_effort to
+    # 'none'"), refused temperature at "low" and took it at "none", and refused "max".
     sol_luna = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
                                  chat_efforts=["none", "low", "medium", "high", "xhigh"],
                                  sampling_efforts=["none"], chat_tool_efforts=["none"],
@@ -190,7 +194,7 @@ const _OPENAI_MODEL_RULES = let
     gpt56 = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
                               chat_efforts=["none", "low", "medium", "high", "xhigh"],
                               sampling_efforts=["none"], chat_tool_efforts=["none"], prompt_cache_retention=false)
-    Dict{String,_OpenAIModelRules}("gpt-6-astra" => top, "gpt-6.1-sol" => top,
+    Dict{String,_OpenAIModelRules}("gpt-6-astra" => top, "gpt-6.1-sol" => top, "gpt-6.1-terra" => sol_luna,
                                    "gpt-6-sol" => sol_luna, "gpt-6-luna" => sol_luna,
                                    "gpt-5.6-sol" => gpt56, "gpt-5.6-terra" => gpt56, "gpt-5.6-luna" => gpt56,
                                    "gpt-5.6" => gpt56)
@@ -399,6 +403,7 @@ const _OPENAI_PRICE_TERMS = let
         _OpenAIPriceTerms(cache_writes=true, long_context=true, tiers=t, long_tiers=t))
     Dict{String,_OpenAIPriceTerms}(
         "gpt-6-astra" => current("ultrafast" => 6.0), "gpt-6.1-sol" => current("ultrafast" => 6.0),
+        "gpt-6.1-terra" => current(),   # listed 2026-10-29
         "gpt-6-sol" => current(), "gpt-6-luna" => current(),
         "gpt-5.6-sol" => current(), "gpt-5.6-terra" => current(), "gpt-5.6-luna" => current(),
         # Earlier models bill no cache-write premium; Fast has no long-context price on the page.

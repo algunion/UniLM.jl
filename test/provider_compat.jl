@@ -150,7 +150,7 @@ const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ul
 @testset "OpenAI model rules: the exact id or a dated snapshot, never another generation" begin
     rules = UniLM._OPENAI_MODEL_RULES
     @test sort!(collect(keys(rules))) == ["gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
-                                          "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"]
+                                          "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"]
     row(model) = UniLM._openai_row(rules, model)
     @test row("gpt-6-sol-2026-09-14") === rules["gpt-6-sol"]
     @test row("gpt-6.1-sol") === rules["gpt-6.1-sol"]
@@ -358,6 +358,33 @@ end
     generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-luna",
                    prompt_cache_options=PromptCacheOptions(ttl="12h"))
     @test JSON.parse(UniLM.encode_request(generic.service, generic))["prompt_cache_options"] == Dict("ttl" => "12h")
+end
+
+@testset "GPT-6.1 Terra: effort none and up; sampling and Chat tools only at none; no Ultrafast" begin
+    # Its model page (2026-10-29) lists efforts "none" to "max"; the API's answers that day: sampling and
+    # Chat Completions tools at "none" only (though the page says "Tool calling requires the Responses API").
+    for model in ("gpt-6.1-terra", "gpt-6.1-terra-2026-10-28")
+        @test _oa_respond(; model, reasoning=Reasoning(effort="none"))["reasoning"]["effort"] == "none"
+        @test _oa_respond(; model, reasoning=Reasoning(effort="max"))["reasoning"]["effort"] == "max"
+        @test _oa_chat(; model, reasoning_effort="xhigh")["reasoning_effort"] == "xhigh"
+        @test occursin("Respond", _oa_chat_err(; model, reasoning_effort="max").msg)
+        body = _oa_chat(; model, reasoning_effort="none", temperature=0.2, logprobs=true, top_logprobs=2)
+        @test (body["temperature"], body["logprobs"], body["top_logprobs"]) == (0.2, true, 2)
+        @test _oa_chat_err(; model, reasoning_effort="low", temperature=0.2).msg ==
+              "$model with reasoning effort \"low\" does not support sampling controls or log probabilities " *
+              "(temperature); set reasoning_effort=\"none\" or remove them"
+        @test _oa_respond_err(; model, top_p=0.5).msg == "$model with reasoning effort \"medium (default)\" does " *
+              "not support sampling controls or log probabilities (top_p); set reasoning=Reasoning(effort=\"none\") " *
+              "or remove them"
+        @test only(_oa_chat(; model, tools=_OA_PING, reasoning_effort="none")["tools"])["function"]["name"] == "ping"
+        for effort in (nothing, "low")
+            @test _oa_chat_err(; model, tools=_OA_PING, reasoning_effort=effort).msg ==
+                  "$model Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"
+        end
+        @test only(_oa_respond(; model, tools=[function_tool("ping", "Ping")])["tools"])["name"] == "ping"
+        @test _oa_respond_err(; model, service_tier="ultrafast").msg == "$model $_OA_NO_ULTRAFAST"
+        @test occursin("prompt_cache_options", _oa_respond_err(; model, prompt_cache_retention="24h").msg)
+    end
 end
 
 @testset "GPT-6 Sol and Luna: sampling, log probabilities and Chat tools only at effort none" begin

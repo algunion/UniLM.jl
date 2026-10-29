@@ -50,6 +50,7 @@ run their examples, in its own words:
 | :--- | :--- |
 | `gpt-6-sol` | "built for complex coding and agentic workflows" ([GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)) |
 | `gpt-6.1-sol` | "Near-Astra performance for complex work at a lower cost" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
+| `gpt-6.1-terra` | "A fast, efficient model for visual reasoning, precise computer use, and clear, natural writing" ([GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra)) |
 | `gpt-6-astra` | "Highest intelligence", "For the most demanding reasoning, coding, and professional work" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
 | `gpt-6-luna` | "Fastest and most cost-effective", "Strong performance for focused, high-volume tasks" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
 | `gpt-5.6` | "The `gpt-5.6` alias routes requests to `gpt-5.6-sol`" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |

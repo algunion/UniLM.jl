@@ -778,6 +778,7 @@ end
     # cached input, output. The pro models list no cached-input rate: a cache read bills as input;
     # so does gpt-audio-1.5, whose row is its text rates.
     for (model, i, c, o) in (("gpt-6-astra", 10.0, 1.0, 50.0), ("gpt-6.1-sol", 2.0, 0.10, 10.0),
+            ("gpt-6.1-terra", 1.0, 0.05, 5.0),   # the pricing page of 2026-10-29
             ("gpt-6-sol", 2.0, 0.20, 10.0), ("gpt-6-luna", 0.10, 0.01, 0.50),
             ("gpt-5.6-sol", 4.0, 0.40, 20.0), ("gpt-5.6-terra", 2.0, 0.20, 12.0), ("gpt-5.6-luna", 0.20, 0.02, 1.20),
             ("gpt-5.5", 5.0, 0.50, 30.0), ("gpt-5.5-pro", 30.0, 30.0, 180.0), ("gpt-5.4", 2.5, 0.25, 15.0),
@@ -853,6 +854,10 @@ end
     @test cost("gpt-6.1-sol", "ultrafast") ≈ 6 * (1_000 * 2.0 + 100 * 10.0) / 1e6
     @test cost("gpt-6-astra", "ultrafast") ≈ 6 * (1_000 * 10.0 + 100 * 50.0) / 1e6
     @test cost("gpt-6-luna", "flex") ≈ 0.5 * (1_000 * 0.10 + 100 * 0.50) / 1e6
+    # GPT-6.1 Terra (pricing page, 2026-10-29): Flex half, Fast twice; long prompts and cache writes as GPT-6's.
+    @test cost("gpt-6.1-terra", "flex") ≈ 0.5 * (1_000 * 1.0 + 100 * 5.0) / 1e6
+    @test cost("gpt-6.1-terra", "fast") ≈ 2 * (1_000 * 1.0 + 100 * 5.0) / 1e6
+    @test UniLM._OPENAI_PRICE_TERMS["gpt-6.1-terra"].cache_writes && UniLM._OPENAI_PRICE_TERMS["gpt-6.1-terra"].long_context
     for tier in ("priority", "fast")
         @test cost("gpt-6-sol", tier) ≈ 2 * (1_000 * 2.0 + 100 * 10.0) / 1e6
         @test cost("gpt-5.6-terra", tier) ≈ 2 * (1_000 * 2.0 + 100 * 12.0) / 1e6

@@ -744,9 +744,10 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
   `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
   each model supports a subset (gpt-5.4-mini stops at `"xhigh"`). For `gpt-6-astra`,
-  `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna`
-  (and their dated snapshots) the native OpenAI endpoint checks the effort before the
-  request: the Responses API takes `"low"` to `"max"` on GPT-6 Astra and GPT-6.1 Sol and
+  `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) the native OpenAI endpoint
+  checks the effort before the request: the Responses API takes `"low"` to `"max"` on GPT-6
+  Astra and GPT-6.1 Sol and
   `"none"` to `"max"` on the others, so `"minimal"` (and `"none"` on Astra and 6.1 Sol)
   throws `ArgumentError` pointing to `"low"`. Other models are checked by the server.
   Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
@@ -856,8 +857,9 @@ Configuration struct for an OpenAI Responses API request.
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
   says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported". UniLM
   sends the field unchecked on those two and on any model without a rule row. OpenAI
-  deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`
-  and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache lifetime
+  deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`,
+  `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots),
+  whose cache lifetime
   `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for any value
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 - `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions

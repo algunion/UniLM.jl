@@ -82,6 +82,13 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
     "to set, and UniLM does not wrap its explicit caching (cached contents) " *
     "(https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
 
+# An explicit-mode Chat's remedy (api.jl): no prompt_cache_options, which native Gemini refuses and the
+# OpenAI-compatible endpoint answers with HTTP 400 (encode_request(::Type{GEMINIOpenAIServiceEndpoint}, …)).
+_explicit_cache_remedy(::Type{GEMINIServiceEndpoint})::String =
+    "Gemini takes no prompt_cache_options, caching repeated prompt prefixes implicitly: unset prompt_cache_options"
+_explicit_cache_remedy(::Type{GEMINIOpenAIServiceEndpoint})::String =
+    "Gemini's OpenAI-compatible endpoint answers prompt_cache_options with HTTP 400: unset prompt_cache_options"
+
 # The service tiers a request names (https://ai.google.dev/gemini-api/docs/optimization):
 # generateContent takes standard, flex and priority (GenerateContentRequest.serviceTier, whose
 # "unspecified" is standard), and so does the Interactions API, whose reference lists flex,

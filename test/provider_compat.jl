@@ -665,12 +665,21 @@ end
     # "With `explicit`, OpenAI does not create an implicit breakpoint and writes up to the latest four explicit
     # breakpoints. If there are no explicit breakpoints, the request does not use prompt caching" (Chat
     # Completions reference, `prompt_cache_options.mode`), and a Chat's message content, plain text, marks none.
+    # The refusal names only the remedies its endpoint takes: native Gemini and Ollama refuse any
+    # prompt_cache_options, Gemini's OpenAI-compatible endpoint answers it with HTTP 400, and of the
+    # endpoints with a Respond, only OpenAI's sends a breakpoint the API documents.
+    implicit, respond = "Use mode=\"implicit\" or leave mode unset", "input_text(text; cache_breakpoint=true)"
     for service in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint("k"),
-                    GenericOpenAIEndpoint("http://x", ""), ANTHROPICServiceEndpoint, OllamaEndpoint())
+                    GenericOpenAIEndpoint("http://x", ""), ANTHROPICServiceEndpoint, OllamaEndpoint(),
+                    GEMINIServiceEndpoint)
         for o in (PromptCacheOptions(mode="explicit"), PromptCacheOptions(mode="explicit", ttl="30m"))
             err = try Chat(; service, model="m", prompt_cache_options=o); nothing catch e; e end
             @test err isa ArgumentError && startswith(err.msg, "prompt_cache_options mode=\"explicit\" caches only") &&
                   occursin("a Chat cannot mark one", err.msg)
+            unset = service in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint) || service isa OllamaEndpoint
+            @test occursin(implicit, err.msg) == !unset
+            @test endswith(err.msg, "unset prompt_cache_options") == unset
+            @test occursin(respond, err.msg) == (service === OPENAIServiceEndpoint)
         end
     end
     @test Chat(prompt_cache_options=PromptCacheOptions(mode="implicit")).prompt_cache_options.mode == "implicit"

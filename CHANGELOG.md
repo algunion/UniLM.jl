@@ -15,6 +15,12 @@
   texts were mixed, its tool calls and reasoning added, and the last finish reason kept. The
   OpenAI-wire streams, generic and DeepSeek endpoints' included, now read choice 0 (a choice without
   an `index` is choice 0) and leave any other.
+- **An explicit-mode `Chat`'s refusal suggests only what its endpoint takes.** The `ArgumentError` for
+  a `Chat` with `prompt_cache_options` `mode="explicit"` told every endpoint to use `mode="implicit"`,
+  leave `mode` unset, or send a `Respond` that marks a breakpoint. Native Gemini and Ollama refuse any
+  `prompt_cache_options`, Gemini's OpenAI-compatible endpoint answers them with HTTP 400, and only
+  OpenAI's `Respond` sends a breakpoint. On those three endpoints the message now says to unset
+  `prompt_cache_options`; it names a `Respond` on `OPENAIServiceEndpoint` only.
 
 ## 0.28.0
 

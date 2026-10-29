@@ -1396,6 +1396,13 @@ function JSON.lower(options::PromptCacheOptions)
     d
 end
 
+# What an explicit-mode Chat's refusal tells to do instead, on its endpoint: implicit mode, which the
+# endpoints that take prompt_cache_options take, and on OpenAI a Respond, whose input marks breakpoints.
+# The endpoints that take no prompt_cache_options name their own (gemini.jl, ollama.jl).
+_explicit_cache_remedy(_)::String = "Use mode=\"implicit\" or leave mode unset"
+_explicit_cache_remedy(::Type{OPENAIServiceEndpoint})::String =
+    _explicit_cache_remedy(nothing) * ", or a Respond, whose input_text(text; cache_breakpoint=true) marks one"
+
 """
     ModerationConfig(; model, input_mode=nothing, output_mode=nothing)
 
@@ -1580,9 +1587,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         # the request does not use prompt caching" (Chat Completions reference, `prompt_cache_options.mode`).
         isnothing(prompt_cache_options) || prompt_cache_options.mode != "explicit" || throw(ArgumentError(
             "prompt_cache_options mode=\"explicit\" caches only the prefixes a request marks with cache " *
-            "breakpoints, and a Chat cannot mark one: the request would not use prompt caching. Use " *
-            "mode=\"implicit\" or leave mode unset, or a Respond, whose input_text(text; cache_breakpoint=true) " *
-            "marks one"))
+            "breakpoints, and a Chat cannot mark one: the request would not use prompt caching. " *
+            _explicit_cache_remedy(service)))
         isnothing(logit_bias) || all(v -> -100 <= v <= 100, values(logit_bias)) ||
             throw(ArgumentError("logit_bias values must be in [-100, 100]"))
         efforts = _reasoning_efforts(service)

@@ -88,6 +88,10 @@ const _OLLAMA_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tool
     :reasoning_effort, :logprobs, :top_logprobs, :_cumulative_cost)
 const _OLLAMA_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _OLLAMA_CHAT_MAPPED_FIELDS))
 
+# An explicit-mode Chat's remedy (api.jl): /api/chat takes no prompt_cache_options at all.
+_explicit_cache_remedy(::OllamaEndpoint)::String =
+    "Ollama /api/chat does not support prompt_cache_options: unset prompt_cache_options"
+
 # reasoning_effort → `think`: "none" turns thinking off; any other effort goes by name,
 # since thinking levels are the model's own (https://docs.ollama.com/capabilities/thinking):
 # a model with thinking metadata applies a level it names and uses its default for any other

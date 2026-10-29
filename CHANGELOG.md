@@ -28,7 +28,6 @@
   it declares no capabilities", before any request. `chatrequest!`, `embeddingrequest!` and `respond`
   still send it unvalidated. Upgrading: an endpoint type of your own that generates or edits images
   declares `:images` or `:image_edits` in `provider_capabilities`.
-
 - **A file whose size is not yet known decodes: `FileObject.bytes` is `Union{Int,Nothing}`.** OpenAI's
   Files reference gives a file's `bytes` as null "In a completed file upload response, … when the file
   size is not yet available". Such a file object did not decode, so `complete_upload` returned no
@@ -54,9 +53,9 @@
   `"input"` and `"output"` hold the moderation results; a streamed reply's chunks are joined, and a
   `prefix_complete` result keeps them too. On an `OllamaEndpoint`, `logprobs` and `top_logprobs` were
   refused; Ollama's `/api/chat` takes both, so they are now sent, and the reply's token list is
-  `logprobs["content"]`. Native Gemini, Anthropic and Gemini Interactions still refuse them, having
-  no such field, and Ollama still refuses `moderation`. `LLMSuccess` gains the two fields last; built
-  positionally, its five earlier fields still build one.
+  `logprobs["content"]`. Native Gemini, Anthropic and Gemini Interactions still refuse them, UniLM
+  mapping no such field there, and Ollama still refuses `moderation`. `LLMSuccess` gains the two
+  fields last; built positionally, its five earlier fields still build one.
 - **`temperature` and `top_p` can be set together.** The `Chat` and `Respond` constructors refused
   the pair on every provider, as "mutually exclusive", though no provider's page refuses it:
   OpenAI's, DeepSeek's and Mistral's references recommend altering one "but not both", and Azure's,

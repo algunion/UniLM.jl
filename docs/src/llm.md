@@ -2954,7 +2954,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (401), grouped by area:
+Every exported symbol (402), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`

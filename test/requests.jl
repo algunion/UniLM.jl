@@ -1839,13 +1839,16 @@ end
     UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("refusal" => "No."),
         Dict("content" => nothing, "refusal" => [tok("No.", -0.1)]), "stop")), st)
     @test st.logprobs == Dict{String,Any}("content" => nothing, "refusal" => [tok("No.", -0.1)])
-    # A null list never erases the tokens an earlier chunk gave, and tokens fill a list named null before.
+    # A null list never erases the tokens an earlier chunk gave, and tokens fill a list named null before;
+    # a member that is no list is kept as the latest chunk gives it, and a null does not erase it either.
     st = UniLM.StreamState()
-    for lp in (Dict("content" => [tok("a", -0.1)], "refusal" => nothing), Dict("content" => nothing, "refusal" => nothing),
-               Dict("content" => [tok("b", -0.2)], "refusal" => [tok("c", -0.3)]))
+    for lp in (Dict("content" => [tok("a", -0.1)], "refusal" => nothing, "extra" => 1),
+               Dict("content" => nothing, "refusal" => nothing, "extra" => 2),
+               Dict("content" => [tok("b", -0.2)], "refusal" => [tok("c", -0.3)], "extra" => nothing))
         UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("content" => "x"), lp)), st)
     end
-    @test st.logprobs == Dict{String,Any}("content" => [tok("a", -0.1), tok("b", -0.2)], "refusal" => [tok("c", -0.3)])
+    @test st.logprobs == Dict{String,Any}("content" => [tok("a", -0.1), tok("b", -0.2)], "refusal" => [tok("c", -0.3)],
+                                          "extra" => 2)
 end
 
 # An OpenAI-wire endpoint whose encoder refuses every request.

@@ -394,7 +394,8 @@ _reply_choice(cho::AbstractDict)::Bool = (i = get(cho, "index", nothing); i === 
 
 # A chunk's log probabilities: each token list it names (`"content"`, `"refusal"`, …) extends the
 # stream's list of that name, in arrival order. A list named null is kept as `nothing`, as an
-# unstreamed reply holds it, until a chunk gives its tokens; it never erases tokens given before.
+# unstreamed reply holds it, until a chunk gives its tokens; a null never erases what an earlier chunk
+# gave. Any other member is kept as the latest chunk gives it.
 function _logprobs_delta!(state::StreamState, lists::AbstractDict)::Nothing
     kept = state.logprobs = something(state.logprobs, Dict{String,Any}())
     for (name, tokens) in lists
@@ -404,6 +405,8 @@ function _logprobs_delta!(state::StreamState, lists::AbstractDict)::Nothing
             prior isa Vector{Any} ? append!(prior, tokens) : (kept[key] = collect(Any, tokens))
         elseif isnothing(tokens)
             get!(kept, key, nothing)
+        else
+            kept[key] = tokens
         end
     end
     nothing

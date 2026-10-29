@@ -15,6 +15,11 @@
 # (https://api-docs.deepseek.com/guides/thinking_mode, the requested-to-actual effort table).
 _reasoning_efforts(::DeepSeekEndpoint)::Tuple{Vararg{String}} = (_OPENAI_REASONING_EFFORTS..., "ultra")
 
+# An explicit-mode Chat's remedy (api.jl): DeepSeek's context caching "is enabled by default for all
+# users" (https://api-docs.deepseek.com/guides/kv_cache), and its reference lists no prompt_cache_options.
+_explicit_cache_remedy(::DeepSeekEndpoint)::String =
+    "DeepSeek caches prompts on its own, and its reference lists no prompt_cache_options: unset prompt_cache_options"
+
 # Copy of `m` with one field replaced; field-generic, so fields added to Message later
 # are carried over.
 _message_with(m::Message, field::Symbol, value) =

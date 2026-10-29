@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.28.0
 
 ### Breaking
 - **A `Chat` with `prompt_cache_options` `mode="explicit"` is refused when it is built.** Explicit

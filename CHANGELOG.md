@@ -43,6 +43,15 @@
   and `OllamaEndpoint` and `GenericOpenAIEndpoint` declare `:agentic` and `:audio` too. Upgrading: code
   that compares a `provider_capabilities` set with a fixed set of its own adds them, or tests one
   capability with `has_capability`.
+- **Gemini Interactions refuses an input that ends with an assistant message before sending.** From
+  Gemini 3.6 Flash and 3.5 Flash-Lite on, Google answers an input whose last step is the model's with
+  HTTP 400 ("Request contains an invalid argument.", gemini-3.8-flash, 26 October 2026), as
+  generateContent answers a request that ends with a model turn, which a `Chat` already refuses before
+  sending. `respond` on `GEMINIServiceEndpoint` sent such an input and returned the failure; it now
+  throws an `ArgumentError` before sending, an input already in the Interactions shape included. The
+  earlier models, which continue a prefilled answer, are unchanged. Upgrading: end the input with a
+  user message, and shape the answer with `instructions` or `text`.
+
 ### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`
   was exported and documented as a Conversations result, yet no verb returned it: UniLM had no call for

@@ -66,13 +66,29 @@ function _interactions_validate_background(r::Respond)::Nothing
     nothing
 end
 
+# From Gemini 3.6 Flash and 3.5 Flash-Lite on, an input whose last step is the model's is answered
+# HTTP 400, as a generateContent request ending with a model turn is (`_gemini_validate_last_turn`):
+# gemini-3.8-flash answered one with "Request contains an invalid argument." and the same input with a
+# user message after it with HTTP 200 (2026-10-26). The earlier models continue a prefilled answer.
+function _interactions_validate_last_step(model::String, input)::Nothing
+    input isa AbstractVector && !isempty(input) || return nothing
+    step = last(input)
+    step isa AbstractDict && _member(step, "type") == "model_output" && !(model in _GEMINI_PRE_3_6_MODELS) &&
+        throw(ArgumentError("$model answers HTTP 400 to an input that ends with an assistant message: Gemini " *
+            "3.6 Flash, 3.5 Flash-Lite and every later model do not continue a prefilled answer. End the input " *
+            "with a user message; to shape the answer, use instructions or text"))
+    nothing
+end
+
 function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     _gemini_refuse_cache_options(r.prompt_cache_options)
     _interactions_reject_unmapped(r)
     _gemini_validate_sampling(r.model, r.temperature, r.top_p)
     _interactions_validate_output_limit(r)
     _interactions_validate_background(r)
-    body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input, r.model))
+    input = _interactions_input(r.input, r.model)
+    _interactions_validate_last_step(r.model, input)
+    body = Dict{Symbol,Any}(:model => r.model, :input => input)
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
     (fmt = _interactions_response_format(r.text)) === nothing || (body[:response_format] = fmt)

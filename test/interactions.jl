@@ -942,6 +942,25 @@ end
     @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
 end
 
+@testset "Interactions encode — an input ending with an assistant message is refused where Gemini answers it with HTTP 400" begin
+    # gemini-3.8-flash answered an input whose last step is a model_output with HTTP 400 "Request contains an
+    # invalid argument.", and the same input with a user message after it with HTTP 200 (2026-10-26), as
+    # generateContent answers a request ending with a model turn on Gemini 3.6 Flash, 3.5 Flash-Lite and
+    # every later model (ai.google.dev/gemini-api/docs/whats-new-gemini-3.6).
+    say(role, text) = InputMessage(; role, content=text)
+    encode(model, input) = UniLM.encode_agentic(GEMINIServiceEndpoint,
+                                                Respond(service=GEMINIServiceEndpoint, model=model, input=input))
+    prefill = [say("user", "Spell the word cat backwards."), say("assistant", "Backwards, the word is")]
+    err = try encode("gemini-3.8-flash", prefill) catch e; e end
+    @test err isa ArgumentError && occursin("answers HTTP 400 to an input that ends with an assistant message", err.msg)
+    # A step already in the Interactions shape counts too.
+    @test_throws ArgumentError encode("gemini-4-argon", Any[Dict("type" => "model_output",
+                                                              "content" => [Dict("type" => "text", "text" => "x")])])
+    @test last(JSON.parse(encode("gemini-3.8-flash", [prefill; say("user", "Finish that sentence.")]))["input"])["type"] ==
+          "user_input"
+    @test last(JSON.parse(encode("gemini-2.5-flash", prefill))["input"])["type"] == "model_output"  # an earlier model
+end
+
 @testset "Interactions decode — the faults an interaction records reach ResponseObject.error" begin
     # An Interaction reports its faults in `errors`, an array of {code, message}
     # (ai.google.dev/api/interactions-api): the error surface holds the first, raw keeps them all.
@@ -1065,9 +1084,11 @@ _ix_text(t) = Dict("type" => "text", "text" => t)
     end
     # The neutral Responses text parts of a replayed turn become Interactions text parts.
     @test _ix_input([InputMessage(role="user", content=[input_text("Hi")]),
-                     Dict("role" => "assistant", "content" => [Dict("type" => "output_text", "text" => "Hello.")])]) ==
+                     Dict("role" => "assistant", "content" => [Dict("type" => "output_text", "text" => "Hello.")]),
+                     InputMessage(role="user", content="Again")]) ==
         [Dict("type" => "user_input", "content" => [_ix_text("Hi")]),
-         Dict("type" => "model_output", "content" => [_ix_text("Hello.")])]
+         Dict("type" => "model_output", "content" => [_ix_text("Hello.")]),
+         Dict("type" => "user_input", "content" => [_ix_text("Again")])]
     # A String input, a tool result and a step already in the Interactions shape pass as given.
     @test _ix_input("Hi") == "Hi"
     step = Dict("type" => "user_input", "content" => [_ix_text("Hi")])

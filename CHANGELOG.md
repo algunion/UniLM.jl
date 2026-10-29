@@ -14,8 +14,8 @@
   reply gives as null, such as `"refusal"` beside an answer's tokens or `"content"` on a refusal, is
   `nothing` in an unstreamed result's `logprobs`, as the reply holds it, but was missing from a
   streamed result's, so reading it there threw a `KeyError`. A streamed result now names every list
-  its chunks name, a list given only as null being `nothing`; a null list still never erases the
-  tokens an earlier chunk gave.
+  its chunks name, a list given only as null being `nothing`, and keeps any other member as the latest
+  chunk gives it; a null still never erases what an earlier chunk gave.
 - **A streamed reply is read from its first choice only, as an unstreamed one is.** A `Chat` asks for
   one choice (`n` is 1), and an unstreamed reply's first choice is its result, but a stream folded
   every choice it carried into one: from a server that streamed another anyway, by its `index`, the
@@ -25,22 +25,24 @@
 - **An explicit-mode `Chat`'s refusal suggests only what its endpoint takes.** The `ArgumentError` for
   a `Chat` with `prompt_cache_options` `mode="explicit"` told every endpoint to use `mode="implicit"`,
   leave `mode` unset, or send a `Respond` that marks a breakpoint. Native Gemini and Ollama refuse any
-  `prompt_cache_options`, Gemini's OpenAI-compatible endpoint answers them with HTTP 400, and only
-  OpenAI's `Respond` sends a breakpoint. On those three endpoints the message now says to unset
-  `prompt_cache_options`; it names a `Respond` on `OPENAIServiceEndpoint` only.
-- **A file object without a field the Files reference requires is a `FileCallError`, not a file with
-  a size, time or name made up for it.** `upload_file`, `retrieve_file`, `list_files` and
+  `prompt_cache_options`, Gemini's OpenAI-compatible endpoint answers them with HTTP 400, DeepSeek's
+  reference lists none, and OpenAI's is the reference that documents the breakpoint a `Respond`
+  marks. On those four endpoints the message now says to unset `prompt_cache_options`; it names a
+  `Respond` on `OPENAIServiceEndpoint` only.
+- **A file object without its size, creation time, name or purpose is a `FileCallError`, not a file
+  with values made up for it.** `upload_file`, `retrieve_file`, `list_files` and
   `complete_upload` decoded a file whose reply lacked `bytes` as 0 bytes, one without `created_at`
   as created at 0, and one without `filename` or `purpose` as named `""`, each a success. Such a
   reply now makes the call a `FileCallError` (from `complete_upload`, an `UploadCallError`), as a
   reply without an `id` already did; a `bytes` given as null is still `nothing`.
 - **A streamed Gemini Interactions search keeps its steps' arguments, results and signatures.**
   Google streams a hosted tool's step (`google_search_call`, `google_search_result`,
-  `code_execution_call`, …) as a start without its fields and one delta of the step's own type that
-  carries them: the call's arguments, the result, and the signature a stateless follow-up sends back.
+  `code_execution_call`, …) as a start without its fields and a delta of the step's own type that
+  carries them: the call's arguments, the result, and the signature a stateless follow-up sends back
+  (one such delta per step in the google_search streams seen on gemini-3.8-flash, 26 October 2026).
   Those deltas were dropped, so a streamed `respond` with `gemini_google_search()` returned its search
   steps without them, unlike the same interaction unstreamed. Each delta's fields are now set on its
-  step, and its signature extends the step's, so both decodes give the same output.
+  step, and its signature extends the step's, so both decodes of such a stream give the same output.
 
 ## 0.28.0
 

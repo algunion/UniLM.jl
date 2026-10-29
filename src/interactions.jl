@@ -624,9 +624,10 @@ function _interaction_step_delta!(state::AgenticStreamState, data::Dict{String,A
         end
         append!(get!(Vector{Any}, part, "annotations"), notes)
     elseif !isnothing(step) && !isempty(kind) && dt == kind
-        # A hosted tool's step (google_search_call, google_search_result, code_execution_call, …) gets
-        # its fields in a delta of its own type, one per step in Google's streams: each is set on the
-        # step, and its signature extends the start event's, as a thought_signature delta does.
+        # A hosted tool's step (google_search_call, google_search_result, code_execution_call, …: the
+        # reference's StepDelta variants) gets its fields in a delta of its own type, one per step in the
+        # google_search streams seen (26 October 2026): each is set on the step, and its signature
+        # extends the start event's, as a thought_signature delta does.
         for (k, v) in d
             if k == "signature"
                 v isa AbstractString && print(get!(IOBuffer, state.text_by_step, idx), v)

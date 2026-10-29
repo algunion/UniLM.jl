@@ -183,7 +183,7 @@ A file stored by the Files API: `id`, `bytes`, `created_at`, `filename`,
 when the reply gives the size as null, which OpenAI's Files reference allows "In a completed
 file upload response, … when the file size is not yet available". A reply without `id`, `bytes`,
 `created_at`, `filename` or `purpose`, each of which the reference requires, is no file: the call
-returns a [`FileCallError`](@ref).
+returns its call error, a [`FileCallError`](@ref) (from `complete_upload`, an `UploadCallError`).
 """
 @kwdef struct FileObject
     id::String

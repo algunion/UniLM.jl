@@ -743,7 +743,7 @@ try
         @test delete_conversation_item("c", "i"; service=DeadEndpoint) isa ConversationCallError
         # Moderations / Audio / Image edits
         @test moderate("x"; service=DeadEndpoint) isa ModerationCallError
-        @test_throws ArgumentError speak("hi"; service=DeadEndpoint)      # no Realtime WebSocket
+        @test_throws ArgumentError speak("hi"; service=DeadEndpoint)      # no :speech capability
         @test transcribe(tf; service=DeadEndpoint) isa AudioCallError
         @test_throws ArgumentError translate(tf; service=DeadEndpoint)    # no Realtime WebSocket
         @test edit_image(png, "p"; model="gpt-image-2", service=DeadEndpoint) isa ImageCallError
@@ -796,7 +796,7 @@ try
         @test list_conversation_items("c"; service=MockServiceEndpoint) isa ConversationFailure
         @test delete_conversation_item("c", "i"; service=MockServiceEndpoint) isa ConversationFailure
         @test moderate("x"; service=MockServiceEndpoint) isa ModerationFailure
-        @test_throws ArgumentError speak("hi"; service=MockServiceEndpoint)       # no Realtime WebSocket
+        @test_throws ArgumentError speak("hi"; service=MockServiceEndpoint)       # no :speech capability
         @test transcribe(tf; service=MockServiceEndpoint) isa AudioFailure
         @test_throws ArgumentError translate(tf; service=MockServiceEndpoint)     # no Realtime WebSocket
         @test edit_image(png, "p"; model="gpt-image-2", service=MockServiceEndpoint) isa ImageFailure

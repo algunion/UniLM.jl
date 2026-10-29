@@ -130,8 +130,8 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
         @test_throws ArgumentError OllamaOptions(; k => v)
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value
-    @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models,
-                                           :system_one, :transcription])
+    @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses,
+                                           :agentic, :models, :system_one, :audio, :transcription])
     @test !occursin("redacted", sprint(show, e))                     # no key to hide
     @test_throws ArgumentError Chat(service=e)                       # no default model
     @test occursin("list_models(service=OllamaEndpoint())", try Chat(service=e); "" catch x; x.msg end)

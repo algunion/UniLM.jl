@@ -36,10 +36,35 @@ end
     @test !has_capability(OPENAIServiceEndpoint, :fim)
     @test has_capability(DeepSeekEndpoint("k"), :fim)
     @test has_capability(DeepSeekEndpoint("k"), :prefix_completion)
-    # OpenAI declares transcription; Ollama declares it alone, which grants no rest of the audio API.
+    # OpenAI declares transcription; so does Ollama, with `:audio` for that route alone (speech is `:speech`).
     @test :transcription in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     ollama = OllamaEndpoint(base_url="http://127.0.0.1:1")
-    @test has_capability(ollama, :transcription) && !has_capability(ollama, :audio)
+    # Ollama serves OpenAI's transcription route (`:audio`, `:transcription`); speech is `:speech` and
+    # translation `:realtime`, which it does not declare.
+    @test has_capability(ollama, :transcription) && has_capability(ollama, :audio)
+    @test !has_capability(ollama, :speech) && !has_capability(ollama, :realtime)
+end
+
+# Declares the Realtime API but not speech.
+struct _RealtimeOnly <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{_RealtimeOnly}) = Set([:realtime])
+
+@testset "the capability symbols say what the verbs do: speak, respond and transcribe" begin
+    ollama = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    generic = GenericOpenAIEndpoint("http://localhost:8000", "")
+    builtins = Any[OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint,
+                   ANTHROPICServiceEndpoint, DeepSeekEndpoint("k"), generic, MistralEndpoint(api_key="k"), ollama,
+                   TYPESAFEServiceEndpoint]
+    has(cap) = [has_capability(s, cap) for s in builtins]
+    # `speak` reaches an OpenAI Realtime session and Gemini TTS on the native endpoint, and no other endpoint;
+    # `respond` the Responses API of OpenAI, Ollama and a generic server, and Gemini Interactions; `transcribe`
+    # OpenAI's Audio API route, which Ollama and a generic server serve too.
+    @test (speech = has(:speech) == [s === OPENAIServiceEndpoint || s === GEMINIServiceEndpoint for s in builtins],
+           agentic = has(:agentic) == (has(:responses) .| [s === GEMINIServiceEndpoint for s in builtins]),
+           audio = has(:audio) == has(:transcription)) == (speech = true, agentic = true, audio = true)
+    # `speak` refuses, before any request, an endpoint that declares its capabilities without `:speech`.
+    err = try speak("hi"; service=_RealtimeOnly) catch e; e end
+    @test err isa ArgumentError && startswith(err.msg, "speak (OpenAI Realtime API) is not supported by _RealtimeOnly")
 end
 
 @testset "validate_capability" begin
@@ -115,7 +140,8 @@ end
     end
     # Every non-OpenAI provider rejects them (has_capability false + validate throws)
     for svc in (GEMINIOpenAIServiceEndpoint, AZUREServiceEndpoint, DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
-        for c in new_caps
+        # A generic server declares `:audio` for OpenAI's transcription route.
+        for c in (svc isa GenericOpenAIEndpoint ? filter(!=(:audio), new_caps) : new_caps)
             @test !has_capability(svc, c)
             @test_throws ArgumentError UniLM.validate_capability(svc, c, "X")
         end

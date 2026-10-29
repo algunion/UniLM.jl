@@ -363,37 +363,14 @@ _capabilities(e::ProviderEntry)::Vector{Symbol} =
 # say "sent unchecked" where they say "yes" or "Supports" for an endpoint whose set UniLM checks.
 _unchecked(e::ProviderEntry)::Bool = any(ep -> ep isa GenericOpenAIEndpoint, e.endpoints)
 
-# Whether `speak` reaches the endpoint `ep`: Gemini TTS on the native Gemini endpoint, else an OpenAI
-# Realtime session, which only an endpoint with `:realtime` opens (src/audio.jl). No capability symbol
-# names speech, so the language-model tables read the verb's own route and show it as `_SPEECH`.
-function _speaks(ep)::Bool
-    wire = try
-        UniLM._speech_wire(ep)
-    catch err
-        err isa ArgumentError || rethrow()
-        return false                                   # the endpoint has no speech route
-    end
-    wire isa UniLM._GeminiSpeechWire || has_capability(ep, :realtime)
-end
-_speaks(e::ProviderEntry)::Bool = any(_speaks, e.endpoints)
-
-const _SPEECH = _Inline["speech (", _code("speak"), ")"]
-
-# Whether some language-model entry speaks, so that the others list speech as not available.
-const _SPOKEN = any(e -> e.chapter == llm && _speaks(e), REGISTRY)
-
-# A capability cell: "sent unchecked: " where `unchecked` and `caps` is not empty, each of `caps` as
-# inline code, then speech where `speech`; "—" when it holds neither.
-function _capability_cell(caps::Vector{Symbol}, speech::Bool; unchecked::Bool=false)::Vector{Any}
+# A capability cell: "sent unchecked: " where `unchecked` and `caps` is not empty, then each of `caps` as
+# inline code; "—" when `caps` is empty.
+function _capability_cell(caps::Vector{Symbol}; unchecked::Bool=false)::Vector{Any}
     parts = _Inline[]
     unchecked && !isempty(caps) && push!(parts, "sent unchecked: ")
     for (i, c) in pairs(caps)
         i > 1 && push!(parts, ", ")
         push!(parts, _code(string(c)))
-    end
-    if speech
-        isempty(caps) || push!(parts, ", ")
-        append!(parts, _SPEECH)
     end
     isempty(parts) ? _cell("—") : _cell(parts)
 end
@@ -426,10 +403,8 @@ capabilities some endpoint of it has (for a decision entry, those of `DECISION_C
 and the capabilities other registry endpoints declare that none of its endpoints has. A
 language-model entry's two capability cells leave out the capabilities only the Decisions
 chapter documents (`system_one`: serving decision models); that chapter's entries list them.
-They hold speech (`speak`) as well, which no capability symbol names: in Supports where `speak`
-reaches an endpoint of the entry, else in Not available. The Supports cell of an entry whose
-capabilities are `GenericOpenAIEndpoint`'s permissive default starts "sent unchecked: ": UniLM sends
-those requests without knowing whether the server serves them.
+The Supports cell of an entry whose capabilities are `GenericOpenAIEndpoint`'s permissive default
+starts "sent unchecked: ": UniLM sends those requests without knowing whether the server serves them.
 """
 function at_a_glance(key::Symbol)::Markdown.MD
     e = entry(key)
@@ -438,9 +413,8 @@ function at_a_glance(key::Symbol)::Markdown.MD
     row = Any[_endpoints(e), _codes(e.key_vars), _model(e.default_model)]
     if e.chapter == llm
         push!(header, "Not available")
-        speaks = _speaks(e)
-        push!(row, _capability_cell(filter(∉(_DECISIONS_ONLY), has), speaks; unchecked=_unchecked(e)),
-              _capability_cell(setdiff(_CAPABILITIES, has, _DECISIONS_ONLY), _SPOKEN && !speaks))
+        push!(row, _capability_cell(filter(∉(_DECISIONS_ONLY), has); unchecked=_unchecked(e)),
+              _capability_cell(setdiff(_CAPABILITIES, has, _DECISIONS_ONLY)))
     else
         push!(row, _codes(filter(in(DECISION_CAPABILITIES), has)))
     end
@@ -454,19 +428,16 @@ One row per capability a registry endpoint declares, sorted, and one column per
 language-model entry, in registry order: "yes" where some endpoint of the entry has the
 capability — "sent unchecked" for an entry whose capabilities are `GenericOpenAIEndpoint`'s
 permissive default, whose requests UniLM sends without knowing whether the server serves them —,
-else "—". A row for speech (`speak`), which no capability symbol names, takes its sorted place:
-"yes" where `speak` reaches an endpoint of the entry. It has no row for a capability only the
-Decisions chapter documents (`system_one`: serving decision models), which no language-model entry
-lists.
+else "—". It has no row for a capability only the Decisions chapter documents (`system_one`: serving
+decision models), which no language-model entry lists.
 """
 function capability_matrix()::Markdown.MD
     entries = filter(e -> e.chapter == llm, REGISTRY)
     has = [Set(_capabilities(e)) for e in entries]
     mark(e, yes) = yes ? _cell(_unchecked(e) ? "sent unchecked" : "yes") : _cell("—")
-    rows = Pair{String,Vector{Any}}[String(c) => Any[_cell(_code(String(c))), (mark(e, c in h) for (e, h) in zip(entries, has))...]
-                                    for c in _CAPABILITIES if c ∉ _DECISIONS_ONLY]
-    _SPOKEN && push!(rows, "speech" => Any[_cell(_SPEECH), (_yes(_speaks(e)) for e in entries)...])
-    _table(["Capability"; [e.name for e in entries]], Vector{Any}[last(r) for r in sort!(rows; by=first)])
+    rows = Vector{Any}[Any[_cell(_code(String(c))), (mark(e, c in h) for (e, h) in zip(entries, has))...]
+                       for c in _CAPABILITIES if c ∉ _DECISIONS_ONLY]
+    _table(["Capability"; [e.name for e in entries]], rows)
 end
 
 """

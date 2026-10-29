@@ -2549,8 +2549,9 @@ with `transcript_text` — and the reply is read as JSON (Ollama labels it
 `application/x-ndjson`). On OpenAI, `srt`, `vtt` and `verbose_json` (subtitles and
 timestamps) are documented only for `whisper-1` and `diarized_json` (speaker labels) only for
 `gpt-4o-transcribe-diarize`, models that shut down on 2027-02-26. `transcribe` needs
-`:transcription`, which `has_capability` reports for any endpoint declaring `:audio`; `speak` on
-OpenAI and `translate` need `:realtime`; `speak` on `GEMINIServiceEndpoint` is Gemini TTS.
+`:transcription`, which `has_capability` reports for any endpoint declaring `:audio`; `speak` needs
+`:speech` (OpenAI, through a Realtime session, and `GEMINIServiceEndpoint`, through Gemini TTS), and
+`translate` needs `:realtime`.
 
 ---
 
@@ -2588,15 +2589,15 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
-| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models` |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
-| Generic (`GenericOpenAIEndpoint`, `MistralEndpoint()`) | sent unchecked: `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:transcription` — the permissive default, which UniLM sends to whatever server the endpoint names, whether it serves them or not |
-| Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:models`, `:system_one`, `:transcription` |
+| Generic (`GenericOpenAIEndpoint`, `MistralEndpoint()`) | sent unchecked: `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:audio`, `:transcription` — the permissive default, which UniLM sends to whatever server the endpoint names, whether it serves them or not |
+| Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:models`, `:system_one`, `:audio`, `:transcription` |
 
 Validation comes in two strengths, and the difference matters if you write your
 own endpoint:

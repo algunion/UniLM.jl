@@ -15,16 +15,17 @@ Standard capability symbols include:
 - Completions: `:fim`, `:prefix_completion`
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
-- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`; declared alone
-  (Ollama), it allows transcription without speech or translation
+- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
+- Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
+  Gemini TTS)
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, OpenAI, Anthropic, Gemini, Ollama)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])
-provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :transcription])  # permissive default
+provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :agentic, :audio, :transcription])  # permissive default
 
 """
     has_capability(service, cap::Symbol) -> Bool

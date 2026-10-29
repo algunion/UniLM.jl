@@ -208,7 +208,7 @@ speak(input::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
 
 # Where a request goes; throws ArgumentError, before any I/O, for a service the wire cannot reach.
 function _speech_target(::_RealtimeSpeechWire, s::SpeechRequest)::String
-    validate_capability(s.service, :realtime, "speak (OpenAI Realtime API)")
+    validate_capability(s.service, :speech, "speak (OpenAI Realtime API)")
     _realtime_url(s.service, s.model)
 end
 _speech_target(::_GeminiSpeechWire, s::SpeechRequest)::String = _gemini_speech_url(s.service, s.model)
@@ -571,7 +571,7 @@ retry budget for this call.
 """
 function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing)
     # An endpoint that declares `:audio` transcribes too (`has_capability`), as does one that declares
-    # only `:transcription` (Ollama).
+    # `:transcription` alone.
     validate_capability(t.service, :transcription, "Audio API")
     # Local validation throws before the request (inside the `try` it would become an AudioCallError).
     _check_transcription(t.service, t)

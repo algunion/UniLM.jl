@@ -36,7 +36,8 @@ end
 auth_header(s::OllamaEndpoint)::Vector{Pair{String,String}} = _ollama_auth(s; required=true)
 
 provider_capabilities(::OllamaEndpoint) =
-    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models, :system_one, :transcription])
+    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :agentic, :models, :system_one, :audio,
+         :transcription])
 
 _model_hint(::OllamaEndpoint) =
     " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"

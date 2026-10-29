@@ -34,6 +34,16 @@
   `UploadSuccess` for a completed upload, and `retrieve_file` and `upload_file` none for such a file.
   It now decodes with `bytes` `nothing`. Upgrading: code that reads a `FileObject`'s `bytes` as an
   `Int` handles `nothing`, a size the service has not given yet.
+- **`:speech` names `speak`'s capability, and Ollama and generic endpoints declare `:agentic` and
+  `:audio`.** No capability symbol said where `speak` goes, so `has_capability` was false for Gemini's
+  native endpoint whatever the symbol, while Gemini TTS answered `speak`; and `OllamaEndpoint` and
+  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) served `respond` and `transcribe` without
+  `:agentic` and `:audio`, the symbols the capability table gives those verbs. `OPENAIServiceEndpoint`
+  and `GEMINIServiceEndpoint` now declare `:speech`, which `speak` checks where it checked `:realtime`,
+  and `OllamaEndpoint` and `GenericOpenAIEndpoint` declare `:agentic` and `:audio` too. Upgrading: code
+  that compares a `provider_capabilities` set with a fixed set of its own adds them, or tests one
+  capability with `has_capability`.
+### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`
   was exported and documented as a Conversations result, yet no verb returned it: UniLM had no call for
   OpenAI's `GET /v1/conversations/{conversation_id}/items/{item_id}`, which gets "a single item from a

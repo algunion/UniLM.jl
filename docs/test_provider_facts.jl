@@ -136,7 +136,7 @@ end
     @test !occursin("system_one", plain(capability_matrix()))
     @test ProviderFacts.DECISION_CAPABILITIES == [:models, :system_one]
 end
-@testset "ProviderFacts — a generic endpoint's capabilities are sent unchecked; speech is where speak goes" begin
+@testset "ProviderFacts — a generic endpoint's capabilities are sent unchecked; speech, respond and transcribe are where their verbs go" begin
     llm = filter(e -> e.chapter == ProviderFacts.llm, REGISTRY)
     # GenericOpenAIEndpoint's set is the code's permissive default: UniLM sends those requests to whatever
     # server the endpoint names, so neither its at-a-glance row nor its matrix column says "supports".
@@ -151,13 +151,21 @@ end
     @test all(r -> all(c -> matrix(r, c) in ("sent unchecked", "—"), columns), 2:length(rows))
     @test any(r -> matrix(r, first(columns)) == "sent unchecked", 2:length(rows))
     @test !any(r -> any(c -> matrix(r, c) == "sent unchecked", setdiff(2:length(llm) + 1, columns)), 2:length(rows))
-    # No capability symbol names speech: speak reaches the native Gemini endpoint (Gemini TTS) and OpenAI's
-    # (a Realtime session), and refuses every other endpoint of the chapter.
+    # `:speech` is speak's: it reaches the native Gemini endpoint (Gemini TTS) and OpenAI's (a Realtime
+    # session), and refuses every other endpoint of the chapter.
     speaks = [:openai, :gemini]
-    @test [e.key for e in llm if occursin("speech (`speak`)", cell(e.key, 4))] == speaks
-    @test [e.key for e in llm if occursin("speech (`speak`)", cell(e.key, 5))] == setdiff([e.key for e in llm], speaks)
-    speech = only(r for r in 2:length(rows) if matrix(r, 1) == "speech (`speak`)")
+    @test [e.key for e in llm if occursin("`speech`", cell(e.key, 4))] == speaks
+    @test [e.key for e in llm if occursin("`speech`", cell(e.key, 5))] == setdiff([e.key for e in llm], speaks)
+    speech = only(r for r in 2:length(rows) if matrix(r, 1) == "`speech`")
     @test [e.key for (i, e) in pairs(llm) if matrix(speech, i + 1) == "yes"] == speaks
+    # `respond` reaches Ollama and a generic server (their Responses API) as it reaches OpenAI and Gemini, and
+    # `transcribe` Ollama and a generic server as it reaches OpenAI: no entry lists `agentic` or `audio` as
+    # not available where its verb works.
+    for (cap, keys) in ((:agentic, [:openai, :gemini, :ollama, :local_servers, :openai_compatible]),
+                        (:audio, [:openai, :ollama, :local_servers, :openai_compatible]))
+        @test [e.key for e in llm if occursin("`$cap`", cell(e.key, 4))] == [e.key for e in llm if e.key in keys]
+        @test [e.key for e in llm if occursin("`$cap`", cell(e.key, 5))] == [e.key for e in llm if e.key ∉ keys]
+    end
 end
 @testset "ProviderFacts — the entries whose requests carry attachments and conversations have those sections" begin
     # an OpenAI-wire endpoint sends a user message's attachments as content parts, and a Chat keeps the conversation

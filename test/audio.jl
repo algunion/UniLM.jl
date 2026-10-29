@@ -36,7 +36,7 @@ struct SpeechWSProbe <: UniLM.ServiceEndpoint end
 const _sp_ws_base = Ref("")
 UniLM._realtime_ws_url(::Type{SpeechWSProbe}) = _sp_ws_base[]
 UniLM.auth_header(::Type{SpeechWSProbe}) = ["Authorization" => "Bearer test-key", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{SpeechWSProbe}) = Set([:realtime])
+UniLM.provider_capabilities(::Type{SpeechWSProbe}) = Set([:realtime, :speech])
 
 _sp_event(type; kw...) = Dict{String,Any}("type" => type, "event_id" => "event_$(type)", (String(k) => v for (k, v) in kw)...)
 
@@ -404,7 +404,8 @@ end
     end
     @test e isa ArgumentError && occursin("model", e.msg) && isempty(seen2)
     @test has_capability(GenericOpenAIEndpoint("http://x", ""), :transcription)
-    @test !has_capability(GenericOpenAIEndpoint("http://x", ""), :audio)        # speech and translation stay refused
+    generic = GenericOpenAIEndpoint("http://x", "")
+    @test !has_capability(generic, :speech) && !has_capability(generic, :realtime)   # speech and translation stay refused
 end
 
 @testset "speak and translate never call the retiring Audio API speech and translation routes" begin

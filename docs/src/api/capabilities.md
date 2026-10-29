@@ -50,8 +50,8 @@ has_capability
 | Symbol | Description |
 |---|---|
 | `:chat` | Chat Completions API |
-| `:responses` | Responses API |
-| `:agentic` | Agentic `respond` verb (OpenAI Responses / Gemini Interactions) |
+| `:responses` | Responses API wire: OpenAI, Ollama and generic servers |
+| `:agentic` | The agentic [`respond`](@ref) verb, on either wire: the Responses API (OpenAI, Ollama, generic servers) or Gemini Interactions |
 | `:tools` | Tool / function calling |
 | `:streaming` | Server-sent-event token streaming (`stream=true`) |
 | `:json_output` | JSON / structured output (`response_format`) |
@@ -64,13 +64,14 @@ has_capability
 | `:vector_stores` | Vector Stores API |
 | `:conversations` | Conversations API |
 | `:moderation` | Moderations API |
-| `:audio` | OpenAI Audio API transcription (implies `:transcription`) |
-| `:transcription` | Transcription alone ([`transcribe`](@ref)): OpenAI and Ollama; implied by `:audio` |
+| `:audio` | OpenAI's Audio API route, which serves [`transcribe`](@ref): OpenAI, Ollama and generic servers (implies `:transcription`) |
+| `:transcription` | Transcription ([`transcribe`](@ref)); implied by `:audio`, so an endpoint of your own may declare either |
+| `:speech` | Speech ([`speak`](@ref)): an OpenAI Realtime session, or Gemini TTS on `GEMINIServiceEndpoint` |
 | `:batch` | Batch API |
 | `:fine_tuning` | Fine-tuning API |
 | `:containers` | Containers API |
 | `:uploads` | Resumable Uploads API |
-| `:realtime` | Realtime API: [`realtime_connect`](@ref), [`speak`](@ref) on OpenAI, [`translate`](@ref) |
+| `:realtime` | Realtime API: [`realtime_connect`](@ref), [`translate`](@ref) and the Realtime session `speak` runs on OpenAI |
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI (its Decisions API) and Ollama |
 | `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama |
 

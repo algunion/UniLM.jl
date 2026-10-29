@@ -149,8 +149,8 @@ checked again on each upgrade. Each has a fallback, which a protocol that define
 | `_check_request(p, service, request)` | — | called first by each built-in encoder: a blank or repeated question name, criteria that are not valid, a `RawQuestion` the protocol does not allow, a `DocumentAttachment`, or an image `detail` the protocol refuses |
 | `_check_answers(p, request, response)` | — | called by each built-in decoder: every question answered once, of its kind, within the protocol's tolerance |
 
-[`UniLM.decode_system_one`](@ref UniLM.decode_system_one) promises answers that have passed the checks every
-provider's answers pass, and only `_check_answers` runs them: a protocol of your own that does not call it returns
+Only `_check_answers` runs the checks every provider's answers pass, as
+[`UniLM.decode_system_one`](@ref UniLM.decode_system_one) states: a protocol of your own that does not call it returns
 whatever its decoder built. The built-in protocols are in the API reference, with the seam:
 [Provider protocol](@ref system_one_protocol_api).
 

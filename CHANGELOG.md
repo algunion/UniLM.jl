@@ -77,6 +77,13 @@
   `*Failure` — and the `RealtimeCallError` of the same verb — keeps the reply's `x-request-id`
   (`request-id`) header as `request_id`, the id a support request names. `RealtimeFailure` now has
   that field; built positionally, `response` and `status` still build one.
+- **The System One seam's docstrings say which checks a protocol of your own gets.**
+  `decode_system_one` promised a success "whose answers have passed the checks every backend's
+  answers pass", but only the built-in decoders run them, through the internal
+  `UniLM._check_answers`; a protocol of your own returned whatever its decoder built.
+  `decode_system_one`, `encode_system_one` and `ask` now state that each built-in encoder and
+  decoder calls the shared checks (`_check_request`, `_check_box_image`, `_check_answers`) and that
+  a protocol of your own gets them only by calling them. No behaviour changes.
 
 ## 0.27.1
 

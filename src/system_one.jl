@@ -1029,7 +1029,10 @@ does not know, content such as images it cannot send, the options it does not
 accept — and throws an `ArgumentError` naming the backend, the rule and the fix;
 it resolves `request.model === nothing` to its default. [`ask`](@ref) calls it
 outside the exchange's error handling, so its `ArgumentError` reaches the caller
-and nothing is sent.
+and nothing is sent. Each built-in encoder first calls
+`UniLM._check_request(p, service, request)` (internal), the refusals every backend
+shares, and one that takes Box questions `UniLM._check_box_image(request)`; an
+encoder of your own runs them only by calling them too.
 
 Public extension API (not exported).
 """
@@ -1042,12 +1045,14 @@ encode_system_one(p::SystemOneProtocol, service, ::SystemOneRequest) = throw(Arg
         -> Union{SystemOneSuccess,SystemOneFailure}
 
 The typed result of `response`, the reply `service` sent to `request`: a
-[`SystemOneSuccess`](@ref) whose answers have passed the checks every backend's
-answers pass — one per question asked, of the question's kind, each value in its
-range (see [`ask`](@ref)) — or a [`SystemOneFailure`](@ref) for a status other
+[`SystemOneSuccess`](@ref), or a [`SystemOneFailure`](@ref) for a status other
 than 200. A 200 that is not a usable answer throws, and [`ask`](@ref)
 returns the throw as a [`SystemOneCallError`](@ref) carrying the reply's request
-id.
+id. Each built-in decoder checks the answers against the request before it builds
+the success — one per question asked, of the question's kind, each value in its
+range (see [`ask`](@ref)) — by calling `UniLM._check_answers(p, request, response)`
+(internal). A decoder of your own gets these checks only by calling it too: UniLM
+checks nothing else of the result.
 
 Public extension API (not exported).
 """
@@ -1546,8 +1551,9 @@ to 1568 pixels on each side (a JPEG ending with its end-of-image marker), 64
 levels of nesting in the state, instructions and criteria, and a body of at most
 32 MiB; a `service` that does not declare `:system_one`.
 
-Every answer is checked against the request before a success is built: each
-question asked is answered once and nothing else is; each answer is of its
+Every answer is checked against the request before a success is built, by the
+decoder of each built-in backend: each question asked is answered once and
+nothing else is; each answer is of its
 question's kind (an answer to a [`RawQuestion`](@ref) may be any); a Choice picks
 an offered option that is the most probable and gives a probability to exactly
 the options offered; a Score gives one to exactly the levels `0` to `n − 1`, its

@@ -321,6 +321,50 @@ end
     @test e isa ArgumentError && contains(e.msg, "_BareProtocol")
 end
 
+# A protocol of one's own that reads its reply itself, its answers checked only if its decoder calls the
+# shared check: here an answer to a question that was not asked, with an option that was not offered.
+struct _OwnProtocol <: UniLM.SystemOneProtocol
+    checks::Bool
+end
+struct _OwnLax <: UniLM.ServiceEndpoint end
+struct _OwnStrict <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{<:Union{_OwnLax,_OwnStrict}}) = Set([:system_one])
+UniLM.auth_header(::Type{<:Union{_OwnLax,_OwnStrict}}) = ["Content-Type" => "application/json"]
+UniLM.system_one_protocol(::Type{_OwnLax}) = _OwnProtocol(false)
+UniLM.system_one_protocol(::Type{_OwnStrict}) = _OwnProtocol(true)
+UniLM.encode_system_one(::_OwnProtocol, service, ::SystemOneRequest) =
+    UniLM.SystemOneWire("POST", _S1_BASE[] * "/v1/own", "/v1/own", "{}")
+function UniLM.decode_system_one(p::_OwnProtocol, service, r::SystemOneRequest, ::HTTP.Response)
+    answer = ChoiceAnswer("nope", 1.0, Dict("nope" => 1.0), Dict{String,Any}())
+    response = SystemOneResponse("own-model", Dict{String,SystemOneAnswer}("other" => answer), TokenUsage(), nothing,
+                                 Dict{String,Any}(), service)
+    p.checks && UniLM._check_answers(p, r, response)
+    SystemOneSuccess(response)
+end
+
+@testset "System One — a protocol of your own: its answers are checked only through the hook its decoder calls" begin
+    # The seam's docstrings state which checks a protocol of its own gets, and which internal hooks give them.
+    # Read raw from the module's docs, which hold every method's docstring.
+    raw(name) = replace(join((join(string.(d.text)) for d in values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)),
+                             " "), r"\s+" => " ")
+    dec, enc, asks = raw(:decode_system_one), raw(:encode_system_one), raw(:ask)
+    @test !occursin("whose answers have passed the checks every backend's answers pass", dec)
+    @test occursin("UniLM checks nothing else of the result", dec) && occursin("UniLM._check_answers(p, request, response)", dec)
+    @test occursin("UniLM._check_request(p, service, request)", enc) && occursin("UniLM._check_box_image(request)", enc)
+    @test occursin("Every answer is checked against the request before a success is built, by the decoder of each built-in backend", asks)
+    # What they state: a decoder that calls no check returns its answers as it built them …
+    q = "team" => choice("Which team?", ["billing", "shipping"])
+    lax, _ = _s1_serve((_, _) -> _s1_reply(200, "{}")) do
+        ask("s", q; service=_OwnLax, model="own-model", config=_S1_CFG)
+    end
+    @test lax isa SystemOneSuccess && collect(keys(lax.response.answers)) == ["other"]
+    # … and one that calls `_check_answers` gets the call error every built-in backend gives.
+    strict, _ = _s1_serve((_, _) -> _s1_reply(200, "{}")) do
+        ask("s", q; service=_OwnStrict, model="own-model", config=_S1_CFG)
+    end
+    @test strict isa SystemOneCallError && occursin("unanswered", strict.error)
+end
+
 # A backend whose `hint` option is sent but does not change an answer, so its recording
 # is keyed on the body without it.
 struct _TrimProtocol <: UniLM.SystemOneProtocol end

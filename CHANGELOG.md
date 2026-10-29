@@ -9,6 +9,12 @@
   streamed result's, so reading it there threw a `KeyError`. A streamed result now names every list
   its chunks name, a list given only as null being `nothing`; a null list still never erases the
   tokens an earlier chunk gave.
+- **A streamed reply is read from its first choice only, as an unstreamed one is.** A `Chat` asks for
+  one choice (`n` is 1), and an unstreamed reply's first choice is its result, but a stream folded
+  every choice it carried into one: from a server that streamed another anyway, by its `index`, the
+  texts were mixed, its tool calls and reasoning added, and the last finish reason kept. The
+  OpenAI-wire streams, generic and DeepSeek endpoints' included, now read choice 0 (a choice without
+  an `index` is choice 0) and leave any other.
 
 ## 0.28.0
 

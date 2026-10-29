@@ -1567,8 +1567,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         isnothing(tools) || !isempty(tools) || (tools = nothing)   # no tools is no tool list
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
-        # A result carries one choice: extra choices were dropped (non-streaming) or
-        # merged into one garbled text (streaming).
+        # A result carries one choice, the reply's first (a stream's choice 0): any other
+        # would be generated, billed and dropped.
         !isnothing(n) && n != 1 && throw(ArgumentError("n must be 1 (got $n): results carry a single choice"))
         !isnothing(max_tokens) && max_tokens < 1 && throw(ArgumentError("max_tokens must be >= 1"))
         !isnothing(max_completion_tokens) && max_completion_tokens < 1 && throw(ArgumentError("max_completion_tokens must be >= 1"))

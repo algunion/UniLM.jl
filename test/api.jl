@@ -1180,7 +1180,7 @@ end
     end
 
     @testset "n is 1: a result carries one choice" begin
-        # Extra choices were dropped (non-stream) or merged into garbled text (stream).
+        # A result reads the reply's first choice, streamed or not: any other would be billed and dropped.
         @test Chat(n=1).n == 1
         @test_throws ArgumentError Chat(n=2)
         @test_throws ArgumentError Chat(n=5)

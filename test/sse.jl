@@ -281,6 +281,27 @@ end
     @test reasoning_text(decode(OPENAIServiceEndpoint, Dict("content" => "Hi", "reasoning_content" => "r"))) === nothing
 end
 
+@testset "handle_sse_event! (OpenAI wire) — the reply is choice 0, as an unstreamed reply's first choice" begin
+    # A Chat asks for one choice (`n` is 1): a choice of another `index` that a server streams anyway is not
+    # mixed into the reply, and a choice without an index is choice 0.
+    chunk(choices...) = JSON.json(Dict("id" => "c1", "model" => "mock", "choices" => collect(choices)))
+    choice(i, delta; finish=nothing) = Dict{String,Any}("index" => i, "delta" => delta, "finish_reason" => finish)
+    call = Dict("index" => 0, "id" => "call_1", "type" => "function", "function" => Dict("name" => "f", "arguments" => "{}"))
+    for (service, key) in ((OPENAIServiceEndpoint, "reasoning"), (GenericOpenAIEndpoint("http://localhost:8080", ""), "reasoning"),
+                           (DeepSeekEndpoint("k"), "reasoning_content"))
+        st = StreamState()
+        for p in (chunk(choice(0, Dict(key => "Think.")), choice(1, Dict(key => "Other."))),
+                  chunk(choice(0, Dict("content" => "Hi")), choice(1, Dict("content" => "Yo", "tool_calls" => [call]))),
+                  chunk(Dict("delta" => Dict("content" => " there"))),
+                  chunk(choice(0, Dict(); finish="stop"), choice(1, Dict(); finish="length")), "[DONE]")
+            UniLM.handle_sse_event!(service, "", p, st)
+        end
+        m = _build_stream_message(st)
+        @test m.content == "Hi there" && m.finish_reason == "stop" && (m.tool_calls === nothing || isempty(m.tool_calls))
+        @test reasoning_text(m) == (service === OPENAIServiceEndpoint ? nothing : "Think.")
+    end
+end
+
 # Reads one HTTP request off `sock` — its headers, then a chunked or Content-Length body —
 # so a raw-socket server answers only once the client has sent all of it.
 function _sse_drain_request!(sock)

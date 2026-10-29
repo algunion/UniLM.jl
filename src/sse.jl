@@ -195,7 +195,7 @@ end
 # `[DONE]` is the ONLY end-of-stream — `finish_reason` is recorded but never
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
-# index [1]; `usage` is captured from any chunk. OpenAI names the served `model` and
+# index [1] — and only choice 0 is read (`_reply_choice`); `usage` is captured from any chunk. OpenAI names the served `model` and
 # the billed `service_tier` on every chunk; the usage takes the stream's tier
 # (`_chunk_tier!`: the latest one named), so a usage chunk without one still carries
 # it. `delta.audio` updates assemble an audio reply (`_audio_delta!`), and a `delta.content` given
@@ -227,7 +227,7 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     choices = get(parsed, "choices", nothing)
     choices isa AbstractVector || return :continue
     for cho in choices
-        cho isa AbstractDict || continue
+        (cho isa AbstractDict && _reply_choice(cho)) || continue
         _logprobs_delta!(state, get(cho, "logprobs", nothing))
         delta = get(cho, "delta", nothing)
         delta isa AbstractDict && _content_delta!(state, get(delta, "content", nothing))
@@ -282,7 +282,7 @@ function handle_sse_event!(service::GenericOpenAIEndpoint, event::AbstractString
         parsed = JSON.parse(payload; dicttype=Dict{String,Any})   # the default handler parsed it too
         choices = parsed isa AbstractDict ? get(parsed, "choices", nothing) : nothing
         for cho in (choices isa AbstractVector ? choices : Any[])
-            cho isa AbstractDict || continue
+            (cho isa AbstractDict && _reply_choice(cho)) || continue
             delta = get(cho, "delta", nothing)
             for field in _GENERIC_REASONING_FIELDS
                 r = delta isa AbstractDict ? get(delta, field, nothing) : nothing
@@ -386,6 +386,11 @@ function _audio_delta!(state::StreamState, a::AbstractDict)::Nothing
     isnothing(e) || (s.expires_at = _audio_expiry(e))
     nothing
 end
+
+# Whether a streamed choice is the reply: choice 0, as an unstreamed reply's first choice is. A Chat
+# asks for one (`n` is 1), and a choice without an `index` is that one; another a server streams anyway
+# is not read.
+_reply_choice(cho::AbstractDict)::Bool = (i = get(cho, "index", nothing); i === nothing || i == 0)
 
 # A chunk's log probabilities: each token list it names (`"content"`, `"refusal"`, …) extends the
 # stream's list of that name, in arrival order. A list named null is kept as `nothing`, as an

@@ -103,7 +103,7 @@ function handle_sse_event!(service::DeepSeekEndpoint, event::AbstractString,
         u isa AbstractDict && (state.usage = _deepseek_usage(state.usage, u))   # the default's usage of `u`
         choices = parsed isa AbstractDict ? get(parsed, "choices", nothing) : nothing
         for cho in (choices isa AbstractVector ? choices : Any[])
-            cho isa AbstractDict || continue
+            (cho isa AbstractDict && _reply_choice(cho)) || continue
             delta = get(cho, "delta", nothing)
             rc = delta isa AbstractDict ? get(delta, "reasoning_content", nothing) : nothing
             rc isa AbstractString && !isempty(rc) && print(_deepseek_reasoning_buffer!(state), rc)

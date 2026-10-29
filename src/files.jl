@@ -179,11 +179,13 @@ end
     FileObject
 
 A file stored by the Files API: `id`, `bytes`, `created_at`, `filename`,
-`purpose`, and `status`; `raw` holds the unparsed JSON response.
+`purpose`, and `status`; `raw` holds the unparsed JSON response. `bytes` is `nothing`
+when the reply gives the size as null, which OpenAI's Files reference allows "In a completed
+file upload response, … when the file size is not yet available".
 """
 @kwdef struct FileObject
     id::String
-    bytes::Int
+    bytes::Union{Int,Nothing}
     created_at::Int
     filename::String
     purpose::String

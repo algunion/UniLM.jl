@@ -17,6 +17,29 @@ end
     end
 end
 
+@testset "a completed upload whose file size is not yet known decodes, its bytes nothing" begin
+    # Files reference, `bytes`: "In a completed file upload response, this can be null when the file
+    # size is not yet available."
+    file = """{"id": "file-1", "object": "file", "bytes": null, "created_at": 1, "filename": "a.jsonl",
+               "purpose": "batch", "status": "processed"}"""
+    upload = """{"id": "upload_1", "object": "upload", "status": "completed", "filename": "a.jsonl", "bytes": 3,
+                 "purpose": "batch", "file": $file}"""
+    r = _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=upload)
+    @test r isa UploadSuccess && r.response.status == "completed"
+    @test r.response.file.id == "file-1" && r.response.file.bytes === nothing
+    f = _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=file)
+    @test f isa FileSuccess && f.response.bytes === nothing
+    path = tempname() * ".jsonl"
+    write(path, "{}
+")
+    try
+        u = _answered(() -> upload_file(path, "batch"; service=URLProbe), 200; body=file)
+        @test u isa FileSuccess && u.response.bytes === nothing
+    finally
+        rm(path; force=true)
+    end
+end
+
 @testset "Uploads API — a failure keeps the request id the service sent" begin
     r = _answered(() -> cancel_upload("upload_x"; service=URLProbe), 400; headers=["x-request-id" => "req_upl"])
     @test r isa UniLM.UploadFailure && r.request_id == "req_upl"

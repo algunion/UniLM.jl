@@ -29,6 +29,13 @@
   still send it unvalidated. Upgrading: an endpoint type of your own that generates or edits images
   declares `:images` or `:image_edits` in `provider_capabilities`.
 
+- **A file whose size is not yet known decodes: `FileObject.bytes` is `Union{Int,Nothing}`.** OpenAI's
+  Files reference gives a file's `bytes` as null "In a completed file upload response, … when the file
+  size is not yet available". Such a file object did not decode, so `complete_upload` returned no
+  `UploadSuccess` for a completed upload, and `retrieve_file` and `upload_file` none for such a file.
+  It now decodes with `bytes` `nothing`. Upgrading: code that reads a `FileObject`'s `bytes` as an
+  `Int` handles `nothing`, a size the service has not given yet.
+
 ### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`
   was exported and documented as a Conversations result, yet no verb returned it: UniLM had no call for

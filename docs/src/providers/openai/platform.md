@@ -26,7 +26,7 @@ These calls are not recorded, so their output on this page is quoted from dated 
 - **Results.** A verb returns a typed result, and throws only for what it refuses before sending
   ([Limits and refusals](@ref openai_platform_limits)): a `*Success`; a `*Failure` for an error
   status, holding the `status`, the body as `response` and the `x-request-id` header as
-  `request_id` (a `RealtimeFailure` carries none); or a `*CallError` when no usable reply came — a
+  `request_id`; or a `*CallError` when no usable reply came — a
   transport failure, a timeout, a cancel, a reply that does not decode —, holding the text as
   `error` and the exception as `cause`. `FileSuccess`, `FileFailure` and `FileCallError` are the Files family, and the others
   are named alike ([Results](@ref results_guide)).

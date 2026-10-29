@@ -316,7 +316,7 @@ secret = mint_realtime_secret()
 
 The verb makes one bounded attempt and returns a
 [`RealtimeSecretSuccess`](@ref), whose `value` is the secret — shown redacted, so a log or the REPL
-does not hand it out —, a [`RealtimeFailure`](@ref) with the status of an error, or a
+does not hand it out —, a [`RealtimeFailure`](@ref) with the status of an error and its `request_id`, or a
 [`RealtimeCallError`](@ref), also for a 200 that carries no secret. Every type is in the
 [Realtime API](@ref realtime_api) reference.
 

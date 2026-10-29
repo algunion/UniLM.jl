@@ -12,8 +12,13 @@
     value::String
     raw::Dict{String,Any} = Dict{String,Any}()
 end
-"Realtime API error result: HTTP `status` and the raw `response` body."
-@kwdef struct RealtimeFailure <: LLMRequestResponse; response::String; status::Int; end
+"Realtime API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any. Built positionally, `response` and `status` alone build one."
+@kwdef struct RealtimeFailure <: LLMRequestResponse
+    response::String
+    status::Int
+    request_id::Union{String,Nothing} = nothing
+    RealtimeFailure(response, status, request_id=nothing) = new(response, status, request_id)
+end
 "Realtime API call that produced no usable reply (transport failure, timeout, cancel, or a 200 without a secret); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel — and `request_id` is the id the service sent with a reply that could not be used."
 @kwdef struct RealtimeCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; request_id::Union{String,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
@@ -35,7 +40,7 @@ function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, se
         !isnothing(session) && (d[:session] = session)
         resp = _http("POST", _api_base_url(service) * REALTIME_CLIENT_SECRETS_PATH, auth_header(service),
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0))
-        resp.status == 200 || return RealtimeFailure(response=String(resp.body), status=resp.status)
+        resp.status == 200 || return _failure(RealtimeFailure, resp)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         cs = get(data, "client_secret", nothing)
         val = get(data, "value", cs isa AbstractDict ? get(cs, "value", nothing) : nothing)

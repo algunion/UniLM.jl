@@ -219,6 +219,14 @@ end
     end
 end
 
+@testset "mint_realtime_secret: a failure keeps the request id the service sent, as every platform failure does" begin
+    r = _answered(() -> mint_realtime_secret(service=URLProbe), 401; body="""{"error":{"message":"bad key"}}""",
+                  headers=["x-request-id" => "req_rt_401"])
+    @test r isa RealtimeFailure && r.status == 401 && r.request_id == "req_rt_401" && occursin("bad key", r.response)
+    @test isnothing(_answered(() -> mint_realtime_secret(service=URLProbe), 500).request_id)   # none sent, none kept
+    @test isnothing(RealtimeFailure("body", 500).request_id)        # built from its two earlier fields
+end
+
 @testset "realtime_connect: an endpoint other than OpenAI is rejected before any I/O" begin
     # The Realtime socket lives on api.openai.com; opening it for another endpoint
     # would send that endpoint's credentials there.

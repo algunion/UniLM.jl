@@ -2809,8 +2809,7 @@ FIMCallError      (.error::String, .status::Union{Int,Nothing}, .request_id::Uni
 `request_id` carries the provider's request id for support escalation — the
 `x-request-id` header, else `request-id` (Anthropic). It exists on the Chat /
 Responses / FIM / image failure and call-error types above, on the System One results
-and on every platform `*Failure` except `RealtimeFailure` (a `RealtimeCallError`
-carries one); the embedding limbs do not carry it.
+and on every platform `*Failure`; the embedding limbs do not carry it.
 
 `sse_dropped` (default `0`) counts the undecodable SSE `data:` payloads dropped
 while assembling **that** streamed turn. It is `0` for a non-streamed call and

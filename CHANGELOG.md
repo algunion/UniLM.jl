@@ -65,6 +65,11 @@
   all. The results are kept rather than one usage summed over the turns because a provider prices
   each request on its own, a long-context rate applying per request. Built positionally, the five
   earlier fields still build one, whose `responses` holds its `response`.
+- **A `RealtimeFailure` keeps the request id the service sent.** `mint_realtime_secret` returned an
+  error status as a `RealtimeFailure` holding only `response` and `status`, while every other platform
+  `*Failure` — and the `RealtimeCallError` of the same verb — keeps the reply's `x-request-id`
+  (`request-id`) header as `request_id`, the id a support request names. `RealtimeFailure` now has
+  that field; built positionally, `response` and `status` still build one.
 
 ## 0.27.1
 

@@ -260,13 +260,15 @@ flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
 `signature` must be echoed unmodified or tool round-trips on thinking models
 are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, DeepSeek
 `reasoning_content` and Ollama `thinking`. `provider` tags the wire dialect
-(`:anthropic`, `:gemini`, `:deepseek`, `:ollama` or `:mistral`); `blocks` is the provider's
-content/parts array exactly as decoded (String-keyed JSON) — for `:deepseek`,
+(`:anthropic`, `:gemini`, `:deepseek`, `:ollama`, `:mistral` or `:generic`); `blocks` is the
+provider's content/parts array exactly as decoded (String-keyed JSON) — for `:deepseek`,
 `[Dict("reasoning_content" => text)]`, echoed only on requests that carry tools; for
 `:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`; for
-`:mistral`, the thinking chunks of a streamed reply joined into one Mistral `ThinkChunk`,
-`[Dict("type" => "thinking", "thinking" => [Dict("type" => "text", "text" => text)])]`, which
-no encoder sends.
+`:mistral`, a reply's Mistral `ThinkChunk`s — an unstreamed reply's as they came, a streamed
+reply's joined into one, `[Dict("type" => "thinking", "thinking" => [Dict("type" => "text",
+"text" => text)])]`; for `:generic`, `[Dict(field => text)]`, the `reasoning_content`
+(llama-server) or `reasoning` (vLLM) another `GenericOpenAIEndpoint` server returned. No
+encoder sends `:mistral` or `:generic` blocks.
 
 Encoders ignore a `ProviderContent` tagged for a different provider — a
 conversation moved across providers falls back to the neutral reconstruction
@@ -1976,8 +1978,9 @@ The reasoning ("thinking") text a provider returned with an assistant turn, read
 from its [`ProviderContent`](@ref): Ollama's `thinking`, DeepSeek's
 `reasoning_content`, Anthropic `thinking` blocks (separate blocks joined by a blank
 line; redacted blocks carry no text), the thought summaries of a native Gemini reply (a
-`Chat` that sets `reasoning_effort` asks for them) and the thinking chunks of a streamed
-Mistral reply. `nothing` when the turn carries none — the provider returned no
+`Chat` that sets `reasoning_effort` asks for them), the thinking chunks of a Mistral reply
+and the `reasoning_content` or `reasoning` of another generic server's reply (llama-server,
+vLLM), streamed or not. `nothing` when the turn carries none — the provider returned no
 reasoning, or the model did not think.
 Like [`text`](@ref), it throws an [`LLMResultError`](@ref) on a failure result.
 
@@ -2011,6 +2014,7 @@ function _reasoning_in(provider::Symbol, b)::Union{String,Nothing}
         provider === :anthropic ? (get(b, "type", nothing) == "thinking" ? get(b, "thinking", nothing) : nothing) :
         provider === :gemini    ? (get(b, "thought", false) === true ? get(b, "text", nothing) : nothing) :
         provider === :mistral   ? _think_chunk_text(b) :
+        provider === :generic   ? get(b, "reasoning_content", get(b, "reasoning", nothing)) :
         nothing
     t isa AbstractString && !isempty(t) ? String(t) : nothing
 end

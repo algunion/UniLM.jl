@@ -105,13 +105,13 @@ one, so [`estimated_cost`](@ref) gives `0.0` and logs one warning per model id �
 server's time ([Cost Tracking](@ref cost_guide)); a result whose usage counts audio tokens is estimated at
 `0.0` with a warning even then, since a row holds no audio rates.
 
-A reasoning model's reasoning is not read: the servers return it beside the answer — `llama-server`
-"via the `reasoning_content` field"
-([server](https://github.com/ggml-org/llama.cpp/blob/b9730/tools/server/README.md)), vLLM in a
-`reasoning` field, which "used to be called `reasoning_content`"
+A reasoning model's reasoning comes back beside the answer — `llama-server` returns it "via the
+`reasoning_content` field" ([server](https://github.com/ggml-org/llama.cpp/blob/b9730/tools/server/README.md)),
+vLLM in a `reasoning` field, which "used to be called `reasoning_content`"
 ([reasoning outputs](https://docs.vllm.ai/en/latest/features/reasoning_outputs/)) — and UniLM keeps
-neither: [`reasoning_text`](@ref) gives `nothing`, and the reasoning does not go back with the next
-turn. The result types are on [Results](@ref results_guide).
+either on the message, from the reply or from a stream's deltas of that name, where
+[`reasoning_text`](@ref) reads it; a stream cut before its finish reason keeps none. The reasoning does
+not go back with the next turn. The result types are on [Results](@ref results_guide).
 
 ## [Streaming](@id local_servers_streaming)
 

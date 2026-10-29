@@ -1257,6 +1257,37 @@ end
 encode_request(s::GenericOpenAIEndpoint, chat::Chat)::String = _mistral_host(s) ?
     _renamed_json(chat, :max_completion_tokens => :max_tokens, :seed => :random_seed) : JSON.json(chat)
 
+# A generic server's reasoning comes back beside the answer, which UniLM keeps on the message as
+# ProviderContent for `reasoning_text`; no encoder sends it back. Mistral's reasoning models answer
+# with "a list of chunks", a `thinking` chunk (ThinkChunk) before the answer's `text` chunks
+# (https://docs.mistral.ai/studio/conversations/reasoning): its ThinkChunks are kept as `:mistral`,
+# as a streamed reply's are. llama-server returns the reasoning "via the `reasoning_content` field"
+# (https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) and vLLM in `reasoning`,
+# which "used to be called `reasoning_content`" (https://docs.vllm.ai/en/latest/features/reasoning_outputs/),
+# streamed as `delta.<field>`: kept as `:generic`, `[Dict(field => text)]`.
+const _GENERIC_REASONING_FIELDS = ("reasoning_content", "reasoning")
+
+function decode_response(service::GenericOpenAIEndpoint, resp::HTTP.Response)
+    decoded = invoke(decode_response, Tuple{OpenAIWireEndpointSpec,HTTP.Response}, service, resp)
+    data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    # The OpenAI-wire decoder read choices[1] already, so it is there.
+    pc = _generic_reasoning(get(data["choices"][1], "message", nothing))
+    isnothing(pc) && return decoded
+    merge(decoded, (; message=_message_with(decoded.message, :provider_content, pc)))
+end
+
+function _generic_reasoning(message::AbstractDict)::Union{ProviderContent,Nothing}
+    content = get(message, "content", nothing)
+    thinking = Any[c for c in (content isa AbstractVector ? content : ()) if c isa AbstractDict && get(c, "type", nothing) == "thinking"]
+    isempty(thinking) || return ProviderContent(:mistral, thinking)
+    for field in _GENERIC_REASONING_FIELDS
+        r = get(message, field, nothing)
+        r isa AbstractString && !isempty(r) && return ProviderContent(:generic, Any[Dict{String,Any}(field => r)])
+    end
+    nothing
+end
+_generic_reasoning(_) = nothing
+
 """
     decode_response(service, resp::HTTP.Response)
 

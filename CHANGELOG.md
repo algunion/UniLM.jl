@@ -34,8 +34,6 @@
   `UploadSuccess` for a completed upload, and `retrieve_file` and `upload_file` none for such a file.
   It now decodes with `bytes` `nothing`. Upgrading: code that reads a `FileObject`'s `bytes` as an
   `Int` handles `nothing`, a size the service has not given yet.
-
-### Added
 - **One item of a conversation can be read: `retrieve_conversation_item`.** `ConversationItemSuccess`
   was exported and documented as a Conversations result, yet no verb returned it: UniLM had no call for
   OpenAI's `GET /v1/conversations/{conversation_id}/items/{item_id}`, which gets "a single item from a
@@ -108,6 +106,14 @@
   cached-audio price — \$0.05, \$0.10, \$0.10 and \$0.03 per 1M tokens, at the billed tier's multiple —
   and its other cached tokens at the cached rate. A usage that reports more cached tokens than text
   tokens and cached audio together is still unpriced, with the warning.
+- **The reasoning of a Mistral reply and of another generic server reaches `reasoning_text`, streamed or
+  not.** An unstreamed `GenericOpenAIEndpoint` reply whose content is a list of chunks, as Mistral's
+  reasoning models answer, kept its `text` chunks and dropped its `thinking` chunks, which a streamed reply
+  keeps; and the `reasoning_content` field llama-server returns the reasoning in, or vLLM's `reasoning`,
+  was dropped, streamed or not. `reasoning_text` gave `nothing` for each. The thinking chunks are now kept
+  as `ProviderContent(:mistral, …)` and the reasoning field as `ProviderContent(:generic, …)`, whose text
+  `reasoning_text` reads; neither goes back with the next request, and the replies of every other
+  endpoint are read as before.
 
 ## 0.27.1
 

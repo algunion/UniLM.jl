@@ -89,11 +89,14 @@ The reply is read as a Chat Completions reply: `result.model` is the model the s
 price row, so the first `chatrequest!` logs a warning and the call costs `0.0`
 ([Cost and usage](@ref openai_compatible_cost)).
 
-An unstreamed reply's reasoning is not kept. A content that is a list of chunks, the shape Mistral's
-reasoning models answer in with `reasoning_effort="high"` — a `thinking` chunk, then the answer's `text`
-chunks ([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text`
-chunks joined, and its `thinking` chunks are dropped: [`reasoning_text`](@ref) gives `nothing`. A
-streamed reply keeps them ([Streaming](@ref openai_compatible_streaming)).
+A content that is a list of chunks, the shape Mistral's reasoning models answer in with
+`reasoning_effort="high"` — a `thinking` chunk, then the answer's `text` chunks
+([reasoning](https://docs.mistral.ai/studio/conversations/reasoning)) — is read as its `text` chunks
+joined, and its `thinking` chunks are kept apart as the turn's reasoning, which
+[`reasoning_text`](@ref) reads, streamed or not ([Streaming](@ref openai_compatible_streaming)). A
+reply's `reasoning_content` or `reasoning` field, in which other servers return the reasoning, is kept
+the same way ([vLLM, LM Studio & llama.cpp](@ref local_servers_start)). No reasoning goes back with
+the next request.
 
 Fields go out under the names of the `Chat`, but on Mistral's host a `max_completion_tokens` goes out
 as `max_tokens`, taken over a `max_tokens` also set, the name Mistral's chat reference gives the cap

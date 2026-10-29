@@ -227,6 +227,60 @@ end
     end
 end
 
+@testset "decode_response (generic) — a reply with reasoning keeps every other field the OpenAI wire decodes" begin
+    lp = Dict("content" => [Dict("token" => "391", "logprob" => -0.2, "bytes" => [51, 57, 49], "top_logprobs" => [])])
+    resp = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("id" => "cmpl-1", "model" => "mock",
+        "moderation" => Dict("output" => Dict("flagged" => false)),
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "logprobs" => lp,
+                           "message" => Dict("role" => "assistant", "content" => "391", "reasoning_content" => "17 × 23."))]))))
+    d, wire = UniLM.decode_response(GenericOpenAIEndpoint("http://localhost:8080", ""), resp), UniLM.extract_message(resp)
+    @test keys(d) == keys(wire)
+    @test d.logprobs == lp && d.moderation == wire.moderation
+    @test reasoning_text(d.message) == "17 × 23."
+end
+
+@testset "decode_response (generic) — an unstreamed reply's reasoning reaches reasoning_text, as a streamed one's does" begin
+    reply(message) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("id" => "cmpl-1", "model" => "mock",
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "message" => merge(Dict("role" => "assistant"), message))]))))
+    decode(s, message) = UniLM.decode_response(s, reply(message)).message
+    mistral = MistralEndpoint(api_key="k")
+    # Mistral's reasoning reply: "the response `message.content` is a list of chunks", a ThinkChunk and the
+    # answer's TextChunks (https://docs.mistral.ai/studio/conversations/reasoning).
+    thinking = [_mi_think("17 × 23: 17 × 20 = 340"), _mi_think(", plus 51."), Dict("type" => "text", "text" => "The answer"),
+                Dict("type" => "text", "text" => " is 391.")]
+    m = decode(mistral, Dict("content" => thinking))
+    @test m.content == "The answer is 391."
+    @test reasoning_text(m) == "17 × 23: 17 × 20 = 340, plus 51."
+    st = StreamState()
+    foreach(p -> UniLM.handle_sse_event!(mistral, "", p, st), _MI_REASONING_STREAM)
+    @test reasoning_text(_build_stream_message(st)) == reasoning_text(m)          # the two reads agree
+    # llama-server returns the reasoning "via the `reasoning_content` field", vLLM in `reasoning`.
+    local_server = GenericOpenAIEndpoint("http://localhost:8080", "")
+    for key in ("reasoning_content", "reasoning")
+        m = decode(local_server, Dict("content" => "391 = 17 × 23.", key => "Try 17: 17 × 23 = 391."))
+        @test m.content == "391 = 17 × 23."
+        @test reasoning_text(m) == "Try 17: 17 × 23 = 391."
+        @test !occursin(key, JSON.json(m))                       # sent back with no next request
+        chunk(delta; finish=nothing) = JSON.json(Dict("id" => "cmpl-1", "model" => "mock",
+            "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)]))
+        st = StreamState()
+        for p in (chunk(Dict(key => "Try 17: ")), chunk(Dict(key => "17 × 23 = 391.")), chunk(Dict("content" => "391 = 17 × 23.")),
+                  chunk(Dict(); finish="stop"), "[DONE]")
+            UniLM.handle_sse_event!(local_server, "", p, st)
+        end
+        streamed = _build_stream_message(st)
+        @test streamed.content == m.content
+        @test reasoning_text(streamed) == reasoning_text(m)
+        # A stream cut before its finish reason keeps no partial reasoning.
+        cut = StreamState()
+        UniLM.handle_sse_event!(local_server, "", chunk(Dict(key => "Try 17")), cut)
+        @test reasoning_text(_build_stream_message(cut)) === nothing
+    end
+    # A reply without reasoning carries none, and other endpoints' replies are read as before.
+    @test reasoning_text(decode(local_server, Dict("content" => "Hi"))) === nothing
+    @test reasoning_text(decode(OPENAIServiceEndpoint, Dict("content" => "Hi", "reasoning_content" => "r"))) === nothing
+end
+
 # Reads one HTTP request off `sock` — its headers, then a chunked or Content-Length body —
 # so a raw-socket server answers only once the client has sent all of it.
 function _sse_drain_request!(sock)

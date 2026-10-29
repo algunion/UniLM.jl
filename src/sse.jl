@@ -269,6 +269,48 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     :continue
 end
 
+# A generic server streams its reasoning as `delta.reasoning_content` (llama-server) or
+# `delta.reasoning` (vLLM) before the answer (`_GENERIC_REASONING_FIELDS`, src/requests.jl): it
+# accumulates in one pending block, closed by the finish reason or `[DONE]` into the shape an
+# unstreamed reply's is kept in, so a stream cut before then keeps no partial reasoning. A stream
+# whose thinking came as Mistral's chunks (`_thinking_buffer!`) is not mixed with it.
+function handle_sse_event!(service::GenericOpenAIEndpoint, event::AbstractString,
+                           payload::AbstractString, state::StreamState)::Symbol
+    status = invoke(handle_sse_event!, Tuple{OpenAIWireEndpointSpec,AbstractString,AbstractString,StreamState},
+                    service, event, payload, state)
+    if status === :continue
+        parsed = JSON.parse(payload; dicttype=Dict{String,Any})   # the default handler parsed it too
+        choices = parsed isa AbstractDict ? get(parsed, "choices", nothing) : nothing
+        for cho in (choices isa AbstractVector ? choices : Any[])
+            cho isa AbstractDict || continue
+            delta = get(cho, "delta", nothing)
+            for field in _GENERIC_REASONING_FIELDS
+                r = delta isa AbstractDict ? get(delta, field, nothing) : nothing
+                r isa AbstractString && !isempty(r) && state.raw_provider !== :mistral &&
+                    print(_generic_reasoning_buffer!(state, field), r)
+            end
+            get(cho, "finish_reason", nothing) isa AbstractString && _finalize_generic_reasoning!(state)
+        end
+    end
+    status === :done && _finalize_generic_reasoning!(state)
+    status
+end
+
+function _generic_reasoning_buffer!(state::StreamState, field::String)::IOBuffer
+    blk = get!(state.raw_pending, 0) do
+        state.raw_provider = :generic
+        Dict{String,Any}()
+    end
+    get!(IOBuffer, blk, field)::IOBuffer
+end
+
+function _finalize_generic_reasoning!(state::StreamState)::Nothing
+    state.raw_provider === :generic || return nothing
+    blk = pop!(state.raw_pending, 0, nothing)
+    isnothing(blk) || push!(state.raw_blocks, Dict{String,Any}(k => takestring!(v) for (k, v) in blk))
+    nothing
+end
+
 # The tier a chunk names becomes the stream's, which the usage takes. An endpoint whose
 # response head names the tier first (`_stream_head!`) may keep that one.
 _chunk_tier!(_, state::StreamState, tier::String)::Nothing = (state.service_tier = tier; nothing)

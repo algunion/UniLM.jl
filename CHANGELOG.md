@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.27.1
 
 ### Fixed
 - **A tool loop on `GEMINIOpenAIServiceEndpoint` works, streamed or not.** Gemini 3 returns

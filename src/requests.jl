@@ -1087,8 +1087,8 @@ the token a provider returns for continuing a long generation in another request
 `audio` is filled by the OpenAI-wire handler only, from a streamed audio reply's
 `delta.audio` updates, and becomes the message's [`AudioOutput`](@ref); a handler of
 another wire leaves it `nothing`. `logprobs` and `moderation` become the result's fields of
-those names: each token list a chunk gives extends the list of its name (`"content"`, …), and
-each moderation object's results are merged in.
+those names: each token list a chunk gives extends the list of its name (`"content"`, …), a list
+only ever given as null stays `nothing`, and each moderation object's results are merged in.
 Tool calls live in `tool_calls` by index as
 `Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
 `"complete" => true` on an entry tells the driver the call has finished streaming.

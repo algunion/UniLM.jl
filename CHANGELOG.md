@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.29.0
+
+### Fixed
+- **A streamed `Chat`'s log probabilities have the shape of an unstreamed one's.** A token list the
+  reply gives as null, such as `"refusal"` beside an answer's tokens or `"content"` on a refusal, is
+  `nothing` in an unstreamed result's `logprobs`, as the reply holds it, but was missing from a
+  streamed result's, so reading it there threw a `KeyError`. A streamed result now names every list
+  its chunks name, a list given only as null being `nothing`; a null list still never erases the
+  tokens an earlier chunk gave.
+
 ## 0.28.0
 
 ### Breaking

@@ -1827,17 +1827,25 @@ end
         @test r isa LLMSuccess && r.logprobs == logprobs && r.moderation == moderation
         rs = fetch(chatrequest!(mk(sse.url; stream=true); config=cfg))
         @test rs isa LLMSuccess && text(rs) == "Hi there"
-        # A stream's tokens in the order its chunks gave them; the results of every chunk that carried some.
-        @test rs.logprobs == Dict{String,Any}("content" => [tok("Hi", -0.25), tok(" there", -0.5)])
+        # A stream's tokens in the order its chunks gave them, under every list the reply names, as the
+        # unstreamed reply holds them; the results of every chunk that carried some.
+        @test rs.logprobs == r.logprobs == logprobs
         @test rs.moderation == moderation
     finally
         close(plain.server); close(sse.server)
     end
-    # A refusal's tokens stay under the key the reply gives them.
+    # A refusal's tokens stay under the key the reply gives them, and its null list stays null.
     st = UniLM.StreamState()
     UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("refusal" => "No."),
         Dict("content" => nothing, "refusal" => [tok("No.", -0.1)]), "stop")), st)
-    @test st.logprobs == Dict{String,Any}("refusal" => [tok("No.", -0.1)])
+    @test st.logprobs == Dict{String,Any}("content" => nothing, "refusal" => [tok("No.", -0.1)])
+    # A null list never erases the tokens an earlier chunk gave, and tokens fill a list named null before.
+    st = UniLM.StreamState()
+    for lp in (Dict("content" => [tok("a", -0.1)], "refusal" => nothing), Dict("content" => nothing, "refusal" => nothing),
+               Dict("content" => [tok("b", -0.2)], "refusal" => [tok("c", -0.3)]))
+        UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("content" => "x"), lp)), st)
+    end
+    @test st.logprobs == Dict{String,Any}("content" => [tok("a", -0.1), tok("b", -0.2)], "refusal" => [tok("c", -0.3)])
 end
 
 # An OpenAI-wire endpoint whose encoder refuses every request.

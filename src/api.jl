@@ -1813,8 +1813,9 @@ Successful Chat Completions API response.
   `logprobs=true` asked for, as the reply gives them: `"content"` lists the output tokens, each
   with its `"token"`, `"logprob"`, `"bytes"` and the `"top_logprobs"` asked for, and a provider
   may add lists of its own (OpenAI's `"refusal"`, DeepSeek's `"reasoning_content"`). A streamed
-  reply's chunks are joined in order, list by list; [`OllamaEndpoint`](@ref)'s token list is the
-  `"content"`. `nothing` when the reply carries none.
+  reply's chunks are joined in order, list by list, and a list the reply gives as null is `nothing`,
+  streamed or not; [`OllamaEndpoint`](@ref)'s token list is the `"content"`. `nothing` when the reply
+  carries none.
 - `moderation::Union{Dict{String,Any},Nothing}`: The moderation results a `Chat` with a
   [`ModerationConfig`](@ref) asked for, as the reply gives them: its `"input"` and `"output"`
   results, each a moderation result or an error (OpenAI's moderated completions); a stream's

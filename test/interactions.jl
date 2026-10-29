@@ -916,28 +916,50 @@ end
     @test only(only(plain.output)["content"]) == Dict("type" => "output_text", "text" => "Hi")
 end
 
-@testset "Interactions stream — a grounded answer's citations arrive after its text and stay on it" begin
-    # A streamed google_search interaction on gemini-3.8-flash (2026-10-26): the answer's text, then one
-    # step.delta of type text_annotation_delta carrying its annotations, in the same step.
+@testset "Interactions stream — a grounded answer's search steps and citations arrive as deltas and stay whole" begin
+    # A streamed google_search interaction on gemini-3.8-flash (2026-10-26): each search step starts with an
+    # empty signature, and one step.delta of the step's own type carries its arguments or result and its
+    # signature; then the answer's text, and one step.delta of type text_annotation_delta carrying its
+    # annotations, in the same step.
     ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
     answer = "The latest stable release of the Julia programming language is version 1.13.3."
     cite = Dict("type" => "url_citation", "url" => "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x",
                 "title" => "julialang.org", "start_index" => 0, "end_index" => 77)
+    queries = Dict("queries" => ["Julia programming language latest release version"])
+    found = [Dict("search_suggestions" => "<div>Julia 1.13.3</div>")]
     interaction = Dict("id" => "v1_s", "status" => "completed", "model" => "gemini-3.8-flash")
-    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "thought"))) *
-          ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "thought_signature", "signature" => "sig"))) *
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "google_search_call", "id" => "call_1",
+                                                             "search_type" => "web_search", "signature" => ""))) *
+          ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "google_search_call", "arguments" => queries,
+                                                              "signature" => "sig-call"))) *
           ev("step.stop", Dict("index" => 0)) *
-          ev("step.start", Dict("index" => 1, "step" => Dict("type" => "model_output"))) *
-          ev("step.delta", Dict("index" => 1, "delta" => Dict("type" => "text", "text" => answer))) *
-          ev("step.delta", Dict("index" => 1, "delta" => Dict("type" => "text_annotation_delta", "annotations" => [cite]))) *
+          ev("step.start", Dict("index" => 1, "step" => Dict("type" => "google_search_result", "call_id" => "call_1",
+                                                             "signature" => ""))) *
+          ev("step.delta", Dict("index" => 1, "delta" => Dict("type" => "google_search_result", "is_error" => false,
+                                                              "result" => found, "signature" => "sig-result"))) *
           ev("step.stop", Dict("index" => 1)) *
+          ev("step.start", Dict("index" => 2, "step" => Dict("type" => "thought"))) *
+          ev("step.delta", Dict("index" => 2, "delta" => Dict("type" => "thought_signature", "signature" => "sig"))) *
+          ev("step.stop", Dict("index" => 2)) *
+          ev("step.start", Dict("index" => 3, "step" => Dict("type" => "model_output"))) *
+          ev("step.delta", Dict("index" => 3, "delta" => Dict("type" => "text", "text" => answer))) *
+          ev("step.delta", Dict("index" => 3, "delta" => Dict("type" => "text_annotation_delta", "annotations" => [cite]))) *
+          ev("step.stop", Dict("index" => 3)) *
           ev("interaction.completed", Dict("interaction" => interaction))
     rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
     streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
     @test output_text(streamed) == answer
     @test url_citations(streamed) == [cite]
+    # The search steps keep what a stateless follow-up sends back: their arguments, result and signatures.
+    search = [o for o in streamed.output if startswith(o["type"], "google_search")]
+    @test [(o["type"], o["signature"]) for o in search] == [("google_search_call", "sig-call"), ("google_search_result", "sig-result")]
+    @test search[1]["arguments"] == queries && search[2]["result"] == found && search[2]["is_error"] === false
     # The same interaction unstreamed decodes to the same output.
-    steps = [Dict("type" => "thought", "signature" => "sig"),
+    steps = [Dict("type" => "google_search_call", "id" => "call_1", "search_type" => "web_search", "arguments" => queries,
+                  "signature" => "sig-call"),
+             Dict("type" => "google_search_result", "call_id" => "call_1", "is_error" => false, "result" => found,
+                  "signature" => "sig-result"),
+             Dict("type" => "thought", "signature" => "sig"),
              Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => answer, "annotations" => [cite])])]
     @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
 end

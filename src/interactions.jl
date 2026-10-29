@@ -510,7 +510,8 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 
 # ─── Streaming decode (Interactions SSE → per-step assembly + final rebuild) ──
 # Named events: interaction.created/status_update, step.start, step.delta
-# (delta.type: text | text_annotation_delta | arguments_delta | thought_summary | thought_signature),
+# (delta.type: text | text_annotation_delta | arguments_delta | thought_summary | thought_signature,
+# or a hosted tool step's own type: google_search_call, code_execution_result, …),
 # step.stop, interaction.completed (final object + usage but NO steps; its
 # `status` may be "completed" or "requires_action" — there is no dedicated
 # requires_action event), then event:done / [DONE].
@@ -520,9 +521,10 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # yield the same output items. A step's streamed string grows in one buffer
 # (`state.text_by_step`) and is written into the step once, when the interaction
 # completes; by step type it is the function-call argument JSON (partial-JSON string
-# deltas), the answer text (extending the step's last text part), or the thought
-# signature. Each thought_summary delta adds one item to the thought's `summary`, and each
-# text_annotation_delta its annotations to the answer step's last text part.
+# deltas), the answer text (extending the step's last text part), or the signature of a
+# thought or a hosted tool step. Each thought_summary delta adds one item to the thought's
+# `summary`, each text_annotation_delta its annotations to the answer step's last text part,
+# and a hosted tool step's own delta its arguments or result to the step.
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                                state::AgenticStreamState)
     for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
@@ -621,6 +623,17 @@ function _interaction_step_delta!(state::AgenticStreamState, data::Dict{String,A
             push!(content, part)
         end
         append!(get!(Vector{Any}, part, "annotations"), notes)
+    elseif !isnothing(step) && !isempty(kind) && dt == kind
+        # A hosted tool's step (google_search_call, google_search_result, code_execution_call, …) gets
+        # its fields in a delta of its own type, one per step in Google's streams: each is set on the
+        # step, and its signature extends the start event's, as a thought_signature delta does.
+        for (k, v) in d
+            if k == "signature"
+                v isa AbstractString && print(get!(IOBuffer, state.text_by_step, idx), v)
+            elseif k != "type"
+                step[k] = v
+            end
+        end
     else
         # Answer text (a top-level `text`). `textbuff` is the full accumulation
         # diagnostics can read; `pending_delta` is what the driver forwards.

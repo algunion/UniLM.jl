@@ -34,6 +34,13 @@
   as created at 0, and one without `filename` or `purpose` as named `""`, each a success. Such a
   reply now makes the call a `FileCallError` (from `complete_upload`, an `UploadCallError`), as a
   reply without an `id` already did; a `bytes` given as null is still `nothing`.
+- **A streamed Gemini Interactions search keeps its steps' arguments, results and signatures.**
+  Google streams a hosted tool's step (`google_search_call`, `google_search_result`,
+  `code_execution_call`, …) as a start without its fields and one delta of the step's own type that
+  carries them: the call's arguments, the result, and the signature a stateless follow-up sends back.
+  Those deltas were dropped, so a streamed `respond` with `gemini_google_search()` returned its search
+  steps without them, unlike the same interaction unstreamed. Each delta's fields are now set on its
+  step, and its signature extends the step's, so both decodes give the same output.
 
 ## 0.28.0
 

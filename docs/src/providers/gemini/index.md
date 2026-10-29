@@ -251,8 +251,8 @@ A model's input and output token limits are in its [`list_models`](@ref) entry
 ([Attachments](@ref gemini_media)), except one rule of the Interactions API below. Rate limits are on
 [When something fails](@ref gemini_failures).
 
-A field a Gemini API has no counterpart for is refused, not dropped, since dropping it would send a
-request other than the one asked for. The one exception is a `Chat`'s `parallel_tool_calls`, which a
+A field a Gemini API has no counterpart for, or one whose counterpart UniLM does not map, is refused,
+not dropped, since dropping it would send a request other than the one asked for. The one exception is a `Chat`'s `parallel_tool_calls`, which a
 `Chat` with tools sets on its own and which is not sent, whatever its value ([Tools](@ref gemini_tools)).
 Each request in the table below that the API would answer with an error is refused too.
 `chatrequest!`, `tool_loop!`, `respond`, `tool_loop`, `generate_image`, `edit_image`, `speak` and
@@ -265,7 +265,8 @@ names meets only the other rules.
 | `temperature` or `top_p`, on a `Chat`, a `Respond` or `GEMINIOpenAIServiceEndpoint`, for a model other than the earlier ones listed in [Request options](@ref gemini_request_options) | `so UniLM sends sampling parameters only to`: from Gemini 3.6 Flash and 3.5 Flash-Lite on, the API ignores them | remove it |
 | a `Chat` that ends with an assistant turn, on a model other than those earlier ones | `answers HTTP 400 to a request that ends with a model turn` | end with a user message; shape the answer with a system message or `response_format` |
 | a `Respond` input that ends with an assistant message, on a model other than those earlier ones | `answers HTTP 400 to an input that ends with an assistant message` | end with a user message; shape the answer with `instructions` or `text` |
-| `moderation`, or a `Chat` field with no counterpart: `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `stream_options`, `verbosity`, `metadata`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `prompt_cache_retention` | `Native Gemini Chat does not support field(s)`: generateContent has no such field | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
+| `moderation`, or a `Chat` field with no counterpart: `logit_bias`, `user`, `stream_options`, `verbosity`, `metadata`, `prediction`, `web_search_options`, `prompt_cache_key`, `prompt_cache_retention` | `Native Gemini Chat does not support field(s)`: generateContent has no such field | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
+| a `Chat` field whose generateContent counterpart UniLM does not map: `presence_penalty`, `frequency_penalty`, `logprobs`, `top_logprobs`, `modalities`, `audio` (`GenerationConfig`'s `presencePenalty`, `frequencyPenalty`, `responseLogprobs`, `logprobs`, `responseModalities`, `speechConfig`) | `Native Gemini Chat does not support field(s)`: UniLM does not translate it | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
 | `prompt_cache_options`, on a `Chat` or a `Respond` | `Gemini takes no prompt_cache_options`: Gemini caches repeated prefixes on its own, and UniLM does not wrap its explicit caching | remove it ([Prompt caching](@ref gemini_caching)) |
 | `reasoning_effort` `"none"`, `"xhigh"` or `"max"`, on a `Chat` or in a `Reasoning` | `Gemini thinking effort must be minimal, low, medium, or high` | one of those four |
 | a level the model's row of the thinking table does not list | `supports`, then the levels it takes, then `thinking effort` | one of them |

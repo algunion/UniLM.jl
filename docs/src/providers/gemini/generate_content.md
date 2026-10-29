@@ -23,7 +23,7 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 | `temperature`, `top_p`, `stop`, `seed` | `generationConfig.temperature`, `topP`, `stopSequences`, `seed` | [Request options](@ref gemini_request_options) |
 | `safety_identifier`, `store`, `service_tier` | `labels.safety_identifier`, `store`, `serviceTier` | [Request options](@ref gemini_request_options) |
 | `stream` | the URL's `:streamGenerateContent?alt=sse` | [Streaming](@ref gemini_streaming) |
-| `prompt_cache_options`, `moderation` and the fields with no counterpart | refused | [Limits and refusals](@ref gemini_limits) |
+| `prompt_cache_options`, `moderation`, the fields with no counterpart and those whose counterpart UniLM does not map | refused | [Limits and refusals](@ref gemini_limits) |
 
 ## [Reasoning](@id gemini_reasoning)
 

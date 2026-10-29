@@ -186,10 +186,13 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
     end
 
     @testset "Gemini Interactions structured output (text → response_format)" begin
+        # The thinking counts toward max_output_tokens here: on 2026-10-29 gemini-3.8-flash spent 210-253 of
+        # them on thought, so a 256-token budget cut the answer off ("incomplete").
         result = respond("Give the capital of Norway as JSON."; service=GEMINIServiceEndpoint,
-            model="gemini-3.8-flash", max_output_tokens=256,
+            model="gemini-3.8-flash", max_output_tokens=1024,
             text=json_schema_format("capital", "A capital city and its country", capital_schema))
         @test result isa ResponseSuccess
+        result isa ResponseSuccess && @test get(result.response.raw, "status", nothing) == "completed"
         if result isa ResponseSuccess
             parsed = JSON.parse(output_text(result))
             @info "Gemini Interactions structured output" json = JSON.json(parsed)

@@ -37,12 +37,14 @@
 - **`:speech` names `speak`'s capability, and Ollama and generic endpoints declare `:agentic` and
   `:audio`.** No capability symbol said where `speak` goes, so `has_capability` was false for Gemini's
   native endpoint whatever the symbol, while Gemini TTS answered `speak`; and `OllamaEndpoint` and
-  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) served `respond` and `transcribe` without
-  `:agentic` and `:audio`, the symbols the capability table gives those verbs. `OPENAIServiceEndpoint`
-  and `GEMINIServiceEndpoint` now declare `:speech`, which `speak` checks where it checked `:realtime`,
-  and `OllamaEndpoint` and `GenericOpenAIEndpoint` declare `:agentic` and `:audio` too. Upgrading: code
-  that compares a `provider_capabilities` set with a fixed set of its own adds them, or tests one
-  capability with `has_capability`.
+  `GenericOpenAIEndpoint` (`MistralEndpoint()` among them) sent `respond` and `transcribe` without
+  declaring `:agentic` and `:audio`, the symbols the capability table gives those verbs.
+  `OPENAIServiceEndpoint` and `GEMINIServiceEndpoint` now declare `:speech`, which `speak` checks where
+  it checked `:realtime`, and `OllamaEndpoint` and `GenericOpenAIEndpoint` declare `:agentic` and
+  `:audio` too; speech and translation stay refused on both. Upgrading: code that compares a
+  `provider_capabilities` set with a fixed set of its own adds them, or tests one capability with
+  `has_capability`; an endpoint type of your own that `speak` reaches through a Realtime session
+  declares `:speech` beside `:realtime`.
 - **Gemini Interactions refuses an input that ends with an assistant message before sending.** From
   Gemini 3.6 Flash and 3.5 Flash-Lite on, Google answers an input whose last step is the model's with
   HTTP 400 ("Request contains an invalid argument.", gemini-3.8-flash, 26 October 2026), as

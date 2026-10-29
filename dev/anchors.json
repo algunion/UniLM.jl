@@ -1718,6 +1718,9 @@
   "UniLM.retrieve_conversation": [
     "/api/conversations/"
   ],
+  "UniLM.retrieve_conversation_item": [
+    "/api/conversations/"
+  ],
   "UniLM.retrieve_file": [
     "/api/files/"
   ],

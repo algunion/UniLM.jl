@@ -1107,6 +1107,45 @@ end
     @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
 end
 
+@testset "compat — a function call's thought signature goes back with it, as Google requires" begin
+    # The compatible endpoint returns a Gemini 3 function call's signature in
+    # tool_calls[].extra_content.google.thought_signature — "Required and Validated" when the call goes back
+    # (ai.google.dev/gemini-api/docs/thought-signatures) — and answered a follow-up whose call lacked it with
+    # HTTP 400 "Function call is missing a thought_signature in functionCall parts" (gemini-3.8-flash,
+    # 2026-10-26). Of parallel calls, only the first carries one.
+    call(id, sig) = merge(Dict{String,Any}("id" => id, "type" => "function",
+                                           "function" => Dict("name" => "secret_number", "arguments" => "{}")),
+                          isnothing(sig) ? Dict{String,Any}() :
+                          Dict{String,Any}("extra_content" => Dict("google" => Dict("thought_signature" => sig))))
+    reply = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("model" => "gemini-3.8-flash", "choices" => [
+        Dict("index" => 0, "finish_reason" => "tool_calls",
+             "message" => Dict("role" => "assistant", "tool_calls" => [call("call_1", "c2ln"), call("call_2", nothing)]))]))))
+    m = decode_response(GEMINIOpenAIServiceEndpoint, reply).message
+    @test [tc.thought_signature for tc in m.tool_calls] == ["c2ln", nothing]
+    # Streamed, each call arrives whole, signature included, without the `index` an OpenAI stream gives
+    # every fragment, and the stream finishes "stop" (gemini-3.8-flash, 29 October 2026): in one chunk or
+    # one chunk per call, the calls keep their order and signatures, and the turn is a tool-call turn.
+    for chunks in ([[call("call_1", "c2ln"), call("call_2", nothing)]], [[call("call_1", "c2ln")], [call("call_2", nothing)]])
+        state = StreamState()
+        for (delta, finish) in [[(Dict("role" => "assistant", "tool_calls" => c), nothing) for c in chunks];
+                                (Dict("role" => "assistant"), "stop")]
+            UniLM.handle_sse_event!(GEMINIOpenAIServiceEndpoint, "", JSON.json(Dict("model" => "gemini-3.8-flash",
+                "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)])), state)
+        end
+        streamed = _build_stream_message(state)
+        @test [(tc.id, tc.thought_signature) for tc in streamed.tool_calls] == [("call_1", "c2ln"), ("call_2", nothing)]
+        @test streamed.finish_reason == TOOL_CALLS
+    end
+    # The next request sends it back on its call, and on no other; another OpenAI-wire endpoint sends none.
+    messages = [Message(role=RoleUser, content="q"), m, Message(role=RoleTool, tool_call_id="call_1", content="41"),
+                Message(role=RoleTool, tool_call_id="call_2", content="41")]
+    sent(service; model="gemini-3.8-flash") =
+        JSON.parse(encode_request(service, Chat(; service, model, messages)))["messages"][2]["tool_calls"]
+    @test [get(tc, "extra_content", nothing) for tc in sent(GEMINIOpenAIServiceEndpoint)] ==
+          [Dict("google" => Dict("thought_signature" => "c2ln")), nothing]
+    @test !any(tc -> haskey(tc, "extra_content"), sent(GenericOpenAIEndpoint("http://localhost:8000", ""); model="m"))
+end
+
 # The compatible wire to a local server, with that endpoint's own encoding, decoding, tiers and prices.
 const _COMPAT_URL = Ref("")
 struct _CompatHere <: UniLM.OpenAIWireEndpoint end

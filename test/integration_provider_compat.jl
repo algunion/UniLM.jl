@@ -145,6 +145,29 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
         @test cumulative_cost(chat) == estimated_cost(r) > 0
     end
 
+    @testset "Gemini OpenAI-compatible tool loop sends each call's thought signature back (stream=$stream)" for stream in (false, true)
+        # This wire gives a Gemini 3 call's signature in extra_content.google.thought_signature, and the
+        # request carrying the tool's result was answered HTTP 400 when the call came back without it.
+        secret = Tool(func=FunctionSignature(name="secret_number", description="Returns the secret number.",
+            parameters=Dict("type" => "object", "properties" => Dict())))
+        chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash", stream=stream,
+            reasoning_effort="low", max_completion_tokens=1024, tools=[secret],
+            messages=[Message(role=UniLM.RoleUser,
+                content="Call secret_number, then answer with that number plus one, digits only.")])
+        r = stream ? fetch(chatrequest!(chat)) : chatrequest!(chat)
+        @test r isa LLMSuccess
+        calls = r isa LLMSuccess ? r.message.tool_calls : nothing
+        @test !isnothing(calls) && length(calls) == 1 && !isnothing(calls[1].thought_signature)
+        if !isnothing(calls) && length(calls) == 1
+            push!(chat, Message(role=UniLM.RoleTool, tool_call_id=calls[1].id, content="41"))
+            follow = Chat(service=chat.service, model=chat.model, stream=stream, messages=chat.messages,
+                tools=chat.tools, reasoning_effort="low", max_completion_tokens=1024)
+            r = stream ? fetch(chatrequest!(follow)) : chatrequest!(follow)
+            @test r isa LLMSuccess
+            @test occursin("42", r isa LLMSuccess ? something(r.message.content, "") : "")
+        end
+    end
+
     capital_schema = Dict("type" => "object",
         "properties" => Dict("city" => Dict("type" => "string"), "country" => Dict("type" => "string")),
         "required" => ["city", "country"], "additionalProperties" => false)

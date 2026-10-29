@@ -237,13 +237,20 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
         tcs isa AbstractVector || continue
         for tc_delta in tcs
             tc_delta isa AbstractDict || continue
-            idx = tc_delta["index"]
+            # Google's OpenAI-compatible stream sends each call whole, without the `index` an
+            # OpenAI stream gives every call fragment (gemini-3.8-flash, 29 October 2026): such a
+            # call takes the next index and is complete as it arrives.
+            whole = !haskey(tc_delta, "index")
+            idx = whole ? (isempty(state.tool_calls) ? 0 : maximum(keys(state.tool_calls)) + 1) : tc_delta["index"]
             entry = get!(state.tool_calls, idx) do
                 Dict{String,Any}("id" => "", "type" => get(tc_delta, "type", "function"),
                     "function" => Dict{String,Any}("name" => "", "arguments" => ""))
             end
+            whole && (entry["complete"] = true)
             id = get(tc_delta, "id", nothing)
             id isa AbstractString && !isempty(id) && (entry["id"] = id)
+            sig = _google_signature(tc_delta)
+            isnothing(sig) || (entry["thought_signature"] = sig)
             fd = get(tc_delta, "function", nothing)
             if fd isa AbstractDict
                 name, args = _tool_fragments!(state, idx)

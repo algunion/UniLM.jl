@@ -184,10 +184,12 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   mapping it to a thinking level, and `prompt_cache_options`, a request that ends with an assistant
   turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach Google, which answered
   the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.
-- **No thinking, no signatures.** UniLM keeps no provider content from this wire: `reasoning_text`
-  gives `nothing`, and no thought signature goes back. Google says "Gemini 3 supports
-  OpenAI compatibility for thought signatures in chat completion APIs"; a multi-turn tool loop on this
-  wire is untested.
+- **No thinking; signatures go back.** UniLM keeps no provider content from this wire:
+  `reasoning_text` gives `nothing`. A function call's thought signature, which this wire gives in the
+  call's `extra_content.google.thought_signature`, stays on its `ToolCall` (`thought_signature`) and
+  goes back with the call, as Google requires ("Gemini 3 supports OpenAI compatibility for thought
+  signatures in chat completion APIs"). A two-turn tool loop on `gemini-3.8-flash`, streamed and not,
+  was answered on 29 October 2026; without the signature, its second request was answered HTTP 400.
 - **Usage.** A stream asks for its usage, `stream_options = {"include_usage": true}`, when the `Chat`
   sets none, so a streamed turn is priced. The usage counted no audio apart on 23 October 2026, so a
   clip is priced at the text rate, a lower bound on the four models with an audio price of their own,

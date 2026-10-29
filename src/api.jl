@@ -67,17 +67,20 @@ results back), the tool `type`, and the [`GPTFunction`] with name and parsed arg
 
 Also carries an optional `thought_signature::Union{Nothing,String}` field holding
 Gemini-3's opaque tool-call signature, which must be echoed verbatim on the next turn;
-it is set by the Gemini decoder, ignored (`nothing`) by every other provider, and
-deliberately excluded from `JSON.lower` so OpenAI-wire serialization is unaffected.
+it is read from Gemini's replies (a native `functionCall` part's `thoughtSignature`, or
+`extra_content.google.thought_signature` on the OpenAI-compatible wire), `nothing` from
+every other provider, and sent back only to Gemini: it is excluded from `JSON.lower`, so
+the other endpoints' request bytes are unaffected.
 """
 @kwdef struct ToolCall
     id::String
     type::String = "function"
     func::GPTFunction
     # Gemini-3 opaque function-calling signature; MUST be echoed verbatim on the
-    # next turn or stateless multi-turn tool calls 400. Set only by the Gemini
-    # decoder; ignored (nothing) by every other provider. Deliberately absent
-    # from JSON.lower below, so OpenAI-wire serialization is byte-identical.
+    # next turn or stateless multi-turn tool calls 400. Read only from Gemini's
+    # replies (native parts, or extra_content on the OpenAI-compatible wire);
+    # nothing on every other provider. Absent from JSON.lower below: only the
+    # Gemini encoders send it, so the other wires' bytes are unchanged.
     thought_signature::Union{Nothing,String} = nothing
 end
 

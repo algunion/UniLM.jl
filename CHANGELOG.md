@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **A tool loop on `GEMINIOpenAIServiceEndpoint` works, streamed or not.** Gemini 3 returns
+  a function call's thought signature on the OpenAI-compatible wire, in the call's
+  `extra_content.google.thought_signature`, and requires it back with the call. UniLM dropped
+  it, so the request carrying the tool's result was answered HTTP 400 ("Function call is
+  missing a thought_signature in functionCall parts"); streamed, the call itself was dropped,
+  as this wire sends each call whole, without the `index` an OpenAI stream gives every call
+  fragment. The call now keeps its signature on its `ToolCall` (`thought_signature`), streamed
+  or not, and the endpoint sends it back with the call; no other endpoint sends it.
+
 ## 0.27.0
 
 ### Breaking

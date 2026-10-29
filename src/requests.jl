@@ -1041,12 +1041,13 @@ _call_arguments(args::AbstractString, finish::String)::Union{Nothing,Dict{String
     finish == TOOL_CALLS || _is_json_object(args) ? _parse_tool_arguments(args) : nothing
 
 # OpenAI-wire `tool_calls` array → the neutral ToolCall vector, less the calls
-# `_call_arguments` drops.
+# `_call_arguments` drops; a call keeps the thought signature Gemini gives it (`_google_signature`).
 function _decode_tool_calls(raw::AbstractVector, finish::String)::Vector{ToolCall}
     calls = ToolCall[]
     for x in raw
         args = _call_arguments(x["function"]["arguments"], finish)
-        isnothing(args) || push!(calls, ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], args)))
+        isnothing(args) || push!(calls, ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], args),
+                                                 thought_signature=_google_signature(x)))
     end
     calls
 end

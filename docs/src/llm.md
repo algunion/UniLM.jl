@@ -455,9 +455,10 @@ Tool(d::AbstractDict)   # construct from dict with keys "name", "description", "
     id::String
     type::String = "function"
     func::GPTFunction       # has .name::String and .arguments::AbstractDict
-    # Gemini-3's opaque tool-call signature. Set only by the Gemini decoder
-    # (nothing on every other provider) and echoed verbatim on the next turn;
-    # deliberately excluded from JSON.lower, so OpenAI-wire bytes are unchanged.
+    # Gemini-3's opaque tool-call signature. Read only from Gemini's replies
+    # (native parts, or extra_content on the OpenAI-compatible wire; nothing on
+    # every other provider) and echoed verbatim on the next turn; excluded from
+    # JSON.lower, so only the Gemini encoders send it.
     thought_signature::Union{Nothing,String} = nothing
 end
 

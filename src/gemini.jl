@@ -304,6 +304,34 @@ function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
 end
 
+# Gemini 3 gives a function call's thought signature on this wire in the call's
+# `extra_content.google.thought_signature` and validates it when the call comes back: "Required and
+# Validated" (https://ai.google.dev/gemini-api/docs/thought-signatures, "Signatures for OpenAI
+# compatibility"). A follow-up whose call lacked it was answered HTTP 400 "Function call is missing
+# a thought_signature in functionCall parts" (gemini-3.8-flash, 26 October 2026). The OpenAI-wire
+# decoders keep it on the call's `ToolCall`, and this endpoint sends each call back with the
+# signature it came with; of parallel calls, only the first has one.
+function _google_signature(call::AbstractDict)::Union{String,Nothing}
+    extra = get(call, "extra_content", nothing)
+    google = extra isa AbstractDict ? get(extra, "google", nothing) : nothing
+    sig = google isa AbstractDict ? get(google, "thought_signature", nothing) : nothing
+    sig isa AbstractString && !isempty(sig) ? String(sig) : nothing
+end
+
+_wire_messages(::Type{GEMINIOpenAIServiceEndpoint}, messages::Conversation) =
+    any(_signed_calls, messages) ? Any[_signed_calls(m) ? _signed_turn(m) : m for m in messages] : messages
+
+_signed_calls(m::Message)::Bool = !isnothing(m.tool_calls) && any(tc -> !isnothing(tc.thought_signature), m.tool_calls)
+
+function _signed_turn(m::Message)
+    d = JSON.lower(m)
+    d[:tool_calls] = Any[isnothing(tc.thought_signature) ? tc :
+                         merge(JSON.lower(tc), Dict(:extra_content =>
+                             Dict(:google => Dict(:thought_signature => tc.thought_signature))))
+                         for tc in something(m.tool_calls)]   # a turn with signed calls (`_signed_calls`)
+    d
+end
+
 # The compatible endpoint answers a sound clip but reports no audio token count: a WAV sent to
 # gemini-3.1-flash-lite came back with 54 prompt tokens and no token details (observed 2026-10-23),
 # where the native endpoint counts 38 of them as audio. So the clip is priced at the model's text

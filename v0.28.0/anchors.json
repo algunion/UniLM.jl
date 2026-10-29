@@ -1,0 +1,3559 @@
+{
+  "API-Constants": [
+    "/llm/"
+  ],
+  "Abstract-Type": [
+    "/api/results/"
+  ],
+  "Abstract-Types": [
+    "/api/endpoints/"
+  ],
+  "Accessor-Functions": [
+    "/api/images/",
+    "/api/responses/"
+  ],
+  "Accessors": [
+    "/api/audio/",
+    "/api/conversations/",
+    "/api/system_one/",
+    "/api/vector_stores/",
+    "/llm/"
+  ],
+  "Agentic-wire-seam": [
+    "/api/endpoints/"
+  ],
+  "Answers": [
+    "/api/system_one/"
+  ],
+  "Anthropic-(Claude)": [
+    "/api/endpoints/"
+  ],
+  "Attachments": [
+    "/api/chat/"
+  ],
+  "Audio-replies": [
+    "/api/chat/"
+  ],
+  "Audio:-speech,-transcription,-translation": [
+    "/llm/"
+  ],
+  "Azure-Deployment-Mapping": [
+    "/api/endpoints/"
+  ],
+  "Azure-OpenAI": [
+    "/api/endpoints/"
+  ],
+  "Base.pop!-Tuple{Chat}": [
+    "/api/chat/"
+  ],
+  "Base.push!-Tuple{Chat, Message}": [
+    "/api/chat/"
+  ],
+  "Bounds": [
+    "/api/realtime/"
+  ],
+  "Breaking-changes-are-batched": [
+    "/stability/"
+  ],
+  "Building-a-Conversation": [
+    "/api/chat/"
+  ],
+  "Built-in-Endpoints": [
+    "/api/endpoints/"
+  ],
+  "CallableTool": [
+    "/llm/"
+  ],
+  "Cancellation": [
+    "/api/config/",
+    "/llm/"
+  ],
+  "Capabilities-by-Provider": [
+    "/api/capabilities/",
+    "/llm/"
+  ],
+  "Capability-Symbols": [
+    "/api/capabilities/"
+  ],
+  "Chat": [
+    "/llm/"
+  ],
+  "Chat-Completions-API": [
+    "/llm/"
+  ],
+  "Chat-Completions-Example": [
+    "/llm/"
+  ],
+  "Chat-Completions-Results": [
+    "/api/results/"
+  ],
+  "Chat-Object": [
+    "/api/chat/"
+  ],
+  "Chat-Prefix-Completion": [
+    "/llm/"
+  ],
+  "Chat-wire-seam": [
+    "/api/endpoints/"
+  ],
+  "Client-Example": [
+    "/llm/"
+  ],
+  "Client-Functions": [
+    "/api/mcp/"
+  ],
+  "Client-Secret": [
+    "/api/realtime/"
+  ],
+  "Client-Types": [
+    "/api/mcp/"
+  ],
+  "Complete-Exports-List": [
+    "/llm/"
+  ],
+  "Concurrency": [
+    "/llm/"
+  ],
+  "Configuration": [
+    "/api/config/",
+    "/api/endpoints/"
+  ],
+  "Construction": [
+    "/api/embeddings/",
+    "/api/images/",
+    "/api/responses/"
+  ],
+  "Constructors,-verbs-and-accessors": [
+    "/llm/"
+  ],
+  "Convenience-Constructors": [
+    "/api/chat/"
+  ],
+  "Conversation-Forking": [
+    "/llm/"
+  ],
+  "Conversation-Management": [
+    "/api/chat/",
+    "/llm/"
+  ],
+  "Cost-Estimation": [
+    "/api/accounting/"
+  ],
+  "Cost-Tracking": [
+    "/llm/"
+  ],
+  "Cost-Tracking-Example": [
+    "/llm/"
+  ],
+  "Decision-provider-contracts": [
+    "/llm/"
+  ],
+  "Designing-meanings": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "Discovery": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Embeddings": [
+    "/llm/"
+  ],
+  "Embeddings-API": [
+    "/llm/"
+  ],
+  "Embeddings-Example": [
+    "/llm/"
+  ],
+  "Embeddings-Object": [
+    "/api/embeddings/"
+  ],
+  "Endpoint": [
+    "/api/ollama/"
+  ],
+  "Environment-Variables": [
+    "/llm/"
+  ],
+  "Error-and-Limit-Contracts": [
+    "/llm/"
+  ],
+  "Event-Builders": [
+    "/api/realtime/"
+  ],
+  "Example": [
+    "/api/completions/",
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Exceptions": [
+    "/llm/"
+  ],
+  "FIM-Completion": [
+    "/llm/"
+  ],
+  "FIM-Example": [
+    "/llm/"
+  ],
+  "Fork-Example": [
+    "/llm/"
+  ],
+  "Functions": [
+    "/api/audio/",
+    "/api/capabilities/",
+    "/api/moderations/",
+    "/api/webhooks/",
+    "/llm/"
+  ],
+  "Generic-Endpoint": [
+    "/api/endpoints/"
+  ],
+  "Google-Gemini": [
+    "/api/endpoints/"
+  ],
+  "Image-Generation-API": [
+    "/llm/"
+  ],
+  "Image-Generation-Example": [
+    "/llm/"
+  ],
+  "Image-Generation-Results": [
+    "/api/results/"
+  ],
+  "ImageGeneration": [
+    "/llm/"
+  ],
+  "Input-Helpers": [
+    "/api/responses/",
+    "/llm/"
+  ],
+  "Installation": [
+    "/llm/"
+  ],
+  "JSON-Serialization": [
+    "/api/images/"
+  ],
+  "Legacy-aliases": [
+    "/api/chat/"
+  ],
+  "Lifecycle": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "MCP-Client": [
+    "/llm/"
+  ],
+  "MCP-Server": [
+    "/llm/"
+  ],
+  "Macros": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Message": [
+    "/llm/"
+  ],
+  "Messages": [
+    "/api/chat/"
+  ],
+  "Model-Constants": [
+    "/api/chat/",
+    "/api/embeddings/"
+  ],
+  "Models": [
+    "/api/ollama/",
+    "/api/system_one/"
+  ],
+  "Moderation": [
+    "/llm/"
+  ],
+  "Multimodal-Input": [
+    "/api/responses/"
+  ],
+  "Natural-language-control-flow": [
+    "/llm/"
+  ],
+  "Objects": [
+    "/api/containers/",
+    "/api/fine_tuning/",
+    "/api/uploads/",
+    "/api/vector_stores/"
+  ],
+  "Ollama-(local)": [
+    "/llm/"
+  ],
+  "Ollama-model-management": [
+    "/llm/"
+  ],
+  "OpenAI-(default)": [
+    "/api/endpoints/"
+  ],
+  "Operations": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Output-Format": [
+    "/api/chat/"
+  ],
+  "Parameters-Reference": [
+    "/api/images/"
+  ],
+  "Parsed-Objects": [
+    "/api/batch/",
+    "/api/conversations/",
+    "/api/files/",
+    "/api/moderations/"
+  ],
+  "Pattern-Matching": [
+    "/api/results/"
+  ],
+  "Pattern-Matching-2": [
+    "/api/results/"
+  ],
+  "Pattern-Matching-3": [
+    "/api/results/"
+  ],
+  "Prefix-Example": [
+    "/llm/"
+  ],
+  "Provider-Capabilities": [
+    "/llm/"
+  ],
+  "Provider-Compatibility": [
+    "/llm/"
+  ],
+  "Provider-Contracts": [
+    "/llm/"
+  ],
+  "Provider-model-listings": [
+    "/llm/"
+  ],
+  "Provider-protocol-(public,-not-exported)": [
+    "/llm/"
+  ],
+  "Public-Extension-API-(not-exported)": [
+    "/llm/"
+  ],
+  "Questions": [
+    "/api/system_one/"
+  ],
+  "Reading-answers": [
+    "/guide/system_one/"
+  ],
+  "Reasoning,-Prompt-Caching-and-Moderation": [
+    "/api/responses/"
+  ],
+  "Reasoning-controls": [
+    "/llm/"
+  ],
+  "Recorded-answers": [
+    "/api/system_one/",
+    "/llm/"
+  ],
+  "Registration": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Renames-keep-their-old-names": [
+    "/stability/"
+  ],
+  "Request-Configuration-and-Timeouts": [
+    "/llm/"
+  ],
+  "Request-Function": [
+    "/api/chat/",
+    "/api/embeddings/",
+    "/api/images/"
+  ],
+  "Request-Functions": [
+    "/api/batch/",
+    "/api/completions/",
+    "/api/containers/",
+    "/api/conversations/",
+    "/api/files/",
+    "/api/fine_tuning/",
+    "/api/responses/",
+    "/api/uploads/",
+    "/api/vector_stores/"
+  ],
+  "Request-Type": [
+    "/api/completions/",
+    "/api/files/",
+    "/api/images/",
+    "/api/responses/"
+  ],
+  "Request-Types": [
+    "/api/audio/"
+  ],
+  "Request-and-Verbs": [
+    "/api/system_one/"
+  ],
+  "Resolution-Precedence": [
+    "/api/config/"
+  ],
+  "Respond": [
+    "/llm/"
+  ],
+  "Response-Accessors": [
+    "/llm/"
+  ],
+  "Response-Management-Functions": [
+    "/llm/"
+  ],
+  "Response-Object": [
+    "/api/responses/"
+  ],
+  "Response-Types": [
+    "/api/completions/",
+    "/api/images/",
+    "/llm/"
+  ],
+  "ResponseFormat-(Structured-Output)": [
+    "/llm/"
+  ],
+  "ResponseObject": [
+    "/llm/"
+  ],
+  "Responses-API": [
+    "/llm/"
+  ],
+  "Responses-API-Examples": [
+    "/llm/"
+  ],
+  "Responses-API-Results": [
+    "/api/results/"
+  ],
+  "Result-Helpers": [
+    "/api/results/"
+  ],
+  "Result-Type-Hierarchy": [
+    "/llm/"
+  ],
+  "Result-Types": [
+    "/api/audio/",
+    "/api/batch/",
+    "/api/completions/",
+    "/api/containers/",
+    "/api/conversations/",
+    "/api/embeddings/",
+    "/api/files/",
+    "/api/fine_tuning/",
+    "/api/images/",
+    "/api/moderations/",
+    "/api/responses/",
+    "/api/results/",
+    "/api/system_one/",
+    "/api/uploads/",
+    "/api/vector_stores/"
+  ],
+  "Results": [
+    "/api/models/",
+    "/api/ollama/"
+  ],
+  "Role-Constants": [
+    "/api/chat/"
+  ],
+  "Routing,-authentication-and-defaults": [
+    "/api/endpoints/"
+  ],
+  "Saving-Images": [
+    "/api/images/"
+  ],
+  "Selecting-a-Backend": [
+    "/api/endpoints/"
+  ],
+  "Server-Example": [
+    "/llm/"
+  ],
+  "Server-Functions": [
+    "/api/mcp/"
+  ],
+  "Server-Types": [
+    "/api/mcp/"
+  ],
+  "Service-Endpoints": [
+    "/llm/"
+  ],
+  "Serving": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Session-Concurrency": [
+    "/llm/"
+  ],
+  "Session-and-Result-Types": [
+    "/api/realtime/"
+  ],
+  "Sharp-edges": [
+    "/llm/"
+  ],
+  "Speech": [
+    "/api/audio/"
+  ],
+  "Streaming-Example-(Chat)": [
+    "/llm/"
+  ],
+  "System-One-API-(Jev,-OpenAI-Decisions,-Ollama)": [
+    "/llm/"
+  ],
+  "System-One-protocols": [
+    "/api/endpoints/"
+  ],
+  "Text-Format": [
+    "/api/responses/"
+  ],
+  "Text-Format-/-Structured-Output": [
+    "/llm/"
+  ],
+  "The-APIs": [
+    "/llm/"
+  ],
+  "The-CHANGELOG-is-authoritative": [
+    "/stability/"
+  ],
+  "Timeout-Errors": [
+    "/api/config/"
+  ],
+  "Token-Usage": [
+    "/api/accounting/"
+  ],
+  "TokenUsage": [
+    "/llm/"
+  ],
+  "Tool-Bridge": [
+    "/api/mcp/",
+    "/llm/"
+  ],
+  "Tool-Calling-Example-(Chat)": [
+    "/llm/"
+  ],
+  "Tool-Calling-Types": [
+    "/llm/"
+  ],
+  "Tool-Choice": [
+    "/api/responses/"
+  ],
+  "Tool-Constructors": [
+    "/api/responses/"
+  ],
+  "Tool-Loop": [
+    "/api/chat/",
+    "/llm/"
+  ],
+  "Tool-Result": [
+    "/llm/"
+  ],
+  "Tool-Results-and-Hosted-(Gemini)-Tools": [
+    "/api/responses/"
+  ],
+  "Tool-Types": [
+    "/api/responses/",
+    "/llm/"
+  ],
+  "ToolCallOutcome-/-ToolLoopResult": [
+    "/llm/"
+  ],
+  "Tools": [
+    "/api/chat/"
+  ],
+  "Toward-1.0": [
+    "/stability/"
+  ],
+  "Transcription": [
+    "/api/audio/"
+  ],
+  "Translation": [
+    "/api/audio/"
+  ],
+  "Transport-Functions": [
+    "/api/realtime/"
+  ],
+  "Type-Hierarchy": [
+    "/api/results/"
+  ],
+  "TypeSafe-(System-One-/-Jev)": [
+    "/api/endpoints/"
+  ],
+  "Types": [
+    "/llm/"
+  ],
+  "Types-2": [
+    "/llm/"
+  ],
+  "Types-and-Constants": [
+    "/api/webhooks/"
+  ],
+  "UniLM.@branch": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.@mcp_prompt": [
+    "/api/mcp/"
+  ],
+  "UniLM.@mcp_resource": [
+    "/api/mcp/"
+  ],
+  "UniLM.@mcp_tool": [
+    "/api/mcp/"
+  ],
+  "UniLM.@nl_str": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.ANTHROPICServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.AZUREServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.AgenticStreamState": [
+    "/api/endpoints/"
+  ],
+  "UniLM.ApplyPatchTool": [
+    "/api/responses/"
+  ],
+  "UniLM.Attachment": [
+    "/api/chat/"
+  ],
+  "UniLM.AudioAttachment": [
+    "/api/chat/"
+  ],
+  "UniLM.AudioCallError": [
+    "/api/audio/"
+  ],
+  "UniLM.AudioFailure": [
+    "/api/audio/"
+  ],
+  "UniLM.AudioOutput": [
+    "/api/chat/"
+  ],
+  "UniLM.BatchCallError": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchFailure": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchList": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchListSuccess": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchObject": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchSuccess": [
+    "/api/batch/"
+  ],
+  "UniLM.BoxAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.BoxCoordinates": [
+    "/api/system_one/"
+  ],
+  "UniLM.BoxQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.CallableTool": [
+    "/api/chat/"
+  ],
+  "UniLM.CancelToken": [
+    "/api/config/"
+  ],
+  "UniLM.Chat": [
+    "/api/chat/"
+  ],
+  "UniLM.ChoiceAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.ChoiceQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.CodeInterpreterTool": [
+    "/api/responses/"
+  ],
+  "UniLM.ComputerTool": [
+    "/api/responses/"
+  ],
+  "UniLM.ContainerCallError": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerDeleteSuccess": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerFailure": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerFileObject": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerList": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerListSuccess": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerObject": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerSuccess": [
+    "/api/containers/"
+  ],
+  "UniLM.ConversationCallError": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationDeleteSuccess": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationFailure": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationItem": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationItemList": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationItemListSuccess": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationItemSuccess": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationObject": [
+    "/api/conversations/"
+  ],
+  "UniLM.ConversationSuccess": [
+    "/api/conversations/"
+  ],
+  "UniLM.CustomTool": [
+    "/api/responses/"
+  ],
+  "UniLM.DEFAULT_PRICING": [
+    "/api/accounting/"
+  ],
+  "UniLM.DecisionDeclinedError": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.DeepSeekEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.DocumentAttachment": [
+    "/api/chat/"
+  ],
+  "UniLM.EmbeddingCallError": [
+    "/api/embeddings/"
+  ],
+  "UniLM.EmbeddingFailure": [
+    "/api/embeddings/"
+  ],
+  "UniLM.EmbeddingInput": [
+    "/api/embeddings/"
+  ],
+  "UniLM.EmbeddingSuccess": [
+    "/api/embeddings/"
+  ],
+  "UniLM.Embeddings": [
+    "/api/embeddings/"
+  ],
+  "UniLM.FIMCallError": [
+    "/api/completions/"
+  ],
+  "UniLM.FIMChoice": [
+    "/api/completions/"
+  ],
+  "UniLM.FIMCompletion": [
+    "/api/completions/"
+  ],
+  "UniLM.FIMFailure": [
+    "/api/completions/"
+  ],
+  "UniLM.FIMResponse": [
+    "/api/completions/"
+  ],
+  "UniLM.FIMSuccess": [
+    "/api/completions/"
+  ],
+  "UniLM.FileCallError": [
+    "/api/files/"
+  ],
+  "UniLM.FileContentSuccess": [
+    "/api/files/"
+  ],
+  "UniLM.FileDeleteSuccess": [
+    "/api/files/"
+  ],
+  "UniLM.FileFailure": [
+    "/api/files/"
+  ],
+  "UniLM.FileList": [
+    "/api/files/"
+  ],
+  "UniLM.FileListSuccess": [
+    "/api/files/"
+  ],
+  "UniLM.FileObject": [
+    "/api/files/"
+  ],
+  "UniLM.FileSearchTool": [
+    "/api/responses/"
+  ],
+  "UniLM.FileSuccess": [
+    "/api/files/"
+  ],
+  "UniLM.FileUpload": [
+    "/api/files/"
+  ],
+  "UniLM.FineTuningCallError": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningFailure": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningJob": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningList": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningListSuccess": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningSuccess": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FunctionCallResult": [
+    "/api/chat/"
+  ],
+  "UniLM.FunctionSignature": [
+    "/api/chat/"
+  ],
+  "UniLM.FunctionTool": [
+    "/api/responses/"
+  ],
+  "UniLM.GEMINIOpenAIServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.GEMINIServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.GPTFunctionCallResult": [
+    "/api/chat/"
+  ],
+  "UniLM.GPTFunctionSignature": [
+    "/api/chat/"
+  ],
+  "UniLM.GPTTool": [
+    "/api/chat/"
+  ],
+  "UniLM.GPTToolCall": [
+    "/api/chat/"
+  ],
+  "UniLM.GenericOpenAIEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.HTTPTransport": [
+    "/api/mcp/"
+  ],
+  "UniLM.ImageAttachment": [
+    "/api/chat/"
+  ],
+  "UniLM.ImageCallError": [
+    "/api/images/"
+  ],
+  "UniLM.ImageEdit": [
+    "/api/images/"
+  ],
+  "UniLM.ImageFailure": [
+    "/api/images/"
+  ],
+  "UniLM.ImageGeneration": [
+    "/api/images/"
+  ],
+  "UniLM.ImageGenerationTool": [
+    "/api/responses/"
+  ],
+  "UniLM.ImageObject": [
+    "/api/images/"
+  ],
+  "UniLM.ImageResponse": [
+    "/api/images/"
+  ],
+  "UniLM.ImageSuccess": [
+    "/api/images/"
+  ],
+  "UniLM.InputMessage": [
+    "/api/responses/"
+  ],
+  "UniLM.InvalidConversationError": [
+    "/api/chat/"
+  ],
+  "UniLM.LLMCallError": [
+    "/api/results/"
+  ],
+  "UniLM.LLMFailure": [
+    "/api/results/"
+  ],
+  "UniLM.LLMRequestResponse": [
+    "/api/results/"
+  ],
+  "UniLM.LLMResultError": [
+    "/api/results/"
+  ],
+  "UniLM.LLMSuccess": [
+    "/api/results/"
+  ],
+  "UniLM.LowConfidenceError": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.MCPCrashError": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPError": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPPromptInfo": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPResourceInfo": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServer": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerCapabilities": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerPrimitive": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerPrompt": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerResource": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerResourceTemplate": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPServerTool": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPSession": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPSessionClosedError": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPTimeoutError": [
+    "/api/config/"
+  ],
+  "UniLM.MCPTool": [
+    "/api/responses/"
+  ],
+  "UniLM.MCPToolInfo": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPToolResult": [
+    "/api/mcp/"
+  ],
+  "UniLM.MCPTransport": [
+    "/api/mcp/"
+  ],
+  "UniLM.Meaning": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.Message": [
+    "/api/chat/"
+  ],
+  "UniLM.MistralEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.ModelListCallError": [
+    "/api/models/"
+  ],
+  "UniLM.ModelListFailure": [
+    "/api/models/"
+  ],
+  "UniLM.ModelListSuccess": [
+    "/api/models/"
+  ],
+  "UniLM.ModerationCallError": [
+    "/api/moderations/"
+  ],
+  "UniLM.ModerationConfig": [
+    "/api/responses/"
+  ],
+  "UniLM.ModerationFailure": [
+    "/api/moderations/"
+  ],
+  "UniLM.ModerationResponse": [
+    "/api/moderations/"
+  ],
+  "UniLM.ModerationResult": [
+    "/api/moderations/"
+  ],
+  "UniLM.ModerationSuccess": [
+    "/api/moderations/"
+  ],
+  "UniLM.NoulAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.NoulCriteria": [
+    "/api/system_one/"
+  ],
+  "UniLM.NoulQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.OPENAIServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.OllamaCallError": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaEndpoint": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaFailure": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaModel": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaModelInfo": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaOptions": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaPullProgress": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaRunningModel": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaSuccess": [
+    "/api/ollama/"
+  ],
+  "UniLM.OllamaSystemOneProtocol": [
+    "/api/system_one/"
+  ],
+  "UniLM.OpenAIDecisionsProtocol": [
+    "/api/system_one/"
+  ],
+  "UniLM.OpenAIWireEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.PromptCacheOptions": [
+    "/api/responses/"
+  ],
+  "UniLM.ProviderContent": [
+    "/api/chat/"
+  ],
+  "UniLM.ProviderModel": [
+    "/api/models/"
+  ],
+  "UniLM.RawQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.RealtimeCallError": [
+    "/api/realtime/"
+  ],
+  "UniLM.RealtimeFailure": [
+    "/api/realtime/"
+  ],
+  "UniLM.RealtimeSecretSuccess": [
+    "/api/realtime/"
+  ],
+  "UniLM.RealtimeSession": [
+    "/api/realtime/"
+  ],
+  "UniLM.Reasoning": [
+    "/api/responses/"
+  ],
+  "UniLM.RecordingWriteError": [
+    "/api/system_one/"
+  ],
+  "UniLM.RefusalAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.ReplayMissError": [
+    "/api/system_one/"
+  ],
+  "UniLM.RequestConfig": [
+    "/api/config/"
+  ],
+  "UniLM.Respond": [
+    "/api/responses/"
+  ],
+  "UniLM.ResponseCallError": [
+    "/api/responses/"
+  ],
+  "UniLM.ResponseFailure": [
+    "/api/responses/"
+  ],
+  "UniLM.ResponseFormat": [
+    "/api/chat/"
+  ],
+  "UniLM.ResponseObject": [
+    "/api/responses/"
+  ],
+  "UniLM.ResponseSuccess": [
+    "/api/responses/"
+  ],
+  "UniLM.ResponseTool": [
+    "/api/responses/"
+  ],
+  "UniLM.RoleAssistant": [
+    "/api/chat/"
+  ],
+  "UniLM.RoleSystem": [
+    "/api/chat/"
+  ],
+  "UniLM.RoleUser": [
+    "/api/chat/"
+  ],
+  "UniLM.ScoreAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.ScoreQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.ServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.ServiceEndpointSpec": [
+    "/api/endpoints/"
+  ],
+  "UniLM.ShellTool": [
+    "/api/responses/"
+  ],
+  "UniLM.SpeechRequest": [
+    "/api/audio/"
+  ],
+  "UniLM.SpeechSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.StdioTransport": [
+    "/api/mcp/"
+  ],
+  "UniLM.StreamState": [
+    "/api/endpoints/"
+  ],
+  "UniLM.SystemOneAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneCallError": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneError": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneFailure": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneProtocol": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneQuestion": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneRequest": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneResponse": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneSuccess": [
+    "/api/system_one/"
+  ],
+  "UniLM.SystemOneWire": [
+    "/api/system_one/"
+  ],
+  "UniLM.TYPESAFEServiceEndpoint": [
+    "/api/endpoints/"
+  ],
+  "UniLM.TextConfig": [
+    "/api/responses/"
+  ],
+  "UniLM.TextFormatSpec": [
+    "/api/responses/"
+  ],
+  "UniLM.TokenUsage": [
+    "/api/accounting/"
+  ],
+  "UniLM.Tool": [
+    "/api/chat/"
+  ],
+  "UniLM.ToolCall": [
+    "/api/chat/"
+  ],
+  "UniLM.ToolCallOutcome": [
+    "/api/chat/"
+  ],
+  "UniLM.ToolLoopResult": [
+    "/api/chat/"
+  ],
+  "UniLM.TranscriptionRequest": [
+    "/api/audio/"
+  ],
+  "UniLM.TranscriptionSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.TypeSafeModelCard": [
+    "/api/system_one/"
+  ],
+  "UniLM.TypeSafeModelsSuccess": [
+    "/api/system_one/"
+  ],
+  "UniLM.TypeSafeProtocol": [
+    "/api/system_one/"
+  ],
+  "UniLM.UniLMCancelled": [
+    "/api/config/"
+  ],
+  "UniLM.UniLMTimeout": [
+    "/api/config/"
+  ],
+  "UniLM.UnknownAnswer": [
+    "/api/system_one/"
+  ],
+  "UniLM.UploadCallError": [
+    "/api/uploads/"
+  ],
+  "UniLM.UploadFailure": [
+    "/api/uploads/"
+  ],
+  "UniLM.UploadObject": [
+    "/api/uploads/"
+  ],
+  "UniLM.UploadPartObject": [
+    "/api/uploads/"
+  ],
+  "UniLM.UploadPartSuccess": [
+    "/api/uploads/"
+  ],
+  "UniLM.UploadSuccess": [
+    "/api/uploads/"
+  ],
+  "UniLM.VectorStoreBatchSuccess": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreCallError": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreDeleteSuccess": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFailure": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileBatch": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileObject": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileSuccess": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreList": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreListSuccess": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreObject": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreSuccess": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.WEBHOOK_EVENTS": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebSearchTool": [
+    "/api/responses/"
+  ],
+  "UniLM.WebhookEvent": [
+    "/api/webhooks/"
+  ],
+  "UniLM.add_azure_deploy_name!": [
+    "/api/endpoints/"
+  ],
+  "UniLM.add_container_file": [
+    "/api/containers/"
+  ],
+  "UniLM.add_conversation_items": [
+    "/api/conversations/"
+  ],
+  "UniLM.add_upload_part": [
+    "/api/uploads/"
+  ],
+  "UniLM.add_vector_store_file": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.answer": [
+    "/api/system_one/"
+  ],
+  "UniLM.answers": [
+    "/api/system_one/"
+  ],
+  "UniLM.apply_patch_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.ask": [
+    "/api/system_one/"
+  ],
+  "UniLM.ask_each": [
+    "/api/system_one/"
+  ],
+  "UniLM.auth_header": [
+    "/api/endpoints/"
+  ],
+  "UniLM.box": [
+    "/api/system_one/"
+  ],
+  "UniLM.call_tool": [
+    "/api/mcp/"
+  ],
+  "UniLM.cancel!": [
+    "/api/config/"
+  ],
+  "UniLM.cancel_batch": [
+    "/api/batch/"
+  ],
+  "UniLM.cancel_fine_tuning_job": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.cancel_response": [
+    "/api/responses/"
+  ],
+  "UniLM.cancel_upload": [
+    "/api/uploads/"
+  ],
+  "UniLM.chatrequest!": [
+    "/api/chat/"
+  ],
+  "UniLM.choice": [
+    "/api/system_one/"
+  ],
+  "UniLM.code_interpreter": [
+    "/api/responses/"
+  ],
+  "UniLM.code_interpreter_outputs": [
+    "/api/responses/"
+  ],
+  "UniLM.compact_response": [
+    "/api/responses/"
+  ],
+  "UniLM.complete_upload": [
+    "/api/uploads/"
+  ],
+  "UniLM.computer_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.configuration_update": [
+    "/api/responses/"
+  ],
+  "UniLM.conversation_id": [
+    "/api/conversations/"
+  ],
+  "UniLM.count_input_tokens": [
+    "/api/responses/"
+  ],
+  "UniLM.create_batch": [
+    "/api/batch/"
+  ],
+  "UniLM.create_container": [
+    "/api/containers/"
+  ],
+  "UniLM.create_conversation": [
+    "/api/conversations/"
+  ],
+  "UniLM.create_file_batch": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.create_fine_tuning_job": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.create_upload": [
+    "/api/uploads/"
+  ],
+  "UniLM.create_vector_store": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.cumulative_cost": [
+    "/api/accounting/"
+  ],
+  "UniLM.current_config": [
+    "/api/config/"
+  ],
+  "UniLM.custom_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.decode_agentic": [
+    "/api/endpoints/"
+  ],
+  "UniLM.decode_agentic_stream": [
+    "/api/endpoints/"
+  ],
+  "UniLM.decode_response": [
+    "/api/endpoints/"
+  ],
+  "UniLM.decode_system_one": [
+    "/api/system_one/"
+  ],
+  "UniLM.default_model": [
+    "/api/endpoints/"
+  ],
+  "UniLM.delete_container": [
+    "/api/containers/"
+  ],
+  "UniLM.delete_conversation": [
+    "/api/conversations/"
+  ],
+  "UniLM.delete_conversation_item": [
+    "/api/conversations/"
+  ],
+  "UniLM.delete_file": [
+    "/api/files/"
+  ],
+  "UniLM.delete_model": [
+    "/api/ollama/"
+  ],
+  "UniLM.delete_response": [
+    "/api/responses/"
+  ],
+  "UniLM.delete_vector_store": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.edit_image": [
+    "/api/images/"
+  ],
+  "UniLM.embedding_vectors": [
+    "/api/embeddings/"
+  ],
+  "UniLM.embeddingrequest!": [
+    "/api/embeddings/"
+  ],
+  "UniLM.encode_agentic": [
+    "/api/endpoints/"
+  ],
+  "UniLM.encode_request": [
+    "/api/endpoints/"
+  ],
+  "UniLM.encode_system_one": [
+    "/api/system_one/"
+  ],
+  "UniLM.estimated_cost": [
+    "/api/accounting/"
+  ],
+  "UniLM.file_content": [
+    "/api/files/"
+  ],
+  "UniLM.file_search": [
+    "/api/responses/"
+  ],
+  "UniLM.file_search_results": [
+    "/api/responses/"
+  ],
+  "UniLM.fim_complete": [
+    "/api/completions/"
+  ],
+  "UniLM.fim_text": [
+    "/api/completions/"
+  ],
+  "UniLM.fork": [
+    "/api/chat/"
+  ],
+  "UniLM.function_calls": [
+    "/api/responses/"
+  ],
+  "UniLM.function_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.gemini_code_execution": [
+    "/api/responses/"
+  ],
+  "UniLM.gemini_google_search": [
+    "/api/responses/"
+  ],
+  "UniLM.gemini_url_context": [
+    "/api/responses/"
+  ],
+  "UniLM.generate_image": [
+    "/api/images/"
+  ],
+  "UniLM.get_prompt": [
+    "/api/mcp/"
+  ],
+  "UniLM.get_response": [
+    "/api/responses/"
+  ],
+  "UniLM.get_url": [
+    "/api/endpoints/"
+  ],
+  "UniLM.handle_sse_event!": [
+    "/api/endpoints/"
+  ],
+  "UniLM.has_capability": [
+    "/api/capabilities/"
+  ],
+  "UniLM.image_data": [
+    "/api/images/"
+  ],
+  "UniLM.image_generation_results": [
+    "/api/responses/"
+  ],
+  "UniLM.image_generation_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.incomplete_details": [
+    "/api/responses/"
+  ],
+  "UniLM.input_audio_append": [
+    "/api/realtime/"
+  ],
+  "UniLM.input_file": [
+    "/api/responses/"
+  ],
+  "UniLM.input_image": [
+    "/api/responses/"
+  ],
+  "UniLM.input_text": [
+    "/api/responses/"
+  ],
+  "UniLM.is_flagged": [
+    "/api/moderations/"
+  ],
+  "UniLM.iscancelled": [
+    "/api/config/"
+  ],
+  "UniLM.isfailure": [
+    "/api/results/"
+  ],
+  "UniLM.issendvalid": [
+    "/api/chat/"
+  ],
+  "UniLM.issuccess": [
+    "/api/results/"
+  ],
+  "UniLM.jl": [
+    "/"
+  ],
+  "UniLM.jl-—-LLM-Reference": [
+    "/llm/"
+  ],
+  "UniLM.json_object_format": [
+    "/api/responses/"
+  ],
+  "UniLM.json_schema_format": [
+    "/api/responses/"
+  ],
+  "UniLM.list_batches": [
+    "/api/batch/"
+  ],
+  "UniLM.list_containers": [
+    "/api/containers/"
+  ],
+  "UniLM.list_conversation_items": [
+    "/api/conversations/"
+  ],
+  "UniLM.list_files": [
+    "/api/files/"
+  ],
+  "UniLM.list_fine_tuning_checkpoints": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.list_fine_tuning_events": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.list_fine_tuning_jobs": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.list_input_items": [
+    "/api/responses/"
+  ],
+  "UniLM.list_models": [
+    "/api/system_one/"
+  ],
+  "UniLM.list_prompts!": [
+    "/api/mcp/"
+  ],
+  "UniLM.list_resources!": [
+    "/api/mcp/"
+  ],
+  "UniLM.list_tools!": [
+    "/api/mcp/"
+  ],
+  "UniLM.list_vector_stores": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.load_model": [
+    "/api/ollama/"
+  ],
+  "UniLM.mcp_approval_requests": [
+    "/api/responses/"
+  ],
+  "UniLM.mcp_approval_response": [
+    "/api/responses/"
+  ],
+  "UniLM.mcp_call_outputs": [
+    "/api/responses/"
+  ],
+  "UniLM.mcp_connect": [
+    "/api/mcp/"
+  ],
+  "UniLM.mcp_disconnect!": [
+    "/api/mcp/"
+  ],
+  "UniLM.mcp_tool": [
+    "/api/responses/"
+  ],
+  "UniLM.mcp_tools": [
+    "/api/mcp/"
+  ],
+  "UniLM.mcp_tools_respond": [
+    "/api/mcp/"
+  ],
+  "UniLM.meaning_gaps": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.meanings": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.mint_realtime_secret": [
+    "/api/realtime/"
+  ],
+  "UniLM.model_info": [
+    "/api/ollama/"
+  ],
+  "UniLM.moderate": [
+    "/api/moderations/"
+  ],
+  "UniLM.nl_classify": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.nl_dispatch": [
+    "/api/nl_dispatch/"
+  ],
+  "UniLM.noul": [
+    "/api/system_one/"
+  ],
+  "UniLM.output_text": [
+    "/api/responses/"
+  ],
+  "UniLM.parse_webhook": [
+    "/api/webhooks/"
+  ],
+  "UniLM.ping": [
+    "/api/mcp/"
+  ],
+  "UniLM.poll_batch": [
+    "/api/batch/"
+  ],
+  "UniLM.poll_file_batch": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.prefix_complete": [
+    "/api/completions/"
+  ],
+  "UniLM.provider_capabilities": [
+    "/api/capabilities/"
+  ],
+  "UniLM.pull_model": [
+    "/api/ollama/"
+  ],
+  "UniLM.read_resource": [
+    "/api/mcp/"
+  ],
+  "UniLM.realtime_connect": [
+    "/api/realtime/"
+  ],
+  "UniLM.realtime_event": [
+    "/api/realtime/"
+  ],
+  "UniLM.realtime_receive": [
+    "/api/realtime/"
+  ],
+  "UniLM.realtime_send": [
+    "/api/realtime/"
+  ],
+  "UniLM.reasoning_items": [
+    "/api/responses/"
+  ],
+  "UniLM.reasoning_summaries": [
+    "/api/responses/"
+  ],
+  "UniLM.reasoning_text": [
+    "/api/chat/"
+  ],
+  "UniLM.refusals": [
+    "/api/responses/"
+  ],
+  "UniLM.register_prompt!": [
+    "/api/mcp/"
+  ],
+  "UniLM.register_resource!": [
+    "/api/mcp/"
+  ],
+  "UniLM.register_resource_template!": [
+    "/api/mcp/"
+  ],
+  "UniLM.register_tool!": [
+    "/api/mcp/"
+  ],
+  "UniLM.respond": [
+    "/api/responses/"
+  ],
+  "UniLM.response_create": [
+    "/api/realtime/"
+  ],
+  "UniLM.response_status": [
+    "/api/responses/"
+  ],
+  "UniLM.retrieve_batch": [
+    "/api/batch/"
+  ],
+  "UniLM.retrieve_container": [
+    "/api/containers/"
+  ],
+  "UniLM.retrieve_conversation": [
+    "/api/conversations/"
+  ],
+  "UniLM.retrieve_conversation_item": [
+    "/api/conversations/"
+  ],
+  "UniLM.retrieve_file": [
+    "/api/files/"
+  ],
+  "UniLM.retrieve_file_batch": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.retrieve_fine_tuning_job": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.retrieve_vector_store": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.running_models": [
+    "/api/ollama/"
+  ],
+  "UniLM.save_audio": [
+    "/api/audio/"
+  ],
+  "UniLM.save_file_content": [
+    "/api/files/"
+  ],
+  "UniLM.save_image": [
+    "/api/images/"
+  ],
+  "UniLM.score": [
+    "/api/system_one/"
+  ],
+  "UniLM.serve": [
+    "/api/mcp/"
+  ],
+  "UniLM.session_update": [
+    "/api/realtime/"
+  ],
+  "UniLM.set_default_config!": [
+    "/api/config/"
+  ],
+  "UniLM.shell": [
+    "/api/responses/"
+  ],
+  "UniLM.speak": [
+    "/api/audio/"
+  ],
+  "UniLM.system_one_protocol": [
+    "/api/system_one/"
+  ],
+  "UniLM.text": [
+    "/api/results/"
+  ],
+  "UniLM.text_format": [
+    "/api/responses/"
+  ],
+  "UniLM.to_tool": [
+    "/api/chat/"
+  ],
+  "UniLM.token_usage": [
+    "/api/accounting/"
+  ],
+  "UniLM.tool_choice_allowed": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_choice_custom": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_choice_function": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_choice_hosted": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_choice_mcp": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_loop": [
+    "/api/chat/"
+  ],
+  "UniLM.tool_loop!": [
+    "/api/chat/"
+  ],
+  "UniLM.tool_result": [
+    "/api/responses/"
+  ],
+  "UniLM.transcribe": [
+    "/api/audio/"
+  ],
+  "UniLM.transcript_text": [
+    "/api/audio/"
+  ],
+  "UniLM.translate": [
+    "/api/audio/"
+  ],
+  "UniLM.unload_model": [
+    "/api/ollama/"
+  ],
+  "UniLM.update!": [
+    "/api/chat/"
+  ],
+  "UniLM.update_conversation": [
+    "/api/conversations/"
+  ],
+  "UniLM.upload_file": [
+    "/api/files/"
+  ],
+  "UniLM.url_citations": [
+    "/api/responses/"
+  ],
+  "UniLM.usage_details": [
+    "/api/responses/"
+  ],
+  "UniLM.vector_store_id": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.verify_webhook": [
+    "/api/webhooks/"
+  ],
+  "UniLM.web_search": [
+    "/api/responses/"
+  ],
+  "UniLM.web_search_results": [
+    "/api/responses/"
+  ],
+  "UniLM.with_cancel": [
+    "/api/config/"
+  ],
+  "UniLM.with_recorded_answers": [
+    "/api/system_one/"
+  ],
+  "UniLM.with_request_config": [
+    "/api/config/"
+  ],
+  "UniLM.with_system_one": [
+    "/api/system_one/"
+  ],
+  "Usage": [
+    "/api/audio/",
+    "/api/batch/",
+    "/api/containers/",
+    "/api/conversations/",
+    "/api/files/",
+    "/api/fine_tuning/",
+    "/api/moderations/",
+    "/api/nl_dispatch/",
+    "/api/realtime/",
+    "/api/uploads/",
+    "/api/vector_stores/",
+    "/api/webhooks/"
+  ],
+  "Usage-Example": [
+    "/api/embeddings/"
+  ],
+  "Usage-Examples": [
+    "/api/images/"
+  ],
+  "Versioning-and-Stability": [
+    "/stability/"
+  ],
+  "What-\"validate-before-dispatch\"-means": [
+    "/api/capabilities/"
+  ],
+  "What-0.x-means-here": [
+    "/stability/"
+  ],
+  "What-each-provider-reports": [
+    "/api/models/"
+  ],
+  "Which-verbs-retry": [
+    "/llm/"
+  ],
+  "accounting_api": [
+    "/api/accounting/"
+  ],
+  "agentic_background": [
+    "/guide/agentic/"
+  ],
+  "agentic_conversations": [
+    "/guide/agentic/"
+  ],
+  "agentic_first": [
+    "/guide/agentic/"
+  ],
+  "agentic_guide": [
+    "/guide/agentic/"
+  ],
+  "agentic_input": [
+    "/guide/agentic/"
+  ],
+  "agentic_providers": [
+    "/guide/agentic/"
+  ],
+  "agentic_see_also": [
+    "/guide/agentic/"
+  ],
+  "agentic_tools": [
+    "/guide/agentic/"
+  ],
+  "anthropic_caching": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_caching_page": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_compatible": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_conversations": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_cost": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_failures": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_first_call": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_limits": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_media": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_models": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_options": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_reasoning": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_request_options": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_requests_page": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_setup": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_start": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_streaming": [
+    "/providers/anthropic/"
+  ],
+  "anthropic_structured_output": [
+    "/providers/anthropic/requests/"
+  ],
+  "anthropic_tools": [
+    "/providers/anthropic/requests/"
+  ],
+  "attachments_guide": [
+    "/guide/attachments/"
+  ],
+  "attachments_providers": [
+    "/guide/attachments/"
+  ],
+  "attachments_send": [
+    "/guide/attachments/"
+  ],
+  "audio_api": [
+    "/api/audio/"
+  ],
+  "azure_caching": [
+    "/providers/azure/"
+  ],
+  "azure_compatible": [
+    "/providers/azure/"
+  ],
+  "azure_conversations": [
+    "/providers/azure/"
+  ],
+  "azure_cost": [
+    "/providers/azure/"
+  ],
+  "azure_failures": [
+    "/providers/azure/"
+  ],
+  "azure_first_call": [
+    "/providers/azure/"
+  ],
+  "azure_limits": [
+    "/providers/azure/"
+  ],
+  "azure_media": [
+    "/providers/azure/"
+  ],
+  "azure_models": [
+    "/providers/azure/"
+  ],
+  "azure_reasoning": [
+    "/providers/azure/"
+  ],
+  "azure_setup": [
+    "/providers/azure/"
+  ],
+  "azure_start": [
+    "/providers/azure/"
+  ],
+  "azure_streaming": [
+    "/providers/azure/"
+  ],
+  "azure_structured_output": [
+    "/providers/azure/"
+  ],
+  "azure_tools": [
+    "/providers/azure/"
+  ],
+  "backend_guide": [
+    "/guide/multi_backend/"
+  ],
+  "backends_choose": [
+    "/decisions/choosing/"
+  ],
+  "backends_confidence": [
+    "/decisions/choosing/"
+  ],
+  "backends_provider_models": [
+    "/guide/multi_backend/"
+  ],
+  "backends_refusals": [
+    "/decisions/choosing/"
+  ],
+  "backends_same_call": [
+    "/decisions/choosing/"
+  ],
+  "backends_table": [
+    "/decisions/choosing/"
+  ],
+  "batch_api": [
+    "/api/batch/"
+  ],
+  "capabilities_api": [
+    "/api/capabilities/"
+  ],
+  "capabilities_check": [
+    "/guide/capabilities/"
+  ],
+  "capabilities_guide": [
+    "/guide/capabilities/"
+  ],
+  "capabilities_matrix": [
+    "/guide/capabilities/"
+  ],
+  "capabilities_providers": [
+    "/guide/capabilities/"
+  ],
+  "chat_api": [
+    "/api/chat/"
+  ],
+  "chat_attachments": [
+    "/guide/attachments/"
+  ],
+  "chat_audio_output": [
+    "/providers/openai/chat_completions/"
+  ],
+  "chat_completions_body": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_create": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_keywords": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_messages": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_providers": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_retries": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_rules": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_see_also": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_send": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_turns": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_validation": [
+    "/guide/chat_completions/"
+  ],
+  "chat_completions_validity": [
+    "/guide/chat_completions/"
+  ],
+  "chat_guide": [
+    "/guide/chat_completions/"
+  ],
+  "chatrequest!": [
+    "/llm/"
+  ],
+  "completions_capabilities": [
+    "/guide/completions/"
+  ],
+  "completions_fim": [
+    "/guide/completions/"
+  ],
+  "completions_fim_request": [
+    "/guide/completions/"
+  ],
+  "completions_fim_results": [
+    "/guide/completions/"
+  ],
+  "completions_fim_send": [
+    "/guide/completions/"
+  ],
+  "completions_guide": [
+    "/guide/completions/"
+  ],
+  "completions_prefix": [
+    "/guide/completions/"
+  ],
+  "completions_prefix_usage": [
+    "/guide/completions/"
+  ],
+  "completions_prefix_validation": [
+    "/guide/completions/"
+  ],
+  "completions_providers": [
+    "/guide/completions/"
+  ],
+  "completions_see_also": [
+    "/guide/completions/"
+  ],
+  "concurrency_cancellation": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_fan_out": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_guide": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_http": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_limits": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_mcp": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_providers": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_see_also": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_sharing": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_streaming": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_threads": [
+    "/guide/concurrency/"
+  ],
+  "concurrency_tool_loops": [
+    "/guide/concurrency/"
+  ],
+  "containers_api": [
+    "/api/containers/"
+  ],
+  "conversations_api": [
+    "/api/conversations/"
+  ],
+  "cost_estimate": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_guide": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_cumulative": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_custom": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_drift": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_local": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_providers": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_reading": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_see_also": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_table": [
+    "/guide/cost_tracking/"
+  ],
+  "cost_tracking_totals": [
+    "/guide/cost_tracking/"
+  ],
+  "custom_backends_fail_loud": [
+    "/guide/custom_backends/"
+  ],
+  "custom_backends_guide": [
+    "/guide/custom_backends/"
+  ],
+  "custom_backends_native": [
+    "/guide/custom_backends/"
+  ],
+  "custom_backends_openai_wire": [
+    "/guide/custom_backends/"
+  ],
+  "custom_backends_providers": [
+    "/guide/custom_backends/"
+  ],
+  "custom_backends_see_also": [
+    "/guide/custom_backends/"
+  ],
+  "decisions_across": [
+    "/decisions/"
+  ],
+  "decisions_concepts": [
+    "/decisions/"
+  ],
+  "decisions_custom": [
+    "/decisions/custom/"
+  ],
+  "decisions_custom_gateway": [
+    "/decisions/custom/"
+  ],
+  "decisions_custom_hooks": [
+    "/decisions/custom/"
+  ],
+  "decisions_custom_protocol": [
+    "/decisions/custom/"
+  ],
+  "decisions_providers": [
+    "/decisions/"
+  ],
+  "decisions_start": [
+    "/decisions/"
+  ],
+  "deepseek_caching": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_completions": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_conversations": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_cost": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_failures": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_first_call": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_limits": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_media": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_models": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_reasoning": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_setup": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_start": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_streaming": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_structured_output": [
+    "/providers/deepseek/"
+  ],
+  "deepseek_tools": [
+    "/providers/deepseek/"
+  ],
+  "embeddingrequest!": [
+    "/llm/"
+  ],
+  "embeddings_api": [
+    "/api/embeddings/"
+  ],
+  "embeddings_basic": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_batch": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_dimensions": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_guide": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_in_place": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_media": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_providers": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_retries": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_see_also": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_similarity": [
+    "/guide/embeddings/"
+  ],
+  "embeddings_tasks": [
+    "/guide/embeddings/"
+  ],
+  "endpoints_api": [
+    "/api/endpoints/"
+  ],
+  "extension_api": [
+    "/api/endpoints/"
+  ],
+  "files_api": [
+    "/api/files/"
+  ],
+  "fim_api": [
+    "/api/completions/"
+  ],
+  "fine_tuning_api": [
+    "/api/fine_tuning/"
+  ],
+  "gemini_apis": [
+    "/providers/gemini/"
+  ],
+  "gemini_audio": [
+    "/providers/gemini/media/"
+  ],
+  "gemini_background": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_caching": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_compatible": [
+    "/providers/gemini/media/"
+  ],
+  "gemini_conversations": [
+    "/providers/gemini/"
+  ],
+  "gemini_cost": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_embeddings": [
+    "/providers/gemini/media/"
+  ],
+  "gemini_failures": [
+    "/providers/gemini/"
+  ],
+  "gemini_finish_reasons": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_first_call": [
+    "/providers/gemini/"
+  ],
+  "gemini_generate_content_page": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_hosted_tools": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_images": [
+    "/providers/gemini/media/"
+  ],
+  "gemini_interactions_conversations": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_first": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_input": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_options": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_page": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_streaming": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_structured_output": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_thinking": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_interactions_tools": [
+    "/providers/gemini/interactions/"
+  ],
+  "gemini_limits": [
+    "/providers/gemini/"
+  ],
+  "gemini_long_decode": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_media": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_media_page": [
+    "/providers/gemini/media/"
+  ],
+  "gemini_models": [
+    "/providers/gemini/"
+  ],
+  "gemini_reasoning": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_request_options": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_setup": [
+    "/providers/gemini/"
+  ],
+  "gemini_start": [
+    "/providers/gemini/"
+  ],
+  "gemini_streaming": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_structured_output": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_tools": [
+    "/providers/gemini/generate_content/"
+  ],
+  "generate_image": [
+    "/llm/"
+  ],
+  "getting_started": [
+    "/getting_started/"
+  ],
+  "getting_started_first_call": [
+    "/getting_started/"
+  ],
+  "getting_started_keys": [
+    "/getting_started/"
+  ],
+  "getting_started_next": [
+    "/getting_started/"
+  ],
+  "getting_started_package": [
+    "/getting_started/"
+  ],
+  "getting_started_results": [
+    "/getting_started/"
+  ],
+  "home_across": [
+    "/"
+  ],
+  "home_decisions": [
+    "/"
+  ],
+  "home_install": [
+    "/"
+  ],
+  "home_llm": [
+    "/"
+  ],
+  "image_generation_edit": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_errors": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_generate": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_providers": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_request": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_results": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_retries": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_save": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_see_also": [
+    "/guide/image_generation/"
+  ],
+  "images_api": [
+    "/api/images/"
+  ],
+  "images_guide": [
+    "/guide/image_generation/"
+  ],
+  "jev_abilities_page": [
+    "/decisions/jev/abilities/"
+  ],
+  "jev_act_on_answer": [
+    "/guide/system_one/"
+  ],
+  "jev_algorithms_guide": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_box": [
+    "/decisions/jev/abilities/"
+  ],
+  "jev_confidence": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_cost": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_designing_questions": [
+    "/guide/system_one/"
+  ],
+  "jev_errors": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_fill_struct": [
+    "/guide/system_one/"
+  ],
+  "jev_first_decision": [
+    "/decisions/jev/"
+  ],
+  "jev_images": [
+    "/decisions/jev/abilities/"
+  ],
+  "jev_items_batch": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_bisect": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_chunks": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_count": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_each": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_find": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_match": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_rank": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_items_stop": [
+    "/guide/semantic_algorithms/"
+  ],
+  "jev_limits": [
+    "/decisions/jev/"
+  ],
+  "jev_llm_check_claims": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_check_draft": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_desk": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_domains": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_guide": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_pick_model": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_route": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_screen_input": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_shortlist": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_llm_tool_calls": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_long_context": [
+    "/decisions/jev/abilities/"
+  ],
+  "jev_loss_matrix": [
+    "/guide/system_one/"
+  ],
+  "jev_many_questions": [
+    "/guide/system_one/"
+  ],
+  "jev_models": [
+    "/decisions/jev/"
+  ],
+  "jev_none_of_these": [
+    "/guide/system_one/"
+  ],
+  "jev_operations_page": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_primitives": [
+    "/guide/system_one/"
+  ],
+  "jev_questions": [
+    "/decisions/jev/"
+  ],
+  "jev_setup": [
+    "/decisions/jev/"
+  ],
+  "jev_start": [
+    "/decisions/jev/"
+  ],
+  "jev_structured": [
+    "/decisions/jev/abilities/"
+  ],
+  "jev_testing": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_testing_assertions": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_audit": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_coverage": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_edge_cases": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_guide": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_keyed": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_manual": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_methods": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_paraphrase": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_pipeline": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_preview": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_providers": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_recorded": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_resolution": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_see_also": [
+    "/guide/jev_testing/"
+  ],
+  "jev_testing_tests": [
+    "/guide/jev_testing/"
+  ],
+  "jev_throughput": [
+    "/decisions/jev/operations/"
+  ],
+  "jev_with_llms_providers": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_with_llms_see_also": [
+    "/guide/jev_with_llms/"
+  ],
+  "jev_worst_level": [
+    "/guide/system_one/"
+  ],
+  "llm_across": [
+    "/providers/"
+  ],
+  "llm_concepts": [
+    "/providers/"
+  ],
+  "llm_providers": [
+    "/providers/"
+  ],
+  "llm_start": [
+    "/providers/"
+  ],
+  "local_servers_completions": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_embeddings": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_failures": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_first_call": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_limits": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_other_apis": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_respond": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_setup": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_start": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_streaming": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_structured_output": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_tools": [
+    "/providers/local_servers/"
+  ],
+  "local_servers_transcription": [
+    "/providers/local_servers/"
+  ],
+  "mcp_api": [
+    "/api/mcp/"
+  ],
+  "mcp_bridge_chat": [
+    "/guide/mcp/"
+  ],
+  "mcp_bridge_respond": [
+    "/guide/mcp/"
+  ],
+  "mcp_calling": [
+    "/guide/mcp/"
+  ],
+  "mcp_client": [
+    "/guide/mcp/"
+  ],
+  "mcp_connecting": [
+    "/guide/mcp/"
+  ],
+  "mcp_discovery": [
+    "/guide/mcp/"
+  ],
+  "mcp_guide": [
+    "/guide/mcp/"
+  ],
+  "mcp_hosted": [
+    "/guide/mcp/"
+  ],
+  "mcp_macro_prompt": [
+    "/guide/mcp/"
+  ],
+  "mcp_macro_resource": [
+    "/guide/mcp/"
+  ],
+  "mcp_macro_tool": [
+    "/guide/mcp/"
+  ],
+  "mcp_macros": [
+    "/guide/mcp/"
+  ],
+  "mcp_providers": [
+    "/guide/mcp/"
+  ],
+  "mcp_register_prompts": [
+    "/guide/mcp/"
+  ],
+  "mcp_register_resources": [
+    "/guide/mcp/"
+  ],
+  "mcp_register_tools": [
+    "/guide/mcp/"
+  ],
+  "mcp_see_also": [
+    "/guide/mcp/"
+  ],
+  "mcp_server": [
+    "/guide/mcp/"
+  ],
+  "mcp_server_create": [
+    "/guide/mcp/"
+  ],
+  "mcp_serving": [
+    "/guide/mcp/"
+  ],
+  "mcp_timeouts": [
+    "/guide/mcp/"
+  ],
+  "mcp_transports": [
+    "/guide/mcp/"
+  ],
+  "models_api": [
+    "/api/models/"
+  ],
+  "moderations_api": [
+    "/api/moderations/"
+  ],
+  "multi_backend_compare": [
+    "/guide/multi_backend/"
+  ],
+  "multi_backend_providers": [
+    "/guide/multi_backend/"
+  ],
+  "multi_backend_see_also": [
+    "/guide/multi_backend/"
+  ],
+  "multi_backend_shared": [
+    "/guide/multi_backend/"
+  ],
+  "multi_backend_switch": [
+    "/guide/multi_backend/"
+  ],
+  "natural_language_dispatch_how": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "natural_language_dispatch_providers": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "natural_language_dispatch_see_also": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "natural_language_dispatch_sixty": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "natural_language_dispatch_slots": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "natural_language_dispatch_testing": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_api": [
+    "/api/nl_dispatch/"
+  ],
+  "nl_dispatch_branch": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_composing": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_control": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_design": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_guide": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_hierarchy": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_keyed": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_literal": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_order": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "nl_dispatch_paths": [
+    "/guide/natural_language_dispatch/"
+  ],
+  "ollama_api": [
+    "/api/ollama/"
+  ],
+  "ollama_conversations": [
+    "/providers/ollama/"
+  ],
+  "ollama_cost": [
+    "/providers/ollama/"
+  ],
+  "ollama_decisions_confidence": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_failures": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_first_decision": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_images": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_limits": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_models": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_options": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_questions": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_setup": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_start": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_testing": [
+    "/decisions/ollama/"
+  ],
+  "ollama_decisions_throughput": [
+    "/decisions/ollama/"
+  ],
+  "ollama_embedding_media": [
+    "/providers/ollama/embeddings/"
+  ],
+  "ollama_embedding_window": [
+    "/providers/ollama/embeddings/"
+  ],
+  "ollama_embeddings": [
+    "/providers/ollama/embeddings/"
+  ],
+  "ollama_embeddings_page": [
+    "/providers/ollama/embeddings/"
+  ],
+  "ollama_failures": [
+    "/providers/ollama/runtime/"
+  ],
+  "ollama_first": [
+    "/providers/ollama/"
+  ],
+  "ollama_guide": [
+    "/providers/ollama/"
+  ],
+  "ollama_json": [
+    "/providers/ollama/"
+  ],
+  "ollama_limits": [
+    "/providers/ollama/"
+  ],
+  "ollama_media": [
+    "/providers/ollama/"
+  ],
+  "ollama_models": [
+    "/providers/ollama/runtime/"
+  ],
+  "ollama_options": [
+    "/providers/ollama/runtime/"
+  ],
+  "ollama_respond": [
+    "/providers/ollama/"
+  ],
+  "ollama_retrieval": [
+    "/providers/ollama/embeddings/"
+  ],
+  "ollama_runners": [
+    "/providers/ollama/runtime/"
+  ],
+  "ollama_runtime_page": [
+    "/providers/ollama/runtime/"
+  ],
+  "ollama_setup": [
+    "/providers/ollama/"
+  ],
+  "ollama_streaming": [
+    "/providers/ollama/"
+  ],
+  "ollama_thinking": [
+    "/providers/ollama/"
+  ],
+  "ollama_tools": [
+    "/providers/ollama/"
+  ],
+  "ollama_transcription": [
+    "/providers/ollama/"
+  ],
+  "openai_apis": [
+    "/providers/openai/"
+  ],
+  "openai_audio": [
+    "/providers/openai/media/"
+  ],
+  "openai_batch": [
+    "/providers/openai/platform/"
+  ],
+  "openai_caching": [
+    "/providers/openai/models/"
+  ],
+  "openai_chat_completions_page": [
+    "/providers/openai/chat_completions/"
+  ],
+  "openai_chat_options": [
+    "/providers/openai/chat_completions/"
+  ],
+  "openai_chat_tools": [
+    "/providers/openai/chat_completions/"
+  ],
+  "openai_compatible_audio": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_completions": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_conversations": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_cost": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_embeddings": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_failures": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_first_call": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_limits": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_media": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_models": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_setup": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_start": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_streaming": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_structured_output": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_compatible_tools": [
+    "/providers/openai_compatible/"
+  ],
+  "openai_containers": [
+    "/providers/openai/platform/"
+  ],
+  "openai_conversations": [
+    "/providers/openai/"
+  ],
+  "openai_conversations_api": [
+    "/providers/openai/platform/"
+  ],
+  "openai_cost": [
+    "/providers/openai/models/"
+  ],
+  "openai_decisions_confidence": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_cost": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_failures": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_first_decision": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_limits": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_models": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_options": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_questions": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_refusals": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_setup": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_start": [
+    "/decisions/openai/"
+  ],
+  "openai_decisions_testing": [
+    "/decisions/openai/"
+  ],
+  "openai_embeddings": [
+    "/providers/openai/"
+  ],
+  "openai_failures": [
+    "/providers/openai/"
+  ],
+  "openai_files": [
+    "/providers/openai/platform/"
+  ],
+  "openai_fine_tuning": [
+    "/providers/openai/platform/"
+  ],
+  "openai_first_call": [
+    "/providers/openai/"
+  ],
+  "openai_hosted_tools": [
+    "/providers/openai/responses/"
+  ],
+  "openai_images": [
+    "/providers/openai/media/"
+  ],
+  "openai_limits": [
+    "/providers/openai/models/"
+  ],
+  "openai_long_jobs": [
+    "/providers/openai/platform/"
+  ],
+  "openai_media": [
+    "/providers/openai/chat_completions/"
+  ],
+  "openai_media_limits": [
+    "/providers/openai/media/"
+  ],
+  "openai_media_page": [
+    "/providers/openai/media/"
+  ],
+  "openai_models": [
+    "/providers/openai/models/"
+  ],
+  "openai_models_page": [
+    "/providers/openai/models/"
+  ],
+  "openai_moderation": [
+    "/providers/openai/platform/"
+  ],
+  "openai_platform_limits": [
+    "/providers/openai/platform/"
+  ],
+  "openai_platform_page": [
+    "/providers/openai/platform/"
+  ],
+  "openai_platform_shared": [
+    "/providers/openai/platform/"
+  ],
+  "openai_reasoning": [
+    "/providers/openai/models/"
+  ],
+  "openai_responses_input": [
+    "/providers/openai/responses/"
+  ],
+  "openai_responses_options": [
+    "/providers/openai/responses/"
+  ],
+  "openai_responses_structured_output": [
+    "/providers/openai/responses/"
+  ],
+  "openai_retrieval_ask": [
+    "/providers/openai/retrieval/"
+  ],
+  "openai_retrieval_cleanup": [
+    "/providers/openai/retrieval/"
+  ],
+  "openai_retrieval_store": [
+    "/providers/openai/retrieval/"
+  ],
+  "openai_setup": [
+    "/providers/openai/"
+  ],
+  "openai_start": [
+    "/providers/openai/"
+  ],
+  "openai_stored_responses": [
+    "/providers/openai/responses/"
+  ],
+  "openai_streaming": [
+    "/providers/openai/"
+  ],
+  "openai_structured_output": [
+    "/providers/openai/chat_completions/"
+  ],
+  "openai_tools": [
+    "/providers/openai/responses/"
+  ],
+  "openai_webhooks": [
+    "/providers/openai/platform/"
+  ],
+  "realtime_api": [
+    "/api/realtime/"
+  ],
+  "respond": [
+    "/llm/"
+  ],
+  "responses_api": [
+    "/api/responses/"
+  ],
+  "responses_guide": [
+    "/providers/openai/responses/"
+  ],
+  "results_failures": [
+    "/guide/results/"
+  ],
+  "results_guide": [
+    "/guide/results/"
+  ],
+  "results_outcomes": [
+    "/guide/results/"
+  ],
+  "results_providers": [
+    "/guide/results/"
+  ],
+  "results_success": [
+    "/guide/results/"
+  ],
+  "retrieval_guide": [
+    "/providers/openai/retrieval/"
+  ],
+  "semantic_algorithms_providers": [
+    "/guide/semantic_algorithms/"
+  ],
+  "semantic_algorithms_see_also": [
+    "/guide/semantic_algorithms/"
+  ],
+  "streaming_chat": [
+    "/guide/streaming/"
+  ],
+  "streaming_dropped": [
+    "/guide/streaming/"
+  ],
+  "streaming_exceptions": [
+    "/guide/streaming/"
+  ],
+  "streaming_guide": [
+    "/guide/streaming/"
+  ],
+  "streaming_notes": [
+    "/guide/streaming/"
+  ],
+  "streaming_providers": [
+    "/guide/streaming/"
+  ],
+  "streaming_respond": [
+    "/guide/streaming/"
+  ],
+  "streaming_respond_config": [
+    "/guide/streaming/"
+  ],
+  "streaming_see_also": [
+    "/guide/streaming/"
+  ],
+  "streaming_stop": [
+    "/guide/streaming/"
+  ],
+  "streaming_tool_calls": [
+    "/guide/streaming/"
+  ],
+  "structured_guide": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_chat": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_constructors": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_json_object": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_providers": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_respond": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_respond_object": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_respond_schema": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_schema": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_see_also": [
+    "/guide/structured_output/"
+  ],
+  "structured_output_text": [
+    "/guide/structured_output/"
+  ],
+  "system_one_api": [
+    "/api/system_one/"
+  ],
+  "system_one_backend_api": [
+    "/api/system_one/"
+  ],
+  "system_one_backends": [
+    "/decisions/choosing/"
+  ],
+  "system_one_choice": [
+    "/guide/system_one/"
+  ],
+  "system_one_first": [
+    "/guide/system_one/"
+  ],
+  "system_one_guide": [
+    "/guide/system_one/"
+  ],
+  "system_one_noul": [
+    "/guide/system_one/"
+  ],
+  "system_one_ollama": [
+    "/api/system_one/"
+  ],
+  "system_one_openai": [
+    "/api/system_one/"
+  ],
+  "system_one_pointing": [
+    "/guide/system_one/"
+  ],
+  "system_one_protocol_api": [
+    "/api/system_one/"
+  ],
+  "system_one_providers": [
+    "/guide/system_one/"
+  ],
+  "system_one_score": [
+    "/guide/system_one/"
+  ],
+  "system_one_see_also": [
+    "/guide/system_one/"
+  ],
+  "system_one_structured": [
+    "/guide/system_one/"
+  ],
+  "system_one_typesafe": [
+    "/api/system_one/"
+  ],
+  "system_one_typesafe_cost": [
+    "/api/system_one/"
+  ],
+  "system_one_typesafe_errors": [
+    "/api/system_one/"
+  ],
+  "system_one_typesafe_limits": [
+    "/api/system_one/"
+  ],
+  "system_one_typesafe_models": [
+    "/api/system_one/"
+  ],
+  "system_one_typesafe_setup": [
+    "/api/system_one/"
+  ],
+  "system_one_with_llm": [
+    "/guide/system_one/"
+  ],
+  "testing_guide": [
+    "/guide/testing/"
+  ],
+  "testing_key": [
+    "/guide/testing/"
+  ],
+  "testing_miss": [
+    "/guide/testing/"
+  ],
+  "testing_providers": [
+    "/guide/testing/"
+  ],
+  "testing_record": [
+    "/guide/testing/"
+  ],
+  "testing_scope": [
+    "/guide/testing/"
+  ],
+  "testing_see_also": [
+    "/guide/testing/"
+  ],
+  "testing_suite": [
+    "/guide/testing/"
+  ],
+  "timeout_concurrency": [
+    "/guide/timeouts/"
+  ],
+  "timeout_realtime": [
+    "/providers/openai/media/"
+  ],
+  "timeout_streams": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_api": [
+    "/api/config/"
+  ],
+  "timeouts_builtin_defaults": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_channels": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_config": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_defaults": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_failures": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_gaps": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_guide": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_mcp": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_migrating": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_per_call": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_process_default": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_providers": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_retries": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_scope": [
+    "/guide/timeouts/"
+  ],
+  "timeouts_see_also": [
+    "/guide/timeouts/"
+  ],
+  "to_tool": [
+    "/llm/"
+  ],
+  "tool_calling_calls": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_chat": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_choice": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_define": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_loop": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_loop_chat": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_loop_respond": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_mcp": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_providers": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_request": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_respond": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_respond_choice": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_result": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_see_also": [
+    "/guide/tool_calling/"
+  ],
+  "tool_calling_strict": [
+    "/guide/tool_calling/"
+  ],
+  "tool_loop!-(Chat-Completions)": [
+    "/llm/"
+  ],
+  "tool_loop-(Responses-API)": [
+    "/llm/"
+  ],
+  "tools_guide": [
+    "/guide/tool_calling/"
+  ],
+  "unpriced-zero": [
+    "/guide/cost_tracking/"
+  ],
+  "uploads_api": [
+    "/api/uploads/"
+  ],
+  "vector_stores_api": [
+    "/api/vector_stores/"
+  ],
+  "webhooks_api": [
+    "/api/webhooks/"
+  ]
+}

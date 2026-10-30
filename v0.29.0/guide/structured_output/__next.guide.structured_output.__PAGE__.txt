@@ -1,0 +1,113 @@
+1:"$Sreact.fragment"
+2:"static/chunks/c16f53c3-1ecb4c2fae030e39.js"
+3:"static/chunks/8500-107859ed31978aa3.js"
+4:"static/chunks/1054-bc532185d13f3017.js"
+5:"static/chunks/92-b0cf97f7a6a33e50.js"
+6:"static/chunks/app/layout-f9082a232c968c88.js"
+7:I[8875,["2545","$2","8500","$3","1054","$4","92","$5","7177","$6"],"Providers"]
+8:I[7976,["2545","$2","8500","$3","1054","$4","92","$5","7177","$6"],"Layout"]
+9:I[7121,[],""]
+a:I[4581,[],""]
+b:"static/chunks/7059-df8888a641edb175.js"
+c:"static/chunks/app/guide/structured_output/page-e1d2d3c0e6149b23.js"
+d:I[8500,["8500","$3","1054","$4","7059","$b","4995","$c"],""]
+e:"RenameRetiredAnchor"
+f:I[5030,["2545","$2","8500","$3","1054","$4","92","$5","7177","$6"],"$e"]
+18:I[272,["8500","$3","1054","$4","7059","$b","4995","$c"],"DocsHeader"]
+40:"ViewportBoundary"
+41:I[484,[],"$40"]
+42:"MetadataBoundary"
+43:I[484,[],"$42"]
+44:"$Sreact.suspense"
+45:I[6869,[],"IconMark"]
+:HL["/UniLM.jl/v0.29.0/_next/static/css/f5dd26555d2c3e7b.css","style"]
+11:X
+14:X
+14:C
+17:[["children",{"s":"__PAGE__","h":160,"d":{"r":["$","$1","c",{"children":[[["$","div",null,{"className":"max-w-2xl min-w-0 flex-auto px-4 py-16 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16","children":[["$","article",null,{"children":[["$","$L18",null,{"title":"Structured Output"}],["$","div",null,{"className":"prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert wrap-break-word prose-headings:scroll-mt-28 prose-headings:font-display prose-headings:font-normal lg:prose-headings:scroll-mt-34 prose-lead:text-slate-500 dark:prose-lead:text-slate-400 prose-a:font-semibold dark:prose-a:text-sky-400 dark:[--tw-prose-background:var(--color-slate-900)] prose-a:no-underline prose-a:shadow-[inset_0_-2px_0_0_var(--tw-prose-background,#fff),inset_0_calc(-1*(var(--tw-prose-underline-size,4px)+2px))_0_0_var(--tw-prose-underline,var(--color-sky-300))] prose-a:hover:[--tw-prose-underline-size:6px] dark:prose-a:shadow-[inset_0_calc(-1*var(--tw-prose-underline-size,2px))_0_0_var(--tw-prose-underline,var(--color-sky-800))] dark:prose-a:hover:[--tw-prose-underline-size:6px] prose-pre:rounded-xl prose-pre:bg-slate-900 prose-pre:shadow-lg dark:prose-pre:bg-slate-800/60 dark:prose-pre:shadow-none dark:prose-pre:ring-1 dark:prose-pre:ring-slate-300/10 dark:prose-hr:border-slate-800","children":["$L19","$L1a","$L1b","$L1c","$L1d","$L1e","$L1f","$L20","$L21","$L22","$L23","$L24","$L25","$L26","$L27","$L28","$L29","$L2a","$L2b","$L2c","$L2d","$L2e","$L2f","$L30","$L31","$L32","$L33","$L34","$L35","$L36","$L37","$L38","$L39","$L3a","$L3b"]}]]}],"$L3c"]}],"$L3d"],null,"$L3e"]}],"p":"$@3f","v":null,"s":"$11"}}]]
+15:[["children",{"s":"structured_output","h":96,"d":{"r":["$","$1","c",{"children":[null,["$","$L9",null,{"parallelRouterKey":"children","template":["$","$La",null,{}]}]]}],"p":"$@16","v":"$14","s":"$11"},"c":"$Q17"}]]
+12:[["children",{"s":"guide","h":96,"d":{"r":["$","$1","c",{"children":[null,["$","$L9",null,{"parallelRouterKey":"children","template":["$","$La",null,{}]}]]}],"p":"$@13","v":"$14","s":"$11"},"c":"$Q15"}]]
+0:{"t":{"t":{"s":"","h":80,"d":{"r":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/UniLM.jl/v0.29.0/_next/static/css/f5dd26555d2c3e7b.css","precedence":"next"}]],["$","html",null,{"lang":"en","className":"h-full antialiased __variable_6726bc __variable_0eb5ec","suppressHydrationWarning":true,"children":[["$","head",null,{"children":[["$","script",null,{"dangerouslySetInnerHTML":{"__html":"(function p(a){let b=location.pathname;if(b===a||b.startsWith(`${a}/`))return;let c=b.split(\"/\").slice(a.split(\"/\").length);location.replace(`${a}/${c.join(\"/\")}${location.search}${location.hash}`)})(\"/UniLM.jl/v0.29.0\")"}}],["$","script",null,{"dangerouslySetInnerHTML":{"__html":"(function q(a,b){addEventListener(\"DOMContentLoaded\",()=>{b(a).then(b=>{void 0===b||b.here||location.replace(`${a}${b.route}#${encodeURIComponent(b.id)}`)})})})(\"/UniLM.jl/v0.29.0\", function m(a){let b;try{b=decodeURIComponent(location.hash.slice(1))}catch{return Promise.resolve(void 0)}if(\"\"===b||null!==document.getElementById(b))return Promise.resolve(void 0);let c=b=>fetch(`${a}/${b}`).then(a=>{if(!a.ok)throw Error(`${b}: HTTP ${a.status}`);return a.json()});return Promise.all([c(\"anchor-aliases.json\").catch(()=>({})),c(\"anchors.json\")]).then(([c,d])=>{let e=Object.hasOwn(c,b)?c[b]:b,f=Object.hasOwn(d,e)?d[e]:[],g=location.pathname.slice(a.length),h=g.endsWith(\"/\")?g:`${g}/`;return f.includes(h)?e===b?void 0:{route:h,id:e,here:!0}:1===f.length?{route:f[0],id:e,here:!1}:void 0})})"}}]]}],["$","body",null,{"className":"flex min-h-full bg-white dark:bg-slate-900","children":[["$","$L7",null,{"children":["$","$L8",null,{"children":["$","$L9",null,{"parallelRouterKey":"children","template":["$","$La",null,{}],"notFound":[["$","div",null,{"className":"max-w-2xl min-w-0 flex-auto px-4 py-16 lg:max-w-none lg:pr-0 lg:pl-8 xl:px-16","children":["$","div",null,{"className":"flex h-full flex-col items-center justify-center text-center","children":[["$","p",null,{"className":"font-display text-sm font-medium text-slate-900 dark:text-white","children":"404"}],["$","h1",null,{"className":"mt-3 font-display text-3xl tracking-tight text-slate-900 dark:text-white","children":"Page not found"}],["$","p",null,{"className":"mt-2 text-sm text-slate-500 dark:text-slate-400","children":"Sorry, we couldn’t find the page you’re looking for."}],["$","$Ld",null,{"href":"/","className":"mt-8 text-sm font-medium text-slate-900 dark:text-white","children":"Go back home"}]]}]}],[]]}]}]}],["$","$Lf",null,{}]]}]]}]]}],"p":"$@10","v":null,"s":"$11"},"c":"$Q12"},"h":{"r":["$","$1","h",{"children":[null,["$","$L41",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","$L43",null,{"children":[["$","div",null,{"hidden":true,"children":["$","$44",null,{"name":"Next.Metadata","children":[["$","title","0",{"children":"Structured Output - UniLM.jl"}],["$","meta","1",{"name":"description","content":"A format makes the model answer in JSON: any JSON object, or one that follows a JSON Schema you give. A Chat takes it as response_format, a Respond as text.…"}],["$","link","2",{"rel":"icon","href":"/UniLM.jl/v0.29.0/icon.svg?77e2d398bbd4d538","type":"image/svg+xml","sizes":"any"}],["$","$L45","3",{}]]}]}],null]}],["$","meta",null,{"name":"next-size-adjust","content":""}]]}],"p":"$@46","v":null,"s":"$11"}},"a":"$@47","u":"$@48","b":"ofLxx5OmKXMjIJ0XSly8z"}
+49:I[946,["8500","$3","1054","$4","7059","$b","4995","$c"],"Fence"]
+4b:I[1245,["8500","$3","1054","$4","7059","$b","4995","$c"],"PrevNextLinks"]
+4c:I[491,["8500","$3","1054","$4","7059","$b","4995","$c"],"TableOfContents"]
+4d:I[484,[],"OutletBoundary"]
+19:["$","p",null,{"children":["A format makes the model answer in JSON: any JSON object, or one that follows a JSON Schema you give. A ",["$","code",null,{"children":"Chat"}]," takes it as ",["$","code",null,{"children":"response_format"}],", a ",["$","code",null,{"children":"Respond"}]," as ",["$","code",null,{"children":"text"}],". How a provider constrains the reply, which parts of a format it sends, and which formats it refuses are on its entry."]}]
+1a:["$","$L49",null,{"language":"julia","children":"service, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n"}]
+1b:["$","p",null,{"children":["The examples use only the names bound above. ",["$","code",null,{"children":"service"}]," and ",["$","code",null,{"children":"model"}]," are the provider and model they run on: bind your own there. The table ",["$","a",null,{"href":"#structured_output_providers","children":"at the end"}]," links each provider's rules."]}]
+1c:["$","h2",null,{"id":"structured_output_chat","children":"On a Chat "}]
+1d:["$","p",null,{"children":["Use ",["$","$Ld",null,{"href":"/api/chat/#UniLM.ResponseFormat","children":["$","code",null,{"children":"ResponseFormat"}]}]," to control the output format:"]}]
+1e:["$","h3",null,{"id":"structured_output_json_object","children":"Free-form JSON "}]
+1f:["$","$L49",null,{"language":"julia","children":"chat = Chat(\n    service=service,\n    model=model,\n    response_format=ResponseFormat()  # type=\"json_object\"\n)\npush!(chat, Message(Val(:system), \"You output JSON. Always respond with valid JSON.\"))\npush!(chat, Message(Val(:user), \"List 3 programming languages with their year of creation.\"))\nprintln(\"Response format type: \", chat.response_format.type)\nprintln(\"Request body:\")\nprintln(UniLM.encode_request(service, chat))\n"}]
+20:["$","$L49",null,{"language":"output","children":"Response format type: json_object\nRequest body:\n{\"messages\":[{\"content\":\"You output JSON. Always respond with valid JSON.\",\"role\":\"system\"},{\"content\":\"List 3 programming languages with their year of creation.\",\"role\":\"user\"}],\"model\":\"gpt-5.4-mini\",\"response_format\":{\"type\":\"json_object\"}}\n"}]
+21:["$","$L49",null,{"language":"julia","children":"result = chatrequest!(chat)\nif result isa LLMSuccess\n    println(JSON.json(JSON.parse(result.message.content), 2))\nelse\n    println(\"Request failed — see result for details\")\nend\n"}]
+22:["$","$L49",null,{"language":"output","children":"{\n  \"languages\": [\n    {\n      \"name\": \"Python\",\n      \"year_of_creation\": 1991\n    },\n    {\n      \"name\": \"Java\",\n      \"year_of_creation\": 1995\n    },\n    {\n      \"name\": \"C++\",\n      \"year_of_creation\": 1985\n    }\n  ]\n}\n"}]
+23:["$","h3",null,{"id":"structured_output_schema","children":"JSON Schema (strict) "}]
+4a:T46f,schema = ResponseFormat(UniLM.JsonSchemaAPI(
+    name="languages",
+    description="A list of programming languages",
+    schema=Dict(
+        "type" => "object",
+        "properties" => Dict(
+            "languages" => Dict(
+                "type" => "array",
+                "items" => Dict(
+                    "type" => "object",
+                    "properties" => Dict(
+                        "name" => Dict("type" => "string"),
+                        "year" => Dict("type" => "integer")
+                    ),
+                    "required" => ["name", "year"],
+                    "additionalProperties" => false
+                )
+            )
+        ),
+        "required" => ["languages"],
+        "additionalProperties" => false
+    ),
+    strict=true
+))
+
+chat = Chat(service=service, model=model, response_format=schema)
+push!(chat, Message(Val(:system), "Return structured data about programming languages."))
+push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
+println("Schema name: ", schema.json_schema.name)
+println("Response format type: ", schema.type)
+println("Strict: ", schema.json_schema.strict)
+24:["$","$L49",null,{"language":"julia","children":"$4a"}]
+25:["$","$L49",null,{"language":"output","children":"Schema name: languages\nResponse format type: json_schema\nStrict: true\n"}]
+26:["$","$L49",null,{"language":"julia","children":"result = chatrequest!(chat)\nif result isa LLMSuccess\n    println(JSON.json(JSON.parse(result.message.content), 2))\nelse\n    println(\"Request failed — see result for details\")\nend\n"}]
+27:["$","$L49",null,{"language":"output","children":"{\n  \"languages\": [\n    {\n      \"name\": \"Julia\",\n      \"year\": 2012\n    },\n    {\n      \"name\": \"Python\",\n      \"year\": 1991\n    },\n    {\n      \"name\": \"Rust\",\n      \"year\": 2010\n    }\n  ]\n}\n"}]
+28:["$","p",null,{"children":[["$","code",null,{"children":"strict=true"}]," asks for a reply that follows the schema exactly; whether a provider sends the format's ",["$","code",null,{"children":"name"}],", ",["$","code",null,{"children":"description"}]," and ",["$","code",null,{"children":"strict"}],", or the schema alone, is on its entry."]}]
+29:["$","h2",null,{"id":"structured_output_respond","children":"On a Respond "}]
+2a:["$","p",null,{"children":["A ",["$","code",null,{"children":"Respond"}]," takes a ",["$","$Ld",null,{"href":"/api/responses/#UniLM.TextConfig","children":["$","code",null,{"children":"TextConfig"}]}]," in ",["$","code",null,{"children":"text"}],", made by the convenience constructors:"]}]
+2b:["$","h3",null,{"id":"structured_output_respond_object","children":"JSON object "}]
+2c:["$","$L49",null,{"language":"julia","children":"result = respond(\"List 3 colors as a JSON object\", text=json_object_format(), service=service, model=model)\nif result isa ResponseSuccess\n    println(output_text(result))\nelse\n    println(\"Request failed — \", result)\nend\n"}]
+2d:["$","$L49",null,{"language":"output","children":"{\"color1\":\"red\",\"color2\":\"blue\",\"color3\":\"green\"}\n"}]
+2e:["$","h3",null,{"id":"structured_output_respond_schema","children":"JSON Schema "}]
+2f:["$","$L49",null,{"language":"julia","children":"fmt = json_schema_format(\n    \"colors\",\n    \"A structured list of colors\",\n    Dict(\n        \"type\" => \"object\",\n        \"properties\" => Dict(\n            \"colors\" => Dict(\n                \"type\" => \"array\",\n                \"items\" => Dict(\n                    \"type\" => \"object\",\n                    \"properties\" => Dict(\n                        \"name\" => Dict(\"type\" => \"string\"),\n                        \"hex\" => Dict(\"type\" => \"string\")\n                    ),\n                    \"required\" => [\"name\", \"hex\"],\n                    \"additionalProperties\" => false\n                )\n            )\n        ),\n        \"required\" => [\"colors\"],\n        \"additionalProperties\" => false\n    ),\n    strict=true\n)\nprintln(\"Format type: \", fmt.format.type)\nprintln(\"Schema strict: \", fmt.format.strict)\n"}]
+30:["$","$L49",null,{"language":"output","children":"Format type: json_schema\nSchema strict: true\n"}]
+31:["$","$L49",null,{"language":"julia","children":"result = respond(\"List red, green, and blue with their hex codes\", text=fmt, service=service, model=model)\nif result isa ResponseSuccess\n    println(JSON.json(JSON.parse(output_text(result)), 2))\nelse\n    println(\"Request failed — \", result)\nend\n"}]
+32:["$","$L49",null,{"language":"output","children":"{\n  \"colors\": [\n    {\n      \"hex\": \"#FF0000\",\n      \"name\": \"red\"\n    },\n    {\n      \"hex\": \"#00FF00\",\n      \"name\": \"green\"\n    },\n    {\n      \"hex\": \"#0000FF\",\n      \"name\": \"blue\"\n    }\n  ]\n}\n"}]
+33:["$","h3",null,{"id":"structured_output_text","children":"Plain text format "}]
+34:["$","$L49",null,{"language":"julia","children":"tc = text_format()\nprintln(\"Default format type: \", tc.format.type)\n"}]
+35:["$","$L49",null,{"language":"output","children":"Default format type: text\n"}]
+36:["$","h2",null,{"id":"structured_output_constructors","children":"Convenience constructors "}]
+37:["$","div",null,{"className":"overflow-x-auto","children":["$","table",null,{"children":[["$","thead",null,{"children":["$","tr",null,{"children":[["$","th",null,{"align":"left","scope":"col","children":"Constructor"}],["$","th",null,{"align":"left","scope":"col","children":"Format"}]]}]}],["$","tbody",null,{"children":[["$","tr",null,{"children":[["$","td",null,{"align":"left","children":["$","code",null,{"children":"json_object_format()"}]}],["$","td",null,{"align":"left","children":"Unstructured JSON"}]]}],["$","tr",null,{"children":[["$","td",null,{"align":"left","children":["$","code",null,{"children":"json_schema_format(name, desc, schema)"}]}],["$","td",null,{"align":"left","children":"Schema-constrained JSON"}]]}],["$","tr",null,{"children":[["$","td",null,{"align":"left","children":["$","code",null,{"children":"text_format()"}]}],["$","td",null,{"align":"left","children":"Plain text (default)"}]]}]]}]]}]}]
+38:["$","h2",null,{"id":"structured_output_see_also","children":"See also "}]
+39:["$","ul",null,{"children":[["$","li",null,{"children":[["$","$Ld",null,{"href":"/api/chat/#UniLM.ResponseFormat","children":["$","code",null,{"children":"ResponseFormat"}]}]," — the format of a ",["$","code",null,{"children":"Chat"}]]}],["$","li",null,{"children":[["$","$Ld",null,{"href":"/api/responses/#UniLM.TextConfig","children":["$","code",null,{"children":"TextConfig"}]}],", ",["$","$Ld",null,{"href":"/api/responses/#UniLM.TextFormatSpec","children":["$","code",null,{"children":"TextFormatSpec"}]}]," — the formats of a ",["$","code",null,{"children":"Respond"}]]}],["$","li",null,{"children":[["$","$Ld",null,{"href":"/guide/jev_with_llms/","children":"Decisions with LLMs"}]," — a decision model beside the LLM, for answers that are categories, yes or no, or scores; a whole record of such fields in one request: ",["$","$Ld",null,{"href":"/guide/system_one/#jev_fill_struct","children":"Fill a struct in one request"}]]}]]}]
+3a:["$","h2",null,{"id":"structured_output_providers","children":"On your provider "}]
+3b:["$","div",null,{"className":"overflow-x-auto","children":["$","table",null,{"children":[["$","thead",null,{"children":["$","tr",null,{"children":["$","th",null,{"align":"left","scope":"col","children":"Provider"}]}]}],["$","tbody",null,{"children":[["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/openai/chat_completions/#openai_structured_output","children":"OpenAI"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/anthropic/requests/#anthropic_structured_output","children":"Anthropic"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/gemini/generate_content/#gemini_structured_output","children":"Google Gemini"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/ollama/#ollama_json","children":"Ollama"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/local_servers/#local_servers_structured_output","children":"vLLM, LM Studio & llama.cpp"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/azure/#azure_structured_output","children":"Azure OpenAI"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/deepseek/#deepseek_structured_output","children":"DeepSeek"}]}]}],["$","tr",null,{"children":["$","td",null,{"align":"left","children":["$","$Ld",null,{"href":"/providers/openai_compatible/#openai_compatible_structured_output","children":"Mistral & OpenAI-compatible services"}]}]}]]}]]}]}]
+3c:["$","$L4b",null,{}]
+3d:["$","$L4c",null,{"tableOfContents":[{"level":2,"id":"structured_output_chat","title":"On a Chat ","children":[{"level":3,"id":"structured_output_json_object","title":"Free-form JSON "},{"level":3,"id":"structured_output_schema","title":"JSON Schema (strict) "}]},{"level":2,"id":"structured_output_respond","title":"On a Respond ","children":[{"level":3,"id":"structured_output_respond_object","title":"JSON object "},{"level":3,"id":"structured_output_respond_schema","title":"JSON Schema "},{"level":3,"id":"structured_output_text","title":"Plain text format "}]},{"level":2,"id":"structured_output_constructors","title":"Convenience constructors ","children":[]},{"level":2,"id":"structured_output_see_also","title":"See also ","children":[]},{"level":2,"id":"structured_output_providers","title":"On your provider ","children":[]}]}]
+3e:["$","$L4d",null,{"children":["$","$44",null,{"name":"Next.MetadataOutlet","children":"$@4e"}]}]
+11:300
+4e:null
+48:true
+11:C
+47:0
+16:"$undefined"
+13:"$undefined"
+10:"$undefined"
+46:"$undefined"
+3f:"$undefined"

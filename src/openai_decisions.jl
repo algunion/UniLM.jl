@@ -26,8 +26,14 @@ The request:
   `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a vector or
   tuple of strings and images, as one user message of `input_text` and `input_image`
   parts (base64 data URLs, each with its `detail` when the image sets one), in
-  order. Each text — the input, or each text part of the message — is at most
-  10,485,760 characters.
+  order; a vector of [`Message`](@ref)s, or a vector or tuple that holds Messages
+  alone, as the conversation, at most 131,072 items in order — each system, user
+  and assistant message a message of its role (a user's images `input_image` parts
+  after its text, an assistant's refusal a `refusal` part after its `output_text`),
+  each tool call of an assistant a `function_call` item after its message, and each
+  tool message the `function_call_output` of the earlier call it answers. Each
+  text — the input, each text part, each message's text — is at most 10,485,760
+  characters.
 - each question is one entry of `questions`, in order, carrying its name: a
   [`NoulQuestion`](@ref) a `predicate`; a [`ChoiceQuestion`](@ref) a `choice` of
   2 to 255 options, each option's name its `value` and a string description its
@@ -56,7 +62,12 @@ What the wire has no form for is an `ArgumentError` before any I/O, naming
 OpenAI's rule and the fix: a question without `instructions`, or with
 instructions beyond those forms and limits; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
-[`BoxQuestion`](@ref); an image anywhere but the state and the instructions; a [`DocumentAttachment`](@ref)
+[`BoxQuestion`](@ref); an image anywhere but the state and the instructions; in a
+conversation, a message's `name`, a refusal or tool calls on a message that is not an
+assistant's, a `tool_call_id` on one that is not a tool message, a tool output that
+answers no earlier call, a call that is not a function call, a call id outside 1 to 64
+characters, a function name other than 1 to 128 letters, digits, `_`, `.` and `-`, and
+a user's sound clip or document; a [`DocumentAttachment`](@ref)
 anywhere (the API takes no files), as on every System One backend; a
 `prompt_cache_options` with another `ttl`, `prewarm` or
 `comparison_response_id`; any other option.
@@ -153,7 +164,8 @@ function _decisions_field(text::AbstractString, what::String)::String
 end
 
 const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector or Tuple of strings and ImageAttachments, which is " *
-                               "sent as one user message of text and image parts in order"
+                               "sent as one user message of text and image parts in order, or a user Message's " *
+                               "attachments in a Vector of Messages"
 
 # The fix for guidance that is not text: write it as text, and move an image to the state or the instructions.
 _decisions_as_text(x)::String = "Write it as text" *
@@ -302,14 +314,17 @@ _decisions_question(name::String, q::SystemOneQuestion) = _decisions_refuse(name
     "it is a $(nameof(typeof(q))), and the API answers predicate, choice and score questions; a RawQuestion " *
     "is sent verbatim")
 
-# The `input`: text, or one user message of text and image parts. The API takes text or
-# messages, so a JSON state is sent as its JSON text, which is what the model reads.
+# The `input`: text, a conversation, or one user message of text and image parts. The API takes
+# text or messages, so a JSON state is sent as its JSON text, which is what the model reads.
 _decisions_input(state::AbstractString) = _decisions_text(String(state), "the state")
 _decisions_input(state::ImageAttachment) = _decisions_message(Any[state])
 # A tuple is taken as a vector is, as every System One backend takes it.
-_decisions_input(state::Union{AbstractVector,Tuple}) =
+function _decisions_input(state::Union{AbstractVector,Tuple})
+    (state isa AbstractVector{<:Message} || !isempty(state) && all(x -> x isa Message, state)) &&
+        return _decisions_conversation(state)
     all(x -> x isa Union{AbstractString,ImageAttachment}, state) && any(x -> x isa ImageAttachment, state) ?
         _decisions_message(state) : _decisions_json_input(state)
+end
 _decisions_input(state) = _decisions_json_input(state)
 
 function _decisions_json_input(state)::String
@@ -362,12 +377,108 @@ function _decisions_image_part(x::ImageAttachment; limit::Integer=_DECISIONS_MAX
 end
 
 # The images a request sends, counted before any is encoded: an image, or the images among the items of a vector or
-# tuple — in the state, and in each question's instructions.
+# tuple (a user message's attachments, in a conversation) — in the state, and in each question's instructions.
 _decisions_images(::ImageAttachment)::Int = 1
-_decisions_images(x::Union{AbstractVector,Tuple})::Int = count(i -> i isa ImageAttachment, x)
+_decisions_images(x::Union{AbstractVector,Tuple})::Int = sum(_decisions_item_images, x; init=0)
 _decisions_images(_)::Int = 0
+_decisions_item_images(::ImageAttachment)::Int = 1
+_decisions_item_images(m::Message)::Int = (a = m.attachments; isnothing(a) ? 0 : count(x -> x isa ImageAttachment, a))
+_decisions_item_images(_)::Int = 0
 _decisions_question_images(q::Union{ChoiceQuestion,ScoreQuestion,NoulQuestion})::Int = _decisions_images(q.instructions)
 _decisions_question_images(::SystemOneQuestion)::Int = 0
+
+# A conversation as `input` (DecisionInput's array of messages, discriminated by `role`, and function-call items):
+# at most this many items; a call's id of 1 to 64 characters, and a function's name of 1 to 128 letters, digits,
+# `_`, `.` and `-`.
+const _DECISIONS_MAX_ITEMS = 131_072
+const _DECISIONS_CALL_ID = 1:64
+const _DECISIONS_FUNCTION_NAME = r"^[a-zA-Z0-9_.-]{1,128}$"
+
+# The conversation's items, in order. "Each tool output must identify a matching call by call ID": a tool message
+# answers a call made before it.
+function _decisions_conversation(messages::Union{AbstractVector,Tuple})::Vector{Any}
+    items, calls = Any[], Set{String}()
+    for (i, m) in enumerate(messages)
+        _decisions_turn!(items, calls, m::Message, i)
+    end
+    n = length(items)
+    n <= _DECISIONS_MAX_ITEMS || throw(ArgumentError(
+        "OpenAI's Decisions API takes a conversation of at most $(_DECISIONS_MAX_ITEMS) items, each message, tool call " *
+        "and tool output one; the state makes $n. Shorten it, or split it into several requests"))
+    items
+end
+
+_decisions_no_field(i::Int, role::String, field::String, rule::String, fix::String) = throw(ArgumentError(
+    "OpenAI's Decisions API has no field for a $role message's $field: $rule, and message $i of the state is a " *
+    "$role message. $fix"))
+
+# One message's items: a system, user or assistant message is a message of its role — a user's text and images
+# `input_text` and `input_image` parts, an assistant's refusal a `refusal` part after its `output_text` — an
+# assistant's tool calls are `function_call` items after it, and a tool message is the `function_call_output` of
+# the call it answers. The constructor guarantees what is read with `::String`: a tool message's call id, and the
+# text of a message that has neither attachments, tool calls nor a refusal.
+function _decisions_turn!(items::Vector{Any}, calls::Set{String}, m::Message, i::Int)::Nothing
+    role, text, refusal, attachments = m.role, m.content, m.refusal_message, m.attachments
+    what = "message $i of the state"
+    isnothing(m.name) || throw(ArgumentError(
+        "OpenAI's Decisions API has no field for a message's `name`, and $what, a $role message, is named " *
+        "$(repr(m.name)). Drop it, or write the name into the content"))
+    role == RoleAssistant || isnothing(refusal) || _decisions_no_field(i, role, "refusal",
+        "only an assistant message carries a refusal", "Drop it, or write it into the content")
+    role == RoleAssistant || isnothing(m.tool_calls) || _decisions_no_field(i, role, "tool calls",
+        "only an assistant message makes tool calls", "Move them to an assistant message")
+    role == RoleTool || isnothing(m.tool_call_id) || _decisions_no_field(i, role, "`tool_call_id`",
+        "only a tool message answers a call", "Drop it")
+    if role == RoleTool
+        id = m.tool_call_id::String
+        id in calls || throw(ArgumentError(
+            "OpenAI's Decisions API matches a tool output to an earlier call by its id; $what answers $(repr(id)), " *
+            "which no earlier assistant message calls. Put the call first, or leave the output out"))
+        push!(items, JSON.Object{String,Any}("type" => "function_call_output", "call_id" => id,
+                                             "output" => _decisions_text(text::String, "the output in $what")))
+    elseif role == RoleAssistant
+        if !isnothing(refusal)
+            parts = Any[]
+            isnothing(text) || isempty(text) ||
+                push!(parts, JSON.Object{String,Any}("type" => "output_text", "text" => _decisions_text(text, what)))
+            push!(parts, JSON.Object{String,Any}("type" => "refusal", "refusal" => _decisions_text(refusal, "the refusal in $what")))
+            push!(items, JSON.Object{String,Any}("role" => role, "content" => parts))
+        elseif !isnothing(text)
+            push!(items, JSON.Object{String,Any}("role" => role, "content" => _decisions_text(text, what)))
+        end
+        for c in something(m.tool_calls, ToolCall[])
+            push!(items, _decisions_call(c, what))
+            push!(calls, c.id)
+        end
+    elseif isnothing(attachments)
+        push!(items, JSON.Object{String,Any}("role" => role, "content" => _decisions_text(text::String, what)))
+    else
+        parts = Any[]
+        isnothing(text) || isempty(text) || push!(parts, _decisions_text_part(text, what))
+        for a in attachments
+            a isa ImageAttachment || throw(ArgumentError(
+                "OpenAI's Decisions API takes text and images in a user message, no audio or files; $what holds " *
+                "$(a). Send the text it holds, or ask about it in a Chat"))
+            push!(parts, _decisions_image_part(a))
+        end
+        push!(items, JSON.Object{String,Any}("role" => role, "content" => parts))
+    end
+    nothing
+end
+
+function _decisions_call(c::ToolCall, what::String)::JSON.Object{String,Any}
+    c.type == "function" || throw(ArgumentError(
+        "OpenAI's Decisions API takes an assistant's tool calls as function calls; $what makes a $(repr(c.type)) " *
+        "call. Leave it out"))
+    length(c.id) in _DECISIONS_CALL_ID || throw(ArgumentError(
+        "OpenAI's Decisions API takes a call id of $(first(_DECISIONS_CALL_ID)) to $(last(_DECISIONS_CALL_ID)) " *
+        "characters; a call in $what has an id of $(length(c.id)). Shorten it"))
+    occursin(_DECISIONS_FUNCTION_NAME, c.func.name) || throw(ArgumentError(
+        "OpenAI's Decisions API takes a function's name as 1 to 128 letters, digits, `_`, `.` and `-`; $what calls " *
+        "$(repr(c.func.name)). Rename the function"))
+    JSON.Object{String,Any}("type" => "function_call", "call_id" => c.id, "name" => c.func.name,
+        "arguments" => _decisions_field(_system_one_body(c.func.arguments), "the arguments of a call in $what"))
+end
 
 # The options as the body writes them: in one order whatever the caller's, so the same
 # request always has the same bytes, and the same recording key.

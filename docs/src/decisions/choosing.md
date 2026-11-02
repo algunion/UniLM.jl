@@ -122,6 +122,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
 | Guidance | strings, objects, arrays and pictures, anywhere | `instructions` on every question: a string, or text, pictures and JSON objects as its parts; strings elsewhere; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
 | Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state (an image, or a vector or tuple of strings and images) and a question's instructions | the state only, the images before the texts; vision models only |
+| A vector of [`Message`](@ref)s as the state | data: its messages as JSON objects | the conversation: a message per role, tool calls and their outputs ([Questions](@ref openai_decisions_questions)) | data: its messages as JSON objects |
 | Box | Jev 1.14 | refused | refused |
 | Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |

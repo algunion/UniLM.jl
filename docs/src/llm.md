@@ -1892,9 +1892,14 @@ Each wrapper's rules, refused before any I/O (on every backend also a `DocumentA
   image inside); Choice 2–255 options, descriptions strings or `nothing`; Score
   2–10 levels, each a string; Noul `yes`/`no` criteria and Box refused; images
   only in the state (an `ImageAttachment`, or a vector or tuple of strings and
-  images) and in instructions, ≤ 128 in all, each sent with its `detail` level
-  when it sets one; each text — the input, or each text part — ≤ 10,485,760
-  characters; the model's name and each question's
+  images, or a user message's attachments in a conversation) and in instructions,
+  ≤ 128 in all, each sent with its `detail` level when it sets one; each text — the
+  input, each text part, each message's text — ≤ 10,485,760 characters; in a
+  conversation, a message's `name`, a user's audio or document, a refusal or tool
+  calls off an assistant message, a `tool_call_id` off a tool message, a tool output
+  with no earlier call, a call that is not a function call, a call id outside 1–64
+  characters and a function name outside `^[a-zA-Z0-9_.-]{1,128}$` refused; a tool
+  call's arguments, the model's name and each question's
   name, string instructions, option names and descriptions and level labels
   ≤ 1,048,576 characters (a `RawQuestion`'s own fields are sent as written); options
   `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128),
@@ -1935,7 +1940,14 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   recorded). `input` is the state string,
   a JSON value's JSON text, or — for an `ImageAttachment` or a vector or tuple of
   strings and images — one user message of `input_text` and `input_image` (data URL,
-  with `detail` when the image sets one) parts; a recording keys and stores each data URL as `data:<mime>;sha256,<hex>`.
+  with `detail` when the image sets one) parts, or — for a vector of `Message`s (or a
+  vector/tuple holding Messages alone) — the conversation, ≤ 131,072 items: `{role,
+  content}` per system/user/assistant message (a user's images → `input_image` parts
+  after an `input_text`; an assistant's refusal → `[{type: "output_text", text},
+  {type: "refusal", refusal}]`), each assistant tool call → `{type: "function_call",
+  call_id, name, arguments}` after its message, each tool message → `{type:
+  "function_call_output", call_id, output}` (TypeSafe and Ollama send the same state as
+  data, its messages as JSON objects); a recording keys and stores each data URL as `data:<mime>;sha256,<hex>`.
   `questions` is an array in request order, each entry carrying its name:
   `noul` → `predicate`, `choice` → `choice` (`choices: [{value, description?}]`),
   `score` → `score` (`levels: [{label}]`), a `RawQuestion` verbatim with `name`

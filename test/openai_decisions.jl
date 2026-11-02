@@ -479,6 +479,102 @@ end
     @test e isa ArgumentError && contains(e.msg, "at most $(n - 1) characters")
 end
 
+@testset "OpenAI Decisions — a vector of Messages is sent as the conversation it holds" begin
+    # OpenAI's OpenAPI description (since 22 October 2026): `input` is a string or "an ordered array of messages,
+    # function calls and outputs, or custom tool calls and outputs" — a message per role (DecisionInputMessage,
+    # discriminated by `role`), and `function_call` and `function_call_output` items; "Each tool output must identify
+    # a matching call by call ID".
+    input(state) = _od_sent(SystemOneRequest(state, "q" => noul("Is the customer satisfied?")))["input"]
+    talk = [Message(Val(:user), "My order #4471 arrived broken."),
+            Message(role=RoleAssistant, content="I am sorry: a refund is on its way.")]
+    r, seen = _od_serve(_od_valid) do
+        ask(talk, "satisfied" => noul("Is the customer satisfied?"); service=_ODMock, config=_OD_CFG)
+    end
+    @test r isa SystemOneSuccess && r["satisfied"] isa NoulAnswer
+    @test JSON.json(_od_body(only(seen))["input"]) ==
+          """[{"role":"user","content":"My order #4471 arrived broken."},""" *
+          """{"role":"assistant","content":"I am sorry: a refund is on its way."}]"""
+    # A tool call and its result: a function_call item after the assistant's message, and the output of the call
+    # it answers; a system message keeps its role.
+    lookup = ToolCall(id="call_1", func=UniLM.GPTFunction("get_order", Dict("id" => 4471)))
+    tools = [Message(Val(:system), "You are a support agent."),
+             Message(Val(:user), "Where is my order #4471?"),
+             Message(role=RoleAssistant, content="Let me check.", tool_calls=[lookup]),
+             Message(role=UniLM.RoleTool, content="{\"status\":\"lost\"}", tool_call_id="call_1"),
+             Message(role=RoleAssistant, content="It was lost in transit; a refund is on its way.")]
+    @test JSON.json(input(tools)) == "[" * join([
+        """{"role":"system","content":"You are a support agent."}""",
+        """{"role":"user","content":"Where is my order #4471?"}""",
+        """{"role":"assistant","content":"Let me check."}""",
+        """{"type":"function_call","call_id":"call_1","name":"get_order","arguments":"{\\"id\\":4471}"}""",
+        """{"type":"function_call_output","call_id":"call_1","output":"{\\"status\\":\\"lost\\"}"}""",
+        """{"role":"assistant","content":"It was lost in transit; a refund is on its way."}"""], ",") * "]"
+    # An assistant's turn of tool calls alone is its calls; a user's pictures are `input_image` parts after its text;
+    # an assistant's refusal is a `refusal` part after its text; a vector of any type, or a tuple, that holds Messages
+    # alone is a conversation too.
+    @test input(Any[Message(role=RoleAssistant, tool_calls=[lookup]), tools[4]]) == [
+        Dict("type" => "function_call", "call_id" => "call_1", "name" => "get_order", "arguments" => "{\"id\":4471}"),
+        Dict("type" => "function_call_output", "call_id" => "call_1", "output" => "{\"status\":\"lost\"}")]
+    shot = Message(Val(:user), "This is what arrived.", ImageAttachment(_OD_PNG.data; detail="high"))
+    declined = Message(role=RoleAssistant, content="I can help with the order.", refusal_message="I cannot share card numbers.")
+    @test input((shot, declined)) == [
+        Dict("role" => "user", "content" => [Dict("type" => "input_text", "text" => "This is what arrived."),
+             Dict("type" => "input_image", "image_url" => UniLM._data_url(_OD_PNG), "detail" => "high")]),
+        Dict("role" => "assistant", "content" => [Dict("type" => "output_text", "text" => "I can help with the order."),
+             Dict("type" => "refusal", "refusal" => "I cannot share card numbers.")])]
+    # Up to 131,072 items.
+    @test length(input(fill(Message(Val(:user), "x"), 131_072))) == 131_072
+    # A vector that holds other values beside Messages is JSON text, as before.
+    @test input(Any[talk[1], "a note"]) isa String && input(Any[]) == "[]"
+    # TypeSafe and Ollama take the same state as data, as before: its messages as JSON objects.
+    req = SystemOneRequest(talk, "q" => noul("Is the customer satisfied?"); model="m")
+    as_data = JSON.parse(JSON.json(talk))
+    @test JSON.parse(UniLM.encode_system_one(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, req).body)["state"] == as_data
+    @test JSON.parse(UniLM.encode_system_one(UniLM.OllamaSystemOneProtocol(), OllamaEndpoint(), req).body)["state"] == as_data
+end
+
+@testset "OpenAI Decisions — what a conversation's message has no field for is refused before sending" begin
+    pdf = DocumentAttachment(joinpath(@__DIR__, "fixtures", "documents", "secret_word.pdf"))
+    wav = AudioAttachment(joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav"))
+    call(id="call_1", name="get_order"; type="function", arguments=Dict("id" => 1)) =
+        ToolCall(id=id, type=type, func=UniLM.GPTFunction(name, arguments))
+    asks(calls...) = Message(role=RoleAssistant, tool_calls=collect(ToolCall, calls))
+    refused, seen = _od_serve(_od_valid) do
+        one(state...) = _od_caught(() -> ask(collect(Message, state), "q" => noul("Is it?"); service=_ODMock))
+        [one(Message(role=RoleUser, content="Hi", name="alice")),                                    # 1: a name
+         one(Message(Val(:user), "Listen.", wav)),                                                   # 2: audio
+         one(Message(Val(:user), "Read this.", pdf)),                                                # 3: a document
+         one(Message(Val(:user), "Hi"), Message(role=UniLM.RoleTool, content="42", tool_call_id="call_9")),    # 4: no such call
+         one(Message(role=UniLM.RoleTool, content="42", tool_call_id="call_1"), asks(call())),            # 5: before its call
+         one(asks(call(; type="custom"))),                                                           # 6
+         one(asks(call("call_1", "get order"))),                                                     # 7
+         one(asks(call("c"^65))),                                                                    # 8
+         one(Message(role=RoleUser, content="Hi", tool_calls=[call()])),                             # 9
+         one(Message(role=RoleUser, content="Hi", refusal_message="No.")),                           # 10
+         one(Message(role=RoleSystem, content="Be brief.", tool_call_id="call_1")),                  # 11
+         one(Message(role=RoleUser, content="Look.", attachments=Attachment[fill(_OD_PNG, 129)...])),    # 12
+         one(Message(Val(:user), "x"^10_485_761)),                                                   # 13
+         one(asks(call(; arguments=Dict("a" => "x"^1_048_576))))]                                    # 14
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
+    @test contains(refused[1].msg, "no field for a message's `name`") && contains(refused[1].msg, "named \"alice\"")
+    @test all(e -> contains(e.msg, "takes text and images in a user message"), refused[2:3])
+    @test all(e -> contains(e.msg, "matches a tool output to an earlier call by its id"), refused[4:5])
+    @test contains(refused[4].msg, "message 2 of the state answers \"call_9\"") &&
+          contains(refused[5].msg, "message 1 of the state answers \"call_1\"")
+    @test contains(refused[6].msg, "makes a \"custom\" call") && contains(refused[7].msg, "calls \"get order\"")
+    @test contains(refused[8].msg, "a call id of 1 to 64 characters") && contains(refused[8].msg, "an id of 65")
+    @test contains(refused[9].msg, "no field for a user message's tool calls: only an assistant message makes tool calls")
+    @test contains(refused[10].msg, "no field for a user message's refusal: only an assistant message carries a refusal")
+    @test contains(refused[11].msg, "no field for a system message's `tool_call_id`: only a tool message answers a call")
+    @test contains(refused[12].msg, "at most 128 images per request") && contains(refused[12].msg, "has 129")
+    @test contains(refused[13].msg, "text of at most 10485760 characters; message 1 of the state has 10485761")
+    @test contains(refused[14].msg, "at most 1048576 characters in the arguments of a call in message 1 of the state")
+    @test all(e -> contains(e.msg, "message 1 of the state"), refused[[1, 2, 3, 6, 7, 8, 9, 10, 11]])
+    e = _od_caught(() -> _od_sent(SystemOneRequest(fill(Message(Val(:user), "x"), 131_073), "q" => noul("Is it?"))))
+    @test e isa ArgumentError && contains(e.msg, "at most 131072 items") && contains(e.msg, "131073")
+end
+
 @testset "OpenAI Decisions — the provider options, written in one order whatever the caller's" begin
     q = "q" => noul("Is it?")
     a = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options=(safety_identifier = "user-1", prompt_cache_key = "tickets")))

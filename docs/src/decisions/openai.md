@@ -9,9 +9,9 @@ score questions you list about it with a probability for each answer you allowed
 the input and no output ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)).
 `OPENAIServiceEndpoint`, the endpoint of the [OpenAI](@ref openai_start) language-model entry, speaks it at
 `POST /v1/decisions` for [`ask`](@ref) and the verbs built on it, with the same key, and no decision verb refuses
-the endpoint. Of the API, UniLM does not wrap a conversation as input (messages, tool calls and their outputs),
-an `input_json` part in the input, image URLs, a score level's description, explicit cache breakpoints, the
-organization's Decisions usage endpoint or GPT-Live's Decisions integration.
+the endpoint. Of the API, UniLM does not wrap an `input_json` part in the input, custom tool calls and their
+outputs, a developer message or an assistant message's `phase`, image URLs, a score level's description, explicit
+cache breakpoints, the organization's Decisions usage endpoint or GPT-Live's Decisions integration.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:openai_decisions)
@@ -50,7 +50,8 @@ OpenAI's guide, fetched on 25 October 2026, opens with "The Decisions API is now
 what the API gained "since the public beta": prompt caching, pictures in question instructions, JSON input, up to
 400 questions per request, image URLs, conversation history, usage reporting, GPT-Live's integration and Private
 Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM sends up to 400
-questions, and pictures and JSON data in a question's instructions ([Questions](@ref openai_decisions_questions)).
+questions, pictures and JSON data in a question's instructions, and a conversation as the input
+([Questions](@ref openai_decisions_questions)).
 
 ## [Options](@id openai_decisions_options)
 
@@ -146,6 +147,7 @@ The state becomes the request's `input`:
 | a string | the string |
 | a JSON value: a dictionary, an array, a tuple, a `NamedTuple` | the value's JSON text, a string |
 | an [`ImageAttachment`](@ref), or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts in their order, each image a base64 data URL, with its `detail` level when it sets one |
+| a vector of [`Message`](@ref)s, or a vector or tuple that holds messages alone | the conversation, in order: each system, user and assistant message a message of its role — a user's pictures `input_image` parts after its text, an assistant's refusal a `refusal` part after its text — each tool call of an assistant a `function_call` item after its message, and each tool message the `function_call_output` of the earlier call it answers |
 
 ```@example openai_decisions
 q = ask("The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
@@ -155,6 +157,19 @@ q = ask("The app crashes every time I open my order history. Third time this wee
         "repeat"  => noul("Has the customer had this problem before?");
         service = OPENAIServiceEndpoint)
 (q["team"].choice, q["urgency"].score, q["repeat"].noul)
+```
+
+A conversation is evidence the questions are asked about: OpenAI's guide passes "conversation history in `input` to
+evaluate a request in context"
+([Evaluate a conversation](https://developers.openai.com/api/docs/guides/decisions#evaluate-a-conversation)). The
+other decision providers take the same vector as data, its messages as JSON objects
+([What each provider takes](@ref backends_table)). This block is not run when the manual is built:
+
+```julia
+conversation = [Message(Val(:user), "My order #4471 arrived broken."),
+                Message(role = RoleAssistant, content = "I am sorry: a refund is on its way.")]
+ask(conversation, "resolved" => noul("Does the reply resolve the customer's problem?");
+    service = OPENAIServiceEndpoint)
 ```
 
 What reaches the model:
@@ -240,7 +255,8 @@ sending:
 | Questions | 1 to 400 per request | yes |
 | Choice options | 2 to 255 per question | yes |
 | Score levels | 2 to 10 per question | yes |
-| Text | 10,485,760 characters for the input, and for each text part of a message or of a question's instructions | yes |
+| Text | 10,485,760 characters for the input, and for each text of a message or part of a question's instructions | yes |
+| Conversation | 131,072 items, each message, tool call and tool output one; a call id of 1 to 64 characters, a function's name of 1 to 128 | yes |
 | Guidance | 1,048,576 characters for a question's string instructions and its name, an option's value and description, a level's label, and the model's name | yes (a `RawQuestion`'s own fields are sent as written) |
 | Instruction parts | 1 to 16,384 per question; an `input_json` part holds at most 32 levels of objects and arrays, 10,000 values and 256 KiB of compact JSON | yes |
 | Images | in the input, and in a question's instructions, which "share the request's image limits with images in `input`"; no number on OpenAI's pages | yes: at most 128 in all |
@@ -267,8 +283,14 @@ answer would carry no sign of the change.
 | a `RawQuestion` that holds a picture | `it holds an image, which a RawQuestion, sent as written, cannot carry` | put the picture in the state, or in the instructions of a `choice`, `score` or `noul` |
 | a `RawQuestion` whose `"name"` field differs from its name | `and the answer is matched to the question by the name it echoes` | drop the field, or name the question as it does |
 | a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a vector or tuple of strings and images |
-| a text — the input, or a text part of the state or of a question's instructions — over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
-| a name, instructions, an option, a level or the model's name over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
+| a message in a conversation with a `name` | `has no field for a message's`: no message of the API carries a name | drop it, or write the name into the content |
+| a user message's sound clip or document | `takes text and images in a user message, no audio or files` | send the text it holds, or ask about it in a Chat |
+| a refusal or tool calls on a message that is not an assistant's, or a `tool_call_id` on one that is not a tool message | `has no field for a`, then the role and the field | drop it, or move the tool calls to an assistant message |
+| a tool message that answers no earlier call | `matches a tool output to an earlier call by its id`: each tool output must name a call before it | put the assistant message that made the call first, or leave the output out |
+| a tool call that is not a function call, a call id outside 1 to 64 characters, or a function name other than 1 to 128 letters, digits, `_`, `.` and `-` | `takes an assistant's tool calls as function calls`, `takes a call id of 1 to 64 characters`, `takes a function's name as` | leave the call out, shorten the id, or rename the function |
+| a conversation of more than 131,072 items, each message, tool call and tool output one | `takes a conversation of at most 131072 items` | shorten it, or split it across requests |
+| a text — the input, a text part of the state or of a question's instructions, or a message's text — over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
+| a name, instructions, an option, a level, a tool call's arguments or the model's name over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
 | more than 128 pictures, the state's and the instructions' together | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |
 | a picture whose data URL would be over 1,073,741,824 characters (about 768 MiB of image) | `OpenAI's Decisions API takes an image as a data URL of at most 1073741824 characters`: the schema's limit on an image's `image_url`, checked from the picture's size before it is encoded | downscale it, or re-encode it in a more compact format |
 | an option other than the three of [Options](@ref openai_decisions_options) | `OpenAI's Decisions API accepts the options` | one of the three, or none |

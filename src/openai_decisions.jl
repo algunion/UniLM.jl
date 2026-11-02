@@ -107,7 +107,9 @@ _system_one_concurrency(::OpenAIDecisionsProtocol, service)::Int = 16
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
 # The limits of the published request schema (`DecisionRequest` in OpenAI's OpenAPI
-# description); lengths are in characters, as JSON Schema counts them.
+# description); lengths are in characters, as JSON Schema counts them. The image cap is not in
+# the schema: it is the API's own, which answers more images with HTTP 400 ("at most 128 input
+# images").
 const _DECISIONS_MAX_QUESTIONS = 400       # "Ask 1–400 questions about the input"
 const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10

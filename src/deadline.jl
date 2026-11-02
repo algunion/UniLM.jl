@@ -94,7 +94,9 @@ function _find_exception(pred::Function, e)
             found !== nothing && return found
         end
     elseif e isa CapturedException
-        # `asyncmap` throws one (in a dispatcher, an MCP handler); this package and HTTP.jl never do, so request errors classify as before.
+        # `asyncmap` throws one (in a dispatcher, an MCP handler). This package and HTTP.jl never do,
+        # so their request errors classify as before; an exception of user code inside one is found
+        # too, unless it is wrapped in `_UserCallbackError`, whose field the walk does not follow.
         found = _find_exception(pred, e.ex)
         found !== nothing && return found
     end
@@ -145,7 +147,7 @@ _cancel_shaped(x)::Bool = x isa UniLMCancelled || x isa HTTP.CanceledError
 
 True when `e` is a connection-level IO failure worth another attempt
 (IOError/SystemError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
-`CompositeException`, and cause-carrying wrappers. Always
+`CompositeException`, `CapturedException` and cause-carrying wrappers. Always
 false for `InterruptException` (user intent wins, even when nested beside a
 transport error), `UniLMCancelled` and `HTTP.CanceledError` (a cancellation is
 user intent too), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,

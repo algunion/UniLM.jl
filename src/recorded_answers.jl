@@ -435,8 +435,9 @@ end
 # one, so a cancelled call reads no recording, just as it sends nothing. `body` is
 # the request as it is keyed and recorded — a System One wire's `record_body` — and
 # `live()` sends the request as given; the scopes see `body` with its credentials and
-# data-URL images replaced. `key_extra` is what a System One request is keyed on
-# beyond its body (its options, its image parts' digests): keyed and recorded, never sent.
+# data-URL images replaced. `key_extra` is what a request is keyed on beyond its body (a
+# System One request's options and image parts' digests, `list_input_items`' page
+# parameters): keyed and recorded, never sent.
 function _recorded_exchange(live::Function, method::String, url::String, body::String,
                             t0::UInt64, tok::Union{Nothing,CancelToken}; key_extra::String="")::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))

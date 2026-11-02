@@ -667,9 +667,10 @@ end
     _StreamRecording(headers, lines)
 
 A recorded stream: the response headers a recording keeps (`_KEPT_HEADERS`), and the
-body split at every `'\\n'`, so that the body is `join(lines, "\\n")` exactly — a CR
-before a newline stays at the end of its line, and a body that the server did not end
-with a newline ends with a non-empty line.
+body the driver read up to the stream's terminal event, split at every `'\\n'`, so that
+it is `join(lines, "\\n")` exactly — a CR before a newline stays at the end of its line,
+and a body that the server did not end with a newline ends with a non-empty line. Bytes
+the driver drains after the terminal event (`_await_body_end`) are not kept.
 """
 struct _StreamRecording
     headers::Vector{Pair{String,String}}

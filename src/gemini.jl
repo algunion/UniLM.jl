@@ -132,12 +132,14 @@ function _gemini_detail_level(detail)::Union{String,Nothing}
     String(detail)
 end
 
-# Which models take one: "Setting media_resolution on individual Part objects is supported on
-# Gemini 4 and Gemini 3 models." (generateContent page) and "Setting the resolution on individual
-# content items is supported on Gemini 4 and Gemini 3 models." (Interactions page), both pages
-# last updated 2026-10-13. That the earlier models still served — the Gemini 2.5 family and
-# Gemma 4 — take no per-part level is inferred from the pages naming only Gemini 4 and Gemini 3
-# (not probed on them): they refuse a level, by exact id, and any other id is left to the server.
+# Which models take one: Google's pages name Gemini 3 alone ("Setting media_resolution on individual
+# Part objects is exclusive to Gemini 3 models.", generateContent; "Setting the `resolution` on
+# individual content items is exclusive to Gemini 3 models.", Interactions; both read on
+# 2026-11-02), and gemini-4-argon was measured honouring a part's level too (countTokens on
+# 2026-10-26: an image's 1,120 tokens at its default resolution, 280 at MEDIA_RESOLUTION_LOW). That
+# the earlier models still served — the Gemini 2.5 family and Gemma 4 — take no per-part level is
+# inferred from the pages (not probed on them): they refuse a level, by exact id, and any other id
+# is left to the server.
 const _GEMINI_NO_PART_RESOLUTION = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
                                     "gemini-2.5-flash-image", "gemma-4-31b-it", "gemma-4-26b-a4b-it")
 
@@ -386,8 +388,8 @@ end
 # - system → concatenated top-level systemInstruction text
 # - user   → {role:"user", parts:[{inlineData}..., {text}]} (`_gemini_user_parts`)
 # - assistant → {role:"model", parts:[{text}?, {functionCall,thoughtSignature?}...]};
-#   a turn with no part to send (a refusal, a turn spent on thinking) is left out,
-#   because an empty-parts model turn breaks the follow-up request
+#   a turn with no part to send (a refusal) is left out, because an empty-parts
+#   model turn breaks the follow-up request
 # - consecutive tool results → ONE {role:"user"} of functionResponse parts
 # - a tool result with no preceding model functionCall of that id → loud ArgumentError.
 function _gemini_contents(messages)

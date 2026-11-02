@@ -510,8 +510,8 @@ try
     end
 
     @testset "Audio API (mock)" begin
-        # Speech runs on a Realtime session or Gemini TTS: this HTTP endpoint has no Realtime
-        # WebSocket, so it is refused before any request.
+        # Speech runs on a Realtime session or Gemini TTS: this endpoint does not declare :speech,
+        # so it is refused before any request.
         @test_throws ArgumentError speak("hello"; voice="verse", service=MockServiceEndpoint)
 
         # Transcription: JSON-response branch + multipart request shape

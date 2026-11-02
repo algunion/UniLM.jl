@@ -812,7 +812,9 @@ end
 """
     Respond(; model="", input, kwargs...)
 
-Configuration struct for an OpenAI Responses API request.
+Configuration struct for an agentic request, sent with [`respond`](@ref): to OpenAI's Responses API,
+the Responses API of an [`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or
+Gemini Interactions on `GEMINIServiceEndpoint`.
 
 # Key Fields
 - `model::String`: Model to use; `""` (the default) resolves to the service's default

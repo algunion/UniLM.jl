@@ -797,6 +797,12 @@ const _RL_CASES = [
      "/v1/messages", "request-id", LLMCallError),
 ]
 
+# The file's first call through the live path compiles it. Made here, outside `_RL_CFG`'s 30 s deadline, so the
+# cases below time their exchange and not that compilation.
+@test _rl_online(() -> with_recorded_answers(mktempdir(); mode=:record) do
+    chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini"); config=UniLM.RequestConfig(max_attempts=1))
+end) isa LLMSuccess
+
 @testset "recorded LLM answers — each provider's reply replays like the live one, with no credential on disk" begin
     @testset "$name" for (name, call, path, header, T) in _RL_CASES
         dir = _ra_dir("llm-" * name)

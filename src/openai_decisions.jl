@@ -480,9 +480,9 @@ function _decisions_call(c::ToolCall, what::String)::JSON.Object{String,Any}
         "arguments" => _decisions_field(_system_one_body(c.func.arguments), "the arguments of a call in $what"))
 end
 
-# The options as the body writes them: in one order whatever the caller's, so the same
-# request always has the same bytes, and the same recording key.
-function _decisions_options(options::NamedTuple)::Vector{Pair{String,Any}}
+# The options' rules: the string options by name and length, then the prompt-cache options,
+# whose object has `mode` and `ttl` only, and a ttl the Decisions API takes.
+function _validate_system_one_options(::OpenAIDecisionsProtocol, options::NamedTuple)::Nothing
     for (k, v) in pairs(options)
         k === :prompt_cache_options && continue
         haskey(_DECISIONS_OPTIONS, k) || throw(ArgumentError(
@@ -491,6 +491,19 @@ function _decisions_options(options::NamedTuple)::Vector{Pair{String,Any}}
             "OpenAI's Decisions API takes `$k` as a String of at most $(_DECISIONS_OPTIONS[k]) characters; got " *
             (v isa AbstractString ? "$(length(v)) characters" : "a $(typeof(v))")))
     end
+    haskey(options, :prompt_cache_options) || return nothing
+    o = options.prompt_cache_options
+    o isa PromptCacheOptions || throw(ArgumentError(
+        "OpenAI's Decisions API takes `prompt_cache_options` as a PromptCacheOptions; got a $(typeof(o))"))
+    isnothing(o.prewarm) && isnothing(o.comparison_response_id) || throw(ArgumentError(
+        "OpenAI's Decisions API takes prompt_cache_options mode and ttl only; prewarm and comparison_response_id " *
+        "are fields of the Responses API (Respond)"))
+    _check_openai_cache_ttl(o, _OPENAI_CACHE_TTLS.decisions)
+end
+
+# The options as the body writes them: in one order whatever the caller's, so the same
+# request always has the same bytes, and the same recording key.
+function _decisions_options(options::NamedTuple)::Vector{Pair{String,Any}}
     written = Pair{String,Any}[String(k) => String(options[k]) for k in keys(_DECISIONS_OPTIONS) if haskey(options, k)]
     haskey(options, :prompt_cache_options) &&
         push!(written, "prompt_cache_options" => _decisions_cache_options(options.prompt_cache_options))
@@ -499,13 +512,7 @@ end
 
 # The prompt-cache options as the body writes them, `mode` then `ttl`: the Decisions API's
 # `prompt_cache_options` object has these two fields only.
-function _decisions_cache_options(o)::JSON.Object{String,Any}
-    o isa PromptCacheOptions || throw(ArgumentError(
-        "OpenAI's Decisions API takes `prompt_cache_options` as a PromptCacheOptions; got a $(typeof(o))"))
-    isnothing(o.prewarm) && isnothing(o.comparison_response_id) || throw(ArgumentError(
-        "OpenAI's Decisions API takes prompt_cache_options mode and ttl only; prewarm and comparison_response_id " *
-        "are fields of the Responses API (Respond)"))
-    _check_openai_cache_ttl(o, _OPENAI_CACHE_TTLS.decisions)
+function _decisions_cache_options(o::PromptCacheOptions)::JSON.Object{String,Any}
     written = JSON.Object{String,Any}()
     isnothing(o.mode) || (written["mode"] = o.mode)
     isnothing(o.ttl) || (written["ttl"] = o.ttl)
@@ -518,6 +525,7 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
     n <= _DECISIONS_MAX_QUESTIONS || throw(ArgumentError(
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_QUESTIONS) questions per request; this one has $n. " *
         "Split it into several requests"))
+    _validate_system_one_options(p, request.options)
     options = _decisions_options(request.options)
     for (name, _) in request.questions
         _decisions_field(name, "a question's name")

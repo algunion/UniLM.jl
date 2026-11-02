@@ -97,11 +97,11 @@ const _REQUEST_CONFIG = ScopedValue{Union{Nothing,RequestConfig}}(nothing)
 
 const _BUILTIN_CONFIG = RequestConfig()
 
-# Process-default holder: `nothing` until `set_default_config!` sets one, so a
-# backend's own default applies only while the user has chosen none. Plain global
-# stores are already atomic on Julia 1.12+ (no torn writes); the @atomic field
-# exists for the compare-and-swap that `set_default_config!`'s read-modify-write
-# retries on.
+# Process-default holder: `nothing` until `set_default_config!` sets one, and again
+# once it is cleared, so a backend's own default applies only while the user has
+# chosen none. Plain global stores are already atomic on Julia 1.12+ (no torn
+# writes); the @atomic field exists for the compare-and-swap that
+# `set_default_config!`'s read-modify-write retries on, which a clear makes miss.
 mutable struct _ConfigHolder
     @atomic cfg::Union{Nothing,RequestConfig}
 end
@@ -142,6 +142,7 @@ with_request_config(f::Function; kwargs...) =
 """
     set_default_config!(cfg::RequestConfig) -> RequestConfig
     set_default_config!(; kwargs...) -> RequestConfig
+    set_default_config!(nothing) -> nothing
 
 Set the process-wide default [`RequestConfig`](@ref) and return it. The
 keyword form merges the given fields over the CURRENT process default (never
@@ -163,13 +164,25 @@ model (an id starting `gemini-4-`, on `GEMINIServiceEndpoint` or
 [`with_request_config`](@ref) scope or a per-call `config` replaces either default too,
 as a whole.
 
+`set_default_config!(nothing)` clears the process default, as
+[`reset_default_config!`](@ref) does: after a clear, calls resolve exactly as if
+no default had ever been set — those defaults apply again, and the keyword form
+merges over the field defaults.
+
 The keyword form is a read-modify-write and retries on a compare-and-swap miss:
 a plain read-then-write loses one of two concurrent calls, because the loser
 installs a snapshot taken before the winner's write and silently drops its field.
+A clear that lands inside that window makes it miss too, so a merge read before
+the clear is never installed after it.
 """
 function set_default_config!(cfg::RequestConfig)::RequestConfig
     @atomic _PROCESS_DEFAULT_CONFIG.cfg = cfg
     cfg
+end
+
+function set_default_config!(::Nothing)::Nothing
+    @atomic _PROCESS_DEFAULT_CONFIG.cfg = nothing
+    nothing
 end
 
 function set_default_config!(; kwargs...)::RequestConfig
@@ -179,6 +192,19 @@ function set_default_config!(; kwargs...)::RequestConfig
         (@atomicreplace _PROCESS_DEFAULT_CONFIG.cfg base => merged).success && return merged
     end
 end
+
+"""
+    reset_default_config!() -> nothing
+
+Clear the process-wide default set by [`set_default_config!`](@ref), as
+`set_default_config!(nothing)` does: after a clear, calls resolve exactly as if
+no default had ever been set — [`current_config`](@ref) returns the field
+defaults outside every [`with_request_config`](@ref) scope, a System One backend
+or a Gemini 4 model brings its own default again, and the keyword form of
+`set_default_config!` merges over the field defaults. Clearing when no default is
+set changes nothing.
+"""
+reset_default_config!()::Nothing = set_default_config!(nothing)
 
 # Per-verb resolution: an explicit per-call config wins over every ambient channel.
 _resolve_config(c::Union{Nothing,RequestConfig})::RequestConfig =

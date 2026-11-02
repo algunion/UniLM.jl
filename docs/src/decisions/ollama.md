@@ -193,7 +193,7 @@ The route answers three kinds of question, in any mix in one request
 ([System One](https://docs.ollama.com/api/systemone)): a [`choice`](@ref) picks one option, a [`score`](@ref) places
 the state on levels lowest first, and a [`noul`](@ref) gives the probability that a statement holds, its `yes` and
 `no` sent as the descriptions of `"true"` and `"false"`. A [`RawQuestion`](@ref) is sent as written, for the server
-to judge; a [`box`](@ref) is refused ([Limits and refusals](@ref ollama_decisions_limits)). No answer is passed to
+to judge; a [`bounding_box`](@ref) is refused ([Limits and refusals](@ref ollama_decisions_limits)). No answer is passed to
 a later question: "Answers are not passed to later questions" ([System One](https://docs.ollama.com/api/systemone)).
 By Ollama's source at v0.40.11, though, every prompt for Nimble and Clef holds all the questions of the request,
 Clef's under "Decide every field jointly"
@@ -325,7 +325,7 @@ would ask a question you did not write.
 | a Choice, Noul or Score without instructions | `Ollama's API reference requires`: a question's `instructions` are among its required fields | say what it asks, as the first argument of `choice`, `score` or `noul` |
 | blank instructions | `Ollama reads blank`: Ollama would read them as none, and its reference requires them not blank (`pattern: \S`) | say what the question asks |
 | instructions that are not a string, an object or an array | `as a string, object or array` | write them as text |
-| a `box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
+| a `bounding_box` question | `Box questions are not supported by Ollama`: the route answers Choice, Score and Noul | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its System One route answers Choice, Score and Noul questions, and this wrapper sends a RawQuestion verbatim` | build it as a `RawQuestion` |
 | a picture in a question | `Ollama takes images in the state only, shared by all questions` | move it into the state, `[image, "…"]` |
 | a picture with a `detail` level | `sends a System One request's images without a detail level`: Ollama's `images` list holds each picture's base64 bytes alone | build the `ImageAttachment` without `detail` |

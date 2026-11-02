@@ -567,9 +567,26 @@ end
     @test long.(seen) == [true, false, false, true, true, false]
     # With no options the wire is what it was, byte for byte.
     @test _s1_text(seen[6]) == """{"state":"s","model":"jev-latest","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
-    # An option the backend does not accept is refused when the request is sent, by name.
+    # An option the backend does not accept is refused, by name.
     e = _s1_caught(() -> with_system_one(() -> ask("s", q), _S1Mock; temperature=0))
     @test e isa ArgumentError && contains(e.msg, "temperature")
+end
+
+@testset "System One — with_system_one checks its options when the scope opens, before f runs" begin
+    ran = Ref(false)
+    q = "q" => noul("Is it?")
+    # The mock speaks TypeSafe's wire, whose wrapper takes one option, `long_context`, a Bool: the
+    # scope refuses what it does not take with the message a request carrying it gets when encoded.
+    for options in ((temperature = 0,), (long_context = 1,), (long_context = true, confg = 1))
+        e = _s1_caught(() -> with_system_one(() -> (ran[] = true), _S1Mock; options...))
+        sent = _s1_caught(() -> UniLM.encode_system_one(UniLM.TypeSafeProtocol(), _S1Mock,
+                                                       SystemOneRequest("s", q; model="m", options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test !ran[]
+    # A protocol UniLM does not wrap checks its options, if at all, when it sends: the scope runs f.
+    @test with_system_one(() -> (ran[] = true; :ran), _XEndpoint; temperature=0, anything="goes") === :ran
+    @test ran[]
 end
 
 _s1_route(::Val{:refund}, ticket) = :refund
@@ -700,7 +717,7 @@ end
          _s1_caught(() -> ask("s", "c" => choice("pick", (a = (weight = Inf,),)); service=_S1Mock)),
          _s1_caught(() -> ask("s", " " => q; service=_S1Mock)),
          _s1_caught(() -> ask("s", q; service=_S1Mock, confg=_S1_CFG)),       # a misspelt keyword is an option
-         _s1_caught(() -> ask("s", "w" => box(ImageAttachment(UInt8[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01])); service=_S1Mock)),
+         _s1_caught(() -> ask("s", "w" => bounding_box(ImageAttachment(UInt8[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01])); service=_S1Mock)),
          _s1_caught(() -> ask(_S1_PNG, q; service=_S1Mock)),
          _s1_caught(() -> ask("s", "c" => choice("pick", ["a" => _S1_PNG, "b" => nothing]); service=_S1Mock))]
     end
@@ -900,7 +917,7 @@ struct _RefusingProtocol <: UniLM.SystemOneProtocol end
 UniLM._allows_refusal(::_RefusingProtocol) = true
 
 @testset "System One — the checks of Box answers and refusals" begin
-    req = SystemOneRequest(_S1_PNG, ["where" => box("the dent"), "ok" => noul("Is it fine?")]; model="m")
+    req = SystemOneRequest(_S1_PNG, ["where" => bounding_box("the dent"), "ok" => noul("Is it fine?")]; model="m")
     resp(a; ok=NoulAnswer(0.5, Dict{String,Any}())) =
         SystemOneResponse("m", Dict{String,SystemOneAnswer}("where" => a, "ok" => ok), TokenUsage(), nothing, Dict{String,Any}())
     ts = UniLM.TypeSafeProtocol()
@@ -927,10 +944,16 @@ UniLM._allows_refusal(::_RefusingProtocol) = true
           "BoxAnswer(BoxCoordinates(top=0.29, bottom=0.71, left=0.18, right=0.56), confidence=nothing)"
     @test sprint(show, refusal) == "RefusalAnswer(1 fields)"
     # A Box question names its target.
-    @test_throws ArgumentError box(nothing)
-    @test_throws ArgumentError box("  ")
-    @test_throws ArgumentError box(42)
-    @test box((what = "the dent", where = "front")) isa BoxQuestion && box(_S1_PNG).instructions === _S1_PNG
+    @test_throws ArgumentError bounding_box(nothing)
+    @test_throws ArgumentError bounding_box("  ")
+    @test_throws ArgumentError bounding_box(42)
+    @test bounding_box((what = "the dent", where = "front")) isa BoxQuestion && bounding_box(_S1_PNG).instructions === _S1_PNG
+end
+
+@testset "System One — bounding_box builds a Box question; box, its former name, is gone, with no alias" begin
+    @test bounding_box("x") isa BoxQuestion && bounding_box("x").instructions == "x"
+    @test !isdefined(UniLM, :box)
+    @test_throws UndefVarError UniLM.box
 end
 
 struct _S1Holder          # a caller's own struct, which no wire maps
@@ -943,9 +966,9 @@ end
                                                TYPESAFEServiceEndpoint)
     caught(f) = try f(); nothing catch e; e end
     # Nothing to locate in: refused before anything is sent, on any backend.
-    e = caught(() -> call("no image in here", "where" => box("the dent")))
+    e = caught(() -> call("no image in here", "where" => bounding_box("the dent")))
     @test e isa ArgumentError && occursin("carries none", e.msg)
-    @test call((photo = img,), "where" => box("the red square")) isa UniLM._SystemOneCall
+    @test call((photo = img,), "where" => bounding_box("the red square")) isa UniLM._SystemOneCall
     # An image inside a struct of the caller's own is reached by no mapping: refused, never
     # written as the array of numbers JSON.jl would make of its bytes.
     e = caught(() -> call((note = "see the photo", held = _S1Holder(img)), "q" => choice(["a", "b"])))

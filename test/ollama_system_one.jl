@@ -224,6 +224,23 @@ end
     end
 end
 
+@testset "Ollama System One — a with_system_one scope takes the keep_alive a request takes, and refuses the rest first" begin
+    ep = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    ran = Ref(0)
+    for options in ((keep_alive = 0,), (keep_alive = 2.5,), (keep_alive = 1e9,), (keep_alive = Inf,), (;))
+        @test with_system_one(() -> (ran[] += 1), ep; model="tev1:0.8b", options...) == ran[]
+    end
+    @test ran[] == 5
+    q = noul("Is it?")
+    for options in ((keep_alive = -1,), (keep_alive = NaN,), (keep_alive = 1e9 + 1,), (keep_alive = true,),
+                    (keep_alive = "5m",), (runner = "mlx", keep_alive = 1, think = false))
+        e = _os1_caught(() -> with_system_one(() -> (ran[] += 1), ep; model="tev1:0.8b", options...))
+        sent = _os1_caught(() -> UniLM.encode_system_one(_OS1_P, ep, SystemOneRequest("s", q; model="m", options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test ran[] == 5                                      # refused before f ran
+end
+
 # ─── Local refusals ──────────────────────────────────────────────────────────
 
 struct _Os1Odd <: SystemOneQuestion end
@@ -259,7 +276,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "image after a text"    => (a(["Photo:", img], q), "an image after a text"),
             "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "images in the state only"),
             "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "images in the state only"),
-            "Box"                   => (a(img, box("the circle")), "Box questions are not supported by Ollama"),
+            "Box"                   => (a(img, bounding_box("the circle")), "Box questions are not supported by Ollama"),
             "unknown kind"          => (a("s", "odd" => _Os1Odd()), "Ollama cannot send \"odd\""),
             "unknown option"        => (a("s", q; num_ctx=4096), "one System One option, `keep_alive`"),
         ]

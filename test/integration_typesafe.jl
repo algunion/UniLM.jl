@@ -99,7 +99,8 @@ end
     end
 
     # Box on Jev 1.14: boxes of the documented shape, around the shapes drawn.
-    r = billed(ask(scene, "rect" => box("the red rectangle"), "disc" => box("the blue disc"); model="jev-1.14.0", config=cfg))
+    r = billed(ask(scene, "rect" => bounding_box("the red rectangle"), "disc" => bounding_box("the blue disc");
+                   model="jev-1.14.0", config=cfg))
     @test ok(r)
     if ok(r)
         @test startswith(r.response.model, "jev-1.14")
@@ -113,7 +114,7 @@ end
     end
 
     # Box on Jev 1.13 — pinned, since the alias that names it moves: a 400 that names the models to use.
-    f = ask(scene, "rect" => box("the red rectangle"); model="jev-1.13.0", config=cfg)
+    f = ask(scene, "rect" => bounding_box("the red rectangle"); model="jev-1.13.0", config=cfg)
     @test f isa SystemOneFailure && f.status == 400
     f isa SystemOneFailure && @test contains(f.message, "Invalid request.") && contains(f.message, "jev-1.14.0")
 

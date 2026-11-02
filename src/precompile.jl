@@ -167,7 +167,7 @@ _workload_questions(p::SystemOneProtocol) = (
 # What only TypeSafe carries: images — the state and an option's description, sent as the
 # parts of a multipart body — and a Box question.
 _workload_images() = (ImageAttachment(_WORKLOAD_PNG),
-                      ("dent" => box("the dent on the bumper"),
+                      ("dent" => bounding_box("the dent on the bumper"),
                        "same" => choice("Is it this one?", ["yes" => ImageAttachment(_WORKLOAD_JPEG), "no" => nothing])))
 
 # The backends of the workload, each with a model to name: the default where there is one.

@@ -196,14 +196,14 @@ _typesafe_carries(name::String, q::SystemOneQuestion) = throw(ArgumentError(
 # keyed as no option at all.
 const _TYPESAFE_OPTIONS = (:long_context,)
 
-function _typesafe_long_context(options::NamedTuple)::Bool
+function _validate_system_one_options(::TypeSafeProtocol, options::NamedTuple)::Nothing
     unknown = [k for k in keys(options) if !(k in _TYPESAFE_OPTIONS)]
     isempty(unknown) || throw(ArgumentError(
         "TypeSafe does not accept the request option$(length(unknown) == 1 ? "" : "s") " *
         join(("`$(k)`" for k in unknown), ", ") * " (accepted: $(join(_TYPESAFE_OPTIONS, ", ")))"))
     v = get(options, :long_context, false)
     v isa Bool || throw(ArgumentError("TypeSafe's `long_context` option is `true` or `false`; got $(repr(v))"))
-    v
+    nothing
 end
 
 # Whether `x`, written as JSON, nests objects and arrays more than `room` levels deep: the
@@ -245,7 +245,8 @@ function encode_system_one(p::TypeSafeProtocol, service, request::SystemOneReque
         _typesafe_carries(name, q)
     end
     _check_box_image(request)
-    long_context = _typesafe_long_context(request.options)
+    _validate_system_one_options(p, request.options)
+    long_context = get(request.options, :long_context, false)::Bool
     _typesafe_check_nesting(request)
     # Only keys the service defines: it rejects any other top-level key with 400, so
     # nothing unknown is ever written even though unknown fields are ignored on read.

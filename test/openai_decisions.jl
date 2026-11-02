@@ -341,7 +341,7 @@ end
          one(score("Rate.", ["l$i" for i in 1:11])),                                    # 9
          one(score("Rate.", ["low", (label = "high",)])),                               # 10
          one(score(["low", "high"])),                                                   # 11
-         one(box("the dent")),                                                          # 12
+         one(bounding_box("the dent")),                                                 # 12
          one(RawQuestion(Dict("type" => "predicate", "name" => "other", "instructions" => "x"))),   # 13
          _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:401]; service=_ODMock))]  # 14
     end
@@ -655,6 +655,27 @@ end
                                               "prewarm and comparison_response_id are fields of the Responses API (Respond)"
     @test refused[5].msg == "OpenAI's Decisions API takes `prompt_cache_options` as a PromptCacheOptions; " *
                             "got a Dict{String, String}"
+end
+
+@testset "OpenAI Decisions — a with_system_one scope takes the options a request takes, and refuses the rest first" begin
+    ran = Ref(0)
+    for options in ((prompt_cache_key = "k"^64, safety_identifier = "u"^128,
+                     prompt_cache_options = PromptCacheOptions(mode="explicit", ttl="12h")),
+                    (prompt_cache_options = PromptCacheOptions(mode="implicit", ttl="30m"),),
+                    (prompt_cache_options = PromptCacheOptions(),), (safety_identifier = "",), (;))
+        @test with_system_one(() -> (ran[] += 1), OPENAIServiceEndpoint; options...) == ran[]
+    end
+    @test ran[] == 5
+    q = "q" => noul("Is it?")
+    for options in ((temperature = 0,), (prompt_cache_key = "k"^65,), (safety_identifier = 7,),
+                    (prompt_cache_options = PromptCacheOptions(ttl="1h"),),
+                    (prompt_cache_options = PromptCacheOptions(prewarm=true),),
+                    (prompt_cache_options = Dict("ttl" => "12h"),))
+        e = _od_caught(() -> with_system_one(() -> (ran[] += 1), OPENAIServiceEndpoint; options...))
+        sent = _od_caught(() -> UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test ran[] == 5                                      # refused before f ran
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────

@@ -138,7 +138,7 @@ UniLM sends each question type as the one that fits:
 | [`score`](@ref) | a `score` question, each level a `label`, lowest first | a [`ScoreAnswer`](@ref), whose `legend` maps each level to its label |
 | [`noul`](@ref) | a `predicate` question | a [`NoulAnswer`](@ref): the probability that the statement holds |
 | [`RawQuestion`](@ref) | its fields as written, with the question's name added as `name` | the answer OpenAI sends for it |
-| [`box`](@ref) | nothing: refused ([Limits and refusals](@ref openai_decisions_limits)) | — |
+| [`bounding_box`](@ref) | nothing: refused ([Limits and refusals](@ref openai_decisions_limits)) | — |
 
 The state becomes the request's `input`:
 
@@ -278,7 +278,7 @@ answer would carry no sign of the change.
 | an option described by anything but a string or `nothing` | `the description of its option`: an option's description is a string | describe it in words |
 | a Score of fewer than 2 or more than 10 levels | `a score has 2 to 10 levels, and it has` | add a level, or merge levels into a coarser rubric |
 | a Score level that is not a string | `must be a string, the level's label`: a level is sent as its label | write the level as text |
-| a `box` question | `it is a Box question, and the API answers predicate, choice and score questions only` | ask it of a provider that answers Box questions |
+| a `bounding_box` question | `it is a Box question, and the API answers predicate, choice and score questions only` | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `the API answers predicate, choice and score questions; a RawQuestion is sent verbatim` | build it as a `RawQuestion` |
 | a `RawQuestion` that holds a picture | `it holds an image, which a RawQuestion, sent as written, cannot carry` | put the picture in the state, or in the instructions of a `choice`, `score` or `noul` |
 | a `RawQuestion` whose `"name"` field differs from its name | `and the answer is matched to the question by the name it echoes` | drop the field, or name the question as it does |

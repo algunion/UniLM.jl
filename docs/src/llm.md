@@ -1971,7 +1971,7 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   "Dreamer-ready", not yet ready for production). Each use of an image is billed. A Score `legend` entry that is an
   image comes back as the request's `ImageAttachment`. A recording is keyed on the
   JSON part plus one `asset-k <sha256>` line per image (`key_extra`), never on or
-  with the bytes. `box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
+  with the bytes. `bounding_box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
   `"jev-latest"`, `"jev-preview"`; a 1.13 model's 400 `"Invalid request."` gets
   a hint naming them) and an image in the request; an inside-out box is a
   `SystemOneCallError`.
@@ -2154,7 +2154,7 @@ score(instructions, levels::AbstractVector) -> ScoreQuestion
 score(levels::AbstractVector) -> ScoreQuestion
 noul(instructions; yes=nothing, no=nothing) -> NoulQuestion
 noul(; yes=nothing, no=nothing) -> NoulQuestion
-box(instructions) -> BoxQuestion
+bounding_box(instructions) -> BoxQuestion
 RawQuestion(fields::AbstractDict)                   # copied into a JSON.Object (a plain Dict sorted)
 
 SystemOneRequest(state, questions; model=nothing, options=(;))
@@ -2189,8 +2189,10 @@ ask_each(requests::AbstractVector{<:SystemOneRequest}; service=nothing, config=n
 
 with_system_one(f, service; model=nothing, options...)   # -> f(); the backend of every call inside f
     # that names no service, spawned tasks included, and for those calls the model and the provider options
-    # (ask's keywords) when the call names none; service must declare :system_one, model must not be blank;
-    # options are checked by the backend's wrapper when each request is sent
+    # (ask's keywords) when the call names none; service must declare :system_one, model must not be blank,
+    # and the backend's wrapper must accept the options (TypeSafe, OpenAI, Ollama: by the rule and with the
+    # message each request gets), or ArgumentError before f runs; a backend UniLM does not wrap checks its
+    # options only when it sends a request
 
 list_models(; service=nothing, config=nothing, cancel=nothing)
     # -> TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError (TypeSafe);
@@ -2730,7 +2732,7 @@ end
 - **Five channels, struct-wise precedence** (a channel supplies a complete struct):
   1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
   2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
-  3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions;
+  3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions; `reset_default_config!()` or `set_default_config!(nothing)` (both `-> nothing`) clears it, after which calls resolve exactly as if none had ever been set;
   4. a backend's own default — System One: `ask`, `ask_each` and the NL verbs on TypeSafe's wire and on OpenAI's Decisions API, and `list_models` on TypeSafe, use `request_timeout = 60`, `total_deadline = 150`; Ollama brings none — or a model's own default: `chatrequest!` and `respond` to a Gemini 4 model (`gemini-4-…` on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`) use `request_timeout = stream_idle_timeout = total_deadline = 1200` (Google ends a non-streamed Argon call after 10 minutes, a stream after 20, and advises a 20-minute read timeout). Either applies only while channels 1–3 supply nothing: a process default you set, even one equal to the built-in defaults, replaces it;
   5. the built-in defaults above.
   `current_config()` returns the ambient struct (active scope, else the process default you set, else the built-in defaults) — channel 4 is never in it.
@@ -2740,6 +2742,7 @@ with_request_config(request_timeout=30.0, max_attempts=1) do
     chatrequest!(chat)          # bounded, no retries, inside this scope only
 end
 set_default_config!(total_deadline=120.0)   # process-wide default
+reset_default_config!()                     # cleared: as if none had been set
 ```
 
 ### Which verbs retry
@@ -3050,7 +3053,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (404), grouped by area:
+Every exported symbol (405), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3095,7 +3098,7 @@ Every exported symbol (404), grouped by area:
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
-**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `box`, `SystemOneRequest`, `ask`, `ask_each`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
+**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `bounding_box`, `SystemOneRequest`, `ask`, `ask_each`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 
@@ -3115,4 +3118,4 @@ Every exported symbol (404), grouped by area:
 
 **Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`, `LLMResultError`, `issuccess`, `isfailure`, `text`, `reasoning_text`
 
-**Request Config, Timeouts & Cancellation**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`, `UniLMCancelled`, `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`
+**Request Config, Timeouts & Cancellation**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `reset_default_config!`, `UniLMTimeout`, `MCPTimeoutError`, `UniLMCancelled`, `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`

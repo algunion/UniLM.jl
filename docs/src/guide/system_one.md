@@ -32,7 +32,7 @@ tables [at the end](@ref system_one_providers) link each provider's rules.
 | catch the messages that fit none of my options | a catch-all option | the probability that none fits | [Let the model say none of these](@ref jev_none_of_these) |
 | act on a small chance of the worst case | the probability at the top level | an alarm that a middling score would not raise | [Act on the risk of the worst level](@ref jev_worst_level) |
 | judge what an image shows | an [`ImageAttachment`](@ref) in the state | answers about the picture, as about a text | [What each provider takes](@ref backends_table) |
-| find where something is in an image | a [`box`](@ref) question, where a provider answers one | the box's edges as fractions of the image, and a confidence | [Locate with Box](@ref jev_box) |
+| find where something is in an image | a [`bounding_box`](@ref) question, where a provider answers one | the box's edges as fractions of the image, and a confidence | [Locate with Box](@ref jev_box) |
 | send a state longer than a request's usual context | a provider's long-context option, where it has one | a longer context | [Long context](@ref jev_long_context) |
 
 ## [First request](@id system_one_first)

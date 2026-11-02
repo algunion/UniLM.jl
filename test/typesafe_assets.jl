@@ -156,7 +156,7 @@ end
              "closest" => score("Which level's sample is closest in colour to the rectangle in the state image?",
                                 [_TA_BLUE, _TA_RED])]; model="jev-latest"),
         "44-box-jev-1.14.0" => SystemOneRequest(_TA_SCENE,
-            ["rect" => box("the red rectangle"), "disc" => box("the blue disc")]; model="jev-1.14.0")]
+            ["rect" => bounding_box("the red rectangle"), "disc" => bounding_box("the blue disc")]; model="jev-1.14.0")]
     for (name, r) in rebuilt
         @test _ta_wire(r).body == _ts_fixture("$(name).request.json")
     end
@@ -181,7 +181,7 @@ end
     # A Box question locates something in an image; with none in the request there is nothing
     # to locate in, and it is refused before anything is sent.
     e = _ta_caught(() -> _ta_wire(SystemOneRequest("A white page with a red rectangle.",
-                                                   "rect" => box("the red rectangle"); model="jev-1.14.0")))
+                                                   "rect" => bounding_box("the red rectangle"); model="jev-1.14.0")))
     @test e isa ArgumentError && contains(e.msg, "carries none")
 end
 
@@ -204,6 +204,21 @@ end
     end
 end
 
+@testset "TypeSafe long context — a with_system_one scope takes the option a request takes, and refuses the rest first" begin
+    ran = Ref(0)
+    for options in ((long_context = true,), (long_context = false,), (;))
+        @test with_system_one(() -> (ran[] += 1), TYPESAFEServiceEndpoint; options...) == ran[]
+    end
+    @test ran[] == 3
+    q = "fox" => noul("Is the text about a fox?")
+    for options in ((confg = 1,), (a = 1, b = 2), (long_context = "true",), (long_context = nothing,))
+        e = _ta_caught(() -> with_system_one(() -> (ran[] += 1), TYPESAFEServiceEndpoint; options...))
+        sent = _ta_caught(() -> _ta_wire(SystemOneRequest("text", q; model="m", options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test ran[] == 3                                      # refused before f ran
+end
+
 # A value nested `n` levels deep: `n` arrays around a string.
 _ta_nest(n::Int) = foldl((a, _) -> Any[a], 1:n; init="x")
 
@@ -217,7 +232,7 @@ _ta_nest(n::Int) = foldl((a, _) -> Any[a], 1:n; init="x")
                        (SystemOneRequest("s", "c" => choice(["a" => _ta_nest(64)]); model="m"), "the criteria of \"c\""),
                        (SystemOneRequest("s", "r" => score([_ta_nest(64)]); model="m"), "the criteria of \"r\""),
                        (SystemOneRequest("s", "n" => noul("q?"; yes=_ta_nest(64)); model="m"), "the criteria of \"n\""),
-                       (SystemOneRequest(_TA_RED, "b" => box(_ta_nest(65)); model="m"), "the instructions of \"b\""),
+                       (SystemOneRequest(_TA_RED, "b" => bounding_box(_ta_nest(65)); model="m"), "the instructions of \"b\""),
                        (SystemOneRequest("s", "x" => RawQuestion(Dict("type" => "rank", "criteria" => _ta_nest(65))); model="m"),
                         "the criteria of \"x\""))
         e = _ta_caught(() -> _ta_wire(r))
@@ -359,7 +374,7 @@ end
 end
 
 @testset "TypeSafe — Box answers decode into boxes, their confidence a number or nothing" begin
-    req = SystemOneRequest(_TA_SCENE, ["rect" => box("the red rectangle"), "disc" => box("the blue disc")];
+    req = SystemOneRequest(_TA_SCENE, ["rect" => bounding_box("the red rectangle"), "disc" => bounding_box("the blue disc")];
                            model="jev-1.14.0")
     r, seen = _ts_mock(; status=200, body=_ts_fixture("44-box-jev-1.14.0.response.json")) do
         ask(req; config=_TS_MOCK_CFG)
@@ -392,7 +407,7 @@ end
 end
 
 @testset "TypeSafe — the new error bodies become typed failures, and the terse ones get a hint" begin
-    box_req = SystemOneRequest(_TA_SCENE, ["rect" => box("the red rectangle"), "disc" => box("the blue disc")];
+    box_req = SystemOneRequest(_TA_SCENE, ["rect" => bounding_box("the red rectangle"), "disc" => bounding_box("the blue disc")];
                                model="jev-latest")
     long = SystemOneRequest("text", "fox" => noul("Is the text about a fox?"); model="jev-latest")
     long_on = SystemOneRequest("text", "fox" => noul("Is the text about a fox?"); model="jev-latest",

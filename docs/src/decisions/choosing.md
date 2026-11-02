@@ -4,7 +4,7 @@
 using UniLM
 ```
 
-UniLM has one decision surface. The questions — [`choice`](@ref), [`score`](@ref), [`noul`](@ref), [`box`](@ref) —
+UniLM has one decision surface. The questions — [`choice`](@ref), [`score`](@ref), [`noul`](@ref), [`bounding_box`](@ref) —
 the verbs — [`ask`](@ref), [`ask_each`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref) —
 and the typed results are the same whichever model answers. Three providers answer them, each with an entry of its
 own: [Jev (TypeSafe)](@ref jev_start), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
@@ -170,7 +170,7 @@ differently. **With one:** each wrapper checks a request against its provider's 
 scene = ImageAttachment("../assets/scene.png")    # a 512 × 512 test picture
 
 for (what, call) in [
-        "a Box question, to OpenAI"  => () -> ask(scene, "rectangle" => box("the red rectangle");
+        "a Box question, to OpenAI"  => () -> ask(scene, "rectangle" => bounding_box("the red rectangle");
                                                   service = OPENAIServiceEndpoint),
         "a Noul's yes/no, to OpenAI" => () -> ask(MESSAGES[1], "refund" => noul("Does the customer want a refund?";
                                                       yes = "They ask for their money back");

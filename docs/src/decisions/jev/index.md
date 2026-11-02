@@ -20,9 +20,9 @@ Main.ProviderFacts.at_a_glance(:jev)
 | [make a first decision](@ref jev_first_decision) | `ask(state, "name" => choice(…))` | the chosen option, its probability, and the model that answered |
 | [set the key, the API root or the default model](@ref jev_setup) | `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL` | every call that names no other provider, on Jev |
 | [pin the version a threshold was tuned on](@ref jev_models) | `model = "jev-1.13.0"`, or `TYPESAFE_DEFAULT_MODEL` | answers from that version, wherever the alias moves |
-| [ask several kinds of question at once](@ref jev_questions) | `choice`, `score`, `noul` and `box` in one `ask` | every answer from one request, the state read once |
+| [ask several kinds of question at once](@ref jev_questions) | `choice`, `score`, `noul` and `bounding_box` in one `ask` | every answer from one request, the state read once |
 | [know what is refused before a request is sent](@ref jev_limits) | the table of refusals | the words of the `ArgumentError`, and the fix |
-| [judge a picture, or find something in it](@ref jev_images) | an `ImageAttachment` in the state; a `box` question | answers about the picture; a box's edges |
+| [judge a picture, or find something in it](@ref jev_images) | an `ImageAttachment` in the state; a `bounding_box` question | answers about the picture; a box's edges |
 | [send a state longer than 32k tokens](@ref jev_long_context) | `long_context = true` | 262k tokens of context, at the same price per token |
 | [act only when Jev is sure enough](@ref jev_confidence) | `min_confidence` and `fallback`, or a `decide` policy | the answer, or a hand-over to a person |
 | [know what a decision cost](@ref jev_cost) | `token_usage`, `estimated_cost` | the input tokens billed and their USD estimate |
@@ -137,7 +137,7 @@ Compute in Julia, send only what the decision needs, and leave text to a languag
 
 Jev answers four kinds of question, in any mix in one request: a [`choice`](@ref) picks one option of a set, a
 [`score`](@ref) places the state on levels you describe, lowest first, a [`noul`](@ref) gives the probability that
-a statement holds, and a [`box`](@ref) locates something in a picture ([Locate with Box](@ref jev_box)). A
+a statement holds, and a [`bounding_box`](@ref) locates something in a picture ([Locate with Box](@ref jev_box)). A
 [`RawQuestion`](@ref) goes out as you wrote it, for a kind UniLM does not model. Each question is evaluated against
 the same state on its own: one answer is never context for another
 ([Primitives](https://docs.typesafe.ai/primitives)).
@@ -198,7 +198,7 @@ answer would carry no sign of the change.
 | a Choice of more than 255 options | `TypeSafe accepts at most 255 options per Choice question`: the service answers 422 for more | split it, or narrow the options |
 | a Score of more than 10 levels | `TypeSafe accepts at most 10 levels per Score question`: the service answers 422 for more | merge levels into a coarser rubric |
 | a question type of your own, a subtype of `SystemOneQuestion` | `its wire carries Choice, Score, Noul and Box questions`: TypeSafe's request has no other kind | build it as a `RawQuestion`, which is sent as written |
-| a `box` question in a request that holds no image | `locates something in an image, and this request carries none`: a box drawn on no picture means nothing | put an `ImageAttachment` in the state ([Locate with Box](@ref jev_box)) |
+| a `bounding_box` question in a request that holds no image | `locates something in an image, and this request carries none`: a box drawn on no picture means nothing | put an `ImageAttachment` in the state ([Locate with Box](@ref jev_box)) |
 | a provider option other than `long_context`, or a `long_context` that is not `true` or `false` | `TypeSafe does not accept the request option`, `option is`: the one option TypeSafe takes is `long_context`, a Boolean | `long_context = true`, or no option |
 | a state, instructions or criteria nested more than 64 levels deep | `TypeSafe accepts at most 64 levels of nested objects and arrays`: the service answers 400 | flatten it |
 | a request body over 32 MiB | `TypeSafe accepts a request body of at most 32 MiB`: the service answers 413 | shorten the state, send fewer or smaller images, or split the request |

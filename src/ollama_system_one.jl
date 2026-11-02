@@ -204,16 +204,20 @@ _ollama_carries(name::String, q::SystemOneQuestion) = throw(ArgumentError(
 _ollama_endpoint_keep_alive(s::OllamaEndpoint)::Union{Nothing,Float64} = s.keep_alive
 _ollama_endpoint_keep_alive(_)::Union{Nothing,Float64} = nothing
 
-function _ollama_system_one_keep_alive(options::NamedTuple, service)::Union{Nothing,Float64}
+function _validate_system_one_options(::OllamaSystemOneProtocol, options::NamedTuple)::Nothing
     other = Symbol[k for k in keys(options) if k !== :keep_alive]
     isempty(other) || throw(ArgumentError(
         "UniLM's Ollama wrapper accepts one System One option, `keep_alive`; got " * join(other, ", ")))
-    haskey(options, :keep_alive) || return _ollama_endpoint_keep_alive(service)
+    haskey(options, :keep_alive) || return nothing
     ka = options.keep_alive
     ka isa Real && !(ka isa Bool) && !isnan(ka) && 0 <= ka && (isinf(ka) || ka <= 1e9) || throw(ArgumentError(
         "Ollama's `keep_alive` is a number of seconds from 0 to 1e9, or Inf to keep the model loaded; got $(repr(ka))"))
-    Float64(ka)
+    nothing
 end
+
+# The keep_alive a request sends, once its options are checked: its own, else the endpoint's.
+_ollama_system_one_keep_alive(options::NamedTuple, service)::Union{Nothing,Float64} =
+    haskey(options, :keep_alive) ? Float64(options.keep_alive) : _ollama_endpoint_keep_alive(service)
 
 # The text state and the images an Ollama System One request sends. Ollama takes images as a list
 # shared by all questions, apart from the text (Clef reads them before it: decision/clef.go of Ollama
@@ -257,6 +261,7 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
             "Move it into the state, e.g. [image, \"…\"]"))
     end
     state, images = _ollama_state_images(request.state)
+    _validate_system_one_options(p, request.options)
     keep_alive = _ollama_system_one_keep_alive(request.options, service)
     o = _system_one_json(request, _system_one_model(p, service, request))
     o["state"] = state

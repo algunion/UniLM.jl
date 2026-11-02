@@ -30,6 +30,14 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26), TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
+
+The table holds the rows shipped with this release. Where a provider has scheduled a new price for
+one of them — Google has, for several Gemini models ([Cost and usage](@ref gemini_cost) lists the
+dates) — [`estimated_cost`](@ref) bills the new rates in every estimate computed on or after that
+date, from 00:00 UTC (Google's page names no time zone), and the table keeps the shipped row. A row
+you set yourself, here or in a `pricing` table, is never replaced; a row equal to the shipped one
+counts as the shipped one.
+
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
@@ -118,10 +126,10 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "deepseek-v4-pro"              => _price(1.32, 0.044, 3.96),
     # Google Gemini, native and OpenAI-compatible (https://ai.google.dev/gemini-api/docs/pricing,
     # 2026-10-22): standard tier, output includes thinking; the Gemini `_billed_cost` prices Flex
-    # and Priority from these rows, with the page's own cache-hit prices. Introductory rates double on
-    # 2026-12-01 for Gemini 4 Argon and on 2027-01-01 for Gemini 3.8 and 3.6 Flash. Google routes
-    # the deprecated gemini-3.7-flash to gemini-3.8-flash and gemini-3.5-flash to gemini-3.6-flash,
-    # so those ids carry the served model's rates.
+    # and Priority from these rows, with the page's own cache-hit prices. Gemini 4 Argon, 3.8 and 3.6
+    # Flash and Robotics-ER 2 Preview carry their introductory rates, which double on the dates
+    # `_PRICE_CHANGES` gives. Google routes the deprecated gemini-3.7-flash to gemini-3.8-flash and
+    # gemini-3.5-flash to gemini-3.6-flash, so those ids carry the served model's rates.
     "gemini-4-argon"        => _price(2.0,  0.10,  10.0),
     "gemini-3.8-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
@@ -135,8 +143,9 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gemini-2.5-pro"        => _price(1.25, 0.125, 10.0),  # prompts up to 200K tokens; longer ones bill more
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
-    "gemini-robotics-er-2-preview" => _price(1.0, 0.10, 5.0),  # doubles on 2027-01-01
+    "gemini-robotics-er-2-preview" => _price(1.0, 0.10, 5.0),
     "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only
+    "gemini-embedding-001"  => _price(0.15, 0.15,  0.0),   # input only; page of 2026-11-02
     # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-10-25): Jev 1.14 and
     # Jev 1.13 at $42 per Btok of input, and output tokens are currently free. The aliases
     # resolve to the versioned id, which is what the response reports back.
@@ -155,6 +164,35 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
 # (https://docs.ollama.com/api/openai-compatibility) — and a hosted model's list price does not bill a run on the
 # caller's machine.
 const _SHIPPED_PRICES = Dict{String,PriceRow}(DEFAULT_PRICING)
+
+# The price changes providers have scheduled for shipped rows, each model's in date order: from 00:00 UTC
+# on `from`, `row` bills in place of the shipped row. Google's pricing page
+# (https://ai.google.dev/gemini-api/docs/pricing, 2026-11-02) gives each introductory price "through" the
+# day before and the new one "starting" on the date, in no time zone, hence UTC; the ids Google routes to
+# 3.8 and 3.6 Flash change with them.
+const _PRICE_CHANGES = Dict{String,Vector{@NamedTuple{from::Date, row::PriceRow}}}(
+    "gemini-4-argon"               => [(from=Date(2026, 12, 1), row=_price(4.0,  0.20, 20.0))],
+    "gemini-3.8-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],
+    "gemini-3.7-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],
+    "gemini-3.6-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],
+    "gemini-3.5-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],
+    "gemini-robotics-er-2-preview" => [(from=Date(2027, 1, 1),  row=_price(2.0,  0.20, 10.0))])
+
+# The day whose prices an estimate bills: today in UTC, read at each call — a value read at load would be
+# the day the package was precompiled — unless a test pins it with `with(_PRICING_DATE => day)`.
+const _PRICING_DATE = ScopedValue{Union{Nothing,Date}}(nothing)
+_pricing_today()::Date = something(_PRICING_DATE[], Date(Dates.now(Dates.UTC)))
+
+# The row that bills today for `key`, which the caller's table prices at `row`: the latest scheduled change
+# in effect while `row` is the one UniLM ships for `key` (a row equal to it counts as it), else `row`, so a
+# row the caller set is never replaced.
+function _row_in_effect(key::String, row::PriceRow)::PriceRow
+    changes = get(_PRICE_CHANGES, key, nothing)
+    (isnothing(changes) || row != _SHIPPED_PRICES[key]) && return row
+    today = _pricing_today()
+    i = findlast(c -> c.from <= today, changes)
+    isnothing(i) ? row : changes[i].row
+end
 
 """
     token_usage(result::LLMRequestResponse) -> TokenUsage
@@ -229,6 +267,11 @@ USD 42 per billion input tokens (2026-10-25); a later version is assumed to keep
 says otherwise. The same lookup prices
 [`SystemOneSuccess`](@ref) results.
 
+[`DEFAULT_PRICING`](@ref) holds the rows shipped with this release. Where a provider has scheduled
+a new price for a shipped row, an estimate computed on or after its date bills the new rates, from
+00:00 UTC on that date, whether `pricing` is `DEFAULT_PRICING` or a copy of it. A row you set
+yourself is never replaced; a row equal to the shipped one counts as the shipped one.
+
 The row's rates bill fresh input tokens and cache writes at `input`, cache reads at
 `cached_input` and completion tokens at `output`, except where UniLM models a provider's
 surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref)).
@@ -297,12 +340,13 @@ end
 # Exact id, then the dated-snapshot alias (OpenAI answers an alias with a
 # -YYYY-MM-DD snapshot, Anthropic's pre-4.6 ids carry -YYYYMMDD; only those date
 # suffixes are stripped, so arbitrary custom names stay unpriced), then the Jev family
-# rate for a versioned Jev id. A miss logs once per model id: the 0.0 it becomes is
-# indistinguishable from a free call.
+# rate for a versioned Jev id; the row found bills as in effect today (`_row_in_effect`).
+# A miss logs once per model id: the 0.0 it becomes is indistinguishable from a free call.
 function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
-    rates = @something(get(pricing, model, nothing),
-                       get(pricing, replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""), nothing),
-                       occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing,
+    lookup(key) = (row = get(pricing, key, nothing); isnothing(row) ? nothing : _row_in_effect(key, row))
+    rates = @something(lookup(model),
+                       lookup(replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => "")),
+                       occursin(r"^jev-\d+\.\d+\.\d+$", model) ? lookup("jev-latest") : nothing,
                        Some(nothing))
     isnothing(rates) && @warn "no price row for this model; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unpriced_", model) maxlog = 1

@@ -493,11 +493,16 @@ lower bound of the bill: it adds nothing for an attempt UniLM retried, a stream 
 error, or an unstreamed reply UniLM could not decode ([Cost Tracking](@ref cost_guide)), and it does
 not price the fees of Google's hosted tools ([Hosted tools](@ref gemini_hosted_tools)).
 
-The rows are Google's list prices for the standard tier as checked on 22 October 2026. The prices of
-Gemini 4 Argon hold "through November 30, 2026", and those of Gemini 3.8 and 3.6 Flash "through
-December 31, 2026", after which Google lists higher ones
-([pricing](https://ai.google.dev/gemini-api/docs/pricing)): check Google's page before relying on an
-estimate.
+The rows are Google's list prices for the standard tier as checked on 22 October 2026. Where Google
+lists a higher price from a date, an estimate computed on or after that day bills it, from 00:00 UTC
+(the page names no time zone), while [`DEFAULT_PRICING`](@ref) keeps the shipped row and a row you set
+yourself is never replaced. Per 1M input, cache-hit and output tokens
+([pricing](https://ai.google.dev/gemini-api/docs/pricing)): Gemini 4 Argon \$2.00 / \$0.10 / \$10.00
+"through November 30, 2026", then \$4.00 / \$0.20 / \$20.00 "starting December 1, 2026"; Gemini 3.8
+and 3.6 Flash, and `gemini-3.7-flash` and `gemini-3.5-flash`, which Google serves as them, \$0.75 /
+\$0.075 / \$3.75 "through December 31, 2026", then \$1.50 / \$0.15 / \$7.50 "starting January 1, 2027";
+Robotics-ER 2 Preview \$1.00 / \$0.10 / \$5.00, then \$2.00 / \$0.20 / \$10.00 from the same day. The
+table gives each change beside the shipped price. Check Google's page before relying on an estimate.
 
 ```@eval
 Main.ProviderFacts.price_table(:gemini)

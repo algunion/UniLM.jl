@@ -271,13 +271,16 @@ end
     tool = merge(usage, Dict("total_tool_use_tokens" => 20, "tool_use_tokens_by_modality" =>
         [Dict("modality" => "audio", "tokens" => 5), Dict("modality" => "text", "tokens" => 15)]))
     @test (token_usage(success(tool)).prompt_tokens, token_usage(success(tool)).prompt_audio_tokens) == (74, 43)
-    # 3.6 Flash's one input price names no modality, so it is the audio's too: $0.75 in, $3.75 out per 1M.
-    @test (@test_logs estimated_cost(success(usage; model="gemini-3.6-flash"))) ≈ (54 * 0.75 + 1 * 3.75) / 1_000_000
+    # 3.6 Flash's one input price names no modality, so it is the audio's too: its row's input rate, the row
+    # in effect today (a scheduled change applies from its date).
+    flash = UniLM._price_row(DEFAULT_PRICING, "gemini-3.6-flash")
+    @test (@test_logs estimated_cost(success(usage; model="gemini-3.6-flash"))) ≈ 54 * flash.input + 1 * flash.output
     # A cache hit beside the audio: 3.6 Flash's cache price names no modality either, so the hit bills at
-    # its cached rate ($0.075 per 1M). 3.1 Flash-Lite lists cached audio apart ($0.025 text, $0.05 audio),
+    # its row's cached rate. 3.1 Flash-Lite lists cached audio apart ($0.025 text, $0.05 audio),
     # and cached_tokens_by_modality says how many cached tokens are audio.
     cached = merge(usage, Dict("total_cached_tokens" => 10))
-    @test (@test_logs estimated_cost(success(cached; model="gemini-3.6-flash"))) ≈ (44 * 0.75 + 10 * 0.075 + 1 * 3.75) / 1_000_000
+    @test (@test_logs estimated_cost(success(cached; model="gemini-3.6-flash"))) ≈
+          44 * flash.input + 10 * flash.cached_input + 1 * flash.output
     split = merge(usage, Dict("total_cached_tokens" => 30, "cached_tokens_by_modality" =>
         [Dict("modality" => "text", "tokens" => 10), Dict("modality" => "audio", "tokens" => 20)]))
     @test (@test_logs estimated_cost(success(split))) ≈ (6 * 0.25 + 18 * 0.50 + 10 * 0.025 + 20 * 0.05 + 1 * 1.50) / 1_000_000
@@ -1220,10 +1223,12 @@ end
         "status" => "completed", "model" => "gemini-3.8-flash", "steps" => [], "usage" => usage,
         "service_tier" => tier)), service=GEMINIServiceEndpoint)
     @test token_usage(success("priority")).service_tier == "priority"
-    # Gemini 3.8 Flash: Priority $1.35 / $6.75 and Flex $0.375 / $1.875 per 1M tokens.
-    @test estimated_cost(success("priority")) ≈ (1_000 * 1.35 + 100 * 6.75) / 1e6
-    @test estimated_cost(success("flex")) ≈ (1_000 * 0.375 + 100 * 1.875) / 1e6
-    @test estimated_cost(success("standard")) ≈ (1_000 * 0.75 + 100 * 3.75) / 1e6
+    # Gemini 3.8 Flash at its row in effect today: Priority 1.8 times it and Flex half.
+    row = UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash")
+    standard = 1_000 * row.input + 100 * row.output
+    @test estimated_cost(success("priority")) ≈ 1.8 * standard
+    @test estimated_cost(success("flex")) ≈ 0.5 * standard
+    @test estimated_cost(success("standard")) ≈ standard
 end
 
 @testset "seed — Gemini Interactions and generic endpoints send it; the other OpenAI-wire Responses encoders refuse it" begin

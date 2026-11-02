@@ -65,9 +65,11 @@ end
     @test occursin("done", lowercase(something(follow.message.content, "")))
 end
 
-# The cost of a reply priced by hand from its own usage, at the given per-1M-token rates.
-_gemini_cost(u, input, cached, output) =
-    ((u.prompt_tokens - u.cached_tokens) * input + u.cached_tokens * cached + u.completion_tokens * output) / 1e6
+# The cost of a reply priced by hand from its own usage, at the rates of a price row. A live run happens on any
+# day and a scheduled price change applies from its date, so each test passes the row in effect:
+# `UniLM._price_row(DEFAULT_PRICING, model)`.
+_gemini_cost(u, row::UniLM.PriceRow) =
+    (u.prompt_tokens - u.cached_tokens) * row.input + u.cached_tokens * row.cached_input + u.completion_tokens * row.output
 
 @testset "Gemini 4 Argon — low effort; the reply names its model and is priced at its row" begin
     # The pricier model, for its own rules: low is its lowest level (minimal is an HTTP 400).
@@ -80,7 +82,7 @@ _gemini_cost(u, input, cached, output) =
     # carried none on 2026-10-22).
     @test r.usage.service_tier == "standard"
     @test estimated_cost(r) > 0
-    @test estimated_cost(r) ≈ _gemini_cost(r.usage, 2.0, 0.10, 10.0)
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-argon"))
 end
 
 @testset "Gemini routes gemini-3.7-flash to gemini-3.8-flash, and the call is priced as served" begin
@@ -89,7 +91,7 @@ end
     @test r isa LLMSuccess
     @info "gemini-3.7-flash" served = r.model usage = r.usage cost = estimated_cost(r)
     @test r.model == "gemini-3.8-flash"
-    @test estimated_cost(r) ≈ _gemini_cost(r.usage, 0.75, 0.075, 3.75)
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash"))
     @test estimated_cost(r) == estimated_cost(r; model="gemini-3.8-flash")
 end
 
@@ -113,7 +115,8 @@ _gemini_ask(prompt, attachment) = chatrequest!(Chat(service=GEMINIServiceEndpoin
     @test wav isa LLMSuccess && occursin("banana", lowercase(wav.message.content))
     @info "Gemini audio" usage = wav.usage cost = estimated_cost(wav)
     @test wav.usage.prompt_audio_tokens > 0 && wav.usage.cached_tokens == 0
-    @test estimated_cost(wav) ≈ _gemini_cost(wav.usage, 0.75, 0.075, 3.75) && cumulative_cost(wav.self) == estimated_cost(wav)
+    @test estimated_cost(wav) ≈ _gemini_cost(wav.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash")) &&
+          cumulative_cost(wav.self) == estimated_cost(wav)
     # detail="low" is the LOW media resolution: the image costs 256 prompt tokens, not ~1,089.
     low = _gemini_ask("What colour is the circle? Answer with one word.", ImageAttachment(circle; detail="low"))
     @info "Gemini media" image = img.usage low_detail = low.usage
@@ -129,7 +132,7 @@ end
         @test r isa LLMSuccess
         @info "Gemini priority" stream usage = r.usage cost = estimated_cost(r)
         @test r.usage.service_tier == "priority"
-        @test estimated_cost(r) ≈ 1.8 * _gemini_cost(r.usage, 0.75, 0.075, 3.75)
+        @test estimated_cost(r) ≈ 1.8 * _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash"))
     end
 end
 
@@ -156,8 +159,8 @@ end
 @testset "Gemini OpenAI-compatible endpoint — a priority reply names no tier; the result records the requested one" begin
     # Observed 2026-10-22: replies to flex and priority requests on this endpoint name their tier in
     # neither the body (service_tier) nor the head (x-gemini-service-tier), streamed or not, so a Chat
-    # result records the tier its request asked for, priced at Priority: 1.8 times $0.75 / $0.075 /
-    # $3.75 per 1M tokens, an upper bound (Google bills a downgraded Priority request at Standard).
+    # result records the tier its request asked for, priced at Priority: 1.8 times the row in effect,
+    # an upper bound (Google bills a downgraded Priority request at Standard).
     # Refuted by a reply that names a tier, or a result that records another tier or price.
     svc = GEMINIOpenAIServiceEndpoint
     for stream in (false, true)
@@ -177,7 +180,8 @@ end
         @test r isa LLMSuccess
         @info "Gemini compat priority result" stream usage = r.usage cost = estimated_cost(r)
         @test r.usage.prompt_tokens > 0 && r.usage.service_tier == "priority"
-        @test isapprox(estimated_cost(r), 1.8 * _gemini_cost(r.usage, 0.75, 0.075, 3.75); rtol=1e-12)
+        @test isapprox(estimated_cost(r), 1.8 * _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash"));
+                       rtol=1e-12)
         @test cumulative_cost(chat) == estimated_cost(r)
     end
 end

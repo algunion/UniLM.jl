@@ -41,6 +41,18 @@ end
           sort(collect(keys(UniLM.DEFAULT_PRICING)))                               # every row in exactly one table
     @test "claude-haiku-5-5" in price_rows(:anthropic)
 end
+@testset "ProviderFacts — a price cell gives the shipped rate, then each change the code schedules, with its date" begin
+    plain(c) = String(strip(Markdown.plain(Markdown.Paragraph(c))))
+    cells = Dict(only(r[1]).code => plain.(r[2:4])
+                 for t in (:openai, :anthropic, :gemini, :deepseek, :jev) for r in only(price_table(t).content).rows[2:end])
+    rate(row, f) = ProviderFacts._per_million(getfield(row, f))
+    @test !isempty(UniLM._PRICE_CHANGES)                                         # premise: a change is scheduled
+    for (id, changes) in UniLM._PRICE_CHANGES, (cell, f) in zip(cells[id], (:input, :cached_input, :output))
+        @test cell == join([rate(UniLM._SHIPPED_PRICES[id], f); ["from $(c.from): $(rate(c.row, f))" for c in changes]], "; ")
+    end
+    @test cells["gemini-4-argon"] == ["2.00; from 2026-12-01: 4.00", "0.10; from 2026-12-01: 0.20", "10.00; from 2026-12-01: 20.00"]
+    @test cells["gemini-2.5-flash"] == ["0.30", "0.03", "2.50"]                   # no change scheduled: one price
+end
 @testset "ProviderFacts — the Claude price rules list every long-prompt tier and every family model without a price row" begin
     rows = only(claude_price_rules().content).rows[2:end]
     ids = [only(r[1]).code for r in rows]

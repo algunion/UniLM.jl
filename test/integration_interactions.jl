@@ -168,8 +168,10 @@ end
     u = token_usage(r)
     @info "Interactions priority" usage = u cost = estimated_cost(r)
     @test u.service_tier == "priority"
-    @test estimated_cost(r) ≈ 1.8 * ((u.prompt_tokens - u.cached_tokens) * 0.75 + u.cached_tokens * 0.075 +
-                                     u.completion_tokens * 3.75) / 1e6
+    # gemini-3.8-flash at Priority: 1.8 times its row in effect on the day the test runs.
+    row = UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash")
+    @test estimated_cost(r) ≈ 1.8 * ((u.prompt_tokens - u.cached_tokens) * row.input + u.cached_tokens * row.cached_input +
+                                     u.completion_tokens * row.output)
 end
 
 end  # if GEMINI_API_KEY

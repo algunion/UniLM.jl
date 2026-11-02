@@ -1537,3 +1537,41 @@ end
         @test b[2] == JSON.json(o)
     end
 end
+
+@testset "long decode — each request starts with the whole budget, so a slow first one leaves the next its deadline" begin
+    # Both requests take 1 s against a 1.6 s deadline: timed from the call's start, the second would have 0.6 s.
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = (sleep(1.0); _json(200, n == 1 ? first : _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxHops, model="gemini-3.8-flash", input="Prove it.");
+                config=RequestConfig(max_attempts=1, request_timeout=10.0, total_deadline=1.6))
+    end
+    @test length(seen) == 2
+    @test r isa ResponseSuccess && output_text(r) == "AB"
+end
+
+# The native wire behind the scripted server, the call's token cancelled after a reply is read and before the
+# next request is sent.
+struct _IxCancelBetween <: UniLM.ServiceEndpoint end
+const _IX_BETWEEN = Ref{Union{Nothing,CancelToken}}(nothing)
+UniLM._agentic_url(::Type{_IxCancelBetween}) = _url_probe_base[] * "/v1beta/interactions"
+UniLM.auth_header(::Type{_IxCancelBetween}) = ["Content-Type" => "application/json"]
+UniLM.encode_agentic(::Type{_IxCancelBetween}, r::Respond) = UniLM.encode_agentic(GEMINIServiceEndpoint, r)
+UniLM.decode_agentic(::Type{_IxCancelBetween}, resp::HTTP.Response) = UniLM.decode_agentic(GEMINIServiceEndpoint, resp)
+UniLM._continued_reply(send, ::Type{_IxCancelBetween}, r::Respond, body::String, resp::HTTP.Response) =
+    UniLM._continued_reply((request, start) -> (cancel!(something(_IX_BETWEEN[])); send(request, start)),
+                           GEMINIServiceEndpoint, r, body, resp)
+
+@testset "long decode — a cancel between two requests sends no more" begin
+    tok = _IX_BETWEEN[] = CancelToken()
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = (sleep(0.3); _json(200, n == 1 ? first : _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxCancelBetween, model="gemini-3.8-flash", input="Prove it."); config=_IX_HOPS_CFG,
+                cancel=tok)
+    end
+    @test length(seen) == 1                                   # the second request never went out
+    @test r isa ResponseCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    elapsed = r isa ResponseCallError && r.cause isa UniLMCancelled ? r.cause.elapsed : NaN
+    @test elapsed >= 0.3                                      # timed from the call's start
+end

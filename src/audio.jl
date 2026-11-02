@@ -253,7 +253,7 @@ every send and every wait for the next event. On Gemini and Ollama, transient st
 (408/429/500/502–504/520–524/529) and transport failures are retried with backoff under the
 config's `max_attempts` and `total_deadline` (`retry-after-ms`, else `Retry-After`, honored), as
 [`chatrequest!`](@ref) retries them, each attempt on Gemini a billed `generateContent` request; a 429
-that no retry can serve is returned at once. Both observe the ambient [`CancelToken`](@ref)
+that no retry can serve is returned at once. All three observe the ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
 with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
 [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.

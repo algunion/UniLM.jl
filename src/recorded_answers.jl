@@ -583,15 +583,16 @@ written as `_redacted` makes it, with `key_extra` after it.
 """
 function _stream_source(method::String, url::String, body::String; key_extra::String="")::_StreamSource
     scope = _ANSWER_SCOPE[]
-    isnothing(scope) && return _LIVE_STREAM
+    isnothing(scope) && return _live_stream()
     path, keyed = _request_path(url), _redacted(body)
     record_to = String[]
     replay = _stream_answer!(record_to, scope, method, path, keyed, key_extra)
     _StreamSource(replay, record_to, method, path, keyed, key_extra)
 end
 
-# A request sent outside every scope: answered live, recorded nowhere.
-const _LIVE_STREAM = _StreamSource(nothing, String[], "", "", "", "")
+# A request sent outside every scope: answered live, recorded nowhere. A new source for each request,
+# so no request's `record_to` is another's.
+_live_stream()::_StreamSource = _StreamSource(nothing, String[], "", "", "", "")
 
 # The scopes' rule, one scope at a time: the recording that answers the request, or `nothing`
 # for a request that is sent. Each scope that records the reply adds its file to `record_to`

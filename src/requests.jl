@@ -1458,7 +1458,7 @@ end
 function _attempt_source!(ctl::_StreamCtl, url::String, body::String)::_StreamSource
     first = ctl.first
     isnothing(first) || (ctl.first = nothing; return first)
-    isnothing(_ANSWER_SCOPE[]) && return _LIVE_STREAM
+    isnothing(_ANSWER_SCOPE[]) && return _live_stream()
     iscancelled(ctl.stop) && throw(_stop_cause(ctl))
     _stream_source("POST", url, body)
 end
@@ -1744,7 +1744,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # The response head, once read, and the attempt's source, once known: a whole reply
     # recovered from its connection's teardown is recorded with them.
     head_ref = Ref{Union{Nothing,HTTP.Response}}(nothing)
-    src = _LIVE_STREAM
+    src = _live_stream()
     cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
     otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
     # Outside every recording scope the request is sent, and its headers are built first, as

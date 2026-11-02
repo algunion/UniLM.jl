@@ -2282,7 +2282,7 @@ that can be passed as input to subsequent requests, reducing token usage in long
 The compaction is the Responses API's `/v1/responses/compact`: on an endpoint that declares its
 capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe, Google's
 OpenAI-compatible endpoint), which has no such route, the call throws `ArgumentError` before any
-request.
+request; so does an endpoint of your own that has no base URL, one that is not an OpenAI-wire endpoint.
 
 Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
@@ -2348,7 +2348,8 @@ Count the number of input tokens a request would use without actually generating
 Useful for estimating costs or checking whether input fits within the context window.
 `model` defaults to OpenAI's default model, `"gpt-6-sol"`. The count is the Responses API's
 `/v1/responses/input_tokens`: on an endpoint that declares its capabilities without `:responses`,
-which has no such route, the call throws `ArgumentError` before any request.
+which has no such route, the call throws `ArgumentError` before any request; so does an endpoint of
+your own that has no base URL, one that is not an OpenAI-wire endpoint.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:

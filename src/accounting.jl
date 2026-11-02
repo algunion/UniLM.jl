@@ -287,7 +287,7 @@ each billable web search at USD 10 per 1,000 calls — USD 25 for the legacy `we
 `gpt-4.1` and `gpt-4.1-mini`, the non-reasoning models UniLM prices — and the image generation
 tool's tokens at the Standard rates of its image model, the one the request's
 [`image_generation_tool`](@ref) names, else the tool's default, `gpt-image-2`; neither is scaled
-by the billed tier. Image tokens of a model UniLM has no image rates for leave the estimate at
+by the billed tier, nor changed by `pricing`, whose rows price the model's own tokens. Image tokens of a model UniLM has no image rates for leave the estimate at
 `0.0`, with one warning per model. File search, containers and Gemini's grounding (its free daily
 quota makes a per-call price wrong) are not billed.
 """

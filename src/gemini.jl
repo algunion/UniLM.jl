@@ -282,9 +282,10 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.seed)        || (gen[:seed] = _gemini_seed(chat.seed))
     # A thinking level also asks for the thought summaries ("You can enable thought summaries by
     # setting `includeThoughts` to `true`", https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries),
-    # which come back as parts marked `thought` for `reasoning_text`. They add nothing to the bill:
+    # which come back as parts marked `thought` for `reasoning_text`. They add nothing to the reply's bill:
     # "pricing is based on the full thought tokens the model needs to generate to create a summary,
-    # despite only the summary being output from the API" (the same page).
+    # despite only the summary being output from the API" (the same page); sent back with a later
+    # turn, they bill as that turn's input.
     if (effort = chat.reasoning_effort) !== nothing
         gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)),
                                     :includeThoughts => true)
@@ -931,8 +932,8 @@ const _GEMINI_SHORT_CONTEXT = 200_000
 # The multiples of the input and cache-hit rates, and of the output rate, that a prompt of
 # `prompt_tokens` costs on `model`. A turn Gemini continues in several requests is priced from
 # its summed usage, so its prompt is the requests' prompts summed, not one request's: that is
-# right only while no model that continues has long-context rates — today only Gemini 4 Argon
-# continues, and its table has none.
+# right only while no model that continues has long-context rates: Google's pages name only Gemini 4
+# Argon as one that continues, and its table has none.
 _gemini_context_multiples(model::String, prompt_tokens::Int)::NTuple{2,Float64} =
     prompt_tokens > _GEMINI_SHORT_CONTEXT && model in _GEMINI_LONG_CONTEXT_MODELS ? (2.0, 1.5) : (1.0, 1.0)
 

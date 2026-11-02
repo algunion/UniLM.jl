@@ -276,9 +276,9 @@ UniLM._models_url(::_AnthropicListingAt) = _url_probe_base[] * "/v1/models"
 UniLM.auth_header(s::_AnthropicListingAt) = UniLM.auth_header(s.endpoint)
 UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint)
 
-# https://platform.claude.com/docs/en/api/models/list (Headers) names `anthropic-version`,
-# `anthropic-workspace-id` and `anthropic-beta`, deprecated on GET /v1/models, and no user-profile
-# header. Refuted if: an Anthropic listing sends the endpoint's betas or its user profile, or
+# https://platform.claude.com/docs/en/api/models/list (Headers) names `anthropic-version` and
+# `anthropic-workspace-id` for GET /v1/models, and no `anthropic-beta` or user-profile header.
+# Refuted if: an Anthropic listing sends the endpoint's betas or its user profile, or
 # leaves out its key, its API version or its workspace — from the type or from an instance.
 @testset "an Anthropic listing sends the key, the version and the workspace, never the user profile or the betas" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do

@@ -1,4 +1,6 @@
 import InteractiveUtils
+using Base.ScopedValues: with
+using Dates: Dates, Date, Day
 
 @testset "TokenUsage" begin
     @testset "defaults" begin
@@ -399,6 +401,82 @@ end
         r = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; service, model="gemini-4-argon"),
                        usage=u)
         @test estimated_cost(r) ≈ want
+    end
+end
+
+@testset "a scheduled price change applies from its date (UTC); the table keeps the shipped row; a caller's row wins" begin
+    # https://ai.google.dev/gemini-api/docs/pricing (fetched 2026-11-02), USD per 1M tokens of input, cache hit
+    # and output: each price "starting" on the date, and half of it "through" the day before. The page names
+    # no time zone, so a change applies from 00:00 UTC. gemini-3.7-flash and gemini-3.5-flash are served as
+    # 3.8 and 3.6 Flash and carry their prices. Refuted if: an estimate on the day before a date bills the new
+    # price or one on the date the old; the table's row changes; a row the caller set is replaced; or a model
+    # without a scheduled change is priced otherwise on a later date.
+    schedule = (("gemini-4-argon", Date(2026, 12, 1), (4.00, 0.20, 20.00)),
+                ("gemini-3.8-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
+                ("gemini-3.7-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
+                ("gemini-3.6-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
+                ("gemini-3.5-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
+                ("gemini-robotics-er-2-preview", Date(2027, 1, 1), (2.00, 0.20, 10.00)))
+    @test Set(first.(schedule)) == Set(keys(UniLM._PRICE_CHANGES))
+    @test all(k -> haskey(UniLM._SHIPPED_PRICES, k), keys(UniLM._PRICE_CHANGES))
+    @test all(changes -> issorted(changes; by=c -> c.from), values(UniLM._PRICE_CHANGES))
+    usage(; tier=nothing) = TokenUsage(prompt_tokens=1_000, cached_tokens=200, completion_tokens=500, total_tokens=1_500,
+                                       service_tier=tier)
+    result(model, u, service) = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; service, model),
+                                           usage=u)
+    cost(model, day; u=usage(), service=GEMINIServiceEndpoint, pricing=DEFAULT_PRICING, as=nothing) =
+        with(() -> estimated_cost(result(model, u, service); model=as, pricing), UniLM._PRICING_DATE => day)
+    bill((i, c, o)) = (800 * i + 200 * c + 500 * o) / 1_000_000
+    for (model, from, after) in schedule
+        for service in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+            @test cost(model, from - Day(1); service) ≈ bill(after ./ 2)
+            @test cost(model, from; service) ≈ bill(after)
+            @test cost(model, from + Day(365); service) ≈ bill(after)
+        end
+        @test with(() -> UniLM._price_row(DEFAULT_PRICING, model), UniLM._PRICING_DATE => from) == UniLM._price(after...)
+        # The table keeps the row UniLM ships; the day's price is the estimate's.
+        @test DEFAULT_PRICING[model] == UniLM._SHIPPED_PRICES[model] == UniLM._price((after ./ 2)...)
+        # Flex and Priority bill 0.5 and 1.8 times the row in effect (Robotics-ER 2 Preview's table lists neither).
+        model == "gemini-robotics-er-2-preview" && continue
+        @test cost(model, from; u=usage(tier="flex")) ≈ 0.5 * bill(after)
+        @test cost(model, from; u=usage(tier="priority")) ≈ 1.8 * bill(after)
+        @test cost(model, from - Day(1); u=usage(tier="priority")) ≈ 1.8 * bill(after ./ 2)
+    end
+    # Google's Priority tables from the dates: $7.20 / $0.36 / $36.00 and $2.70 / $0.27 / $13.50.
+    @test cost("gemini-4-argon", Date(2026, 12, 1); u=usage(tier="priority")) ≈ bill((7.20, 0.36, 36.00))
+    @test cost("gemini-3.8-flash", Date(2027, 1, 1); u=usage(tier="priority")) ≈ bill((2.70, 0.27, 13.50))
+    # Audio on a one-price model bills at the row's input rate, so it moves with the row.
+    heard = TokenUsage(prompt_tokens=1_010, completion_tokens=1, total_tokens=1_011, prompt_audio_tokens=1_000)
+    @test cost("gemini-3.8-flash", Date(2027, 1, 1); u=heard) ≈ (1_010 * 1.50 + 1 * 7.50) / 1_000_000
+    @test cost("gemini-3.8-flash", Date(2026, 12, 31); u=heard) ≈ (1_010 * 1.50 + 1 * 7.50) / 2_000_000
+    # The change follows the row the lookup finds: an id with a dated snapshot suffix is priced as its model.
+    @test cost("gemini-4-argon", Date(2026, 12, 1); as="gemini-4-argon-2026-11-20") ≈ bill((4.00, 0.20, 20.00))
+    # A row the caller set is theirs on every date, in DEFAULT_PRICING or in a pricing= table; a copy of the
+    # shipped row, as in merge(DEFAULT_PRICING, …), is the shipped row.
+    custom = UniLM._price(3.00, 0.30, 15.00)
+    shipped = DEFAULT_PRICING["gemini-4-argon"]
+    try
+        DEFAULT_PRICING["gemini-4-argon"] = custom
+        @test cost("gemini-4-argon", Date(2026, 12, 1)) ≈ cost("gemini-4-argon", Date(2027, 6, 1)) ≈
+              bill((3.00, 0.30, 15.00))
+    finally
+        DEFAULT_PRICING["gemini-4-argon"] = shipped
+    end
+    @test cost("gemini-4-argon", Date(2026, 12, 1)) ≈ bill((4.00, 0.20, 20.00))
+    @test cost("gemini-4-argon", Date(2027, 6, 1); pricing=Dict("gemini-4-argon" => custom)) ≈ bill((3.00, 0.30, 15.00))
+    @test cost("gemini-4-argon", Date(2026, 12, 1); pricing=merge(DEFAULT_PRICING, Dict("mine" => custom))) ≈
+          bill((4.00, 0.20, 20.00))
+    # A model without a scheduled change is priced by its row on every date.
+    @test cost("gemini-2.5-flash", Date(2027, 6, 1)) ≈ cost("gemini-2.5-flash", Date(2026, 11, 2)) ≈
+          bill((0.30, 0.03, 2.50))
+    # Unpinned, the day is the current one in UTC, read at each call rather than when the package loaded.
+    earliest = Date(Dates.now(Dates.UTC))
+    @test earliest <= UniLM._pricing_today() <= Date(Dates.now(Dates.UTC))
+    # Both docstrings say so.
+    doc(name) = replace(join((join(string.(d.text)) for d in values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)),
+                             " "), r"\s+" => " ")
+    for name in (:DEFAULT_PRICING, :estimated_cost)
+        @test all(s -> occursin(s, doc(name)), ("rows shipped with this release", "00:00 UTC", "on or after", "never replaced"))
     end
 end
 

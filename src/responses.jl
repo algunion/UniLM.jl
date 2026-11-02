@@ -137,24 +137,6 @@ Responses API documents no file inputs and refuses an `input_file` part before a
 """
 input_file(a::DocumentAttachment) = input_file(; file_data=_data_url(a), filename=a.filename)
 
-"""
-    configuration_update(; effort::String)
-
-Build a `configuration_update` input item,
-`{"type": "configuration_update", "reasoning": {"effort": effort}}`, that changes the
-reasoning effort of this and later responses without rewriting the request-level
-`reasoning.effort`, so the cached prompt prefix stays reusable. Place it in `input`
-before the next user message. Supported by the GPT-6 model family in standard,
-single-agent requests; the API rejects two adjacent updates. `effort` must be one of
-`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`.
-See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
-"""
-function configuration_update(; effort::String)
-    effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
-        "configuration_update effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
-    Dict{Symbol,Any}(:type => "configuration_update", :reasoning => Dict{Symbol,Any}(:effort => effort))
-end
-
 
 # ─── Tool Types ───────────────────────────────────────────────────────────────
 
@@ -734,6 +716,49 @@ json_schema_format(d::AbstractDict) = TextConfig(
 Create a JSON object output format (unstructured).
 """
 json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
+
+"""
+    configuration_update(; effort=nothing, format=nothing)
+
+Build a `configuration_update` input item,
+`{"type": "configuration_update", "reasoning": {"effort": effort}, "text": {"format": format}}`
+with the part not given left out, that changes the reasoning effort, the text output format, or
+both, of this and later responses without rewriting the request-level `reasoning.effort` or
+`text`, so the cached prompt prefix stays reusable: "Each setting stays in effect until a later
+update replaces it." Place it in `input` before the next user message. Supported by the GPT-6
+model family in standard, single-agent requests; the API rejects two adjacent updates.
+
+- `effort` must be one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`.
+- `format` is a [`TextConfig`](@ref) that [`text_format`](@ref)`()` (plain text) or
+  [`json_schema_format`](@ref) (a JSON Schema) builds; the item carries its format, which OpenAI
+  takes as "a JSON schema for structured output or text to return to plain text". A
+  [`json_object_format`](@ref)`()`, another format type, or a `verbosity` throws `ArgumentError`:
+  the item's text holds a text or JSON-schema format alone.
+
+Neither given throws `ArgumentError`.
+See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
+"""
+function configuration_update(; effort::Union{String,Nothing}=nothing, format::Union{TextConfig,Nothing}=nothing)
+    isnothing(effort) && isnothing(format) && throw(ArgumentError(
+        "configuration_update needs an effort, a format or both: it changes the reasoning effort or the text " *
+        "format of later responses"))
+    item = Dict{Symbol,Any}(:type => "configuration_update")
+    if !isnothing(effort)
+        effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+            "configuration_update effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
+        item[:reasoning] = Dict{Symbol,Any}(:effort => effort)
+    end
+    if !isnothing(format)
+        type = format.format.type
+        type in ("text", "json_schema") || throw(ArgumentError("configuration_update format must be plain text " *
+            "(text_format()) or a JSON schema (json_schema_format(name, description, schema)), the formats OpenAI's " *
+            "configuration update takes (got $(repr(type)))"))
+        isnothing(format.verbosity) || throw(ArgumentError("configuration_update takes a text format without a " *
+            "verbosity, which its text does not hold: set verbosity on the request's text"))
+        item[:text] = Dict{Symbol,Any}(:format => format.format)
+    end
+    item
+end
 
 
 """

@@ -146,8 +146,9 @@ with status `"incomplete"`, possibly before any visible text.
 
 `Reasoning` also takes OpenAI's persisted reasoning, `context` (`"auto"`, `"current_turn"` or
 `"all_turns"`), and its execution mode, `mode` (`"standard"` or `"pro"`), and a `Respond` input may hold
-a [`configuration_update`](@ref) item, which changes the effort of later responses without rewriting
-the request-level effort, so the cached prompt prefix stays reusable; OpenAI supports it on "the GPT-6
+a [`configuration_update`](@ref) item, which changes the effort of later responses, their text format
+([`text_format`](@ref)`()` or [`json_schema_format`](@ref)), or both, without rewriting the request-level
+settings, so the cached prompt prefix stays reusable; OpenAI supports it on "the GPT-6
 model family in standard, single-agent mode"
 ([change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation)).
 
@@ -305,6 +306,7 @@ no row names meets only the other rules.
 | `input_image` with neither `url` nor `file_id`; `input_file` with none of `url`, `id` and `file_data` | `must be provided`: a part needs its content | one of them |
 | a `FunctionTool` `allowed_callers` other than `"direct"` and `"programmatic"` | `FunctionTool allowed_callers must be`: UniLM sends only those two invocation contexts | one of them |
 | a `Reasoning` `context` or `mode`, or a `configuration_update` effort, outside OpenAI's values | `reasoning context must be`, `reasoning mode must be`, `configuration_update effort must be one of`: UniLM sends only the values the message lists | one of those values |
+| a `configuration_update` with neither `effort` nor `format`, or a `format` that is not plain text or a JSON schema (`json_object_format()`), or that sets a `verbosity` | `configuration_update needs an effort, a format or both`, `configuration_update format must be plain text`, `configuration_update takes a text format without a verbosity`: the item's text format is "oneOf" text and a JSON schema, and its text holds the format alone | an `effort`, `text_format()` or `json_schema_format(…)`; a verbosity on the request's `text` |
 | an `image_generation_tool` `action`, `moderation`, `partial_images` or `input_fidelity` outside its values | `image_generation action must be`, `image_generation moderation must be`, `image_generation partial_images must be`, `image_generation input_fidelity must be`: UniLM sends only the values the message lists | one of those values |
 | a `ModerationConfig` `input_mode` or `output_mode` other than `"score"` and `"block"` | `moderation input_mode must be`, `moderation output_mode must be`: a moderation policy's mode is one of the two | `"score"` or `"block"` |
 | an image or a sound clip in an `Embeddings` input | `the OpenAI Embeddings API takes text only`: the Embeddings API embeds text | text ([Embeddings](@ref openai_embeddings)) |

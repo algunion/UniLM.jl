@@ -3127,3 +3127,29 @@ end
         HTTP.forceclose(srv.server)
     end
 end
+
+@testset "configuration_update changes the text format: plain text or a JSON schema, not json_object" begin
+    # The item takes "reasoning, text, or both"; its text format is "oneOf" ResponseFormatText and
+    # TextResponseFormatJsonSchema (the Responses reference's ResponseConfigurationUpdateItemParam).
+    schema = Dict("type" => "object", "properties" => Dict("n" => Dict("type" => "integer")),
+                  "required" => ["n"], "additionalProperties" => false)
+    item = configuration_update(format=json_schema_format("count", "A count", schema; strict=true))
+    @test JSON.parse(JSON.json(item)) == Dict("type" => "configuration_update", "text" => Dict("format" =>
+        Dict("type" => "json_schema", "name" => "count", "description" => "A count", "schema" => schema, "strict" => true)))
+    @test JSON.parse(JSON.json(configuration_update(effort="low", format=text_format()))) == Dict(
+        "type" => "configuration_update", "reasoning" => Dict("effort" => "low"), "text" => Dict("format" => Dict("type" => "text")))
+    r = Respond(model="gpt-6-luna", input=[configuration_update(format=json_schema_format(Dict("name" => "count",
+        "schema" => schema))), InputMessage(role="user", content="How many?")])
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["input"][1] == Dict("type" => "configuration_update",
+        "text" => Dict("format" => Dict("type" => "json_schema", "name" => "count", "schema" => schema)))
+    # Neither setting is no update; json_object is no format the item takes; nor is a verbosity, which
+    # the item's text object does not hold.
+    err(f) = try f(); nothing catch e; e end
+    for (f, words) in ((() -> configuration_update(), ("effort", "format")),
+                       (() -> configuration_update(format=json_object_format()), ("json_object", "json_schema_format")),
+                       (() -> configuration_update(format=text_format(type="xml")), ("\"xml\"", "text_format")),
+                       (() -> configuration_update(effort="low", format=text_format(verbosity="low")), ("verbosity",)))
+        e = err(f)
+        @test e isa ArgumentError && occursin("configuration_update", e.msg) && all(w -> occursin(w, e.msg), words)
+    end
+end

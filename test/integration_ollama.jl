@@ -1,9 +1,10 @@
 # ─── Ollama + Gemma 4 live witnesses ─────────────────────────────────────────
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else
-# 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b), the
-# embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma), the GGUF chat model
-# UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base) and the FIM model
-# UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) installed. Live, nothing is
+# 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b, which also
+# transcribes and translates), the embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma),
+# the GGUF chat model UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base), the FIM model
+# UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and the speech model
+# UNILM_OLLAMA_SPEECH_MODEL (default phonon; speech needs Ollama 0.40.9 or later) installed. Live, nothing is
 # skipped for want of a model: a server that does not list its models is an error, and so is
 # a named model that is not installed, naming the variable to change. Local models: no
 # spend, and a cloud model named in the environment is refused before any request. Each
@@ -16,8 +17,10 @@ const _OLLAMA_MODEL = get(ENV, "UNILM_OLLAMA_MODEL", "gemma4:e4b")
 const _OLLAMA_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OLLAMA_FIM = get(ENV, "UNILM_OLLAMA_FIM_MODEL", "qwen2.5-coder:1.5b-base")
 const _OLLAMA_GGUF = get(ENV, "UNILM_OLLAMA_GGUF_MODEL", "qwen2.5-coder:1.5b-base")
+const _OLLAMA_SPEECH = get(ENV, "UNILM_OLLAMA_SPEECH_MODEL", "phonon")
 const _OLLAMA_NAMED = ("UNILM_OLLAMA_MODEL" => _OLLAMA_MODEL, "UNILM_OLLAMA_EMBED_MODEL" => _OLLAMA_EMBED,
-                       "UNILM_OLLAMA_GGUF_MODEL" => _OLLAMA_GGUF, "UNILM_OLLAMA_FIM_MODEL" => _OLLAMA_FIM)
+                       "UNILM_OLLAMA_GGUF_MODEL" => _OLLAMA_GGUF, "UNILM_OLLAMA_FIM_MODEL" => _OLLAMA_FIM,
+                       "UNILM_OLLAMA_SPEECH_MODEL" => _OLLAMA_SPEECH)
 const _OLLAMA_MEDIA = joinpath(@__DIR__, "fixtures", "ollama")
 
 # Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
@@ -50,7 +53,7 @@ end
 
 if isnothing(_OLLAMA_EP)
     @info "Skipping Ollama live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
-          "$_OLLAMA_MODEL, $_OLLAMA_EMBED and $_OLLAMA_GGUF)"
+          "$_OLLAMA_MODEL, $_OLLAMA_EMBED, $_OLLAMA_GGUF and $_OLLAMA_SPEECH)"
 else
 
 _lchat(; ep=_OLLAMA_EP, system="You are concise.", kw...) =
@@ -346,6 +349,41 @@ end
     @test r isa TranscriptionSuccess && occursin("banana", lowercase(transcript_text(r)))
     # …or by the JSON reply itself returned as the transcript (Ollama labels it application/x-ndjson).
     @test r.raw isa AbstractDict && !occursin('{', transcript_text(r))
+end
+
+@testset "speech: a WAV of 24 kHz mono 16-bit PCM, in the model's own voice or one it lists, that says the text" begin
+    # Refuted by: a model without its voices, a non-success, another format, or a transcript of the speech
+    # without the spoken word.
+    info = model_info(_OLLAMA_SPEECH; service=_OLLAMA_EP)
+    @test info isa OllamaSuccess && :speech in info.response.capabilities
+    voices = info isa OllamaSuccess ? filter(!=("default"), info.response.voices) : String[]
+    @test !isempty(voices)
+    le(b, i, n) = sum(Int(b[i+k]) << (8k) for k in 0:n-1)
+    for voice in (nothing, first(voices, 1)...)
+        r = speak("The secret word is banana."; service=_OLLAMA_EP, model=_OLLAMA_SPEECH, voice)
+        @test r isa SpeechSuccess && r.content_type == "audio/wav"
+        r isa SpeechSuccess || continue
+        b = r.audio
+        @test length(b) > 44 && (String(b[1:4]), String(b[9:12])) == ("RIFF", "WAVE")
+        @test (le(b, 23, 2), le(b, 25, 4), le(b, 35, 2)) == (1, 24000, 16)       # mono, 24 kHz, 16-bit
+        path = tempname() * ".wav"
+        heard = try
+            write(path, b)
+            transcribe(path; service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+        finally
+            rm(path; force=true)
+        end
+        @info "Ollama speech, transcribed" voice heard = (heard isa TranscriptionSuccess ? transcript_text(heard) : heard)
+        @test heard isa TranscriptionSuccess && occursin("banana", lowercase(transcript_text(heard)))
+    end
+end
+
+@testset "translation of a recording into French" begin
+    # Refuted by: a non-success, or a translation without the French word for the secret word.
+    r = translate(joinpath(_OLLAMA_MEDIA, "secret_word.wav"); language="fr", service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+    @test r isa TranscriptionSuccess
+    @info "Ollama translate into French" text = (r isa TranscriptionSuccess ? transcript_text(r) : r)
+    @test r isa TranscriptionSuccess && occursin("banane", lowercase(transcript_text(r)))
 end
 
 end # Ollama live

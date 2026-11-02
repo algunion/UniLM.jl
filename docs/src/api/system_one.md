@@ -388,7 +388,9 @@ model — Tev1, Nimble, Kev, Clef and the others Ollama lists as [decision
 models](https://ollama.com/search?c=decision) — through Ollama's
 TypeSafe-compatible route `POST /v1/systemone`: Ollama 0.35 or later, 0.35.1 or
 later for pictures, and 0.40.0 or later for the MLX builds of Tev1 and Clef Flash
-used below; what this section reports was measured on 0.40.6. The
+used below; what this section reports was measured on 0.40.6, and the live suite
+`test/integration_ollama_system_one.jl` passed unchanged on 0.40.13 (2 November 2026),
+784 tests. The
 verbs, the questions and the result types are the ones below; no key is sent and
 nothing is billed. Start the server and pull the decision models first: the
 example below uses `tev1:4b`, `clef-flash:9b` (a vision model, for pictures) and

@@ -171,9 +171,10 @@ Ollama has no default: name a model that hears audio, such as `gemma4:e4b`. Its
 the reply by its `Content-Type`: JSON, or the bare text for `"text"`. A reply labelled
 otherwise is an [`AudioCallError`](@ref) naming the label: Ollama before 0.40.12 labelled
 its JSON `application/x-ndjson`. `languages`, `keywords` and any other format (`srt`,
-`vtt`, `diarized_json`) throw `ArgumentError` before the request, in Ollama's words. An
-endpoint declares transcription with the capability `:transcription`, which `:audio`
-implies.
+`vtt`, `diarized_json`) throw `ArgumentError` before the request, in Ollama's words. The
+live suite `test/integration_ollama.jl`, whose 91 tests include a transcription,
+passed unchanged on Ollama 0.40.13 (2 November 2026). An endpoint declares transcription with the
+capability `:transcription`, which `:audio` implies.
 
 OpenAI deprecated `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`,
 `gpt-4o-transcribe-diarize`, and `whisper-1` on August 26, 2026, with shutdown

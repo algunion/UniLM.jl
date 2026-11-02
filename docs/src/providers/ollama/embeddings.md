@@ -218,4 +218,5 @@ The first question finds the refund policy, the second the returns policy. The d
 once; each search embeds only its question.
 
 Recorded on 21 October 2026 on `embeddinggemma-2:740m-q8_0` with UniLM's development branch after
-0.24.0 and Ollama 0.40.6, on an Apple M4 Max with 64 GB.
+0.24.0 and Ollama 0.40.6, on an Apple M4 Max with 64 GB. The live suite `test/integration_ollama_embeddings.jl`
+passed unchanged on Ollama 0.40.13 (2 November 2026), 79 tests.

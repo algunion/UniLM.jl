@@ -1271,8 +1271,8 @@ Mistral's names: a `Chat`'s `max_completion_tokens` as `max_tokens`, its `seed` 
 an `Embeddings` request's `dimensions` as `output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
 """
 MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
-    isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
-                         GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
+    isnothing(api_key) ? GenericOpenAIEndpoint("https://" * MISTRAL_API_HOST, "", MISTRAL_API_KEY) :
+                         GenericOpenAIEndpoint("https://" * MISTRAL_API_HOST, api_key)
 
 """
     DeepSeekEndpoint <: OpenAIWireEndpoint

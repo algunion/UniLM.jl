@@ -12,7 +12,9 @@ has an entry of its own: [OpenAI Decisions API](@ref openai_decisions_start). No
 the table below lists as not available sends a request through this endpoint. Of the two APIs,
 UniLM sends no Responses `prompt` template and no `access_programs`, does not use the Responses
 API's WebSocket mode, and does not read back the completions a Chat Completions request stores
-with `store=true`.
+with `store=true`; a `Chat` sends no `functions` or `function_call`, which the Chat Completions
+reference deprecates "in favor of `tools`" and "in favor of `tool_choice`", the fields a `Chat`
+sends instead.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:openai)

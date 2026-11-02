@@ -46,7 +46,7 @@ goes on without them (observed on 25 October 2026). `draft_num_predict` caps the
 per step of a model that has a draft model: "Set to 0 to disable speculative drafting"
 ([Modelfile](https://docs.ollama.com/modelfile)). `typical_p` is one the reference marks: "`typical_p` is
 deprecated and may be removed in a future release"; Ollama 0.40.11 still reads it per request, and its
-log says "deprecated option provided" (observed on 25 October 2026). `respond`, `compact_response`, FIM and transcription use Ollama's
+log says "deprecated option provided" (observed on 25 October 2026). `respond`, `compact_response`, FIM, `transcribe`, `speak` and `translate` use Ollama's
 OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runner`. Decision requests
 (`ask`) carry the endpoint's `keep_alive` and `runner` and none of its options
 ([Models](@ref ollama_models)).
@@ -211,7 +211,7 @@ Ollama's message (`pull model manifest: file does not exist`).
 
 ## [When something fails](@id ollama_failures)
 
-`chatrequest!`, `respond`, `embeddingrequest!`, `fim_complete` and `transcribe` return what the server or
+`chatrequest!`, `respond`, `embeddingrequest!`, `fim_complete`, `transcribe`, `speak` and `translate` return what the server or
 the network did as a typed result, and do not throw it ([Results](@ref results_guide)): a failure holds
 Ollama's HTTP `status` and, as `response`, the body that came with it, `{"error": …}` with the message;
 a call error holds the text of an exception as `error` and the exception as `cause`. UniLM sends a

@@ -18,7 +18,7 @@ exception for what the provider answered, except from `nl_classify`, `nl_dispatc
 `SystemOneError` when the call fails and, with no `fallback` or `_` line, a `LowConfidenceError` or
 `DecisionDeclinedError` for an answer they cannot act on —, the same token and cost accounting, and the same `RequestConfig` of timeouts
 and retries. OpenAI, Anthropic, Google Gemini and Ollama are reached through their own APIs (Ollama's
-`respond`, compaction, FIM and transcription through its OpenAI-compatible routes), so what a provider adds to its replies —
+`respond`, compaction, FIM, transcription, speech and translation through its OpenAI-compatible routes), so what a provider adds to its replies —
 Anthropic's thinking blocks and their signatures, Gemini's thought signatures — goes back to it on the next turn;
 the other language-model providers through the OpenAI-compatible API they serve. UniLM also speaks MCP, as a client
 and as a server, and records a call once to replay it in tests with no key.

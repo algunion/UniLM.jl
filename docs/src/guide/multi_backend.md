@@ -102,7 +102,7 @@ Main.ProviderFacts.on_your_provider(Main.ProviderFacts.llm, :limits)
 | OpenAI | its own: Chat Completions and Responses | against the API |
 | Anthropic | its own: Messages | against the API |
 | Google Gemini | its own: generateContent and Interactions; `GEMINIOpenAIServiceEndpoint`, Google's OpenAI-compatible endpoint | against the API |
-| Ollama | its own, and its OpenAI-compatible routes for `respond`, compaction, FIM and transcription | decision models, embeddings and model management, against a local server; not chat, `respond`, FIM or transcription |
+| Ollama | its own, and its OpenAI-compatible routes for `respond`, compaction, FIM, transcription, speech and translation | decision models, embeddings and model management, against a local server; not chat, `respond`, FIM, transcription, speech or translation |
 | vLLM, LM Studio & llama.cpp | OpenAI-compatible | — |
 | Azure OpenAI | Azure OpenAI's Chat Completions, in the dated `api-version` form | — |
 | DeepSeek | OpenAI-compatible, with its beta FIM and prefix completion | — |

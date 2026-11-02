@@ -915,6 +915,23 @@ end
     @test length(SpeechRequest(input=repeat("é", 4096), service=off, model="phonon").input) == 4096
 end
 
+# Refuted if: an empty `instructions`, which Ollama's speech route takes as none (server/speech.go answers only a
+# non-empty one with HTTP 400), is refused or reaches the wire; or an empty `response_format`, which Ollama reads as
+# wav, is refused in Ollama's words rather than by UniLM's own wav-or-pcm rule.
+@testset "speak on Ollama: empty instructions are none; an empty format is refused by UniLM's rule, not Ollama's" begin
+    wav = _sp_streamed_wav(_sp_pcm(Int16[0, 1200, -1200, 300]))
+    r, seen = _with_scripted((_, _) -> _sp_audio("wav", wav)) do
+        speak("Hi."; service=OllamaEndpoint(base_url=_url_probe_base[]), model="phonon", instructions="")
+    end
+    @test r isa SpeechSuccess && length(seen) == 1 && !haskey(JSON.parse(only(seen).body), "instructions")
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(f) = try f(); nothing catch x; x end
+    e = refusal(() -> speak("Hi."; service=off, model="phonon", instructions=" "))
+    @test e isa ArgumentError && occursin("\"instructions are not supported\"", e.msg)
+    e = refusal(() -> speak("Hi."; service=off, model="phonon", response_format=""))
+    @test e isa ArgumentError && startswith(e.msg, "response_format must be \"wav\"") && !occursin("Ollama", e.msg)
+end
+
 # Refuted if: Ollama's 400 (an unknown voice, its message naming the voices) is not an AudioFailure carrying the body,
 # or a reply that is not the audio asked for — another label, a WAV without its header, samples cut mid-frame — comes
 # back as a success.

@@ -971,6 +971,27 @@ _ot_field(body::AbstractString, name::AbstractString) =
     @test length(seen) == 1 && _ot_field(only(seen).body, "language") == "en"
 end
 
+# Refuted if: a temperature outside OpenAI's 0–1 is refused on Ollama, whose route parses any number and answers only
+# NaN and the infinities with HTTP 400 (server/transcription.go), or a non-finite one is sent to it; or OpenAI loses
+# its 0–1 range.
+@testset "transcription on Ollama: any finite temperature is sent; OpenAI keeps its 0 to 1" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    reply(_, _) = HTTP.Response(200, ["Content-Type" => "application/json; charset=utf-8"],
+                                Vector{UInt8}(JSON.json(Dict("text" => "banana"))))
+    for t in (1.5, -0.5)
+        r, seen = _with_scripted(reply) do
+            transcribe(wav; service=ep(), model="gemma4:e4b", temperature=t)
+        end
+        @test r isa TranscriptionSuccess && length(seen) == 1 && _ot_field(only(seen).body, "temperature") == string(t)
+    end
+    for t in (NaN, Inf, -Inf)
+        @test_throws ArgumentError UniLM.TranscriptionRequest(service=ep(), file=wav, model="gemma4:e4b", temperature=t)
+    end
+    @test_throws ArgumentError UniLM.TranscriptionRequest(file=wav, temperature=1.5)
+    @test_throws ArgumentError UniLM.TranscriptionRequest(file=wav, temperature=NaN)
+end
+
 # Refuted if: a reply labelled neither application/json nor text/plain — Ollama before 0.40.12 labelled its JSON
 # application/x-ndjson, the header of the chat stream it transcribed with (as _ollama_mock does) — comes back as a
 # transcript rather than as a call error that names the label and the release that answers otherwise.

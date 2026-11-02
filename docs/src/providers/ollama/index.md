@@ -426,7 +426,7 @@ transcript_text(r)
 # "The secret word is banana"
 ```
 
-The request carries the file, the model, and the `language`, `prompt`, `temperature` (Ollama's default 0)
+The request carries the file, the model, and the `language`, `prompt`, `temperature` (any finite number; Ollama's default 0)
 and `response_format` you set: `"json"` (the default), `"text"` or `"verbose_json"`, whose `raw` holds
 Ollama's segments, one per piece of audio it transcribed. UniLM reads the reply by its `Content-Type`: JSON,
 or the bare text for `"text"`. Ollama before 0.40.12 labelled its JSON `application/x-ndjson`, and such a
@@ -452,7 +452,7 @@ the `voice` and `speed` you set; without a voice the model speaks in its own. Th
 24 kHz as Ollama streamed it: for `"wav"`, a WAV file whose header, written before the length is known, holds
 the maximum value in its size fields; for `"pcm"`, the bare samples. Ollama answers with HTTP 400 what a model
 does not support, so a request without a `model`, an `input` of more than 4,096 characters, a `speed` other
-than 1, any `instructions` and a format other than `"wav"` and `"pcm"` are refused before it is sent. A voice
+than 1, non-empty `instructions` and a format other than `"wav"` and `"pcm"` are refused before it is sent. A voice
 the model does not have is Ollama's 400, an [`AudioFailure`](@ref) whose message lists the voices it has:
 `voice "Nobody At All" not found; available voices: Alfie, Azgorath, …`. A reply under another
 `Content-Type` is an [`AudioCallError`](@ref), and a transient status is sent again, as a chat request is.
@@ -601,7 +601,7 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | a transcription with `languages` or `keywords` | `takes one`, `lists no`: Ollama's OpenAI-compatibility page lists one `language` and no `keywords` | one `language`, or none to let the model detect it |
 | a transcription `response_format` other than `"json"`, `"text"` and `"verbose_json"`, such as `"srt"` or `"vtt"` | `Ollama answers HTTP 400 "response_format … is not supported, use json, text or verbose_json"` | one of those three |
 | `speak` without a `model` | `Ollama has no default speech model` | an installed speech model, such as `"phonon"` |
-| `speak` with an `input` of more than 4,096 characters, a `speed` other than 1, any `instructions`, a `response_format` other than `"wav"` and `"pcm"`, or a blank `voice` | `reads at most 4,096 characters`, `speaks at speed 1.0 only`, `"instructions are not supported"`, `is not supported, use wav or pcm`, `takes a voice by name`: Ollama answers each with HTTP 400 | the text in parts, no `speed`, no `instructions`, `"wav"` or `"pcm"`, a voice [`model_info`](@ref) lists, or none |
+| `speak` with an `input` of more than 4,096 characters, a `speed` other than 1, non-empty `instructions`, a `response_format` other than `"wav"` and `"pcm"`, or a blank `voice` | `reads at most 4,096 characters`, `speaks at speed 1.0 only`, `"instructions are not supported"`, `is not supported, use wav or pcm`, `takes a voice by name`: Ollama answers each with HTTP 400 | the text in parts, no `speed`, no `instructions`, `"wav"` or `"pcm"`, a voice [`model_info`](@ref) lists, or none |
 | `translate` without a `model`, with a blank `language`, or of an empty file | `Ollama has no default translation model`, `needs a target language`, `"audio file is empty"` | a model that hears audio, such as `"gemma4:e4b"`; a code such as `"fr"`; a recording |
 | [`load_model`](@ref) through an endpoint with `keep_alive=0` | `would unload the model`: Ollama reads such a request as an unload | `keep_alive` unset, or a number of seconds |
 

@@ -104,24 +104,27 @@ function _speech_model(::_OllamaSpeechWire, model::Union{AbstractString,Nothing}
     String(model)
 end
 
-# The refusal of a format no speech wire produces; Ollama's in its own words (server/speech.go).
-_speech_format_refusal(::_SpeechWire, fmt::AbstractString)::String =
+# The refusal of a format no speech wire produces; Ollama's in its own words (server/speech.go), except an empty
+# format, which Ollama reads as wav: that one is refused by UniLM's own rule.
+_speech_format_rule(fmt::AbstractString)::String =
     "response_format must be \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz); got $(repr(fmt))"
-_speech_format_refusal(::_OllamaSpeechWire, fmt::AbstractString)::String =
+_speech_format_refusal(::_SpeechWire, fmt::AbstractString)::String = _speech_format_rule(fmt)
+_speech_format_refusal(::_OllamaSpeechWire, fmt::AbstractString)::String = isempty(fmt) ? _speech_format_rule(fmt) :
     "Ollama answers HTTP 400 \"response_format $(repr(fmt)) is not supported, use wav or pcm\": set response_format " *
     "to \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz)"
 
 # What a speech wire cannot carry beyond its voices, formats and speeds, refused before any request.
 _check_speech(::_SpeechWire, ::AbstractString, ::Union{AbstractString,Nothing}) = nothing
-# Ollama reads "up to 4,096 characters" and answers `instructions` with HTTP 400 "instructions are not supported"
-# (https://docs.ollama.com/api/openai-compatibility, server/speech.go).
+# Ollama reads "up to 4,096 characters" and answers non-empty `instructions` with HTTP 400 "instructions are not
+# supported" (https://docs.ollama.com/api/openai-compatibility, server/speech.go); empty ones are none, and UniLM
+# never sends them.
 const _OLLAMA_SPEECH_CHARS = 4096
 function _check_speech(::_OllamaSpeechWire, input::AbstractString, instructions::Union{AbstractString,Nothing})
     n = length(input)
     n <= _OLLAMA_SPEECH_CHARS || throw(ArgumentError(
         "Ollama reads at most 4,096 characters per speech request (got $n): split the text, e.g. at paragraph or " *
         "sentence breaks, and speak each part"))
-    isnothing(instructions) || throw(ArgumentError(
+    isnothing(instructions) || isempty(instructions) || throw(ArgumentError(
         "Ollama answers `instructions` with HTTP 400 \"instructions are not supported\": remove instructions"))
     nothing
 end
@@ -156,13 +159,13 @@ Every service produces 16-bit mono PCM at 24 kHz: `response_format` `"wav"` retu
 `"pcm"` as the raw samples. `instructions` direct the delivery (tone, pace, accent): on OpenAI they
 follow the session's instruction to read `input` word for word, on Gemini they are the text's speech
 style (`speechMetadata.style`). Gemini TTS has no speed parameter: describe the pace in
-`instructions` (`"speaking slowly"`). Ollama takes neither: it answers `instructions` and any speed
-but 1 with HTTP 400.
+`instructions` (`"speaking slowly"`). Ollama takes neither: it answers non-empty `instructions` and
+any speed but 1 with HTTP 400.
 
 Throws `ArgumentError`, before any request, for an empty `input`, a voice the Realtime session does
 not have or a blank Gemini or Ollama voice, a `response_format` other than `"wav"` or `"pcm"`, a
 `speed` out of range, and any `speed` on Gemini; on Ollama, for a request without a `model`, an
-`input` of more than 4,096 characters and any `instructions`; and for `GEMINIOpenAIServiceEndpoint`,
+`input` of more than 4,096 characters and non-empty `instructions`; and for `GEMINIOpenAIServiceEndpoint`,
 which has no speech route, naming `GEMINIServiceEndpoint`. The Extended Voice Library's names are
 listed only by Gemini's `GET /v1beta/voices`, so a Gemini voice is sent as given, and Gemini answers a
 name it does not have; an Ollama voice is sent as given too, and Ollama answers one the model does not
@@ -536,13 +539,14 @@ whose request names the model its server serves. Optional
 For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
 Other models retain their singular `language` field. Never set both forms.
 `response_format` is one of `json`, `text`, `srt`, `verbose_json`, `vtt`,
-`diarized_json`, and `temperature` lies in `0 … 1`; anything else is an `ArgumentError`.
+`diarized_json`, and `temperature` lies in `0 … 1` (on Ollama, any finite number); anything else is
+an `ArgumentError`.
 On OpenAI, `srt`, `vtt` and `verbose_json` (subtitles and timestamps) are documented only
 for `whisper-1`, and `diarized_json` (speaker labels) only for `gpt-4o-transcribe-diarize`:
 deprecated models that shut down on February 26, 2027
 ([speech to text](https://developers.openai.com/api/docs/guides/speech-to-text)).
 Ollama's `/v1/audio/transcriptions` (Ollama 0.40.12 or later) reads one `language`, the
-`prompt`, `temperature` (its default 0) and a `response_format` of `json`, `text` or
+`prompt`, `temperature` (any finite number; its default 0) and a `response_format` of `json`, `text` or
 `verbose_json`: a request to it that sets `languages`, `keywords` or another format throws
 `ArgumentError` before any request, in Ollama's words.
 Pass to [`transcribe`](@ref).
@@ -566,11 +570,18 @@ Pass to [`transcribe`](@ref).
         end
         isnothing(response_format) || response_format in _TRANSCRIPTION_FORMATS || throw(ArgumentError(
             "response_format must be one of $(_TRANSCRIPTION_FORMATS); got $(repr(response_format))"))
-        isnothing(temperature) || 0 <= temperature <= 1 ||
-            throw(ArgumentError("temperature must be between 0 and 1; got $temperature"))
+        refusal = isnothing(temperature) ? nothing : _transcription_temperature_refusal(service, temperature)
+        isnothing(refusal) || throw(ArgumentError(refusal))
         new(service, file, model, language, prompt, response_format, temperature, languages, keywords)
     end
 end
+
+# The temperatures a transcription route takes: OpenAI's reference gives 0 to 1; Ollama's route parses any number
+# and refuses only NaN and the infinities as an "invalid temperature" (server/transcription.go).
+_transcription_temperature_refusal(_, t::Real)::Union{Nothing,String} =
+    0 <= t <= 1 ? nothing : "temperature must be between 0 and 1; got $t"
+_transcription_temperature_refusal(::OllamaEndpoint, t::Real)::Union{Nothing,String} =
+    isfinite(t) ? nothing : "Ollama refuses a temperature that is not a finite number (\"invalid temperature\"); got $t"
 
 # The model a transcription names, else the service's default: `gpt-transcribe` for OpenAI and an
 # endpoint of the caller's own; none for Ollama or a generic endpoint, whose models are the caller's

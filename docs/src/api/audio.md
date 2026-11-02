@@ -99,9 +99,9 @@ where the pace goes (`"speaking slowly"`): Gemini TTS has no speed parameter
 On Ollama, `speak` sends one POST to `/v1/audio/speech` with the model, the text, the
 format, and the voice and speed when set ([speech](https://docs.ollama.com/capabilities/speech));
 there is no default model, so name an installed speech model such as `phonon`. Ollama answers
-with HTTP 400 what its model does not support, so UniLM refuses before the request, naming
-Ollama, a request without a model, an `input` of more than 4,096 characters, a `speed` other
-than 1, any `instructions` and a format other than `"wav"` and `"pcm"`. A voice is each model's
+with HTTP 400 what its model does not support, so UniLM refuses, before sending it, a request
+without a model, an `input` of more than 4,096 characters, a `speed` other than 1, non-empty
+`instructions` and a format other than `"wav"` and `"pcm"`. A voice is each model's
 own and is sent as given: Ollama answers one the model does not have with a 400
 [`AudioFailure`](@ref) that names the voices it has. The reply's bytes come back as Ollama
 streamed them, and a reply under another `Content-Type` is an [`AudioCallError`](@ref);
@@ -166,7 +166,7 @@ their singular field. Setting both forms raises `ArgumentError`.
 
 Ollama has no default: name a model that hears audio, such as `gemma4:e4b`. Its
 `/v1/audio/transcriptions` (Ollama 0.40.12 or later) reads one `language`, a `prompt`,
-`temperature` (its default 0) and a `response_format` of `json`, `text` or `verbose_json`
+`temperature` (any finite number; its default 0) and a `response_format` of `json`, `text` or `verbose_json`
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and UniLM reads
 the reply by its `Content-Type`: JSON, or the bare text for `"text"`. A reply labelled
 otherwise is an [`AudioCallError`](@ref) naming the label: Ollama before 0.40.12 labelled

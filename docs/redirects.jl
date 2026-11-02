@@ -6,8 +6,9 @@
 #
 # <out> is the site's static export (site/out, holding anchors.json), <base> the path it is served under
 # (/UniLM.jl/dev, /UniLM.jl/vX.Y.Z, or "" at the root), <toml> the redirect table (default docs/redirects.toml).
-# Writes the stubs and <out>/anchor-aliases.json, then checks that each route of docs/routes-v0.26.0.txt is a page
-# or a stub of <out> and that each id of docs/anchors-v0.26.0.txt resolves; exits 1 on any problem.
+# Writes the stubs, over those an earlier run wrote into <out>, and <out>/anchor-aliases.json, then checks that each
+# route of docs/routes-v0.26.0.txt is a page or a stub of <out> and that each id of docs/anchors-v0.26.0.txt
+# resolves; exits 1 on any problem.
 module Redirects
 
 using JSON, TOML
@@ -118,6 +119,15 @@ script at the first `</script`, even one inside a string.
 """
 js(x)::String = replace(JSON.json(x), '<' => "\\u003c")
 
+"""
+The tag in the head of every stub: HTML's `generator` metadata, naming the software that wrote the page. A later run
+over the same export overwrites a file that holds it, and refuses to replace any other, a page of the site.
+"""
+const STUB_MARK = """<meta name="generator" content="UniLM.jl docs/redirects.jl">"""
+
+"Whether the file `path` is a stub that an earlier run wrote: it holds `STUB_MARK`."
+is_stub(path::String)::Bool = occursin(STUB_MARK, read(path, String))
+
 "The HTML of the stub at route `old` for the route `new` that replaced it; `dests` is its `stub_map`."
 function stub(old::String, new::String, base::String, dests::Dict{String,String})::String
     up = "../"^count('/', old)
@@ -126,6 +136,7 @@ function stub(old::String, new::String, base::String, dests::Dict{String,String}
     <html lang="en">
     <head>
     <meta charset="utf-8">
+    $STUB_MARK
     <title>Moved</title>
     <link rel="canonical" href="$base/$new">
     <meta http-equiv="refresh" content="2; url=$up$new">
@@ -156,7 +167,8 @@ URLs, so a reader stays in the folder they came from (dev/, stable/ or a version
 
 Refuses, before writing anything, an old route that is the home page, that is no route of the file `list` — the
 routes an earlier version served, one per line (`/guide/x/`), so a stub anywhere else forwards nobody — or where a
-page exists, a new route that is not a page, and a successor id that `<out>/anchors.json` lacks.
+page exists, a new route that is not a page, and a successor id that `<out>/anchors.json` lacks. A stub an earlier
+run wrote at an old route, which holds `STUB_MARK`, is no page: this run's stub replaces it.
 """
 function write_stubs(out::String, base::String, toml::String, list::String)::Vector{String}
     c, anchors = Config(toml), read_anchors(out)
@@ -169,7 +181,8 @@ function write_stubs(out::String, base::String, toml::String, list::String)::Vec
         isempty(old) && error("$toml: [routes] moves the home page, which a stub would replace")
         old in served || error("$toml: [routes] $(repr(old)) is no route of $list, which lists the routes an " *
                                "earlier version served: a stub there forwards nobody")
-        isfile(joinpath(out, old, "index.html")) &&
+        page = joinpath(out, old, "index.html")
+        isfile(page) && !is_stub(page) &&
             error("$toml: [routes] $(repr(old)) is a page of $out, which a stub would replace")
         isfile(joinpath(out, new, "index.html")) ||
             error("$toml: [routes] $(repr(old)) moves to $(repr(new)), which is not a page of $out")

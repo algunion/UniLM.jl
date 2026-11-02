@@ -727,18 +727,18 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
         end
     end
     u = get(ev, "usageMetadata", nothing)
-    u isa AbstractDict && (state.usage = _gemini_usage(u, state.service_tier))
+    u isa AbstractDict && (state.usage = _gemini_usage(u, _stream_tier(state)))
     :continue
 end
 
-# A stream's tier is also in its response head, read before the first chunk (`state.service_tier`),
+# A stream's tier is also in its response head, read before the first chunk (`state.head_tier`),
 # so the streamed usage names the tier the reply not streamed names.
 _stream_head!(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServiceEndpoint}}, state::StreamState,
-              head::HTTP.Response)::Nothing = (state.service_tier = _gemini_header_tier(head); nothing)
+              head::HTTP.Response)::Nothing = (state.head_tier = _gemini_header_tier(head); nothing)
 
 # The compatible endpoint's reply reads as the OpenAI wire's, its billed tier header first, as on
 # the native wire: the response head's x-gemini-service-tier, else the reply's service_tier — a
-# stream's head outranks every chunk's (`_chunk_tier!`). Neither named a tier in replies to flex
+# stream's head outranks every chunk's (`_stream_tier`). Neither named a tier in replies to flex
 # and priority requests on 2026-10-22, streamed or not, so such a reply reports none.
 function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Response)
     d = extract_message(resp)
@@ -746,8 +746,6 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
     usage = isnothing(tier) || isnothing(d.usage) ? d.usage : TokenUsage(; _usage_fields(d.usage)..., service_tier=tier)
     merge(d, (; usage))
 end
-_chunk_tier!(::Type{GEMINIOpenAIServiceEndpoint}, state::StreamState, tier::String)::Nothing =
-    (isnothing(state.service_tier) && (state.service_tier = tier); nothing)
 
 # A reply that names no tier was billed at the one its request asked for, so the result records
 # that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,

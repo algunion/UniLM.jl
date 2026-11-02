@@ -197,8 +197,8 @@ end
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
 # index [1] — and only choice 0 is read (`_reply_choice`); `usage` is captured from any chunk. OpenAI names the served `model` and
-# the billed `service_tier` on every chunk; the usage takes the stream's tier
-# (`_chunk_tier!`: the latest one named), so a usage chunk without one still carries
+# the billed `service_tier` on every chunk; the usage takes the stream's tier (`_stream_tier`:
+# the response head's, else the latest one a chunk named), so a usage chunk without one still carries
 # it. `delta.audio` updates assemble an audio reply (`_audio_delta!`), and a `delta.content` given
 # as a list of chunks is read chunk by chunk (`_content_delta!`). A choice's `logprobs` extends
 # the stream's token lists, and a chunk's `moderation` adds its results (`_logprobs_delta!`,
@@ -223,7 +223,7 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     tier = _wire_string(parsed, "service_tier")
     isnothing(tier) || _chunk_tier!(service, state, tier)
     u = get(parsed, "usage", nothing)
-    u isa AbstractDict && (state.usage = _token_usage_from(u; service_tier=state.service_tier))
+    u isa AbstractDict && (state.usage = _token_usage_from(u; service_tier=_stream_tier(state)))
     _moderation_delta!(state, get(parsed, "moderation", nothing))
     choices = get(parsed, "choices", nothing)
     choices isa AbstractVector || return :continue
@@ -312,8 +312,8 @@ function _finalize_generic_reasoning!(state::StreamState)::Nothing
     nothing
 end
 
-# The tier a chunk names becomes the stream's, which the usage takes. An endpoint whose
-# response head names the tier first (`_stream_head!`) may keep that one.
+# The tier a chunk names becomes the stream's latest; the usage takes it unless the response head
+# named one (`_stream_tier`).
 _chunk_tier!(_, state::StreamState, tier::String)::Nothing = (state.service_tier = tier; nothing)
 
 # A streamed `delta.content`. A string is the answer's next text. A list of chunks is the shape

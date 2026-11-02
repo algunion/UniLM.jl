@@ -1081,8 +1081,9 @@ both `content` and `pending_delta` (the driver forwards the latter to the stream
 callback), refusal text to `refusal`, and records `finish_reason`, `usage`
 (a [`TokenUsage`](@ref)), the `model` the provider reports having served (the result's
 `model`; `nothing` when it reports none) and, for an in-band error, the decoded payload
-in `error`. `service_tier` holds the billed tier a chunk (or the response head) reported,
-for a handler whose provider reports it apart from the usage, and `continuation_token`
+in `error`. `service_tier` holds the billed tier the latest chunk reported, for a handler
+whose provider reports it apart from the usage, and `head_tier` the one the response head
+reported, which outranks it (Gemini's `x-gemini-service-tier`); `continuation_token`
 the token a provider returns for continuing a long generation in another request.
 `audio` is filled by the OpenAI-wire handler only, from a streamed audio reply's
 `delta.audio` updates, and becomes the message's [`AudioOutput`](@ref); a handler of
@@ -1132,9 +1133,11 @@ Public extension API (not exported); see the Custom Backends guide.
     # O(fragment) and joined onto `tool_calls` once, by `_tool_function!` —
     # re-concatenating a String per fragment is quadratic in the argument length.
     tool_fragments::Dict{Int,NTuple{2,IOBuffer}} = Dict{Int,NTuple{2,IOBuffer}}()
-    # The served model and the billed tier, as the stream's chunks report them.
+    # The served model and the billed tier, as the stream's chunks report them, and the billed tier
+    # the response head reported (`_stream_head!`), which outranks every chunk's (`_stream_tier`).
     model::Union{String,Nothing} = nothing
     service_tier::Union{String,Nothing} = nothing
+    head_tier::Union{String,Nothing} = nothing
     # A streamed audio reply as it arrives; the OpenAI-wire handler alone fills it.
     audio::Union{_StreamedAudio,Nothing} = nothing
     # The latest token the reply carried for continuing the generation in another request.
@@ -1364,6 +1367,11 @@ _decoded_continuation(decoded)::Union{String,Nothing} =
 # What a stream's response head reports before the first chunk, for an endpoint whose provider
 # reports something there (Gemini's billed tier): recorded in `state`. The fallback reads nothing.
 _stream_head!(_, ::StreamState, ::HTTP.Response)::Nothing = nothing
+
+# The tier a streamed reply was billed at, which its usage takes: the one its response head named,
+# else the latest a chunk named.
+_stream_tier(state::StreamState)::Union{String,Nothing} =
+    isnothing(state.head_tier) ? state.service_tier : state.head_tier
 
 # A usage's fields by name.
 _usage_fields(u::TokenUsage) = NamedTuple{fieldnames(TokenUsage)}(ntuple(i -> getfield(u, i), Val(fieldcount(TokenUsage))))

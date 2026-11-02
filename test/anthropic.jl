@@ -1114,10 +1114,10 @@ const _NO_MID_SYSTEM_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opu
 # the earlier messages), https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md;
 # they and an id no row names are placed append-only. The rest accept mid-conversation system
 # messages without that check.
-const _PREFIX_CHECKED_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
+const _PREFIX_CHECKED_MODELS = ("claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-sonnet-5-5",
+                                "claude-haiku-5-5")
 const _APPEND_ONLY_MODELS = (_PREFIX_CHECKED_MODELS..., "claude-opus-9")
-const _UNCHECKED_MID_SYSTEM_MODELS = ("claude-mythos-5-1", "claude-fable-5", "claude-mythos-5", "claude-opus-5",
-                                      "claude-opus-4-8")
+const _UNCHECKED_MID_SYSTEM_MODELS = ("claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-opus-4-8")
 
 @testset "encode — a later system message stays in place where the model accepts it" begin
     tc = ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))
@@ -1210,6 +1210,17 @@ _thinking_reply(text, sig) = Message(role=RoleAssistant, content=text, finish_re
         body = _anthropic_body(; model, messages=[s("s0"), u("u1"), a1, u("u2"), s("s2")])
         @test body["system"] == "s0" && _roles(body) == ["user", "assistant", "user", "system"]
     end
+end
+
+# https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md: "The prefix check runs on
+# Claude 5.1 and later models", and on Claude Mythos 5.1 a block that fails it is an HTTP 400 on every account.
+@testset "encode — Claude Mythos 5.1 checks the thinking prefix: a system message after a reply stays in the messages" begin
+    a1 = _thinking_reply("a1", "sig1")
+    msgs = [Message(Val(:user), "u1"), a1, Message(Val(:system), "s2"), Message(Val(:user), "u2")]
+    body = _anthropic_body(model="claude-mythos-5-1", messages=msgs)
+    @test !haskey(body, "system")
+    @test body["messages"] == [_wire("user", "u1"), _wire("assistant", a1.provider_content.blocks), _wire("user", "u2"),
+                               _wire("system", "s2")]
 end
 
 @testset "encode — under append-only placement every later request extends the earlier one" begin

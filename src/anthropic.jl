@@ -108,7 +108,9 @@ const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill
 # Dates: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
 const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
     "claude-fable-5-1"      => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
-    "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    # "The prefix check runs on Claude 5.1 and later models", and Mythos 5.1 answers a block that
+    # fails it with HTTP 400 on every account (preserved-thinking.md, read on 2026-11-02).
+    "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
     "claude-fable-5"        => _ClaudeFamily(thinking=:always, system=true),
     "claude-mythos-5"       => _ClaudeFamily(thinking=:always, system=true),
     "claude-opus-5-5"       => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true, fast=:ga),

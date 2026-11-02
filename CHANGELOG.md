@@ -50,6 +50,9 @@
   keyword was an `UndefKeywordError`: `effort` is now optional, since an update may change the text format alone.
 - **`ImageEdit` has a `markup` field after `mask`**, so its positional constructor takes one more argument there;
   keyword construction, the documented form, is unchanged.
+- **Native Anthropic requests and `list_models` send the key as `Authorization: Bearer <key>`**, the header
+  Anthropic's API overview names, instead of `x-api-key`, which Anthropic keeps as a legacy fallback. A proxy or
+  gateway that reads or sets `x-api-key` must use `Authorization` instead.
 
 ### Added
 - **Scheduled price changes take effect on their dates, without a new release.** Google doubles Gemini 4 Argon's
@@ -131,6 +134,9 @@
 - **The Gemini docs no longer say thought summaries add nothing to the bill.** A `Chat` sends them back with the
   reply on its next turn, where they bill as input: on `gemini-3.8-flash`, an 895-character summary added 365 input
   tokens.
+- **Claude Mythos 5.1 is treated as a model that runs Anthropic's thinking-prefix check**, which answers a changed
+  prefix with HTTP 400 on every account. A system message pushed after a reply is now placed append-only on it, as on
+  Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, instead of being joined into the top-level `system` prompt.
 
 ## 0.29.0
 

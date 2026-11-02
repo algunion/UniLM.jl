@@ -481,7 +481,8 @@ end
     # A model without a scheduled change is priced by its row on every date.
     @test cost("gemini-2.5-flash", Date(2027, 6, 1)) ≈ cost("gemini-2.5-flash", Date(2026, 11, 2)) ≈
           bill((0.30, 0.03, 2.50))
-    # Unpinned, the day is the current one in UTC, read at each call rather than when the package loaded.
+    # Unpinned, the day is today's in UTC. (This cannot tell a date read at each call from one read when the
+    # package loaded, unless the package loaded on an earlier UTC day.)
     earliest = Date(Dates.now(Dates.UTC))
     @test earliest <= with(UniLM._pricing_today, UniLM._PRICING_DATE => nothing) <= Date(Dates.now(Dates.UTC))
     # Both docstrings say so.

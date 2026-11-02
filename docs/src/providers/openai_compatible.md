@@ -117,7 +117,7 @@ text(chatrequest!(chat))
 ```
 
 A reply's reasoning never goes back with a later turn: an unstreamed reply keeps none
-([First call](@ref openai_compatible_first_call)), and the reasoning a streamed one keeps is not sent. What `push!` refuses is the same on every provider ([Chat Completions](@ref chat_guide)).
+([First call](@ref openai_compatible_first_call)), and the reasoning a streamed one keeps is not sent. What `push!` refuses is the same on every provider ([Conversations with Chat](@ref chat_guide)).
 
 ## [Streaming](@id openai_compatible_streaming)
 

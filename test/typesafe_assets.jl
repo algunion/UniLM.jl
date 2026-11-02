@@ -430,11 +430,11 @@ end
         (_ts_request_02(), "56-err-nesting.response.json", 400, "api_usage_error",
             "Request JSON nesting exceeds the maximum depth of 64."),
         # The bare "Invalid request." a Box question draws from Jev 1.13 names the models that answer one…
-        (box_req, "45-box-jev-latest.response.json", 400, "api_usage_error",
+        (box_req, "45-box-jev-1.13.0.response.json", 400, "api_usage_error",
             "Invalid request. Box questions need a Jev model that supports them, 1.14 or later, such as " *
             "\"jev-1.14.0\", \"jev-latest\" or \"jev-preview\""),
         # …and only when the request holds a Box question.
-        (_ts_request_02(), "45-box-jev-latest.response.json", 400, "api_usage_error", "Invalid request."),
+        (_ts_request_02(), "45-box-jev-1.13.0.response.json", 400, "api_usage_error", "Invalid request."),
         # A context overflow names long_context and the limits, or, with it on, the long limit.
         (long, "46-long-context-off.response.json", 400, "max_tokens_exceeded",
             "max_tokens_exceeded. The request is longer than the context of 64k tokens per request and 32k for " *

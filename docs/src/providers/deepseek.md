@@ -23,7 +23,7 @@ Main.ProviderFacts.at_a_glance(:deepseek)
 | [hold a conversation](@ref deepseek_conversations) | `push!` a message, then `chatrequest!` again | each reply appended to the `Chat` and sent back with the next turn |
 | [stream a reply](@ref deepseek_streaming) | `stream=true` and a `callback` | the text as it arrives, then the whole message and its usage |
 | [let the model call my functions](@ref deepseek_tools) | `tools` and `tool_loop!` | the calls run and answered until the model replies, its thinking sent back as DeepSeek requires |
-| [get JSON](@ref deepseek_structured_output) | `response_format=UniLM.json_object()` | a reply that is one JSON object, or blank content to retry |
+| [get JSON](@ref deepseek_structured_output) | `response_format=UniLM.json_object()` | a reply that is one JSON object, unless cut off at `max_tokens` or blank (retry it) |
 | [control thinking](@ref deepseek_reasoning) | `reasoning_effort` | thinking off, or at an effort, and its text in `reasoning_text` |
 | [fill in the middle or continue a prefix](@ref deepseek_completions) | `fim_complete`, `prefix_complete` | the text between a prefix and a suffix; the rest of an assistant turn |
 | [reuse a cached prompt](@ref deepseek_caching) | nothing: DeepSeek caches on its own | cache hits in `usage.cached_tokens`, billed at the cached rate |

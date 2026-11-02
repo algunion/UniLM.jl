@@ -132,7 +132,7 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
 | [`ask_each`](@ref) in flight | 16 | 16 | 1 |
 | Recordings filed under | `/v1/systemone` | `/openai-decisions/v1/decisions` | `/ollama/v1/systemone` |
-| Status, 25 October 2026 | `jev-latest` and `jev-preview` are Jev 1.14; images "dreamer-ready" | generally available | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026); the live suite passed unchanged on Ollama 0.40.13 (2 November 2026) |
+| Status | `jev-latest` and `jev-preview` are Jev 1.14 (2 November 2026); images "dreamer-ready" (25 October 2026) | generally available (25 October 2026) | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026); the live suite passed unchanged on Ollama 0.40.13 (2 November 2026) |
 
 The Where a picture may stand row is what UniLM sends. TypeSafe takes a picture "anywhere text can go in a System
 One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API takes pictures in the input and in a

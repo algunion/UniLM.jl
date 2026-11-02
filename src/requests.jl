@@ -1302,9 +1302,20 @@ Completions (`extract_message`). A body that is not a valid reply should throw:
 [`chatrequest!`](@ref) reports the exception as an `LLMCallError` carrying it in `cause`,
 never as an empty success.
 
-Public extension API (not exported); see the Custom Backends guide.
+Public extension API (not exported); see the Custom Backends guide. An unstreamed
+[`chatrequest!`](@ref) on an endpoint with no method throws the `MethodError` for this
+function before anything is sent, as a missing [`encode_request`](@ref) does.
 """
 decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_message(resp)
+
+# The decoder an unstreamed Chat reads its reply with, checked before anything is sent: on an
+# endpoint without one the request would be sent, and billed, for a reply that cannot be read. It
+# is refused with the `MethodError` the decoder's call raises, as an endpoint without an encoder is.
+function _require_decoder(service)::Nothing
+    hasmethod(decode_response, Tuple{Core.Typeof(service),HTTP.Response}) ||
+        throw(MethodError(decode_response, (service, HTTP.Response(200))))
+    nothing
+end
 
 # The served model a decoder reported; optional in the seam's contract, so a decoder that
 # returns only the message and usage reports none.
@@ -2177,9 +2188,10 @@ none and is dispatched unvalidated), or when the provider's encoder rejects the
 request (e.g. an option the provider or model does not support);
 `InvalidConversationError` when `chat.history` is on and the conversation ends with an
 assistant message, so the reply could not be appended; and the `MethodError` of a
-seam method the endpoint type lacks — [`encode_request`](@ref), and on a stream
-[`handle_sse_event!`](@ref), whose missing method would otherwise drop every payload
-of the reply.
+seam method the endpoint type lacks — [`encode_request`](@ref), and the reply's decoder:
+[`decode_response`](@ref), whose missing method would otherwise leave a billed reply
+unread, or on a stream [`handle_sse_event!`](@ref), whose missing method would otherwise
+drop every payload of the reply.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
@@ -2189,7 +2201,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)
-    chat.stream === true && _require_stream_handler(chat.service)
+    chat.stream === true ? _require_stream_handler(chat.service) : _require_decoder(chat.service)
     cfg = _resolve_config(config, _model_default_config(chat.service, chat.model))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()

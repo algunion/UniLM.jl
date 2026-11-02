@@ -166,10 +166,11 @@ end
 err isa MethodError, err.f
 ```
 
-A missing decoder fails the call too, once the reply has arrived: the result is an `LLMCallError`
-whose `cause` is the `MethodError` for `decode_response`. A missing stream handler is refused as a
-missing encoder is, before anything is sent, alike on both seams: a streamed `chatrequest!` throws the
-`MethodError` for `handle_sse_event!`, and a streamed `respond` the one for `decode_agentic_stream`.
+A missing decoder or stream handler is refused as a missing encoder is, before anything is sent, so
+no request is billed for a reply that could not be read, alike on both seams: `chatrequest!` throws
+the `MethodError` for `decode_response`, or on a stream for `handle_sse_event!`, and `respond` the one
+for `decode_agentic`, or on a stream for `decode_agentic_stream`. A subtype of `OpenAIWireEndpoint`
+inherits all four.
 
 ## [See also](@id custom_backends_see_also)
 

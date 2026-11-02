@@ -1737,9 +1737,19 @@ Parse `service`'s 200 response into the neutral [`ResponseObject`](@ref), whose
 valid response should throw: [`respond`](@ref) and the lifecycle operations report the
 exception as a `ResponseCallError` carrying it in `cause`.
 
-Public extension API (not exported); see the Custom Backends guide.
+Public extension API (not exported); see the Custom Backends guide. An unstreamed `respond`
+on an endpoint with no method throws the `MethodError` for this function before anything is
+sent, as an unstreamed [`chatrequest!`](@ref) does for a missing [`decode_response`](@ref).
 """
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
+
+# The decoder an unstreamed `respond` reads its reply with, checked before anything is sent, as an
+# unstreamed Chat's is (`_require_decoder`): the same refusal on both seams.
+function _require_agentic_decoder(service)::Nothing
+    hasmethod(decode_agentic, Tuple{Core.Typeof(service),HTTP.Response}) ||
+        throw(MethodError(decode_agentic, (service, HTTP.Response(200))))
+    nothing
+end
 
 # The response a result reports for a request that named `requested` (for a Chat result, the model
 # its reply named): as decoded, unless the endpoint answers under a name other than the one that
@@ -1763,7 +1773,8 @@ ends the streamed [`respond`](@ref) as a `ResponseCallError` with the exception 
 
 Public extension API (not exported); see the Custom Backends guide. A streamed `respond` on
 an endpoint with no method throws the `MethodError` for this function before anything is
-sent, as a streamed [`chatrequest!`](@ref) does for a missing [`handle_sse_event!`](@ref).
+sent, as a streamed [`chatrequest!`](@ref) does for a missing [`handle_sse_event!`](@ref), and
+an unstreamed `respond` for a missing [`decode_agentic`](@ref).
 """
 decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state)
@@ -1823,10 +1834,10 @@ when `callback` is passed without `r.stream === true` (it runs only on a stream,
 would be ignored), when `r.service` is an endpoint type that declares its capabilities
 and lists neither `:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or
 when the provider's encoder rejects the request (e.g. an option the provider or model
-does not support). A streamed call on an endpoint type with no
-[`decode_agentic_stream`](@ref) method throws that function's `MethodError` before any
-network I/O too, as a streamed [`chatrequest!`](@ref) does for a missing
-[`handle_sse_event!`](@ref).
+does not support). A call on an endpoint type without the decoder it reads its reply
+with — [`decode_agentic`](@ref), or on a stream [`decode_agentic_stream`](@ref) — throws
+that function's `MethodError` before any network I/O too, as [`chatrequest!`](@ref) does
+for a missing [`decode_response`](@ref) or [`handle_sse_event!`](@ref).
 
 # Examples
 ```julia
@@ -1843,7 +1854,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         throw(ArgumentError("callback requires stream=true"))
     _validate_agentic_capability(r.service)
     body = encode_agentic(r.service, r)
-    r.stream === true && _require_agentic_stream_decoder(r.service)
+    r.stream === true ? _require_agentic_stream_decoder(r.service) : _require_agentic_decoder(r.service)
     cfg = _resolve_config(config, _model_default_config(r.service, r.model)); tok = _resolve_cancel(cancel); t0 = time_ns()
     # Streaming path. cfg/t0 are resolved above so both paths share one budget
     # origin: the stream driver bounds the first byte, guards the byte gap, and

@@ -900,6 +900,52 @@ UniLM.decode_agentic(::_NoStreamHandler, resp::HTTP.Response) = UniLM.parse_resp
     end
 end
 
+# An endpoint of the caller's own that implements its wire's encoders but no decoder of an unstreamed
+# reply: the chat seam's `decode_response`, the agentic seam's `decode_agentic`.
+struct _NoDecoder <: UniLM.ServiceEndpoint end
+UniLM.get_url(::_NoDecoder, ::Chat) = _url_probe_base[] * "/v1/chat/completions"
+UniLM.get_url(::_NoDecoder, ::Respond) = _url_probe_base[] * "/v1/responses"
+UniLM.auth_header(::_NoDecoder) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::_NoDecoder, chat::Chat) = JSON.json(chat)
+UniLM.encode_agentic(::_NoDecoder, r::Respond) = JSON.json(r)
+# An OpenAI-wire endpoint of the caller's own, which inherits the wire's decoders.
+struct _WireOwn <: UniLM.OpenAIWireEndpoint end
+
+@testset "a missing decoder is refused before anything is sent, on both seams" begin
+    # The reply a request would be billed for could not be read: the call throws the MethodError of the
+    # decoder it lacks before sending, as it does for a missing encoder.
+    chat_reply = """{"id":"chatcmpl-1","object":"chat.completion","model":"m","choices":[{"index":0,""" *
+                 """"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],""" *
+                 """"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"""
+    chat = Chat(service=_NoDecoder(), model="m", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    err, seen = _with_scripted((_, _) -> _json(200, chat_reply)) do
+        try chatrequest!(chat) catch e; e end
+    end
+    @test err isa MethodError && err.f === UniLM.decode_response && isempty(seen)
+    @test occursin("decode_response(::$(_NoDecoder)", sprint(showerror, err))
+    @test length(chat) == 2
+    response_reply = """{"id":"resp_1","object":"response","status":"completed","model":"m","output":[{"type":"message",""" *
+                     """"id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi",""" *
+                     """"annotations":[]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"""
+    r = Respond(service=_NoDecoder(), model="m", input="hi")
+    err, seen = _with_scripted((_, _) -> _json(200, response_reply)) do
+        try respond(r) catch e; e end
+    end
+    @test err isa MethodError && err.f === UniLM.decode_agentic && isempty(seen)
+    @test occursin("decode_agentic(::$(_NoDecoder)", sprint(showerror, err))
+    # Every built-in endpoint has its decoders, and an OpenAI-wire endpoint of the caller's own inherits
+    # them: none is refused.
+    for s in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, GEMINIServiceEndpoint,
+              ANTHROPICServiceEndpoint(), DeepSeekEndpoint(api_key="k"), MistralEndpoint(), OllamaEndpoint(),
+              _WireOwn, _WireOwn())
+        @test isnothing(UniLM._require_decoder(s))
+    end
+    for s in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:1", ""),
+              OllamaEndpoint(), _WireOwn, _WireOwn())
+        @test isnothing(UniLM._require_agentic_decoder(s))
+    end
+end
+
 # ─── Driver: cancellation, stops, time in user code, user-code failures ─────────
 
 # SSE server on an OS-assigned port. After reading the request it answers `status`

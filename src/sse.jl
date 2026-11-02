@@ -123,7 +123,8 @@ Public extension API (not exported): a backend adds a method for its own service
 type (dispatch is on the first argument); see the Custom Backends guide. A streamed
 [`chatrequest!`](@ref) on an endpoint with no method throws the `MethodError` for this
 function before anything is sent, as a missing [`encode_request`](@ref) does, and so does
-a streamed [`respond`](@ref) on one with no [`decode_agentic_stream`](@ref).
+a streamed [`respond`](@ref) on one with no [`decode_agentic_stream`](@ref). An unstreamed
+call checks its decoder the same way ([`decode_response`](@ref), [`decode_agentic`](@ref)).
 """
 function handle_sse_event! end
 

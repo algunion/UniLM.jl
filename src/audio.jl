@@ -751,11 +751,11 @@ OpenAI-compatible translation route, one multipart request carrying the `model` 
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)); the translation is the
 reply's `text`, and `raw` holds the reply. Ollama decodes a WAV file itself and passes any other
 container to the model whole. There is no default model: name an installed model that hears audio,
-such as `lfm3-audio`; a call without one, a blank `language`, and a missing or empty file throw
+such as `gemma4:e4b`; a call without one, a blank `language`, and a missing or empty file throw
 `ArgumentError` before any request:
 
 ```julia
-r = translate("bonjour.wav"; language="en", service=OllamaEndpoint(), model="lfm3-audio")
+r = translate("memo.wav"; language="fr", service=OllamaEndpoint(), model="gemma4:e4b")
 r isa TranscriptionSuccess && println(transcript_text(r))
 ```
 
@@ -811,7 +811,7 @@ function _translate(service::OllamaEndpoint, path::AbstractString, language::Abs
     validate_capability(service, :audio, "translate (Ollama translation route)")
     (isnothing(model) || isempty(strip(model))) && throw(ArgumentError(
         "Ollama has no default translation model: name an installed model that hears audio, e.g. " *
-        "model = \"lfm3-audio\""))
+        "model = \"gemma4:e4b\""))
     lang = _translation_language(language)
     isfile(path) || throw(ArgumentError("file not found: $path"))
     filesize(path) > 0 || throw(ArgumentError(

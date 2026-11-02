@@ -119,6 +119,7 @@ export
     current_config,
     with_request_config,
     set_default_config!,
+    reset_default_config!,
     UniLMTimeout,
     MCPTimeoutError,
     UniLMCancelled,

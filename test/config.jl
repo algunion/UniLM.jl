@@ -270,6 +270,8 @@ end
         @test limit(probe(config=RequestConfig(request_timeout=0.3, max_attempts=1))) == 0.3
         set_default_config!(RequestConfig(request_timeout=0.25, max_attempts=1))
         @test limit(probe()) == 0.25
+        reset_default_config!()                                         # cleared: the backend's own again
+        @test limit(probe()) == 0.4
         set_default_config!(RequestConfig())                            # the field defaults, set
         @test probe() isa SystemOneSuccess
     finally
@@ -338,8 +340,73 @@ UniLM._model_default_config(::Type{_ModelCfgProbe}, model::AbstractString) =
         set_default_config!(RequestConfig(request_timeout=0.25, max_attempts=1))
         @test limit(chatrequest!(chat("slow-thinker"))) == 0.25
         @test limit(respond(asked("slow-thinker"))) == 0.25
+        set_default_config!(nothing)                                    # cleared: the model's own again
+        @test limit(chatrequest!(chat("slow-thinker"))) == 0.4
+        @test limit(respond(asked("slow-thinker"))) == 0.4
     finally
         _restore_default!(initial)
         close(server)
+    end
+end
+
+# ─── Clearing the process default ───────────────────────────────────────────
+
+@testset "after a clear, calls resolve exactly as if no default had ever been set" begin
+    long = RequestConfig(request_timeout=1200.0, stream_idle_timeout=1200.0, total_deadline=1200.0)
+    hosted = RequestConfig(request_timeout=60.0, total_deadline=150.0)
+    backend = RequestConfig(request_timeout=0.4, max_attempts=1)
+    set = RequestConfig(request_timeout=5.0, max_attempts=1)
+    initial = _saved_default()
+    try
+        for clear! in (() -> set_default_config!(nothing), reset_default_config!)
+            set_default_config!(set)
+            @test UniLM._resolve_config(nothing, backend) === set              # set, it replaces a backend's own
+            @test clear!() === nothing
+            @test current_config() == RequestConfig()                          # outside every scope
+            @test UniLM._resolve_config(nothing, backend) === backend
+            # What the seams pass: Gemini 4's 20 minutes, a hosted System One service's 60 s and 150 s.
+            for svc in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+                @test UniLM._resolve_config(nothing, UniLM._model_default_config(svc, "gemini-4-argon")) == long
+            end
+            for (p, svc) in ((UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint),
+                             (UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint))
+                @test UniLM._resolve_config(nothing, UniLM._system_one_default_config(p, svc)) == hosted
+            end
+            # The keyword form merges over the field defaults, not over the default cleared.
+            @test set_default_config!(; total_deadline=120.0) == RequestConfig(total_deadline=120.0)
+            @test current_config() == RequestConfig(total_deadline=120.0)
+            clear!(); clear!()                                                 # clearing none leaves none
+            @test current_config() == RequestConfig() && UniLM._resolve_config(nothing, backend) === backend
+        end
+    finally
+        _restore_default!(initial)
+    end
+end
+
+@testset "a clear racing the keyword form's compare-and-swap loses no write" begin
+    # Property: a keyword set never installs a merge of what it read before a clear that landed
+    # first. Its compare-and-swap misses, and it merges again over what the clear left, the
+    # field defaults. So once every task is done and a final keyword set has run, the default
+    # holds the tasks' fields and that set's over the field defaults: no task's field is lost,
+    # and no value set before the clear survives it (`stale` sets fields no task sets).
+    fields = (:request_timeout, :stream_idle_timeout, :mcp_connect_timeout, :mcp_request_timeout)
+    stale = RequestConfig(connect_timeout=7.0, max_attempts=9)
+    initial = _saved_default()
+    try
+        # Each task is held inside its merge window, having read `stale`, while the clear lands;
+        # released, the tasks race one another's compare-and-swap.
+        for clear! in (() -> set_default_config!(nothing), reset_default_config!)
+            set_default_config!(stale)
+            gates = [GatedSeconds(10.0i) for i in eachindex(fields)]
+            held = [Threads.@spawn set_default_config!(; (fields[i] => gates[i],)...) for i in eachindex(fields)]
+            foreach(g -> wait(g.entered), gates)
+            clear!()
+            foreach(g -> notify(g.release), gates)
+            foreach(wait, held)
+            set_default_config!(; total_deadline=120.0)
+            @test current_config() == RequestConfig(; (fields[i] => 10.0i for i in eachindex(fields))..., total_deadline=120.0)
+        end
+    finally
+        _restore_default!(initial)
     end
 end

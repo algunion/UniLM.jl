@@ -33,7 +33,7 @@ const LOCAL = Set{String}([
     "provider_capabilities", "meanings", "meaning_gaps", "current_config", "get_url", "auth_header",
     # scopes, local writes, webhooks, the provider protocol's methods and the MCP server's definitions
     "with_recorded_answers", "with_system_one", "with_request_config", "with_cancel", "set_default_config!",
-    "cancel!", "add_azure_deploy_name!", "update!", "save_image", "save_audio", "save_file_content",
+    "reset_default_config!", "cancel!", "add_azure_deploy_name!", "update!", "save_image", "save_audio", "save_file_content",
     "parse_webhook", "verify_webhook", "encode_request", "decode_response", "encode_agentic", "decode_agentic",
     "decode_agentic_stream", "encode_system_one", "decode_system_one", "system_one_protocol", "handle_sse_event!",
     "register_tool!", "register_resource!", "register_resource_template!", "register_prompt!",

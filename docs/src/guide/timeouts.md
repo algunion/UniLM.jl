@@ -144,7 +144,10 @@ current_config().request_timeout    # 45.0
 ```
 
 `set_default_config!(cfg)` replaces the default with `cfg`; the keyword form
-merges over the current default.
+merges over the current default. `reset_default_config!()`, or
+`set_default_config!(nothing)`, clears it: later calls resolve exactly as if no
+default had ever been set — the built-in defaults, or a provider's own where it
+brings one — and the keyword form merges over the built-in defaults again.
 
 ### [4. Defaults](@id timeouts_builtin_defaults)
 

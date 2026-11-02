@@ -2730,7 +2730,7 @@ end
 - **Five channels, struct-wise precedence** (a channel supplies a complete struct):
   1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
   2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
-  3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions;
+  3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions; `reset_default_config!()` or `set_default_config!(nothing)` (both `-> nothing`) clears it, after which calls resolve exactly as if none had ever been set;
   4. a backend's own default — System One: `ask`, `ask_each` and the NL verbs on TypeSafe's wire and on OpenAI's Decisions API, and `list_models` on TypeSafe, use `request_timeout = 60`, `total_deadline = 150`; Ollama brings none — or a model's own default: `chatrequest!` and `respond` to a Gemini 4 model (`gemini-4-…` on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`) use `request_timeout = stream_idle_timeout = total_deadline = 1200` (Google ends a non-streamed Argon call after 10 minutes, a stream after 20, and advises a 20-minute read timeout). Either applies only while channels 1–3 supply nothing: a process default you set, even one equal to the built-in defaults, replaces it;
   5. the built-in defaults above.
   `current_config()` returns the ambient struct (active scope, else the process default you set, else the built-in defaults) — channel 4 is never in it.
@@ -2740,6 +2740,7 @@ with_request_config(request_timeout=30.0, max_attempts=1) do
     chatrequest!(chat)          # bounded, no retries, inside this scope only
 end
 set_default_config!(total_deadline=120.0)   # process-wide default
+reset_default_config!()                     # cleared: as if none had been set
 ```
 
 ### Which verbs retry
@@ -3115,4 +3116,4 @@ Every exported symbol (404), grouped by area:
 
 **Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`, `LLMResultError`, `issuccess`, `isfailure`, `text`, `reasoning_text`
 
-**Request Config, Timeouts & Cancellation**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`, `UniLMCancelled`, `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`
+**Request Config, Timeouts & Cancellation**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `reset_default_config!`, `UniLMTimeout`, `MCPTimeoutError`, `UniLMCancelled`, `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`

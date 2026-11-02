@@ -28,7 +28,8 @@ Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 
 Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
-`gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26), TypeSafe rows on 2026-10-25,
+`gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
+`gpt-6-astra-law` on 2026-11-02), TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
 The table holds the rows shipped with this release. Where a provider has scheduled a new price for
@@ -80,6 +81,8 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-6.1-terra" => _price(1.0,  0.05, 5.0),    # listed 2026-10-29
     "gpt-6-sol"     => _price(2.0,  0.20, 10.0),
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
+    "gpt-6-rosalind"  => _price(15.0, 1.50, 75.0),  # life sciences, trusted access; the page of 2026-11-02
+    "gpt-6-astra-law" => _price(10.0, 1.0,  50.0),  # promotional, at least through 2026-12-31; no later price yet
     "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, at least through 2026-11-21
     "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
     "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),

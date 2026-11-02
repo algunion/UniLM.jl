@@ -274,9 +274,12 @@ released since 5 March 2026 ([pricing](https://developers.openai.com/api/docs/pr
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 
-The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October); prices
-change, so check OpenAI's [pricing page](https://developers.openai.com/api/docs/pricing) before relying
-on an estimate.
+The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October,
+`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November); prices change, so check OpenAI's
+[pricing page](https://developers.openai.com/api/docs/pricing) before relying on an estimate.
+`gpt-6-astra-law`'s is a promotional price, "available at least through December 31, 2026", with no
+later price published yet. OpenAI lists `gpt-6-rosalind` at Standard rates alone, and "Access is limited
+to approved internal research through the trusted-access program".
 
 ```@eval
 Main.ProviderFacts.price_table(:openai)

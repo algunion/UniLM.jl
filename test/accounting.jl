@@ -1128,3 +1128,38 @@ end
     @test estimated_cost(result("gpt-6-luna", searches(2); service=nothing)) ==
           estimated_cost(result("gpt-6-luna", nothing; service=nothing))
 end
+
+@testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin
+    # OpenAI's pricing page (2026-11-02), Life sciences, Standard only: "| gpt-6-rosalind | $15.00 | $75.00 | $1.50 |
+    # $18.75 | $37.50 | $30.00 | $112.50 | $3.00 | $37.50 | $75.00 |" (input, output, cached input, 30m and 12h writes,
+    # then the same over 272K input tokens); Legal model configurations: "| gpt-6-astra-law | $10.00 | $50.00 | $1.00 |",
+    # its promotional pricing "available at least through December 31, 2026", with no later price.
+    @test DEFAULT_PRICING["gpt-6-rosalind"] == UniLM._price(15.0, 1.50, 75.0)
+    @test DEFAULT_PRICING["gpt-6-astra-law"] == UniLM._price(10.0, 1.0, 50.0)
+    @test !haskey(UniLM._PRICE_CHANGES, "gpt-6-astra-law")
+    short = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, cache_write_tokens=4_000, cache_write_extended_tokens=1_000,
+                       completion_tokens=100, total_tokens=10_100)
+    long = TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000, completion_tokens=1_000,
+                      total_tokens=301_000)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", short)),
+                   (5_000 * 15.0 + 1_000 * 1.50 + 3_000 * 18.75 + 1_000 * 37.50 + 100 * 75.0) / 1e6; rtol=1e-12)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", long)),
+                   (150_000 * 30.0 + 100_000 * 3.00 + 50_000 * 37.50 + 1_000 * 112.50) / 1e6; rtol=1e-12)
+    # No Flex price for it on the page: estimated at the standard rates, with the warning.
+    @test (@test_logs (:warn, r"service tier") estimated_cost(_oa_result("gpt-6-rosalind", _oa_tiered(1_000, 100, "flex")))) ≈
+          (1_000 * 15.0 + 100 * 75.0) / 1e6
+    # The page gives astra-law three rates and no cache-write or long-context term.
+    @test isapprox(estimated_cost(_oa_result("gpt-6-astra-law", long)), (200_000 * 10.0 + 100_000 * 1.0 + 1_000 * 50.0) / 1e6;
+                   rtol=1e-12)
+    # Both are OpenAI's ids. The per-model rules resolve an exact id or a dated snapshot alone, so neither takes
+    # another model's row: gpt-6-astra-law is not checked as gpt-6-astra, which refuses effort "none" before sending.
+    for id in ("gpt-6-rosalind", "gpt-6-astra-law")
+        @test any(p -> startswith(id, p), UniLM._MODEL_ID_PREFIXES.openai)
+        @test UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id) === nothing
+        r = Respond(model=id, input="hi", reasoning=Reasoning(effort="none"), temperature=0.5)
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["reasoning"] == Dict("effort" => "none")
+    end
+    @test UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, "gpt-6-astra-law") === nothing
+    @test_throws ArgumentError UniLM.encode_agentic(OPENAIServiceEndpoint,
+        Respond(model="gpt-6-astra", input="hi", reasoning=Reasoning(effort="none")))
+end

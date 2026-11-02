@@ -411,6 +411,8 @@ const _OPENAI_PRICE_TERMS = let
         "gpt-6-astra" => current("ultrafast" => 6.0), "gpt-6.1-sol" => current("ultrafast" => 6.0),
         "gpt-6.1-terra" => current(),   # listed 2026-10-29
         "gpt-6-sol" => current(), "gpt-6-luna" => current(),
+        # GPT-6 Rosalind lists cache-write and long-context rates at Standard alone (2026-11-02).
+        "gpt-6-rosalind" => _OpenAIPriceTerms(cache_writes=true, long_context=true),
         "gpt-5.6-sol" => current(), "gpt-5.6-terra" => current(), "gpt-5.6-luna" => current(),
         # Earlier models bill no cache-write premium; Fast has no long-context price on the page.
         "gpt-5.5" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5, "fast" => 2.5),

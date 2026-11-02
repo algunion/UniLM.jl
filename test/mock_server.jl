@@ -610,7 +610,7 @@ try
         @test create_upload(filename="big.bin", purpose="batch", bytes=10, mime_type="application/octet-stream", service=MockServiceEndpoint) isa UploadSuccess
         response_body[] = JSON.json(Dict("id" => "part-1"))
         @test add_upload_part("upload-1", Vector{UInt8}("chunk"); service=MockServiceEndpoint) isa UploadPartSuccess
-        response_body[] = JSON.json(Dict("id" => "upload-1", "status" => "completed",
+        response_body[] = JSON.json(Dict("id" => "upload-1", "status" => "completed", "filename" => "big.bin", "bytes" => 10,
             "file" => Dict("id" => "file-9", "bytes" => 10, "created_at" => 1, "filename" => "big.bin", "purpose" => "batch")))
         rc = complete_upload("upload-1", ["part-1"]; service=MockServiceEndpoint)
         @test rc isa UploadSuccess && !isnothing(rc.response.file) && rc.response.file.id == "file-9"
@@ -669,7 +669,7 @@ try
         let b = JSON.parse(request_body[])
             @test b["model"] == "gpt-4.1-mini" && b["training_file"] == "file-t"
         end
-        response_body[] = JSON.json(Dict("id" => "upload-9", "status" => "pending"))
+        response_body[] = JSON.json(Dict("id" => "upload-9", "status" => "pending", "filename" => "big.bin", "bytes" => 123))
         create_upload(filename="big.bin", purpose="batch", bytes=123, mime_type="application/octet-stream", service=MockServiceEndpoint)
         let b = JSON.parse(request_body[])
             @test b["filename"] == "big.bin" && b["bytes"] == 123 && b["mime_type"] == "application/octet-stream"

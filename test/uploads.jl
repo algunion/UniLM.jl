@@ -40,6 +40,26 @@ end
     end
 end
 
+@testset "an upload object without a field the Uploads reference requires is an UploadCallError" begin
+    # OpenAI's Upload object has an `id`, `bytes`, `created_at`, `expires_at`, `filename`, `purpose` and
+    # `status`, none of them optional, and a `file` that is optional or null: a reply missing one of the
+    # fields UniLM reads is no Upload object, never an UploadSuccess whose status, name or size is nothing.
+    full = Dict{String,Any}("id" => "upload_1", "object" => "upload", "bytes" => 3, "created_at" => 1,
+                            "expires_at" => 2, "filename" => "a.jsonl", "purpose" => "batch", "status" => "pending")
+    ok = _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=JSON.json(full))
+    @test ok isa UploadSuccess && (ok.response.status, ok.response.filename, ok.response.bytes) == ("pending", "a.jsonl", 3)
+    @test ok.response.raw["created_at"] == 1 && ok.response.raw["expires_at"] == 2 && ok.response.raw["purpose"] == "batch"
+    for key in ("status", "filename", "bytes")
+        r = _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200;
+                      body=JSON.json(delete!(copy(full), key)))
+        @test r isa UniLM.UploadCallError && occursin(key, r.error)
+    end
+    # `file` is null until the upload completes.
+    pending = _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200;
+                        body=JSON.json(merge(full, Dict("file" => nothing))))
+    @test pending isa UploadSuccess && pending.response.file === nothing
+end
+
 @testset "Uploads API — a failure keeps the request id the service sent" begin
     r = _answered(() -> cancel_upload("upload_x"; service=URLProbe), 400; headers=["x-request-id" => "req_upl"])
     @test r isa UniLM.UploadFailure && r.request_id == "req_upl"

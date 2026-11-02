@@ -249,6 +249,33 @@ end
     @test length(input("x"^10_485_760)) == 10_485_760
 end
 
+@testset "OpenAI Decisions — an image's data URL is checked against the schema's maxLength before it is encoded" begin
+    # DecisionInputImage's `image_url` is a string of at most 1,073,741,824 characters: "data:", the mime type,
+    # ";base64," and the padded base64 of the bytes, four characters for every three bytes begun. Its length
+    # follows from the byte count, so a refused image is never encoded.
+    sigs = (UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], UInt8[0xff, 0xd8, 0xff], Vector{UInt8}("GIF89a"),
+            vcat(Vector{UInt8}("RIFF"), zeros(UInt8, 4), Vector{UInt8}("WEBP")))
+    for sig in sigs, extra in 0:2                        # every mime type, every byte count modulo 3
+        img = ImageAttachment(vcat(sig, zeros(UInt8, extra)))
+        @test UniLM._decisions_image_url_length(img.mime, length(img.data)) == length(UniLM._data_url(img))
+    end
+    # The boundary, with no image built: 805,306,350 PNG bytes make a URL of 1,073,741,822 characters, one
+    # byte more a URL of 1,073,741,826.
+    @test UniLM._decisions_image_url_length("image/png", 805_306_350) == 1_073_741_822
+    @test UniLM._decisions_image_url_length("image/png", 805_306_351) == 1_073_741_826
+    @test isnothing(UniLM._check_decisions_image_url("image/png", 805_306_350))
+    e = _od_caught(() -> UniLM._check_decisions_image_url("image/png", 805_306_351))
+    @test e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "1073741824") &&
+          contains(e.msg, "1073741826")
+    # The encoder checks an image before it encodes it: a limit one character below a small image's URL
+    # refuses that image.
+    n = length(UniLM._data_url(_OD_PNG))
+    @test only(UniLM._decisions_message(Any["What is it?", _OD_PNG]; limit=n))["content"][2]["image_url"] ==
+          UniLM._data_url(_OD_PNG)
+    e2 = _od_caught(() -> UniLM._decisions_message(Any["What is it?", _OD_PNG]; limit=n - 1))
+    @test e2 isa ArgumentError && contains(e2.msg, "at most $(n - 1) characters") && contains(e2.msg, "$n")
+end
+
 @testset "OpenAI Decisions — an image's detail level is sent as the part's `detail`" begin
     # The reference's `input_image` takes `detail`, "low", "high", "auto" or "original": each is sent
     # beside the image, and an image that sets none is sent as before, without it.

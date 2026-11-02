@@ -36,13 +36,13 @@ end
     @test !has_capability(OPENAIServiceEndpoint, :fim)
     @test has_capability(DeepSeekEndpoint("k"), :fim)
     @test has_capability(DeepSeekEndpoint("k"), :prefix_completion)
-    # OpenAI declares transcription; so does Ollama, with `:audio` for that route alone (speech is `:speech`).
+    # OpenAI declares transcription; so does Ollama, with `:audio` for its audio routes (speech is `:speech`).
     @test :transcription in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     ollama = OllamaEndpoint(base_url="http://127.0.0.1:1")
-    # Ollama serves OpenAI's transcription route (`:audio`, `:transcription`); speech is `:speech` and
-    # translation `:realtime`, which it does not declare.
+    # Ollama serves OpenAI's transcription and translation routes (`:audio`, `:transcription`) and its speech
+    # route (`:speech`); it has no Realtime API.
     @test has_capability(ollama, :transcription) && has_capability(ollama, :audio)
-    @test !has_capability(ollama, :speech) && !has_capability(ollama, :realtime)
+    @test has_capability(ollama, :speech) && !has_capability(ollama, :realtime)
 end
 
 # Declares the Realtime API but not speech.
@@ -56,10 +56,11 @@ UniLM.provider_capabilities(::Type{_RealtimeOnly}) = Set([:realtime])
                    ANTHROPICServiceEndpoint, DeepSeekEndpoint("k"), generic, MistralEndpoint(api_key="k"), ollama,
                    TYPESAFEServiceEndpoint]
     has(cap) = [has_capability(s, cap) for s in builtins]
-    # `speak` reaches an OpenAI Realtime session and Gemini TTS on the native endpoint, and no other endpoint;
-    # `respond` the Responses API of OpenAI, Ollama and a generic server, and Gemini Interactions; `transcribe`
-    # OpenAI's Audio API route, which Ollama and a generic server serve too.
-    @test (speech = has(:speech) == [s === OPENAIServiceEndpoint || s === GEMINIServiceEndpoint for s in builtins],
+    # `speak` reaches an OpenAI Realtime session, Gemini TTS on the native endpoint and Ollama's speech route,
+    # and no other endpoint; `respond` the Responses API of OpenAI, Ollama and a generic server, and Gemini
+    # Interactions; `transcribe` OpenAI's Audio API route, which Ollama and a generic server serve too.
+    @test (speech = has(:speech) == [s === OPENAIServiceEndpoint || s === GEMINIServiceEndpoint || s isa OllamaEndpoint
+                                     for s in builtins],
            agentic = has(:agentic) == (has(:responses) .| [s === GEMINIServiceEndpoint for s in builtins]),
            audio = has(:audio) == has(:transcription)) == (speech = true, agentic = true, audio = true)
     # `speak` refuses, before any request, an endpoint that declares its capabilities without `:speech`.

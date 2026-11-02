@@ -163,9 +163,9 @@ end
     @test all(r -> all(c -> matrix(r, c) in ("sent unchecked", "—"), columns), 2:length(rows))
     @test any(r -> matrix(r, first(columns)) == "sent unchecked", 2:length(rows))
     @test !any(r -> any(c -> matrix(r, c) == "sent unchecked", setdiff(2:length(llm) + 1, columns)), 2:length(rows))
-    # `:speech` is speak's: it reaches the native Gemini endpoint (Gemini TTS) and OpenAI's (a Realtime
-    # session), and refuses every other endpoint of the chapter.
-    speaks = [:openai, :gemini]
+    # `:speech` is speak's: it reaches the native Gemini endpoint (Gemini TTS), OpenAI's (a Realtime
+    # session) and Ollama's (its speech route), and refuses every other endpoint of the chapter.
+    speaks = [:openai, :gemini, :ollama]
     @test [e.key for e in llm if occursin("`speech`", cell(e.key, 4))] == speaks
     @test [e.key for e in llm if occursin("`speech`", cell(e.key, 5))] == setdiff([e.key for e in llm], speaks)
     speech = only(r for r in 2:length(rows) if matrix(r, 1) == "`speech`")

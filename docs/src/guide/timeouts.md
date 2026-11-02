@@ -250,8 +250,8 @@ result = fetch(task)     # LLMSuccess, or a call-error carrying the UniLMTimeout
 
 Automatic retries apply to the inference verbs — `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `transcribe`, `speak` when it sends one HTTP request
-(`generateContent`), `ask`, `list_models`, and the `tool_loop` family through them (streams retry
+`generate_image`, `edit_image`, `transcribe`, `speak` and `translate` when they send one HTTP request
+(Gemini's `generateContent`, Ollama's audio routes), `ask`, `list_models`, and the `tool_loop` family through them (streams retry
 only before the first callback fires) — and to `moderate`, which is free and changes nothing when
 it is sent again. Every other verb makes a single bounded attempt and `max_attempts` has
 no effect on it: the platform and lifecycle verbs (batch, container, conversation, file,

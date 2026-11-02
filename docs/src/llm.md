@@ -2531,9 +2531,12 @@ event — read even when the server closes the session while UniLM sends — or 
 `response.done` (`status = nothing`, the event's JSON as `response`); a session that closes before
 its result (the close's status and reason in `error`, the `HTTP.WebSockets.WebSocketError` in
 `cause`), a timeout, a cancel and a reply without usable audio are an `AudioCallError`, and audio
-received before a failure is never returned. Both
+received before a failure is never returned. On OpenAI's Realtime API both
 make a single bounded attempt (`total_deadline` the whole call, `connect_timeout` the WebSocket open,
-`stream_idle_timeout` every send and every wait for the next event) and observe the ambient
+`stream_idle_timeout` every send and every wait for the next event): a retry after the session's
+`response.create`, or after its audio, may bill a second response, and a session's audio cannot be
+resumed. `speak` on Gemini sends its request again after a retryable status or transport failure,
+under `max_attempts` and `total_deadline`, as `chatrequest!` does. Both observe the ambient
 `CancelToken` (`with_cancel`): a token already cancelled sends nothing, and a cancel ends the call at
 once with `cause = UniLMCancelled`. Speech is not priced: `token_usage` and `estimated_cost` throw for
 a `SpeechSuccess`.
@@ -2662,13 +2665,15 @@ set_default_config!(total_deadline=120.0)   # process-wide default
 
 ### Which verbs retry
 
-`max_attempts` applies to the inference verbs only: `chatrequest!`,
+`max_attempts` applies to the inference verbs: `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `transcribe`, `ask`, `ask_each` (per request), `list_models`, and the
-`tool_loop` family (streams retry only before the first callback fires). Platform and lifecycle verbs
-— batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning, moderation, upload, vector-store, speech and translation (`speak`,
-`translate`), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
+`generate_image`, `edit_image`, `transcribe`, `speak` on `GEMINIServiceEndpoint`, `ask`, `ask_each`
+(per request), `list_models`, and the `tool_loop` family (streams retry only before the first callback
+fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
+lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
+retried), fine-tuning, upload, vector-store, speech and translation on OpenAI's Realtime API (`speak`,
+`translate`: a retry after the session's `response.create`, or after its audio, may bill a second
+response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
 `max_attempts` has no effect on them. A 429 that no retry can serve — spent credit, a
 reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded`
 (the codes under `chatrequest!`) — is never retried. `poll_batch` /

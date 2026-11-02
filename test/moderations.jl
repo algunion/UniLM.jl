@@ -64,3 +64,22 @@ end
     @test err isa ArgumentError
     @test contains(sprint(showerror, err), "flagged")
 end
+
+@testset "moderate retries a transient status within its RequestConfig" begin
+    # Moderation is free, and classifying the same input again changes nothing: a transient status or a
+    # transport failure is sent again, as a Chat's request is.
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}") : _json(200, """{"results":[{"flagged":false}]}""")) do
+        moderate("hello"; service=URLProbe, config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test r isa ModerationSuccess && length(seen) == 2
+    @test r isa ModerationSuccess && !is_flagged(r) && seen[1].body == seen[2].body
+    # The attempts are the config's: one attempt returns the 503, and a 400 is never sent again.
+    once, seen1 = _with_scripted((_, _) -> _json(503, "{}")) do
+        moderate("hello"; service=URLProbe, config=RequestConfig(max_attempts=1))
+    end
+    @test once isa UniLM.ModerationFailure && once.status == 503 && length(seen1) == 1
+    bad, seen2 = _with_scripted((_, _) -> _json(400, "{}")) do
+        moderate("hello"; service=URLProbe, config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test bad isa UniLM.ModerationFailure && bad.status == 400 && length(seen2) == 1
+end

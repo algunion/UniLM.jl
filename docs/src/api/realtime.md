@@ -34,7 +34,9 @@ resolves it the usual four ways, and captures it on the session's `config` field
   sit idle waiting for input.
 
 Realtime throws rather than returning a typed result value, and `realtime_connect`
-makes a single attempt; `max_attempts` does not apply. Neither the WebSocket open nor
+makes a single attempt; `max_attempts` does not apply, nor to the sessions `speak` and `translate`
+drive, since a retry after a session's `response.create`, or after its audio, may bill a second
+response, and a session's audio cannot be resumed. Neither the WebSocket open nor
 `realtime_receive` observes a [`CancelToken`](@ref). [`mint_realtime_secret`](@ref) is
 an ordinary HTTP verb that returns typed results: a `200` without a non-empty secret is
 a `RealtimeCallError`, and a `RealtimeCallError` carries its exception in `cause` and

@@ -30,10 +30,12 @@ These calls are not recorded, so their output on this page is quoted from dated 
   transport failure, a timeout, a cancel, a reply that does not decode —, holding the text as
   `error` and the exception as `cause`. `FileSuccess`, `FileFailure` and `FileCallError` are the Files family, and the others
   are named alike ([Results](@ref results_guide)).
-- **One attempt.** Each call makes a single attempt, bounded by the call's `config`, a
+- **One attempt.** Each call but `moderate` makes a single attempt, bounded by the call's `config`, a
   [`RequestConfig`](@ref); `max_attempts` does not change it. A create is never sent again: a POST
   that timed out, or drew a gateway 5xx after OpenAI stored its object, may still have made it, so
-  a failed `upload_file` does not prove that no file was made.
+  a failed `upload_file` does not prove that no file was made. [`moderate`](@ref), which is free and
+  changes nothing when it is sent again, is sent again after a transient status or a transport
+  failure, as a `Chat` is ([Timeouts & Retries](@ref timeouts_retries)).
 - **The key** is read when the call is made: without `OPENAI_API_KEY` the result is the family's
   call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)).
 - **Cancellation.** With the key set, the ambient [`CancelToken`](@ref) of [`with_cancel`](@ref) ends

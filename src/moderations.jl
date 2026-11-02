@@ -86,15 +86,19 @@ parts) for policy violations (free). Returns `ModerationSuccess`, `ModerationFai
 (one row for a string or a parts vector, one per string of a string vector) is a
 `ModerationCallError`: a verdict that cannot be matched to its input is no verdict.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+Transient statuses (408/429/500/502–504/520–524/529) and transport failures are retried with
+backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `total_deadline`;
+`retry-after-ms`, else `Retry-After`, honored), as [`chatrequest!`](@ref) retries them: moderation is
+free, and a request sent again changes nothing. A 429 that no retry can serve is returned at once.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for this call.
 """
 function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :moderation, "Moderations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
-        resp = _http("POST", _api_base_url(service) * MODERATIONS_PATH, auth_header(service),
-            body; cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * MODERATIONS_PATH,
+            auth_header(service), body)
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             results = ModerationResult[

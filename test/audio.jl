@@ -805,6 +805,27 @@ end
     @test run(_sp_gemini_reply(_sp_inline("audio/L16;codec=pcm;rate=24000", pcm))) isa SpeechSuccess   # STOP
 end
 
+@testset "speak on Gemini: a transient status is sent again, within its RequestConfig" begin
+    # Gemini TTS is a billed generateContent, retried as a Chat's request is: a transient status or a
+    # transport failure is sent again under the config's max_attempts and total_deadline.
+    pcm = _sp_pcm(Int16[1, 2])
+    reply = _sp_gemini_reply(_sp_inline("audio/L16;codec=pcm;rate=24000", pcm))
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}") : _json(200, reply)) do
+        speak("Hi."; service=GeminiSpeechProbe, config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test r isa SpeechSuccess && length(seen) == 2
+    @test r isa SpeechSuccess && r.audio == _sp_wav(pcm) && seen[1].body == seen[2].body
+    # The attempts are the config's: one attempt returns the 503, and a 400 is never sent again.
+    once, seen1 = _with_scripted((_, _) -> _json(503, "{}")) do
+        speak("Hi."; service=GeminiSpeechProbe, config=RequestConfig(max_attempts=1))
+    end
+    @test once isa UniLM.AudioFailure && once.status == 503 && length(seen1) == 1
+    bad, seen2 = _with_scripted((_, _) -> _json(400, "{}")) do
+        speak("Hi."; service=GeminiSpeechProbe, config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test bad isa UniLM.AudioFailure && bad.status == 400 && length(seen2) == 1
+end
+
 # ─── Translation on OpenAI Realtime ──────────────────────────────────────────
 
 @testset "translate: a Realtime translation session in 200 ms frames, its transcript as the text" begin

@@ -181,10 +181,15 @@ session that closes before its response is done (`error` names the close's statu
 `cause` is the close), a timeout, a cancel and a reply without usable audio are an
 [`AudioCallError`](@ref). Audio received before a failure is never returned.
 
-Pass `config::Union{Nothing,RequestConfig}` to bound the call (a single attempt; `max_attempts` does
-not apply). On OpenAI, `total_deadline` bounds the whole call whatever the socket does,
-`connect_timeout` the WebSocket open, and `stream_idle_timeout` every send and every wait for the
-next event; on Gemini it bounds the one HTTP request. Both observe the ambient [`CancelToken`](@ref)
+Pass `config::Union{Nothing,RequestConfig}` to bound the call. On OpenAI the session is a single
+attempt, which `max_attempts` does not change: a retry after the session's `response.create` may
+bill a second response, and a session's audio cannot be resumed. There `total_deadline` bounds the
+whole call whatever the socket does, `connect_timeout` the WebSocket open, and `stream_idle_timeout`
+every send and every wait for the next event. On Gemini, transient statuses
+(408/429/500/502–504/520–524/529) and transport failures are retried with backoff under the
+config's `max_attempts` and `total_deadline` (`retry-after-ms`, else `Retry-After`, honored), as
+[`chatrequest!`](@ref) retries them, each attempt a billed `generateContent` request; a 429 that no
+retry can serve is returned at once. Both observe the ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
 with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
 [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.
@@ -219,7 +224,7 @@ function _speak(::_RealtimeSpeechWire, s::SpeechRequest, url::String, cfg::Reque
 end
 
 function _speak(::_GeminiSpeechWire, s::SpeechRequest, url::String, cfg::RequestConfig, t0::UInt64)
-    resp = _http("POST", url, auth_header(s.service), _gemini_speech_body(s); cfg, remaining=_remaining_s(cfg, t0))
+    resp = _http_with_retries(cfg, t0, "POST", url, auth_header(s.service), _gemini_speech_body(s))
     resp.status == 200 || return _failure(AudioFailure, resp)
     cand = _gemini_finished_candidate(JSON.parse(resp.body; dicttype=Dict{String,Any}))
     cand === nothing && return _failure(AudioFailure, resp)
@@ -633,7 +638,9 @@ even when the server closes the session during the upload, or a WebSocket upgrad
 and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
 `config::Union{Nothing,RequestConfig}` bounds the call as for [`speak`](@ref): `total_deadline` the
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
-every wait for the next event; a single attempt. The ambient [`CancelToken`](@ref)
+every wait for the next event. It is a single attempt, which `max_attempts` does not change: a retry
+after the session's audio was sent may bill a second translation, and a session's audio cannot be
+resumed. The ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
 call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
 """

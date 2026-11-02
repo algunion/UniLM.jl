@@ -141,6 +141,16 @@ end
     write_stubs(out, "", fixture_toml(routes = Dict("guide/old" => "a")), served)
     @test check_old_routes(out, served) == String[]
 end
+@testset "redirects — a route of any list of served routes takes a stub, of none is refused; a # line is no route" begin
+    out = fixture_out(pages = ["", "a/"], anchors = Dict("kept" => ["/a/"]))
+    v026, earlier = fixture_routes("/", "/a/", "/guide/old/"), fixture_routes("# served before", "/guide/older/")
+    @test check_old_routes(out, v026, earlier) == ["/guide/old/", "/guide/older/"]
+    @test write_stubs(out, "", fixture_toml(routes = Dict("guide/old" => "a", "guide/older" => "a")), v026, earlier) ==
+          [joinpath(out, "guide", "old", "index.html"), joinpath(out, "guide", "older", "index.html")]
+    @test check_old_routes(out, v026, earlier) == String[]
+    never_served = fixture_toml(routes = Dict("never_served" => "a"))
+    @test_throws ErrorException ["\"never_served/\"", v026, earlier] write_stubs(out, "", never_served, v026, earlier)
+end
 @testset "redirects — a run overwrites the stubs an earlier run wrote, never a page" begin
     out = fixture_out(pages = ["a/", "b/"], anchors = Dict("kept" => ["/a/"]))
     served, stub = fixture_routes("/old/"), joinpath(out, "old", "index.html")
@@ -152,12 +162,15 @@ end
     @test_throws ErrorException ["\"old/\"", "is a page"] write_stubs(out, "", fixture_toml(routes = Dict("old" => "a")), served)
     @test read(stub, String) == "<!DOCTYPE html>"
 end
-@testset "redirects — the CLI exits 1 while a route of v0.26.0 has neither a page nor a stub, or an id resolves nowhere; a rerun overwrites its stubs" begin
+@testset "redirects — the CLI exits 1 while a route an earlier version served has neither a page nor a stub, or an id resolves nowhere; a rerun overwrites its stubs" begin
     ids = readlines(joinpath(@__DIR__, "anchors-v0.26.0.txt"))
     routes = readlines(joinpath(@__DIR__, "routes-v0.26.0.txt"))
+    earlier = filter(!startswith('#'), readlines(joinpath(@__DIR__, "routes-earlier.txt")))
     @test length(ids) == 139 && issorted(ids) && allunique(ids)
     @test length(routes) == 54 && issorted(routes) && allunique(routes) && first(routes) == "/" &&
           all(r -> startswith(r, '/') && endswith(r, '/'), routes)
+    @test !isempty(earlier) && issorted(earlier) && allunique(earlier) && isdisjoint(earlier, routes) &&
+          all(r -> startswith(r, '/') && endswith(r, '/'), earlier)
     moved = "/guide/responses_api/"                                          # a page v0.26.0 served
     @test moved in routes
     pages = String[[chopprefix(r, "/") for r in routes if r != moved]; "providers/openai/responses/"]
@@ -169,15 +182,16 @@ end
         (run(pipeline(ignorestatus(cmd); stdout = devnull, stderr = err)).exitcode, String(take!(err)))
     end
     alias = Dict(ids[1] => ids[2])
-    code, err = cli(fixture_toml(anchors = alias))                           # the moved page has no stub
-    @test code == 1 && occursin(moved, err) && !occursin(ids[1], err)
+    older = Dict{String,String}(r => "llm" for r in earlier)                 # a stub at each route of the earlier list
+    code, err = cli(fixture_toml(anchors = alias))                           # the moved page has no stub, nor have they
+    @test code == 1 && occursin(moved, err) && all(r -> occursin(r, err), earlier) && !occursin(ids[1], err)
     code, err = cli(fixture_toml(routes = Dict("guide/responses" => "providers/openai/responses"), anchors = alias))
-    @test code == 1 && occursin("guide/responses/", err)                     # a route v0.26.0 never served
-    code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => "providers/openai/responses")))
+    @test code == 1 && occursin("guide/responses/", err)                     # a route no version served
+    code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => "providers/openai/responses", older...)))
     @test code == 1 && occursin(ids[1], err) && !occursin(moved, err)        # an id resolves nowhere
     stub = joinpath(out, "guide", "responses_api", "index.html")             # that run wrote it before the check
     for to in ("providers/openai/responses", "llm")                          # each run overwrites the run before's
-        code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => to), anchors = alias))
+        code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => to, older...), anchors = alias))
         @test code == 0 && occursin("url=../../$to/", read(stub, String))
     end
 end

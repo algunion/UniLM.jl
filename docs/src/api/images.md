@@ -147,5 +147,5 @@ end
 Defaults shown as quoted strings other than `model` are the **API's** defaults for
 an omitted field; the struct stores `nothing` and omits them from the request body.
 A field set for the provider that does not take it throws `ArgumentError` naming the
-provider and the field. `input_fidelity` and `mask` are edit parameters (OpenAI): set
+provider and the field. `input_fidelity`, `mask` and `markup` are edit parameters (OpenAI): set
 them on [`ImageEdit`](@ref) — `ImageGeneration` does not accept them.

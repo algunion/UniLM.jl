@@ -848,7 +848,7 @@ end
         @test configuration_update(; effort)[:reasoning][:effort] == effort
     end
     @test_throws ArgumentError configuration_update(effort="ultra")
-    @test_throws UndefKeywordError configuration_update()
+    @test_throws ArgumentError configuration_update()   # neither effort nor format: no update
     r = Respond(model="gpt-6-luna", prompt_cache_options=PromptCacheOptions(mode="explicit"),
         input=[configuration_update(effort="low"),
                InputMessage(role="user", content=[input_text("Stable prefix"; cache_breakpoint=true)])])

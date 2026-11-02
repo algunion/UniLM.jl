@@ -1472,7 +1472,10 @@ OpenAI options, omitted from the request when unset:
   future models, only `24h` is supported". `OPENAIServiceEndpoint` sends it, and throws
   `ArgumentError` for any value on the models whose cache lifetime `prompt_cache_options`
   sets — `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
-  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) — as a [`Respond`](@ref) does.
+  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) — as a [`Respond`](@ref) does. It
+  also throws for any value but `"24h"` on `gpt-5.5` and `gpt-5.5-pro` (and their dated
+  snapshots): the API answered `"in_memory"` there with HTTP 400, "This model is compatible
+  only with 24h extended prompt caching".
   Azure, `GEMINIOpenAIServiceEndpoint`, `DeepSeekEndpoint` and generic endpoints (Mistral
   among them) send it as given, the server's answer the check; native Gemini,
   `ANTHROPICServiceEndpoint` and [`OllamaEndpoint`](@ref), whose requests have no such

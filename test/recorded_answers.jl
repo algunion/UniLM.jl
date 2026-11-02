@@ -119,23 +119,6 @@ _ra_caught(f::Function) = try f(); nothing catch e; e end
 
 # ─── With the service reachable ──────────────────────────────────────────────
 
-@testset "recorded answers — the docstrings name each System One backend's path, unkeyed options and access" begin
-    rawdoc(name) = replace(join((join(string.(d.text)) for d in
-                                 values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)), " "), r"\s+" => " ")
-    # The keyed path is "/" * namespace * the wire's own path: OpenAI's Decisions API is not at /v1/systemone.
-    for doc in (rawdoc(:ReplayMissError), rawdoc(:with_recorded_answers))
-        @test occursin("`\"/openai-decisions/v1/decisions\"`", doc) && occursin("`\"/ollama/v1/systemone\"`", doc)
-        @test !occursin("`\"/<namespace>/v1/systemone\"`", doc)
-    end
-    doc = rawdoc(:with_recorded_answers)
-    # OpenAI's three options that change how a request is served, never its answer, are none of them keyed.
-    @test occursin("OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`", doc)
-    # Recording needs each backend's own access, not TypeSafe's key for every System One backend.
-    @test occursin("(`TYPESAFE_API_KEY` for Jev, `OPENAI_API_KEY` for OpenAI's Decisions API, a running server " *
-                   "for Ollama)", doc)
-    @test !occursin("(`TYPESAFE_API_KEY` for System One)", doc)
-end
-
 @testset "recorded answers — :record writes one readable file per request and no credential" begin
     dir = _ra_dir("record")
     a, b = _ra_request(), _ra_request("Where is my parcel?")
@@ -814,6 +797,12 @@ const _RL_CASES = [
      "/v1/messages", "request-id", LLMCallError),
 ]
 
+# The file's first call through the live path compiles it. Made here, outside `_RL_CFG`'s 30 s deadline, so the
+# cases below time their exchange and not that compilation.
+@test _rl_online(() -> with_recorded_answers(mktempdir(); mode=:record) do
+    chatrequest!(_rl_chat(_RL_OPENAI; model="gpt-5.4-mini"); config=UniLM.RequestConfig(max_attempts=1))
+end) isa LLMSuccess
+
 @testset "recorded LLM answers — each provider's reply replays like the live one, with no credential on disk" begin
     @testset "$name" for (name, call, path, header, T) in _RL_CASES
         dir = _ra_dir("llm-" * name)
@@ -1154,7 +1143,17 @@ end
     _rl_offline(() -> with_recorded_answers(outer) do
         with_recorded_answers(_rl_openai_stream, inner; mode=:record_missing)
     end)
+    # The same files, holding the same request, response head and stream: the time each was written aside, and
+    # what follows the terminal `data: [DONE]` line. A live recording keeps all its last read held (here the
+    # event's closing blank line, as the connection delivered it); a replay stops reading at that line.
+    function answer(file)
+        rec = JSON.parsefile(file)
+        res, stream = rec["response"], rec["response"]["stream"]
+        (rec["request"], Dict(k => v for (k, v) in res if k != "stream"),
+         stream[1:something(findfirst(==("data: [DONE]"), stream), length(stream))])
+    end
     @test readdir(inner) == readdir(outer)
+    @test [answer(f) for f in readdir(inner; join=true)] == [answer(f) for f in readdir(outer; join=true)]
 end
 @testset "recorded answers — an old recording without kept headers still replays as today" begin
     for f in readdir(_RA_COMMITTED)

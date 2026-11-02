@@ -38,9 +38,11 @@ const MISTRAL_API_KEY::String = "MISTRAL_API_KEY"
 const OLLAMA_HOST::String = "OLLAMA_HOST"
 const OLLAMA_API_KEY::String = "OLLAMA_API_KEY"
 
-# The model-id prefixes of each hosted provider: an id that starts with one of them is that
-# provider's; an id with none of them (a local Ollama model such as `gemma4:e4b`, a Jev model)
-# is none of theirs.
+# ─── Model-id prefixes ────────────────────────────────────────────────────────
+
+# The model-id prefixes of three hosted providers, OpenAI, Anthropic and Gemini: an id that starts
+# with one of them is that provider's. Any other id (DeepSeek's, a local Ollama model such as
+# `gemma4:e4b`, a Jev model) is none of theirs.
 const _MODEL_ID_PREFIXES::NamedTuple = (
     openai=("gpt-", "chatgpt-", "text-embedding-", "omni-moderation-", "o1", "o3", "o4"),
     anthropic=("claude-",),

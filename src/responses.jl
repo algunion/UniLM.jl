@@ -1990,6 +1990,8 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         # As in `ask`: a missing recording, or a paid reply's lost recording, reaches
         # the caller instead of reading as a service failure.
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
+        # A stop is timed from the call's start, whichever of its requests it ended, as `chatrequest!` times it.
+        e isa UniLMCancelled && (e = UniLMCancelled(e.source, _elapsed_s(t0)))
         return _response_call_error(e, @isdefined(resp) ? resp : nothing; service=r.service)
     end
 end

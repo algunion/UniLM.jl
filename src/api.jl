@@ -551,7 +551,7 @@ Represents a single message in a Chat Completions conversation.
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
-- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`) and by the OpenAI-wire stream handler for the thinking chunks of a streamed Mistral reply (`:mistral`), `nothing` otherwise. Never serialized on the OpenAI wire.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`) and, for a [`GenericOpenAIEndpoint`](@ref) reply, streamed or not, to Mistral's thinking chunks (`:mistral`) or another server's `reasoning_content` or `reasoning` (`:generic`); `nothing` otherwise. Never serialized on the OpenAI wire.
 - `attachments::Union{Nothing,Vector{Attachment}}`: Images, sound clips and PDF documents sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref), [`DocumentAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends or refuses them.
 - `audio_output::Union{Nothing,AudioOutput}`: The audio an OpenAI model answered with ([`AudioOutput`](@ref)), set by the OpenAI-wire decoders; `nothing` otherwise. Its docstring says how each encoder sends the turn back.
 
@@ -1271,8 +1271,8 @@ Mistral's names: a `Chat`'s `max_completion_tokens` as `max_tokens`, its `seed` 
 an `Embeddings` request's `dimensions` as `output_dimension` ([`GenericOpenAIEndpoint`](@ref)).
 """
 MistralEndpoint(; api_key::Union{String,Nothing}=nothing) =
-    isnothing(api_key) ? GenericOpenAIEndpoint("https://api.mistral.ai", "", MISTRAL_API_KEY) :
-                         GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
+    isnothing(api_key) ? GenericOpenAIEndpoint("https://" * MISTRAL_API_HOST, "", MISTRAL_API_KEY) :
+                         GenericOpenAIEndpoint("https://" * MISTRAL_API_HOST, api_key)
 
 """
     DeepSeekEndpoint <: OpenAIWireEndpoint

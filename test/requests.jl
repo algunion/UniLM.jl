@@ -1814,8 +1814,7 @@ end
     stream = chunk(choice(Dict("role" => "assistant", "content" => ""), nothing)) *
              chunk(choice(Dict("content" => "Hi"), Dict("content" => [tok("Hi", -0.25)], "refusal" => nothing))) *
              chunk(choice(Dict("content" => " there"), Dict("content" => [tok(" there", -0.5)]), "stop")) *
-             chunk(Dict{String,Any}("choices" => [], "moderation" => Dict("input" => verdict))) *
-             chunk(Dict{String,Any}("choices" => [], "moderation" => Dict("output" => verdict))) *
+             chunk(Dict{String,Any}("choices" => [], "moderation" => moderation)) *
              chunk(Dict{String,Any}("choices" => [], "usage" => usage)) * "data: [DONE]\n\n"
     plain, sse = _json_reply_server(body), _sse_reply_server(stream)
     try
@@ -1834,6 +1833,13 @@ end
     finally
         close(plain.server); close(sse.server)
     end
+    # Results split across chunks are merged.
+    st = UniLM.StreamState()
+    for part in (Dict("input" => verdict), Dict("output" => verdict))
+        UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""),
+                             chunk(Dict{String,Any}("choices" => [], "moderation" => part)), st)
+    end
+    @test st.moderation == moderation
     # A refusal's tokens stay under the key the reply gives them, and its null list stays null.
     st = UniLM.StreamState()
     UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""), chunk(choice(Dict("refusal" => "No."),

@@ -56,8 +56,9 @@ HTTP.close_idle_connections!()
     said = [m.match for m in eachmatch(r"\p{L}+", a.transcript)]
     names_it(f) = !isempty(said) && all(w -> occursin(Regex("\\b$w\\b", "i"), something(f.message.content, "")), said)
     f = ask_follow_up()
-    for _ in 2:3
+    for attempt in 1:2
         f isa LLMSuccess && !names_it(f) || break
+        @info "Chat audio live follow-up: an answer without the word" attempt text = f.message.content usage = f.usage
         f = ask_follow_up()
     end
     @test f isa LLMSuccess

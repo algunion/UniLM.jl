@@ -319,41 +319,39 @@ end
     end
 end
 
-# DeepSeek's own endpoint, encoder and decoder included, behind the local URL.
-struct _DSPrefixHere <: UniLM.OpenAIWireEndpoint
-    real::DeepSeekEndpoint
+# A prefix completion on DeepSeekEndpoint itself — its URL, encoder and decoder — answered by a recording. The
+# first replay misses and reports the request the endpoint builds; `reply` is recorded under that request's key
+# and replayed. A replaying scope sends nothing, and each call runs under a deadline that stops a request at the
+# seam, before any connection: DeepSeek's host is never reached. Returns the result and the reported miss.
+function _ds_prefix_replayed(call::Function, reply::AbstractString)
+    dir = mktempdir()
+    miss = try with_recorded_answers(call, dir); nothing catch e; e end
+    miss isa ReplayMissError || error("the first replay was to miss; it gave $(repr(miss))")
+    UniLM._record(joinpath(dir, miss.key * ".json"), miss.method, miss.path, miss.body, "",
+                  HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(reply)))
+    with_recorded_answers(call, dir), miss
 end
-UniLM.provider_capabilities(s::_DSPrefixHere) = UniLM.provider_capabilities(s.real)
-UniLM.auth_header(::_DSPrefixHere) = ["Content-Type" => "application/json"]
-UniLM._prefix_complete_url(::_DSPrefixHere) = _COMPL_URL[]
-UniLM.encode_request(s::_DSPrefixHere, chat::Chat) = UniLM.encode_request(s.real, chat)
-UniLM.decode_response(s::_DSPrefixHere, resp::HTTP.Response) = UniLM.decode_response(s.real, resp)
 
 @testset "prefix_complete keeps DeepSeek's reasoning_content: read back, and sent with tools" begin
     # DeepSeek: with tools, "the reasoning_content must be fully passed back … If your code does not
     # correctly pass back reasoning_content, the API will return a 400 error"
     # (https://api-docs.deepseek.com/guides/thinking_mode).
-    server, url = _compl_canned_server(200, JSON.json(Dict("model" => "deepseek-flash",
+    reply = JSON.json(Dict("model" => "deepseek-flash",
         "choices" => [Dict("index" => 0, "finish_reason" => "stop", "message" => Dict("role" => "assistant",
                            "content" => "print('hi')\n```", "reasoning_content" => "because"))],
-        "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 3, "total_tokens" => 11))),
-        ["Content-Type" => "application/json"])
-    _COMPL_URL[] = url
-    try
-        chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
-                    messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Python hello world"),
-                              Message(role=UniLM.RoleAssistant, content="```python\n")])
-        r = prefix_complete(chat)
-        @test r isa LLMSuccess && reasoning_text(r) == "because"
-        @test reasoning_text(last(chat)) == "because"               # the committed whole turn keeps it
-        next = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
-                    messages=[chat.messages; Message(Val(:user), "Now run it.")],
-                    tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))])
-        turn = JSON.parse(UniLM.encode_request(DeepSeekEndpoint("sk-test"), next))["messages"][3]
-        @test turn["content"] == "```python\nprint('hi')\n```" && turn["reasoning_content"] == "because"
-    finally
-        close(server)
-    end
+        "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 3, "total_tokens" => 11)))
+    chat = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
+                messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Python hello world"),
+                          Message(role=UniLM.RoleAssistant, content="```python\n")])
+    r, miss = _ds_prefix_replayed(() -> prefix_complete(chat; config=_TINY_DEADLINE), reply)
+    @test miss.path == "/beta/v1/chat/completions"                  # DeepSeek's beta route
+    @test r isa LLMSuccess && reasoning_text(r) == "because"
+    @test reasoning_text(last(chat)) == "because"               # the committed whole turn keeps it
+    next = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
+                messages=[chat.messages; Message(Val(:user), "Now run it.")],
+                tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))])
+    turn = JSON.parse(UniLM.encode_request(DeepSeekEndpoint("sk-test"), next))["messages"][3]
+    @test turn["content"] == "```python\nprint('hi')\n```" && turn["reasoning_content"] == "because"
 end
 
 @testset "prefix_complete keeps the reply's log probabilities" begin
@@ -361,13 +359,10 @@ end
                                                          "top_logprobs" => Any[])])
     reply = JSON.json(Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0, "finish_reason" => "stop",
         "logprobs" => lp, "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
-    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", logprobs=true,
+    chat = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash", logprobs=true,
                 messages=[Message(Val(:user), "Write it."), Message(role=UniLM.RoleAssistant, content="```python\n")])
-    r, seen = _with_scripted((_, _) -> _json(200, reply)) do
-        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
-        prefix_complete(chat)
-    end
-    @test JSON.parse(only(seen).body)["logprobs"] === true
+    r, miss = _ds_prefix_replayed(() -> prefix_complete(chat; config=_TINY_DEADLINE), reply)
+    @test JSON.parse(miss.body)["logprobs"] === true
     @test r isa LLMSuccess && r.logprobs == lp && r.moderation === nothing
 end
 
@@ -379,49 +374,48 @@ end
         "completion_tokens" => 3, "total_tokens" => 11), "choices" => [Dict("index" => 0,
         "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
     thought = UniLM.ProviderContent(:deepseek, Any[Dict{String,Any}("reasoning_content" => "r1")])
-    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash",
+    chat = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash",
                 tools=[Tool(func=FunctionSignature(name="run", parameters=Dict("type" => "object")))],
                 messages=[Message(Val(:system), "You write code."), Message(Val(:user), "Hi."),
                           Message(role=UniLM.RoleAssistant, content="Hello.", provider_content=thought),
                           Message(Val(:user), "Now write it."), Message(role=UniLM.RoleAssistant, content="```python\n")])
-    r, seen = _with_scripted((_, _) -> _json(200, reply)) do
-        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
-        prefix_complete(chat)
-    end
+    r, miss = _ds_prefix_replayed(() -> prefix_complete(chat; config=_TINY_DEADLINE), reply)
     @test r isa LLMSuccess
-    sent = JSON.parse(only(seen).body)["messages"]
+    sent = JSON.parse(miss.body)["messages"]
     @test get(sent[3], "reasoning_content", nothing) == "r1"          # the earlier reasoning turn
     @test sent[end]["prefix"] === true && sent[end]["content"] == "```python\n"
     @test !haskey(sent[end], "reasoning_content")
 end
 
-# DeepSeek's encoder asks a stream for its usage (`stream_options`), so the local stand-in does too.
-UniLM._asks_stream_usage(::_DSPrefixHere) = true
-
 @testset "prefix_complete on a streaming Chat sends the request unstreamed, which it reads" begin
     # A server streams when the request asks it to; prefix_complete reads one JSON reply, which
-    # carries its usage unasked.
+    # carries its usage unasked. DeepSeek's encoder asks a stream for its usage (`stream_options`).
     reply = JSON.json(Dict("model" => "deepseek-flash", "usage" => Dict("prompt_tokens" => 8,
         "completion_tokens" => 3, "total_tokens" => 11), "choices" => [Dict("index" => 0,
         "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => "x = 1"))]))
-    streamed = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => Dict("content" => "x = 1"),
-        "finish_reason" => "stop")])) * "\n\ndata: [DONE]\n\n"
-    chat = Chat(service=_DSPrefixHere(DeepSeekEndpoint("sk-test")), model="deepseek-flash", stream=true,
+    chat = Chat(service=DeepSeekEndpoint("sk-test"), model="deepseek-flash", stream=true,
                 messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
                           Message(role=UniLM.RoleAssistant, content="```python\n")])
-    r, seen = _with_scripted((_, req) -> get(JSON.parse(_body_text(req)), "stream", false) === true ?
-            HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(streamed)) :
-            _json(200, reply)) do
-        _COMPL_URL[] = _url_probe_base[] * "/v1/chat/completions"
-        prefix_complete(chat)
-    end
+    @test haskey(JSON.parse(UniLM.encode_request(chat.service, chat)), "stream_options")
+    r, miss = _ds_prefix_replayed(() -> prefix_complete(chat; config=_TINY_DEADLINE), reply)
     @test r isa LLMSuccess
     @test r.message.content == "x = 1" && r.usage.total_tokens == 11
-    sent = JSON.parse(only(seen).body)
+    sent = JSON.parse(miss.body)
     @test !haskey(sent, "stream") && !haskey(sent, "stream_options")
     @test sent["messages"][end]["prefix"] === true
     @test last(chat).content == "```python\nx = 1" && chat.stream === true
 end
+
+# DeepSeek's encoder and decoder behind the local URL, for the testset below: its failure case needs a server's
+# HTTP 400, which a recording cannot replay.
+struct _DSPrefixHere <: UniLM.OpenAIWireEndpoint
+    real::DeepSeekEndpoint
+end
+UniLM.provider_capabilities(s::_DSPrefixHere) = UniLM.provider_capabilities(s.real)
+UniLM.auth_header(::_DSPrefixHere) = ["Content-Type" => "application/json"]
+UniLM._prefix_complete_url(::_DSPrefixHere) = _COMPL_URL[]
+UniLM.encode_request(s::_DSPrefixHere, chat::Chat) = UniLM.encode_request(s.real, chat)
+UniLM.decode_response(s::_DSPrefixHere, resp::HTTP.Response) = UniLM.decode_response(s.real, resp)
 
 @testset "prefix_complete adds its turn's cost to cumulative_cost, as chatrequest! does" begin
     # deepseek-flash: $0.30 per 1M input tokens, $1.20 per 1M output (DEFAULT_PRICING).

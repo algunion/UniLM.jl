@@ -696,45 +696,49 @@ end
     @test err isa ArgumentError && occursin("presence_penalty", err.msg)
 end
 
-@testset "thinking levels — one row per model of the provider table" begin
-    # (model, accepted level, rejected level, error fragment), transcribed from the
-    # "Controlling thinking" table (ai.google.dev/gemini-api/docs/thinking, 2026-10-22). The
-    # -latest aliases take the levels of the model that served each on 2026-10-22, and
-    # gemini-3.7-flash and gemini-3.5-flash those of the models Google routes them to.
-    # A row allowing all four levels can only reject a non-level.
+@testset "thinking levels — every level of every model of the provider table, on both wires" begin
+    # (model, its levels, the refusal of a level it lacks), transcribed from the "Controlling thinking" table
+    # (ai.google.dev/gemini-api/docs/thinking, 2026-10-22). The -latest aliases take the levels of the model
+    # that served each on 2026-10-22, and gemini-3.7-flash and gemini-3.5-flash those of the models Google
+    # routes them to. A model with all four levels refuses only a non-level.
     three, four = "supports low, medium, or high thinking effort", "must be minimal, low, medium, or high"
-    rows = (("gemini-4-argon",               "low",     "minimal", three),
-            ("gemini-3.8-flash",             "medium",  "minimal", three),
-            ("gemini-3.6-flash",             "minimal", "xhigh",   four),
-            ("gemini-3.5-flash-lite",        "minimal", "none",    four),
-            ("gemini-3.1-pro-preview",       "medium",  "minimal", three),
-            ("gemini-3.1-flash-lite-image",  "minimal", "low",     "supports minimal or high thinking effort"),
-            ("gemini-3-flash-preview",       "minimal", "xhigh",   four),
-            ("gemini-2.5-pro",               "low",     "minimal", three),
-            ("gemini-2.5-flash",             "medium",  "minimal", three),
-            ("gemini-2.5-flash-lite",        "high",    "minimal", three),
-            ("gemini-robotics-er-2-preview", "minimal", "xhigh",   four),
-            ("gemini-pro-latest",            "high",    "minimal", three),   # served by gemini-3.1-pro-preview
-            ("gemini-flash-latest",          "low",     "minimal", three),   # served by gemini-3.8-flash
-            ("gemini-flash-lite-latest",     "minimal", "xhigh",   four),    # served by gemini-3.5-flash-lite
-            ("gemini-3.7-flash",             "high",    "minimal", three),   # routed to gemini-3.8-flash
-            ("gemini-3.5-flash",             "minimal", "xhigh",   four))    # routed to gemini-3.6-flash
+    L3, L4 = ["low", "medium", "high"], ["minimal", "low", "medium", "high"]
+    rows = (("gemini-4-argon",               L3, three),
+            ("gemini-3.8-flash",             L3, three),
+            ("gemini-3.6-flash",             L4, nothing),
+            ("gemini-3.5-flash-lite",        L4, nothing),
+            ("gemini-3.1-pro-preview",       L3, three),
+            ("gemini-3.1-flash-lite-image",  ["minimal", "high"], "supports minimal or high thinking effort"),
+            ("gemini-3-flash-preview",       L4, nothing),
+            ("gemini-2.5-pro",               L3, three),
+            ("gemini-2.5-flash",             L3, three),
+            ("gemini-2.5-flash-lite",        L3, three),
+            ("gemini-robotics-er-2-preview", L4, nothing),
+            ("gemini-pro-latest",            L3, three),     # served by gemini-3.1-pro-preview
+            ("gemini-flash-latest",          L3, three),     # served by gemini-3.8-flash
+            ("gemini-flash-lite-latest",     L4, nothing),   # served by gemini-3.5-flash-lite
+            ("gemini-3.7-flash",             L3, three),     # routed to gemini-3.8-flash
+            ("gemini-3.5-flash",             L4, nothing))   # routed to gemini-3.6-flash
     @test Set(first.(rows)) == Set(keys(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
     @test !haskey(UniLM._GEMINI_THINKING_LEVELS, "gemini-3-pro-preview")  # shut down on 2026-03-09
     level(model, effort) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(
         service=GEMINIServiceEndpoint, model=model, input="x", reasoning=Reasoning(effort=effort))))["generation_config"]["thinking_level"]
     native(model, effort) = JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(
         service=GEMINIServiceEndpoint, model=model, reasoning_effort=effort)))["generationConfig"]["thinkingConfig"]["thinkingLevel"]
-    @testset "$model" for (model, ok, bad, fragment) in rows
-        @test level(model, ok) == ok
-        if startswith(model, "gemini-2.5-")   # generateContent on 2.5 takes a thinking budget, never a level
-            @test_throws ArgumentError native(model, ok)
-        else
-            @test native(model, ok) == uppercase(ok)
+    @testset "$model" for (model, levels, refusal) in rows
+        for effort in levels                                   # each level the model takes
+            @test level(model, effort) == effort
+            if startswith(model, "gemini-2.5-")   # generateContent on 2.5 takes a thinking budget, never a level
+                @test_throws ArgumentError native(model, effort)
+            else
+                @test native(model, effort) == uppercase(effort)
+            end
         end
-        err = try level(model, bad); nothing catch e; e end
-        @test err isa ArgumentError && occursin(fragment, err.msg)
-        @test_throws ArgumentError native(model, bad)
+        for (effort, fragment) in [[e => refusal for e in setdiff(L4, levels)]; ["xhigh" => four, "none" => four]]
+            err = try level(model, effort); nothing catch e; e end   # each it lacks, and two that are no level
+            @test err isa ArgumentError && occursin(fragment, err.msg)
+            @test_throws ArgumentError native(model, effort)
+        end
     end
     # Gemini 4 Argon and the aliases answer MINIMAL with HTTP 400 "Thinking level MINIMAL is not
     # supported for this model" (observed 2026-10-22): the request is refused before it is sent.
@@ -760,8 +764,15 @@ end
         Dict("text" => "No.", "thoughtSignature" => "c2ln")]))])
     m = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply)))).message
     @test m.content == "No." && reasoning_text(m) == "391 = 17 × 23, so it is not prime."
+    # A stream sends the summary in parts, an event each, then the answer with its signature.
     state = StreamState()
-    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(reply), state)
+    parts = [Dict("text" => "391 = 17 × 23, ", "thought" => true), Dict("text" => "so it is not prime.", "thought" => true),
+             Dict("text" => "No.", "thoughtSignature" => "c2ln")]
+    for (k, p) in enumerate(parts)
+        cand = Dict{String,Any}("content" => Dict("role" => "model", "parts" => [p]))
+        k == length(parts) && (cand["finishReason"] = "STOP")
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(Dict("candidates" => [cand])), state)
+    end
     streamed = _build_stream_message(state)
     @test streamed.content == "No." && reasoning_text(streamed) == reasoning_text(m)
 end

@@ -90,7 +90,7 @@ function _poll(fetch::Function, ::Type{S}, terminal::Function, ended::Function;
     seen = nothing
     while (left = limit - _elapsed_s(t0)) > 0
         c = RequestConfig(cfg; total_deadline=min(cfg.total_deadline, left))
-        r = isnothing(tok) ? fetch(c) : with_cancel(() -> fetch(c), tok)
+        r = _with_resolved_cancel(() -> fetch(c), cancel)
         if r isa S
             terminal(r) && return r
             seen = r

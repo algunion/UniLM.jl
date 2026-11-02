@@ -4,7 +4,9 @@ using Sockets
 # This mock server exists ONLY for scenarios that cannot be tested against the
 # real/live server: error codes, retry exhaustion, and connection failures.
 
-response_status = Ref{Int}(200)
+# Named apart from UniLM's exported `response_status`: a global of that name would shadow it in every file a
+# session includes after this one.
+_mock_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
 response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
 request_body = Ref{String}("")   # captures the last request body for wire-level assertions
@@ -30,7 +32,7 @@ mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
     # Default to application/json, but let a test override the response Content-Type.
     has_ct = any(p -> lowercase(p.first) == "content-type", response_headers[])
     headers = has_ct ? response_headers[] : vcat(["Content-Type" => "application/json"], response_headers[])
-    return HTTP.Response(response_status[], headers, Vector{UInt8}(response_body[]))
+    return HTTP.Response(_mock_status[], headers, Vector{UInt8}(response_body[]))
 end
 
 mock_base_url = "http://127.0.0.1:$mock_port"
@@ -68,7 +70,7 @@ UniLM._realtime_ws_url(::Type{WSMockEndpoint}) = "ws://127.0.0.1:$_ws_mock_port"
 
 # Helper: set error response
 function set_error!(status, msg="error"; headers::Vector{Pair{String,String}}=Pair{String,String}[])
-    response_status[] = status
+    _mock_status[] = status
     response_body[] = JSON.json(Dict("error" => Dict("message" => msg, "type" => "server_error")))
     response_headers[] = headers
 end
@@ -177,7 +179,7 @@ try
     @testset "_respond_stream 200 + streamed response.failed → structured ResponseFailure" begin
         # HTTP 200, but the SSE stream ends in response.failed — the structured error must be
         # surfaced, not silently degraded to a 200 with a raw SSE blob (the pre-fix behavior).
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
             "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n"
@@ -190,7 +192,7 @@ try
     end
 
     @testset "_respond_stream 200 + completed without response key → degrades, no crash" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
         inner = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
@@ -404,7 +406,7 @@ try
     end
 
     @testset "Files API (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "file-1", "bytes" => 5, "created_at" => 1,
             "filename" => "a.txt", "purpose" => "user_data", "status" => "processed"))
@@ -439,7 +441,7 @@ try
     end
 
     @testset "Vector Stores API (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "vs-1", "name" => "docs", "status" => "completed",
             "file_counts" => Dict("total" => 0)))
@@ -472,7 +474,7 @@ try
     end
 
     @testset "Conversations API (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "conv-1", "created_at" => 1, "metadata" => Dict("k" => "v")))
         r = create_conversation(metadata=Dict("k" => "v"), service=MockServiceEndpoint)
@@ -495,7 +497,7 @@ try
     end
 
     @testset "Moderations API (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("model" => "omni-moderation-latest", "results" => [
             Dict("flagged" => true, "categories" => Dict("violence" => true),
@@ -515,7 +517,7 @@ try
         @test_throws ArgumentError speak("hello"; voice="verse", service=MockServiceEndpoint)
 
         # Transcription: JSON-response branch + multipart request shape
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = ["Content-Type" => "application/json"]
         response_body[] = JSON.json(Dict("text" => "hello world"))
         af = tempname() * ".wav"
@@ -537,7 +539,7 @@ try
     end
 
     @testset "Batch API (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "batch-1", "status" => "completed",
             "endpoint" => "/v1/chat/completions", "output_file_id" => "file-out",
@@ -555,7 +557,7 @@ try
     end
 
     @testset "Image edits (mock)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "EDITED")]))
         img = tempname() * ".png"
@@ -575,7 +577,7 @@ try
     end
 
     @testset "Fine-tuning API (mock)" begin
-        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        _mock_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "ftjob-1", "status" => "running", "model" => "gpt-4.1-mini"))
         r = create_fine_tuning_job(model="gpt-4.1-mini", training_file="file-1", service=MockServiceEndpoint)
         @test r isa FineTuningSuccess && r.response.id == "ftjob-1"
@@ -588,7 +590,7 @@ try
     end
 
     @testset "Containers API (mock)" begin
-        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        _mock_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "cntr-1", "status" => "running", "name" => "box"))
         @test create_container(name="box", service=MockServiceEndpoint) isa ContainerSuccess
         response_body[] = JSON.json(Dict("id" => "cfile-1", "object" => "container.file",
@@ -605,7 +607,7 @@ try
     end
 
     @testset "Uploads API (mock)" begin
-        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        _mock_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "upload-1", "status" => "pending", "filename" => "big.bin", "bytes" => 10))
         @test create_upload(filename="big.bin", purpose="batch", bytes=10, mime_type="application/octet-stream", service=MockServiceEndpoint) isa UploadSuccess
         response_body[] = JSON.json(Dict("id" => "part-1"))
@@ -620,7 +622,7 @@ try
     end
 
     @testset "Realtime API (mock secret + event builders)" begin
-        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        _mock_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("value" => "ek_123", "expires_at" => 1))
         r = mint_realtime_secret(service=MockServiceEndpoint)
         @test r isa RealtimeSecretSuccess && r.value == "ek_123"
@@ -655,7 +657,7 @@ try
     end
 
     @testset "review-remediation coverage (wire format, untested fns, poll timeout)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
 
         # JSON request-body wire-format assertions (mock captures request_body[])
@@ -935,7 +937,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "tool loops preserve incomplete results without executing partial calls" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_body[] = JSON.json(Dict("choices" => [Dict("finish_reason" => "length",
             "message" => Dict("role" => "assistant", "content" => "partial"))]))
         chat = Chat(service=MockServiceEndpoint,
@@ -958,7 +960,7 @@ try
     end
 
     @testset "tool_loop! two-turn cycle (Chat)" begin
-        response_status[] = 200
+        _mock_status[] = 200
 
         # First response: tool call
         response_body[] = JSON.json(Dict(
@@ -1017,7 +1019,7 @@ try
     end
 
     @testset "tool_loop! max turns exhausted (Chat)" begin
-        response_status[] = 200
+        _mock_status[] = 200
 
         # Always return tool calls
         response_body[] = JSON.json(Dict(
@@ -1052,7 +1054,7 @@ try
     end
 
     @testset "tool_loop! with parallel tool calls (Chat)" begin
-        response_status[] = 200
+        _mock_status[] = 200
 
         # Response with two parallel tool calls
         response_body[] = JSON.json(Dict(
@@ -1100,7 +1102,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "tool_loop two-turn cycle (Respond)" begin
-        response_status[] = 200
+        _mock_status[] = 200
 
         # First response: function call
         response_body[] = JSON.json(Dict(
@@ -1153,7 +1155,7 @@ try
     end
 
     @testset "tool_loop max turns exhausted (Respond)" begin
-        response_status[] = 200
+        _mock_status[] = 200
 
         # Always return function call
         response_body[] = JSON.json(Dict(
@@ -1193,7 +1195,7 @@ try
 
     @testset "chatrequest! stream=true success → LLMSuccess via dispatch (_chatrequeststream)" begin
         # Content deltas "Hello" + " world", a usage chunk, then finish_reason stop + [DONE].
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n""" *
@@ -1230,7 +1232,7 @@ try
         # deliver everything in one read, so assert transport-agnostically: all leading
         # callback payloads are Strings that concatenate to the full text; the last is
         # the Message. (Before delta-forwarding, this transport could only ever observe the final Message.)
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             """data: {"id":"c","choices":[{"index":0,"delta":{"content":"Ahoy"},"finish_reason":null}]}\n\n""" *
@@ -1260,7 +1262,7 @@ try
 
     @testset "chatrequest! stream on_tool_call fires with parsed ToolCall (_fire_tool_calls! + _build_stream_message)" begin
         # A single streamed tool call: id, name, then argument fragments, finishing tool_calls.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
@@ -1326,7 +1328,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "embeddingrequest! success → EmbeddingSuccess with exact vectors + usage (428–430)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "object" => "list",
@@ -1375,7 +1377,7 @@ try
         # 200 with a realistic FIM completion shape (per _parse_fim_response): choices[].text,
         # usage.{prompt,completion,total}_tokens, model. Falsifies the success branch AND that
         # the request body serialized prompt+suffix (would fail if JSON.lower(fim) regressed).
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "cmpl-1",
@@ -1470,7 +1472,7 @@ try
     @testset "prefix_complete success → LLMSuccess, history keeps prefix + continuation, request carries prefix:true" begin
         # Build a Chat whose LAST message is role=assistant (the prefix). Set messages= directly
         # because push! forbids assistant-after-user-then-assistant ordering construction.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "chatcmpl-1",
@@ -1577,7 +1579,7 @@ try
         # readavailable → _parse_response_stream_chunk returns terminal=:completed with the
         # `response` key → the completed branch (1049-1061) builds the ResponseObject and
         # 1078-1079 wraps it in ResponseSuccess.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
@@ -1602,7 +1604,7 @@ try
     @testset "_respond_stream 200 + response.completed fires callback with final ResponseObject (1062)" begin
         # The completed branch invokes callback(result[], close_ref) where result[] is the
         # built ResponseObject — falsifies that streaming success notifies the callback.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
@@ -1624,7 +1626,7 @@ try
         # carrying usable partial output. Only "failed" is a failure — on this path and
         # on the non-streamed one alike — so the truncation is reported in `status` /
         # `incomplete_details`, not by discarding the result.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
@@ -1646,7 +1648,7 @@ try
         # A data: line with invalid JSON makes JSON.parse throw → caught (1020), stashed to failbuff,
         # `continue` (1022). No terminal, no result[] → resp.status==200 but result[] is nothing, so
         # the final else (1088-1089) returns ResponseFailure(raw wire bytes). Must not throw/crash.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.created\ndata: {not valid json}\n\n"
@@ -1680,7 +1682,7 @@ try
     end
 
     @testset "get_response 200 → ResponseSuccess w/ parsed ResponseObject (1230)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "resp_get",
@@ -1701,7 +1703,7 @@ try
     end
 
     @testset "delete_response 200 → raw Dict with deleted==true (1255-1256)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "resp_del", "object" => "response.deleted", "deleted" => true))
@@ -1716,7 +1718,7 @@ try
     end
 
     @testset "list_input_items 200 → raw Dict with data/paging fields (1292-1293)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "object" => "list",
@@ -1737,7 +1739,7 @@ try
     end
 
     @testset "cancel_response 200 → ResponseSuccess w/ parsed ResponseObject (1323-1324)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "resp_cancel", "status" => "cancelled", "model" => "mock-model",
@@ -1753,7 +1755,7 @@ try
     end
 
     @testset "compact_response 200 → raw Dict with output/usage (1365-1366)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "resp_compact", "object" => "response.compaction",
@@ -1774,7 +1776,7 @@ try
     end
 
     @testset "count_input_tokens 200 → raw Dict with input_tokens (1404-1405)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "object" => "response.input_tokens", "input_tokens" => 42))
@@ -1797,7 +1799,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "generate_image 200 success → ImageSuccess parsed (images.jl 249)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "created" => 1_700_000_000,
@@ -1843,7 +1845,7 @@ try
     end
 
     @testset "edit_image with mask → multipart mask part + ImageSuccess (images.jl 341–342)" begin
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("created" => 2,
             "data" => [Dict("b64_json" => "TUFTS0VE")]))
@@ -2009,7 +2011,7 @@ try
         # callback is never fired again, and the failed turn is not committed.
         # Falsifier: a driver that swallowed the exception (logging it and going on)
         # would return an LLMSuccess and commit the turn.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_boom","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
@@ -2048,7 +2050,7 @@ try
         # The dispatcher is built INTERNALLY from the CallableTool's own callable, so the
         # recorded outcome must equal what *that* closure computes (3+7=10) — falsifies that
         # tool_loop! routed the call into the CallableTool and not some other path.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         turn1 = JSON.json(Dict(
             "choices" => [Dict(
@@ -2100,7 +2102,7 @@ try
         # The internally-built dispatcher hits `error("Unknown tool: subtract")` (line 178),
         # which _dispatch_tool catches → a FAILED outcome whose error mentions the unknown name.
         # The error string is then pushed back as the tool message; turn 2 returns text → completed.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         turn1 = JSON.json(Dict(
             "choices" => [Dict(
@@ -2160,7 +2162,7 @@ try
         # Turn 1: a function_call item. Turn 2: a completed message with final text. The dispatcher
         # is built from the CallableTool in r.tools; the recorded result must equal what THAT
         # closure computes (3*5=15), proving the no-dispatcher Responses loop wired it through.
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         turn1 = JSON.json(Dict(
             "id" => "resp_q1", "status" => "completed", "model" => "mock-model",
@@ -2202,7 +2204,7 @@ try
         # Asserts: the result is a FIMSuccess with the EXACT parsed text, and the wire body shows the
         # prompt + suffix the convenience method serialized — proving it constructed the FIMCompletion
         # from its positional/keyword args (falsifies wrong field wiring, e.g. suffix dropped).
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
             "id" => "cmpl-conv",
@@ -2255,7 +2257,7 @@ try
 
     @testset "Residual stream flushing & request_id propagation" begin
         # 1. Test streaming residual flushing on :completed event
-        response_status[] = 200
+        _mock_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.output_text.delta\ndata: {\"delta\":\"final text\"}\n\n" *
@@ -2273,7 +2275,7 @@ try
         @test "final text" in seen_deltas
 
         # 2. Test ResponseFailure request_id propagation (non-streaming)
-        response_status[] = 400
+        _mock_status[] = 400
         response_headers[] = ["x-request-id" => "mock-resp-fail-id-123"]
         response_body[] = "bad request payload"
         res_fail = respond(Respond(input="x", service=MockServiceEndpoint))
@@ -2284,7 +2286,7 @@ try
         # 3. Test ResponseFailure request_id propagation (streaming). A non-200 is the
         # streamed failure the driver reports from the response itself; `incomplete`
         # is a success on this path, so it cannot stand in for one.
-        response_status[] = 400
+        _mock_status[] = 400
         response_headers[] = ["x-request-id" => "mock-resp-fail-stream-id-123"]
         response_body[] = "bad request payload"
         res_fail_stream = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
@@ -2293,7 +2295,7 @@ try
         @test res_fail_stream.request_id == "mock-resp-fail-stream-id-123"
 
         # 4. Test LLMFailure request_id propagation (non-streaming)
-        response_status[] = 401
+        _mock_status[] = 401
         response_headers[] = ["x-request-id" => "mock-llm-fail-id-123"]
         response_body[] = "Unauthorized"
         # Empty conversation: the mock forces a 401 regardless of the body, and
@@ -2305,7 +2307,7 @@ try
         @test res_llm_fail.request_id == "mock-llm-fail-id-123"
 
         # 5. Test LLMFailure request_id propagation (streaming)
-        response_status[] = 401
+        _mock_status[] = 401
         response_headers[] = ["x-request-id" => "mock-llm-fail-stream-id-123"]
         response_body[] = "Unauthorized stream"
         # Empty conversation: the mock forces a 401 regardless of the body.
@@ -2316,7 +2318,7 @@ try
         @test res_llm_fail_stream.request_id == "mock-llm-fail-stream-id-123"
 
         # 6. Test FIMFailure request_id propagation
-        response_status[] = 500
+        _mock_status[] = 500
         response_headers[] = ["x-request-id" => "mock-fim-fail-id-123"]
         response_body[] = "Internal Server Error"
         res_fim_fail = fim_complete(FIMCompletion(prompt="a", suffix="b", service=MockServiceEndpoint))

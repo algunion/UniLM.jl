@@ -221,7 +221,7 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     model = _wire_string(parsed, "model")
     isnothing(model) || (state.model = model)
     tier = _wire_string(parsed, "service_tier")
-    isnothing(tier) || _chunk_tier!(service, state, tier)
+    isnothing(tier) || (state.service_tier = tier)
     u = get(parsed, "usage", nothing)
     u isa AbstractDict && (state.usage = _token_usage_from(u; service_tier=_stream_tier(state)))
     _moderation_delta!(state, get(parsed, "moderation", nothing))
@@ -311,10 +311,6 @@ function _finalize_generic_reasoning!(state::StreamState)::Nothing
     isnothing(blk) || push!(state.raw_blocks, Dict{String,Any}(k => takestring!(v) for (k, v) in blk))
     nothing
 end
-
-# The tier a chunk names becomes the stream's latest; the usage takes it unless the response head
-# named one (`_stream_tier`).
-_chunk_tier!(_, state::StreamState, tier::String)::Nothing = (state.service_tier = tier; nothing)
 
 # A streamed `delta.content`. A string is the answer's next text. A list of chunks is the shape
 # Mistral's reasoning models stream: "1. Thinking phase: `delta.content` is a list containing a

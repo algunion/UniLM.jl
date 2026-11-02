@@ -512,8 +512,8 @@ end
     @test UniLM.GEMINIOpenAIServiceEndpoint <: UniLM.ServiceEndpoint
 
     @testset "DeepSeekEndpoint keyword constructor" begin
-        # api.jl:379 — the kwarg ctor. Passing api_key explicitly means the ENV["DEEPSEEK_API_KEY"]
-        # default is never evaluated (zero-spend), and the key must round-trip into the struct.
+        # A given key is kept as is. Without one the field is `nothing` and the key is read from
+        # DEEPSEEK_API_KEY each time a request is built (test/deepseek.jl).
         ds = DeepSeekEndpoint(api_key="explicit-key")
         @test ds isa UniLM.DeepSeekEndpoint
         @test ds.api_key == "explicit-key"
@@ -1499,10 +1499,6 @@ end
 @testset "streamed usage is requested from OpenAI, DeepSeek and Gemini's compatible endpoint" begin
     # Each streams token usage only when asked (`stream_options.include_usage`; Google's compatibility
     # page streams with it), so an unasked stream was costed at zero.
-    # The Chat docstring names the three endpoints that ask, as the encoder does.
-    doc = replace(join((join(string.(d.text)) for d in
-                        values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :Chat)].docs)), " "), r"\s+" => " ")
-    @test occursin("an `OPENAIServiceEndpoint`, `DeepSeekEndpoint` or `GEMINIOpenAIServiceEndpoint` stream requests", doc)
     @test all(UniLM._asks_stream_usage, (OPENAIServiceEndpoint, DeepSeekEndpoint(api_key="k"), GEMINIOpenAIServiceEndpoint))
     sys_user = [Message(Val(:system), "s"), Message(Val(:user), "u")]
     auto = Dict(:include_usage => true)

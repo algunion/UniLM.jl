@@ -213,8 +213,12 @@ end
     loose = function_tool("get_time", "Get time")
     gen(tools, tc=nothing) = get(JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
         Respond(service=GEMINIServiceEndpoint, input="x", tools=tools, tool_choice=tc))), "generation_config", nothing)
-    mode(tools, tc=nothing) = gen(tools, tc)["tool_choice"]["allowed_tools"]
-    @test gen([strict]) == Dict("tool_choice" => Dict("allowed_tools" => Dict("mode" => "validated")))
+    # The reference takes a mode as a ToolChoiceType string or as a ToolChoiceConfig's allowed_tools: one request.
+    function mode(tools, tc=nothing)
+        sent = gen(tools, tc)["tool_choice"]
+        sent isa AbstractString ? Dict("mode" => sent) : sent["allowed_tools"]
+    end
+    @test collect(keys(gen([strict]))) == ["tool_choice"] && mode([strict]) == Dict("mode" => "validated")
     @test mode([loose, strict], "auto") == Dict("mode" => "validated")       # one strict tool is enough
     @test mode([UniLM.CallableTool(strict, (n, a) -> "x")]) == Dict("mode" => "validated")   # a tool loop's
     @test mode([strict], "required") == Dict("mode" => "any")
@@ -967,6 +971,31 @@ end
     @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
 end
 
+@testset "Interactions stream — an answer's citations count bytes of its whole text, across every text delta" begin
+    # The answer arrives in three text deltas, the first holding a 3-byte "—", and its citations after them:
+    # their indices count bytes of the step's whole text, as an unstreamed interaction's do.
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    deltas = ["Julia 1.13 — ", "was released ", "in 2026."]
+    answer = join(deltas)
+    cite(id, text) = (i = first(findfirst(text, answer)) - 1;
+                      Dict("type" => "url_citation", "url" => "https://example.com/$id", "title" => id,
+                           "start_index" => i, "end_index" => i + ncodeunits(text)))
+    notes = [cite("a", "Julia 1.13"), cite("b", "in 2026")]
+    interaction = Dict("id" => "v1_d", "status" => "completed", "model" => "gemini-3.8-flash")
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "model_output"))) *
+          join(ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "text", "text" => d))) for d in deltas) *
+          ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "text_annotation_delta", "annotations" => notes))) *
+          ev("step.stop", Dict("index" => 0)) *
+          ev("interaction.completed", Dict("interaction" => interaction))
+    rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
+    streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
+    @test output_text(streamed) == answer
+    segment(a) = String(codeunits(answer)[a["start_index"]+1:a["end_index"]])
+    @test [segment(a) for a in url_citations(streamed)] == ["Julia 1.13", "in 2026"]
+    steps = [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => answer, "annotations" => notes)])]
+    @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
+end
+
 @testset "Interactions encode — an input ending with an assistant message is refused where Gemini answers it with HTTP 400" begin
     # gemini-3.8-flash answered an input whose last step is a model_output with HTTP 400 "Request contains an
     # invalid argument.", and the same input with a user message after it with HTTP 200 (2026-10-26), as
@@ -1466,4 +1495,83 @@ end
         @test length(seen) == n
         @test r isa ResponseCallError && r.request_id == id
     end
+end
+
+@testset "long decode — a cancel during a later request is timed from the call's start, as chatrequest!'s is" begin
+    # The first request takes 0.5 s; the token is cancelled once the second has reached the server.
+    tok = CancelToken()
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = n == 1 ? (sleep(0.5); _json(200, first)) :
+                            (cancel!(tok); sleep(2.0); _json(200, _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxHops, model="gemini-3.8-flash", input="Prove it."); config=_IX_HOPS_CFG, cancel=tok)
+    end
+    @test length(seen) == 2
+    @test r isa ResponseCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    # The call's 0.5 s before the second request count; that request alone had run for a few milliseconds.
+    elapsed = r isa ResponseCallError && r.cause isa UniLMCancelled ? r.cause.elapsed : NaN
+    @test elapsed >= 0.5
+    @test r isa ResponseCallError && r.error == sprint(showerror, r.cause)
+end
+
+@testset "long decode — a later request is the first's bytes, key order included, with only the continuation fields changed" begin
+    replies = [_ix_hop("v1_a", "requires_continuation"; text="A", token="T1"), _ix_hop("v1_b", "completed"; text="B")]
+    bodies(; kw...) = [s.body for s in last(_with_scripted((n, _) -> _json(200, replies[min(n, 2)])) do
+        respond(Respond(; service=_IxHops, model="gemini-3.8-flash", input="Prove it.", instructions="Be brief.",
+                        max_output_tokens=100, reasoning=Reasoning(effort="low"), kw...); config=_IX_HOPS_CFG)
+    end)]
+    # Unstored: the whole request again, the token after it.
+    b = bodies(store=false)
+    @test length(b) == 2
+    @test b[2] == chop(b[1]) * ",\"continuation_token\":\"T1\"}"
+    # Stored, alone or continuing a conversation: the input goes, the token follows the other fields, and the
+    # interaction that issued it is named — after them, or where the caller's previous interaction was named.
+    for kw in ((;), (previous_response_id="v1_prev",))
+        b = bodies(; kw...)
+        o = JSON.parse(b[1]; dicttype=JSON.Object{String,Any})
+        @test JSON.json(o) == b[1]                       # read in order, the first body writes back as it was sent
+        delete!(o, "input")
+        o["continuation_token"] = "T1"
+        o["previous_interaction_id"] = "v1_a"
+        @test length(b) == 2
+        @test b[2] == JSON.json(o)
+    end
+end
+
+@testset "long decode — each request starts with the whole budget, so a slow first one leaves the next its deadline" begin
+    # Both requests take 1 s against a 1.6 s deadline: timed from the call's start, the second would have 0.6 s.
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = (sleep(1.0); _json(200, n == 1 ? first : _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxHops, model="gemini-3.8-flash", input="Prove it.");
+                config=RequestConfig(max_attempts=1, request_timeout=10.0, total_deadline=1.6))
+    end
+    @test length(seen) == 2
+    @test r isa ResponseSuccess && output_text(r) == "AB"
+end
+
+# The native wire behind the scripted server, the call's token cancelled after a reply is read and before the
+# next request is sent.
+struct _IxCancelBetween <: UniLM.ServiceEndpoint end
+const _IX_BETWEEN = Ref{Union{Nothing,CancelToken}}(nothing)
+UniLM._agentic_url(::Type{_IxCancelBetween}) = _url_probe_base[] * "/v1beta/interactions"
+UniLM.auth_header(::Type{_IxCancelBetween}) = ["Content-Type" => "application/json"]
+UniLM.encode_agentic(::Type{_IxCancelBetween}, r::Respond) = UniLM.encode_agentic(GEMINIServiceEndpoint, r)
+UniLM.decode_agentic(::Type{_IxCancelBetween}, resp::HTTP.Response) = UniLM.decode_agentic(GEMINIServiceEndpoint, resp)
+UniLM._continued_reply(send, ::Type{_IxCancelBetween}, r::Respond, body::String, resp::HTTP.Response) =
+    UniLM._continued_reply((request, start) -> (cancel!(something(_IX_BETWEEN[])); send(request, start)),
+                           GEMINIServiceEndpoint, r, body, resp)
+
+@testset "long decode — a cancel between two requests sends no more" begin
+    tok = _IX_BETWEEN[] = CancelToken()
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = (sleep(0.3); _json(200, n == 1 ? first : _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxCancelBetween, model="gemini-3.8-flash", input="Prove it."); config=_IX_HOPS_CFG,
+                cancel=tok)
+    end
+    @test length(seen) == 1                                   # the second request never went out
+    @test r isa ResponseCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    elapsed = r isa ResponseCallError && r.cause isa UniLMCancelled ? r.cause.elapsed : NaN
+    @test elapsed >= 0.3                                      # timed from the call's start
 end

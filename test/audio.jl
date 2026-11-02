@@ -408,11 +408,13 @@ end
     @test !has_capability(generic, :speech) && !has_capability(generic, :realtime)   # speech and translation stay refused
 end
 
-@testset "speak and translate never call the retiring Audio API speech and translation routes" begin
+@testset "speak and translate reach the Audio API's speech and translation routes on Ollama alone" begin
+    # OpenAI's speak and translate run on Realtime sessions, as its Audio API speech and translation routes retire;
+    # Ollama serves those routes, so every source line that names one is Ollama's.
     src = normpath(joinpath(@__DIR__, "..", "src"))
-    hits = [(basename(f), i) for f in readdir(src; join=true) if endswith(f, ".jl")
-                             for (i, line) in enumerate(eachline(f)) if occursin(r"audio/(speech|translations)\b", line)]
-    @test isempty(hits)
+    hits = [(basename(f), i, line) for f in readdir(src; join=true) if endswith(f, ".jl")
+                                   for (i, line) in enumerate(eachline(f)) if occursin(r"audio/(speech|translations)\b", line)]
+    @test !isempty(hits) && all(h -> occursin(r"Ollama|_OLLAMA_", h[3]), hits)
     @test !isdefined(UniLM, :AUDIO_SPEECH_PATH) && !isdefined(UniLM, :AUDIO_TRANSLATIONS_PATH)
 end
 
@@ -852,6 +854,154 @@ end
 end
 
 # ─── Translation on OpenAI Realtime ──────────────────────────────────────────
+
+# ─── Speech on Ollama ─────────────────────────────────────────────────────────
+
+# The stream Ollama writes for "wav": a header whose size fields hold the maximum, written before the length is
+# known (https://docs.ollama.com/capabilities/speech), then the samples.
+_sp_streamed_wav(pcm) = (w = _sp_wav(pcm); w[5:8] .= 0xff; w[41:44] .= 0xff; w)
+_sp_audio(fmt, bytes) = HTTP.Response(200, ["Content-Type" => "audio/$fmt"], bytes)
+
+# Refuted if: speak on Ollama does not send one POST to /v1/audio/speech carrying the model, the input, the format and
+# the voice and speed it sets (no voice when none is named), or returns anything but the reply's bytes as they came.
+@testset "speak on Ollama: one POST to /v1/audio/speech, the reply's bytes as they came" begin
+    pcm = _sp_pcm(Int16[0, 1200, -1200, 300])
+    wav = _sp_streamed_wav(pcm)
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    r, seen = _with_scripted((_, _) -> _sp_audio("wav", wav)) do
+        speak("Hello from Ollama."; service=ep(), model="phonon", voice="Zoey")
+    end
+    @test r isa SpeechSuccess && r.audio == wav && r.content_type == "audio/wav"
+    req = only(seen)
+    @test (req.method, req.target) == ("POST", "/v1/audio/speech")
+    @test JSON.parse(req.body) == Dict("model" => "phonon", "input" => "Hello from Ollama.", "voice" => "Zoey",
+                                       "response_format" => "wav")
+    r, seen = _with_scripted((_, _) -> _sp_audio("pcm", pcm)) do
+        speak(SpeechRequest(input="Hi.", service=ep(), model="phonon", response_format="pcm", speed=1))
+    end
+    @test r isa SpeechSuccess && r.audio == pcm && r.content_type == "audio/pcm"
+    @test JSON.parse(only(seen).body) == Dict("model" => "phonon", "input" => "Hi.", "response_format" => "pcm",
+                                              "speed" => 1.0)
+    @test :speech in provider_capabilities(OllamaEndpoint())
+    # A transient status is sent again, within the config; a spent budget sends nothing.
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}") : _sp_audio("wav", wav)) do
+        speak("Hi."; service=ep(), model="phonon", config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test r isa SpeechSuccess && length(seen) == 2
+    r, seen = _with_scripted((_, _) -> _sp_audio("wav", wav)) do
+        speak("Hi."; service=ep(), model="phonon", config=_TINY_DEADLINE)
+    end
+    @test _seam_timeout(r, AudioCallError) && isempty(seen)
+end
+
+# Refuted if: what Ollama's speech route answers with HTTP 400, or cannot take, reaches the network — the dead port
+# would answer it with a call error — or a refusal does not name Ollama and its limit.
+@testset "speak on Ollama: what its speech route refuses is refused before any request" begin
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(f) = try f(); nothing catch x; x end
+    for (call, fragment) in (
+            (() -> speak("Hi."; service=off), "Ollama has no default speech model"),
+            (() -> speak(repeat("a", 4097); service=off, model="phonon"), "at most 4,096 characters per speech request (got 4097)"),
+            (() -> speak("Hi."; service=off, model="phonon", speed=1.25), "speaks at speed 1.0 only (got 1.25)"),
+            (() -> speak("Hi."; service=off, model="phonon", speed=NaN), "speaks at speed 1.0 only"),
+            (() -> speak("Hi."; service=off, model="phonon", instructions="Calm."), "\"instructions are not supported\""),
+            (() -> speak("Hi."; service=off, model="phonon", response_format="mp3"),
+             "\"response_format \"mp3\" is not supported, use wav or pcm\""),
+            (() -> speak("Hi."; service=off, model="phonon", voice="  "), "Ollama takes a voice by name"))
+        e = refusal(call)
+        @test e isa ArgumentError && occursin("Ollama", e.msg) && occursin(fragment, e.msg)
+    end
+    # The limit counts characters, as Ollama does, not bytes.
+    @test length(SpeechRequest(input=repeat("é", 4096), service=off, model="phonon").input) == 4096
+end
+
+# Refuted if: Ollama's 400 (an unknown voice, its message naming the voices) is not an AudioFailure carrying the body,
+# or a reply that is not the audio asked for — another label, a WAV without its header, samples cut mid-frame — comes
+# back as a success.
+@testset "speak on Ollama: its 400 is an AudioFailure; a reply that is not the audio asked for is a call error" begin
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    unknown = JSON.json(Dict("error" => Dict("message" => "unknown voice \"Nobody\", available voices: default, Zoey",
+                                             "type" => "invalid_request_error")))
+    r, seen = _with_scripted((_, _) -> _json(400, unknown)) do
+        speak("Hi."; service=ep(), model="phonon", voice="Nobody")
+    end
+    @test r isa AudioFailure && r.status == 400 && occursin("available voices", r.response) && length(seen) == 1
+    for (fmt, reply) in (("wav", _json(200, "{}")), ("wav", _sp_audio("wav", UInt8[1, 2, 3, 4])),
+                         ("pcm", _sp_audio("pcm", UInt8[1, 2, 3])), ("pcm", _sp_audio("wav", _sp_streamed_wav(UInt8[0, 0]))))
+        r, _ = _with_scripted((_, _) -> reply) do
+            speak("Hi."; service=ep(), model="phonon", response_format=fmt)
+        end
+        @test r isa AudioCallError
+    end
+end
+
+# ─── Translation on Ollama ────────────────────────────────────────────────────
+
+# Refuted if: translate on Ollama does not send one multipart POST to /v1/audio/translations carrying the file as it
+# is, the model and the target language as `to_language` (English unless named), or does not return the reply's text
+# with its JSON as `raw`.
+@testset "translate on Ollama: one multipart POST to /v1/audio/translations, its text" begin
+    said = "Le mot secret est banane."
+    reply(_, _) = HTTP.Response(200, ["Content-Type" => "application/json; charset=utf-8"],
+                                Vector{UInt8}(JSON.json(Dict("text" => said))))
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    r, seen = _with_scripted(reply) do
+        translate(_SP_WAV; language="fr", service=ep(), model="lfm3-audio")
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == said && r.raw == Dict("text" => said)
+    req = only(seen)
+    @test (req.method, req.target) == ("POST", "/v1/audio/translations")
+    for (name, value) in ("model" => "lfm3-audio", "to_language" => "fr")
+        @test occursin("name=\"$name\"\r\n\r\n$value\r\n", req.body)
+    end
+    @test occursin("name=\"file\"; filename=\"secret_word.wav\"", req.body) && occursin(String(read(_SP_WAV)), req.body)
+    @test !occursin("name=\"language\"", req.body)          # Ollama's `language` is the spoken one: not named here
+    # A file Ollama decodes itself or passes to the model whole goes as it is, unlike on OpenAI.
+    mktempdir() do dir
+        clip = joinpath(dir, "clip.mp3")
+        write(clip, UInt8[0xff, 0xfb, 0x90, 0x44, 0x00, 0x0f])
+        r, seen = _with_scripted(reply) do
+            translate(clip; service=ep(), model="lfm3-audio")
+        end
+        @test r isa TranscriptionSuccess && occursin("name=\"to_language\"\r\n\r\nen\r\n", only(seen).body)
+        @test occursin(String(read(clip)), only(seen).body)
+    end
+    # A transient status is sent again, the whole file each time; a spent budget sends nothing.
+    r, seen = _with_scripted((n, req) -> n == 1 ? _json(503, "{}") : reply(n, req)) do
+        translate(_SP_WAV; language="fr", service=ep(), model="lfm3-audio",
+                  config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test r isa TranscriptionSuccess && length(seen) == 2 && all(q -> occursin(String(read(_SP_WAV)), q.body), seen)
+    r, seen = _with_scripted(reply) do
+        translate(_SP_WAV; service=ep(), model="lfm3-audio", config=_TINY_DEADLINE)
+    end
+    @test _seam_timeout(r, AudioCallError) && isempty(seen)
+end
+
+# Refuted if: a translation Ollama cannot take reaches the network — the dead port would answer it with a call error —
+# or Ollama's own 400 does not come back as an AudioFailure carrying its message.
+@testset "translate on Ollama: what it cannot take is refused before any request; its 400 is an AudioFailure" begin
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(f) = try f(); nothing catch x; x end
+    mktempdir() do dir
+        empty = joinpath(dir, "empty.wav")
+        touch(empty)
+        for (call, fragment) in ((() -> translate(_SP_WAV; service=off), "Ollama has no default translation model"),
+                                 (() -> translate(_SP_WAV; service=off, model=" "), "Ollama has no default translation model"),
+                                 (() -> translate(_SP_WAV; service=off, model="lfm3-audio", language=" "), "needs a target language"),
+                                 (() -> translate(joinpath(dir, "absent.wav"); service=off, model="lfm3-audio"), "file not found"),
+                                 (() -> translate(empty; service=off, model="lfm3-audio"), "\"audio file is empty\""))
+            e = refusal(call)
+            @test e isa ArgumentError && occursin(fragment, e.msg)
+        end
+    end
+    unsupported = JSON.json(Dict("error" => Dict("message" => "unsupported to_language \"xx\", use an ISO 639-1 code such as \"en\"",
+                                                 "type" => "invalid_request_error")))
+    r, seen = _with_scripted((_, _) -> _json(400, unsupported)) do
+        translate(_SP_WAV; language="xx", service=OllamaEndpoint(base_url=_url_probe_base[]), model="lfm3-audio")
+    end
+    @test r isa AudioFailure && r.status == 400 && occursin("unsupported to_language", r.response) && length(seen) == 1
+end
 
 @testset "translate: a Realtime translation session in 200 ms frames, its transcript as the text" begin
     pcm = UniLM._translation_pcm(_SP_WAV)

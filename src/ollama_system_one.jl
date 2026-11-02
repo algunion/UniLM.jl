@@ -31,10 +31,13 @@ There is no default model: the call names one (`model = "tev1:4b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
 route refuses in its shared checks or documents as its maximum (Ollama 0.40.6):
 more than 64 questions; a Choice of more than 255 options; a Score of fewer than 2
-or more than 10 levels; a blank text `state` without images; a Box question, which
-Ollama does not answer. By Ollama's source, a Kev model on Ollama's own runner (such
-as `kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
-state; that is untested. It also refuses what Ollama's API reference does not list,
+or more than 10 levels; a Box question, which Ollama does not answer. By Ollama's
+source, a Kev model on Ollama's own runner (such as `kev:0.8b-mxfp8`) skips the
+shared checks and takes 1 to 255 levels; that is untested. A blank text `state`
+without images is sent, for Ollama to judge by the model's encoding: by its source,
+d3 models answer one (Ollama 0.40.11 or later), and the other encodings answer HTTP
+400 `state must not be empty`, which comes back as a [`SystemOneFailure`](@ref).
+It also refuses what Ollama's API reference does not list,
 though some models read it: `instructions` given as anything but a string, an object
 or an array; an option described by anything but a string or `nothing`; a Score level
 or a Noul criterion that is not a string (on Ollama 0.40.6, `kev:0.8b-q8_0` and
@@ -254,8 +257,6 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
             "Move it into the state, e.g. [image, \"…\"]"))
     end
     state, images = _ollama_state_images(request.state)
-    isempty(images) && state isa AbstractString && isempty(strip(state)) && throw(ArgumentError(
-        "Ollama refuses a blank `state` without images: it must hold the content the questions are about"))
     keep_alive = _ollama_system_one_keep_alive(request.options, service)
     o = _system_one_json(request, _system_one_model(p, service, request))
     o["state"] = state

@@ -20,8 +20,9 @@ that serves it once loaded: [`OllamaRunningModel`](@ref)`.runner` (`/api/ps`) re
 — and `format` (`:gguf`, `:safetensors`), as Ollama 0.40 and later report them; `nothing`
 when not reported. `capabilities` holds what
 the server reports, e.g. `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`,
-`:thinking`, `:image` and `:audio`. A detail the server does not report, or reports empty
-(`""`), is `nothing`; `raw` holds the unparsed entry.
+`:thinking`, `:image`, `:audio`, `:decision` (a decision model, which [`ask`](@ref) reaches) and
+`:speech` (a speech model, which [`speak`](@ref) reaches). A detail the server does not report,
+or reports empty (`""`), is `nothing`; `raw` holds the unparsed entry.
 """
 struct OllamaModel
     name::String
@@ -56,7 +57,10 @@ Ollama 0.40.6, else `nothing` (a legacy GGUF model names none: `embeddinggemma:l
 [`OllamaModel`](@ref)`.runner` (`/api/tags`) and from the runner that serves it once loaded
 ([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`:gguf`,
 `:safetensors`), as Ollama 0.40 and later report them; `nothing` when not reported or
-empty (`""`). `raw` holds the whole reply (template, license, `model_info`, …).
+empty (`""`). `voices` are the voices a speech model (`:speech` among its `capabilities`)
+speaks with, as `/api/show` lists them (Ollama 0.40.11 or later), the names [`speak`](@ref)
+takes as `voice`; empty for any other model. `raw` holds the whole reply (template, license,
+`model_info`, …).
 """
 struct OllamaModelInfo
     name::String
@@ -70,6 +74,7 @@ struct OllamaModelInfo
     quantization::Union{String,Nothing}
     runner::Union{Symbol,Nothing}
     format::Union{Symbol,Nothing}
+    voices::Vector{String}
     raw::Dict{String,Any}
 end
 
@@ -190,11 +195,13 @@ function _decode_show(name::String, d::Dict{String,Any})::OllamaModelInfo
     levels = something(_opt_field(thinking, "values", AbstractVector), [])
     all(v -> v isa Union{Bool,String}, levels) ||
         throw(ArgumentError("Ollama thinking levels must be booleans or strings"))
+    voices = something(_opt_field(d, "voices", AbstractVector), [])
+    all(v -> v isa String, voices) || throw(ArgumentError("Ollama voices must be strings"))
     OllamaModelInfo(name, _ollama_capabilities(d), isnothing(arch) ? nothing : _opt_field(meta, arch * ".context_length", Int),
                     Vector{Union{Bool,String}}(levels), _opt_field(thinking, "default", Union{Bool,String}),
                     _decode_parameters(something(_opt_field(d, "parameters", String), "")),
                     _opt_text(det, "family"), _opt_text(det, "parameter_size"), _opt_text(det, "quantization_level"),
-                    _opt_symbol(det, "runner"), _opt_format(det), d)
+                    _opt_symbol(det, "runner"), _opt_format(det), String[v for v in voices], d)
 end
 
 # The `parameters` text of /api/show: one `key value` line per Modelfile default, a

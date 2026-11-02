@@ -1,7 +1,7 @@
 # ============================================================================
-# Audio — speech (OpenAI Realtime sessions, Gemini TTS), transcription (OpenAI
-# Audio API, Ollama) and translation (OpenAI Realtime translation sessions).
-# The Realtime session drivers live in realtime.jl.
+# Audio — speech (OpenAI Realtime sessions, Gemini TTS, Ollama), transcription
+# (OpenAI Audio API, Ollama) and translation (OpenAI Realtime translation
+# sessions, Ollama). The Realtime session drivers live in realtime.jl.
 # ============================================================================
 
 "Audio error result: the HTTP `status` (`nothing` when a Realtime session reported the failure as an event, which carries no HTTP status), the raw `response` (the reply body, the Realtime event's JSON, or for a refused WebSocket upgrade HTTP.jl's report of its status) and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
@@ -11,18 +11,21 @@
 
 # ─── Speech ──────────────────────────────────────────────────────────────────
 
-# Speech from either service is 16-bit little-endian mono PCM at 24 kHz: the one rate of the
-# Realtime API's PCM output, and the rate UniLM asks Gemini TTS for.
+# Speech from every service is 16-bit little-endian mono PCM at 24 kHz: the one rate of the
+# Realtime API's PCM output, the rate UniLM asks Gemini TTS for, and the one rate Ollama speaks at.
 const _SPEECH_RATE = 24_000
 const _SPEECH_FORMATS = ("wav", "pcm")
 
-# How a service speaks: an OpenAI Realtime session (every service but Gemini's; `_realtime_ws_url`
-# refuses all but OPENAIServiceEndpoint) or Gemini TTS through generateContent.
+# How a service speaks: an OpenAI Realtime session (every service but Gemini's and Ollama's;
+# `_realtime_ws_url` refuses all but OPENAIServiceEndpoint), Gemini TTS through generateContent, or
+# Ollama's speech route.
 abstract type _SpeechWire end
 struct _RealtimeSpeechWire <: _SpeechWire end
 struct _GeminiSpeechWire <: _SpeechWire end
+struct _OllamaSpeechWire <: _SpeechWire end
 _speech_wire(_) = _RealtimeSpeechWire()
 _speech_wire(::Type{GEMINIServiceEndpoint}) = _GeminiSpeechWire()
+_speech_wire(::OllamaEndpoint) = _OllamaSpeechWire()
 # Google's OpenAI-compatible API documents no speech route (https://ai.google.dev/gemini-api/docs/openai):
 # Gemini speaks through its native API only.
 _speech_wire(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError(
@@ -56,8 +59,13 @@ const _GEMINI_SPEECH = _SpeechRules("Gemini TTS", "gemini-3.8-flash-tts", "Kore"
      "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
      "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"], nothing,
     "https://ai.google.dev/gemini-api/docs/speech-generation")
+# Ollama's speech route (Ollama 0.40.9 or later): no default model, each model's own voices (none named: the
+# model's own voice, `voice` not sent) and speed 1 only (https://docs.ollama.com/api/openai-compatibility).
+const _OLLAMA_SPEECH = _SpeechRules("Ollama", "", "", String[], (1.0, 1.0),
+    "https://docs.ollama.com/api/openai-compatibility")
 _speech_rules(::_RealtimeSpeechWire) = _REALTIME_SPEECH
 _speech_rules(::_GeminiSpeechWire) = _GEMINI_SPEECH
+_speech_rules(::_OllamaSpeechWire) = _OLLAMA_SPEECH
 
 # The voice a request names, as its wire takes it: a Realtime session one of its built-in voices.
 function _speech_voice(w::_RealtimeSpeechWire, v::AbstractString)::String
@@ -78,6 +86,45 @@ function _speech_voice(::_GeminiSpeechWire, v::AbstractString)::String
         "(got $(repr(v))): https://ai.google.dev/gemini-api/docs/speech-generation#voices"))
     String(v)
 end
+# Ollama's voices are each model's own, as `model_info` lists them (`voices`): a voice is sent as given, and Ollama
+# answers one the model does not have with HTTP 400 naming the voices it has; none (`""`) leaves the model's own
+# voice (https://docs.ollama.com/capabilities/speech).
+function _speech_voice(::_OllamaSpeechWire, v::AbstractString)::String
+    isempty(v) || !isempty(strip(v)) || throw(ArgumentError(
+        "Ollama takes a voice by name, one of those model_info lists for the model (got $(repr(v))): leave voice " *
+        "unset for the model's own voice"))
+    String(v)
+end
+
+# The model a request names, else its wire's default; Ollama has none.
+_speech_model(w::_SpeechWire, model::Union{AbstractString,Nothing})::String = String(something(model, _speech_rules(w).model))
+function _speech_model(::_OllamaSpeechWire, model::Union{AbstractString,Nothing})::String
+    (isnothing(model) || isempty(strip(model))) && throw(ArgumentError(
+        "Ollama has no default speech model: name an installed one, e.g. model = \"phonon\" (`ollama pull phonon`)"))
+    String(model)
+end
+
+# The refusal of a format no speech wire produces; Ollama's in its own words (server/speech.go).
+_speech_format_refusal(::_SpeechWire, fmt::AbstractString)::String =
+    "response_format must be \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz); got $(repr(fmt))"
+_speech_format_refusal(::_OllamaSpeechWire, fmt::AbstractString)::String =
+    "Ollama answers HTTP 400 \"response_format $(repr(fmt)) is not supported, use wav or pcm\": set response_format " *
+    "to \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz)"
+
+# What a speech wire cannot carry beyond its voices, formats and speeds, refused before any request.
+_check_speech(::_SpeechWire, ::AbstractString, ::Union{AbstractString,Nothing}) = nothing
+# Ollama reads "up to 4,096 characters" and answers `instructions` with HTTP 400 "instructions are not supported"
+# (https://docs.ollama.com/api/openai-compatibility, server/speech.go).
+const _OLLAMA_SPEECH_CHARS = 4096
+function _check_speech(::_OllamaSpeechWire, input::AbstractString, instructions::Union{AbstractString,Nothing})
+    n = length(input)
+    n <= _OLLAMA_SPEECH_CHARS || throw(ArgumentError(
+        "Ollama reads at most 4,096 characters per speech request (got $n): split the text, e.g. at paragraph or " *
+        "sentence breaks, and speak each part"))
+    isnothing(instructions) || throw(ArgumentError(
+        "Ollama answers `instructions` with HTTP 400 \"instructions are not supported\": remove instructions"))
+    nothing
+end
 
 function _speech_speed(r::_SpeechRules, speed::Real)::Float64
     s = Float64(speed)
@@ -85,6 +132,8 @@ function _speech_speed(r::_SpeechRules, speed::Real)::Float64
     range === nothing && throw(ArgumentError(
         "$(r.provider) has no speed control: describe the pace in `instructions` instead, e.g. " *
         "instructions = \"speaking slowly\" ($(r.docs))"))
+    first(range) == last(range) && s != first(range) && throw(ArgumentError(
+        "$(r.provider) speaks at speed $(first(range)) only (got $s): leave speed unset ($(r.docs))"))
     first(range) <= s <= last(range) || throw(ArgumentError(
         "$(r.provider) speed must be between $(first(range)) and $(last(range)) (got $s)"))
     s
@@ -101,20 +150,26 @@ and `voice` left `nothing` are the service's defaults:
 |:--|:--|:--|:--|:--|:--|
 | `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
 | `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key | none |
+| [`OllamaEndpoint`](@ref) | Ollama's speech route (Ollama 0.40.9 or later) | none: name an installed speech model, such as `phonon` | the model's own (`voice` not sent) | one of the model's voices, which [`model_info`](@ref) lists (`voices`), sent as given | `1` only |
 
-Both services produce 16-bit mono PCM at 24 kHz: `response_format` `"wav"` returns it as a WAV file,
+Every service produces 16-bit mono PCM at 24 kHz: `response_format` `"wav"` returns it as a WAV file,
 `"pcm"` as the raw samples. `instructions` direct the delivery (tone, pace, accent): on OpenAI they
 follow the session's instruction to read `input` word for word, on Gemini they are the text's speech
 style (`speechMetadata.style`). Gemini TTS has no speed parameter: describe the pace in
-`instructions` (`"speaking slowly"`).
+`instructions` (`"speaking slowly"`). Ollama takes neither: it answers `instructions` and any speed
+but 1 with HTTP 400.
 
 Throws `ArgumentError`, before any request, for an empty `input`, a voice the Realtime session does
-not have or a blank Gemini voice, a `response_format` other than `"wav"` or `"pcm"`, a `speed` out of
-range, and any `speed` on Gemini; and for `GEMINIOpenAIServiceEndpoint`, which has no speech route,
-naming `GEMINIServiceEndpoint`. The Extended Voice Library's names are listed only by Gemini's
-`GET /v1beta/voices`, so a Gemini voice is sent as given, and Gemini answers a name it does not have.
+not have or a blank Gemini or Ollama voice, a `response_format` other than `"wav"` or `"pcm"`, a
+`speed` out of range, and any `speed` on Gemini; on Ollama, for a request without a `model`, an
+`input` of more than 4,096 characters and any `instructions`; and for `GEMINIOpenAIServiceEndpoint`,
+which has no speech route, naming `GEMINIServiceEndpoint`. The Extended Voice Library's names are
+listed only by Gemini's `GET /v1beta/voices`, so a Gemini voice is sent as given, and Gemini answers a
+name it does not have; an Ollama voice is sent as given too, and Ollama answers one the model does not
+have with HTTP 400 naming those it has.
 Voices: [OpenAI Realtime](https://developers.openai.com/api/reference/resources/realtime/client-events),
-[Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation#voices).
+[Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation#voices),
+[Ollama](https://docs.ollama.com/capabilities/speech).
 """
 struct SpeechRequest
     service::ServiceEndpointSpec
@@ -132,10 +187,9 @@ struct SpeechRequest
         rules = _speech_rules(wire)
         isempty(strip(input)) && throw(ArgumentError("speak needs text to read: input is empty"))
         v = _speech_voice(wire, something(voice, rules.voice))
-        response_format in _SPEECH_FORMATS || throw(ArgumentError(
-            "response_format must be \"wav\" (a WAV file) or \"pcm\" (raw 16-bit mono PCM at 24 kHz); " *
-            "got $(repr(response_format))"))
-        new(service, something(model, rules.model), input, v, response_format,
+        response_format in _SPEECH_FORMATS || throw(ArgumentError(_speech_format_refusal(wire, response_format)))
+        _check_speech(wire, input, instructions)
+        new(service, _speech_model(wire, model), input, v, response_format,
             isnothing(speed) ? nothing : _speech_speed(rules, speed), instructions)
     end
 end
@@ -167,9 +221,19 @@ message, asks for a response and collects its audio. Realtime models are convers
 notes that instructions are not guaranteed to be followed. On `GEMINIServiceEndpoint` it comes from
 Gemini TTS (`generateContent` on `gemini-3.8-flash-tts` unless `model` names another,
 [speech generation](https://ai.google.dev/gemini-api/docs/speech-generation)), which reads the text
-verbatim.
+verbatim. On [`OllamaEndpoint`](@ref) it comes from Ollama's OpenAI-compatible speech route
+(Ollama 0.40.9 or later, [speech](https://docs.ollama.com/capabilities/speech)), one request
+carrying the model, the text, the format, and the voice and speed when set; there is no default
+model, so name an installed speech model, such as `phonon`:
+
+```julia
+r = speak("Hello from UniLM."; service=OllamaEndpoint(), model="phonon", voice="Zoey")
+r isa SpeechSuccess && save_audio(r, "hello.wav")
+```
 
 Returns [`SpeechSuccess`](@ref): a WAV file (`response_format = "wav"`) or the raw samples (`"pcm"`).
+Ollama's bytes come back as it streamed them: its WAV header, written before the length is known,
+holds the maximum size in its size fields.
 A failure the provider reports is an [`AudioFailure`](@ref): an HTTP error status, a WebSocket upgrade
 the server refuses included (a bad key is a 401; `response` is then HTTP.jl's report of the status,
 since it does not keep the reply); a Gemini reply whose candidate did not finish (a `finishReason`
@@ -185,11 +249,11 @@ Pass `config::Union{Nothing,RequestConfig}` to bound the call. On OpenAI the ses
 attempt, which `max_attempts` does not change: a retry after the session's `response.create` may
 bill a second response, and a session's audio cannot be resumed. There `total_deadline` bounds the
 whole call whatever the socket does, `connect_timeout` the WebSocket open, and `stream_idle_timeout`
-every send and every wait for the next event. On Gemini, transient statuses
+every send and every wait for the next event. On Gemini and Ollama, transient statuses
 (408/429/500/502–504/520–524/529) and transport failures are retried with backoff under the
 config's `max_attempts` and `total_deadline` (`retry-after-ms`, else `Retry-After`, honored), as
-[`chatrequest!`](@ref) retries them, each attempt a billed `generateContent` request; a 429 that no
-retry can serve is returned at once. Both observe the ambient [`CancelToken`](@ref)
+[`chatrequest!`](@ref) retries them, each attempt on Gemini a billed `generateContent` request; a 429
+that no retry can serve is returned at once. All three observe the ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
 with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
 [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.
@@ -217,6 +281,10 @@ function _speech_target(::_RealtimeSpeechWire, s::SpeechRequest)::String
     _realtime_url(s.service, s.model)
 end
 _speech_target(::_GeminiSpeechWire, s::SpeechRequest)::String = _gemini_speech_url(s.service, s.model)
+function _speech_target(::_OllamaSpeechWire, s::SpeechRequest)::String
+    validate_capability(s.service, :speech, "speak (Ollama speech route)")
+    _api_base_url(s.service) * _OLLAMA_SPEECH_PATH
+end
 
 function _speak(::_RealtimeSpeechWire, s::SpeechRequest, url::String, cfg::RequestConfig, t0::UInt64)
     r = _realtime_call(session -> _realtime_speak(session, s), url, s.model, s.service, cfg, t0)
@@ -229,6 +297,12 @@ function _speak(::_GeminiSpeechWire, s::SpeechRequest, url::String, cfg::Request
     cand = _gemini_finished_candidate(JSON.parse(resp.body; dicttype=Dict{String,Any}))
     cand === nothing && return _failure(AudioFailure, resp)
     _speech_success(s, _gemini_speech_pcm(cand))
+end
+
+function _speak(::_OllamaSpeechWire, s::SpeechRequest, url::String, cfg::RequestConfig, t0::UInt64)
+    resp = _http_with_retries(cfg, t0, "POST", url, auth_header(s.service), _ollama_speech_body(s))
+    resp.status == 200 || return _failure(AudioFailure, resp)
+    _ollama_speech(s, resp)
 end
 
 # Speech in the requested format: a canonical WAV file around the samples, or the samples.
@@ -245,6 +319,38 @@ any existing file intact. An existing file keeps its permission bits. A symlink 
 through — a dangling one creates its target; a directory throws `ArgumentError`.
 """
 save_audio(r::SpeechSuccess, path::String) = _atomic_write(path, r.audio)
+
+# ─── Ollama's speech route ───────────────────────────────────────────────────
+# https://docs.ollama.com/api/openai-compatibility: the model, the text and the format, and the voice and speed
+# when the request sets them.
+
+const _OLLAMA_SPEECH_PATH = "/v1/audio/speech"   # Ollama's OpenAI-compatible speech route
+
+function _ollama_speech_body(s::SpeechRequest)::String
+    body = Dict{String,Any}("model" => s.model, "input" => s.input, "response_format" => s.response_format)
+    isempty(s.voice) || (body["voice"] = s.voice)
+    isnothing(s.speed) || (body["speed"] = s.speed)
+    JSON.json(body)
+end
+
+# Ollama streams the audio as `audio/<format>`, 16-bit mono at 24 kHz: a WAV file whose header, written before the
+# length is known, holds the maximum size, or the bare samples (https://docs.ollama.com/capabilities/speech). The
+# bytes are returned as they came; a reply under another label, a WAV reply without its RIFF/WAVE header, or
+# samples cut mid-frame, is a call error.
+function _ollama_speech(s::SpeechRequest, resp::HTTP.Response)::SpeechSuccess
+    kind = "audio/" * s.response_format
+    label = HTTP.header(resp, "Content-Type", "")
+    lowercase(strip(first(split(label, ';')))) == kind ||
+        error("Ollama answered speech with Content-Type $(repr(label)), not $kind")
+    audio = Vector{UInt8}(resp.body)
+    if s.response_format == "wav"
+        length(audio) >= 12 && view(audio, 1:4) == b"RIFF" && view(audio, 9:12) == b"WAVE" ||
+            error("Ollama's speech reply is not a WAV file (no RIFF/WAVE header)")
+    else
+        _pcm16_checked(audio)
+    end
+    SpeechSuccess(audio=audio, content_type=kind)
+end
 
 # ─── Gemini TTS (generateContent) ────────────────────────────────────────────
 # https://ai.google.dev/gemini-api/docs/speech-generation. The base is a function so tests can
@@ -435,12 +541,10 @@ On OpenAI, `srt`, `vtt` and `verbose_json` (subtitles and timestamps) are docume
 for `whisper-1`, and `diarized_json` (speaker labels) only for `gpt-4o-transcribe-diarize`:
 deprecated models that shut down on February 26, 2027
 ([speech to text](https://developers.openai.com/api/docs/guides/speech-to-text)).
-Ollama's `/v1/audio/transcriptions` reads one `language` and the `prompt`, transcribes at
-temperature 0, and is asked for JSON only, the one form in which it reports a failure that
-arrives after its reply has begun (as `text` that failure reads as an empty transcript): a
-request to it that sets `temperature`, `languages`, `keywords`, or a `response_format`
-other than `json` throws `ArgumentError` before any request; read the text with
-[`transcript_text`](@ref).
+Ollama's `/v1/audio/transcriptions` (Ollama 0.40.12 or later) reads one `language`, the
+`prompt`, `temperature` (its default 0) and a `response_format` of `json`, `text` or
+`verbose_json`: a request to it that sets `languages`, `keywords` or another format throws
+`ArgumentError` before any request, in Ollama's words.
 Pass to [`transcribe`](@ref).
 """
 @kwdef struct TranscriptionRequest
@@ -483,35 +587,43 @@ _transcription_model(t::TranscriptionRequest)::String = @something(t.model, _def
 
 # What a service's transcription route cannot carry, refused before any request.
 _check_transcription(_, ::TranscriptionRequest) = nothing
+# Ollama's route (0.40.12 or later) takes one `language` and no `keywords` — its OpenAI-compatibility page lists
+# file, model, language, prompt, response_format, temperature and stream — and answers a format other than json,
+# text and verbose_json with HTTP 400 (server/transcription.go); each is refused in Ollama's words.
+const _OLLAMA_TRANSCRIPTION_FORMATS = ("json", "text", "verbose_json")
 function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
-    for (f, rule) in ((:temperature, "runs at temperature 0 and takes no `temperature`: remove it"),
-                      (:languages, "takes one `language`: remove `languages`"),
-                      (:keywords, "takes no `keywords`: remove them"))
-        isnothing(getfield(t, f)) || throw(ArgumentError("Ollama's transcription $rule"))
-    end
-    # Ollama writes the transcript only when the model's chat stream ends: a failure after the reply has
-    # begun leaves a 200 with an empty body (Ollama 0.40.6, middleware/openai.go TranscriptionWriter), which
-    # its JSON form reports and "text" would read as an empty transcript. Any other format is answered as
-    # JSON too, so JSON is the one form asked for.
+    isnothing(t.languages) || throw(ArgumentError(
+        "Ollama's transcription takes one `language`, an \"ISO 639-1 code such as `fr`, or an English language " *
+        "name; omit it to let the model detect the language\" (its OpenAI-compatibility page): pass language=… " *
+        "in place of languages"))
+    isnothing(t.keywords) || throw(ArgumentError(
+        "Ollama's OpenAI-compatibility page lists no `keywords` for transcription (it lists file, model, language, " *
+        "prompt, response_format, temperature and stream): remove them"))
     fmt = t.response_format
-    fmt == "text" && throw(ArgumentError(
-        "Ollama's transcription reports a failure that arrives after its reply has begun only as JSON, and " *
-        "\"text\" would read it as an empty transcript: leave response_format unset (JSON) and read the " *
-        "text with transcript_text"))
-    isnothing(fmt) || fmt == "json" || throw(ArgumentError(
-        "Ollama transcribes to JSON only (got $(repr(fmt))): leave response_format unset and read the text " *
-        "with transcript_text"))
+    isnothing(fmt) || fmt in _OLLAMA_TRANSCRIPTION_FORMATS || throw(ArgumentError(
+        "Ollama answers HTTP 400 \"response_format $(repr(fmt)) is not supported, use json, text or verbose_json\": " *
+        "leave response_format unset (json), or ask for \"text\" or \"verbose_json\""))
     nothing
 end
 
 # Whether a 200 transcription reply is the JSON object `{"text": …}` rather than the bare text.
 _transcription_json(_, ::TranscriptionRequest, resp::HTTP.Response)::Bool =
     occursin("application/json", HTTP.header(resp, "Content-Type", ""))
-# Ollama is asked for JSON only, and answers it under the `application/x-ndjson` header of the chat
-# stream it transcribes with: that header is sent before the JSON is written (Ollama 0.40.6).
-_transcription_json(::OllamaEndpoint, ::TranscriptionRequest, ::HTTP.Response)::Bool = true
+_transcription_json(::OllamaEndpoint, ::TranscriptionRequest, resp::HTTP.Response)::Bool = _ollama_audio_json(resp)
 
-"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript or translation (via [`transcript_text`](@ref)), `raw` the parsed JSON a transcription reply carried (`nothing` for a translation)."
+# Ollama 0.40.12 and later label a JSON reply (json, verbose_json) application/json and a text one text/plain
+# (server/transcription.go). Any other label is refused rather than read as a transcript: before 0.40.12 Ollama
+# labelled its JSON application/x-ndjson, the header of the chat stream it transcribed with.
+function _ollama_audio_json(resp::HTTP.Response)::Bool
+    label = HTTP.header(resp, "Content-Type", "")
+    kind = lowercase(strip(first(split(label, ';'))))
+    kind == "application/json" && return true
+    kind == "text/plain" && return false
+    error("Ollama answered with Content-Type $(repr(label)), neither application/json nor text/plain: UniLM reads " *
+          "the audio replies of Ollama 0.40.12 or later")
+end
+
+"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript or translation (via [`transcript_text`](@ref)), `raw` the parsed JSON a transcription or Ollama translation reply carried (`nothing` for a text reply and for an OpenAI Realtime translation)."
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
     text::String
     raw::Union{Dict{String,Any},Nothing} = nothing
@@ -552,14 +664,16 @@ Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
 (`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`. `model`
 left `nothing` is the service's default (`gpt-transcribe` on OpenAI).
 
-On Ollama, an installed model that hears audio transcribes through Ollama's
-OpenAI-compatible `/v1/audio/transcriptions` route. There is no default model, and what
-that route cannot carry — `temperature`, `languages`, `keywords`, a `response_format`
-other than `json` (`text` included: a failure after the reply has begun would read as an
-empty transcript) — throws `ArgumentError` before any request:
+On Ollama (0.40.12 or later), an installed model that hears audio transcribes through
+Ollama's OpenAI-compatible `/v1/audio/transcriptions` route, which takes `language`, `prompt`,
+`temperature` and a `response_format` of `json`, `text` or `verbose_json`; the reply is read
+by its Content-Type, JSON or, for `"text"`, the bare text. There is no default model, and
+what that route cannot carry — `languages`, `keywords`, another format — throws
+`ArgumentError` before any request:
 
 ```julia
-r = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", language="en")
+r = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", language="en",
+               temperature=0.0, response_format="text")
 r isa TranscriptionSuccess && println(transcript_text(r))
 ```
 
@@ -587,16 +701,8 @@ function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig
         # Form reads it to its end, so every attempt builds its own from the file (`_BodyFactory`).
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
             auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t))))
-        if resp.status == 200
-            if _transcription_json(t.service, t, resp)
-                d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-                TranscriptionSuccess(text=get(d, "text", ""), raw=d)
-            else
-                TranscriptionSuccess(text=String(resp.body))
-            end
-        else
-            _failure(AudioFailure, resp)
-        end
+        resp.status == 200 ? _transcription_success(_transcription_json(t.service, t, resp), resp) :
+                             _failure(AudioFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)
@@ -605,16 +711,24 @@ end
 transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
 
-# ─── Translation (OpenAI Realtime translation sessions) ──────────────────────
+# A 200 transcription or translation reply: the JSON object `{"text": …}`, or the bare text.
+function _transcription_success(json::Bool, resp::HTTP.Response)::TranscriptionSuccess
+    json || return TranscriptionSuccess(text=String(resp.body))
+    d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    TranscriptionSuccess(text=get(d, "text", ""), raw=d)
+end
+
+# ─── Translation (OpenAI Realtime translation sessions, Ollama) ──────────────
 
 """
-    translate(path; language="en", model="gpt-realtime-translate", service=OPENAIServiceEndpoint,
+    translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint,
               config=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
 
-Translate the speech in the WAV file at `path` into `language` and return the translation as text:
-a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref).
+Translate the speech in the audio file at `path` into `language` and return the translation as
+text: a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref). `model` left `nothing`
+is the service's default: `gpt-realtime-translate` on OpenAI; Ollama has none.
 
-The audio goes to an OpenAI Realtime translation session
+On OpenAI the audio goes to an OpenAI Realtime translation session
 (`wss://api.openai.com/v1/realtime/translations`,
 [Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)): UniLM
 sets the target language (the session's `audio.output.language`, such as `"fr"` or `"es"`; English
@@ -625,31 +739,55 @@ did. A short clip's translation also varies from call to call: of ten translatio
 two-second French sentence made with [`speak`](@ref), one came back empty and six named words the
 sentence does not have (October 2026).
 
-`path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation session
-takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear interpolation
-(speech-grade: there is no anti-aliasing filter). Any other file throws `ArgumentError` before any
-I/O, naming the conversion; so do an empty file, a blank `language` and a service without OpenAI's
-Realtime API.
+There `path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation
+session takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear
+interpolation (speech-grade: there is no anti-aliasing filter). Any other file throws `ArgumentError`
+before any I/O, naming the conversion; so do an empty file, a blank `language` and a service that
+has neither OpenAI's Realtime API nor Ollama's translation route.
 
-A failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event, for example
-for a language it does not translate into (`status = nothing`, the event's JSON as `response`), read
-even when the server closes the session during the upload, or a WebSocket upgrade the server refuses
-(a bad key is a 401). A session that closes before `session.closed` (`error` names the close's status
-and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
+On [`OllamaEndpoint`](@ref) (Ollama 0.40.12 or later) the file goes as it is to Ollama's
+OpenAI-compatible translation route, one multipart request carrying the `model` and the target
+`language` as `to_language`, the "ISO 639-1 code of the output language"
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)); the translation is the
+reply's `text`, and `raw` holds the reply. Ollama decodes a WAV file itself and passes any other
+container to the model whole. There is no default model: name an installed model that hears audio,
+such as `gemma4:e4b`; a call without one, a blank `language`, and a missing or empty file throw
+`ArgumentError` before any request:
+
+```julia
+r = translate("memo.wav"; language="fr", service=OllamaEndpoint(), model="gemma4:e4b")
+r isa TranscriptionSuccess && println(transcript_text(r))
+```
+
+A status Ollama answers is an [`AudioFailure`](@ref) (a language it does not translate into is a
+400); transient statuses and transport failures are retried as [`transcribe`](@ref) retries them,
+the whole file sent each time.
+
+On OpenAI, a failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event,
+for example for a language it does not translate into (`status = nothing`, the event's JSON as
+`response`), read even when the server closes the session during the upload, or a WebSocket upgrade
+the server refuses (a bad key is a 401). A session that closes before `session.closed` (`error`
+names the close's status and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
 `config::Union{Nothing,RequestConfig}` bounds the call as for [`speak`](@ref): `total_deadline` the
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
-every wait for the next event. It is a single attempt, which `max_attempts` does not change: a retry
-after the session's audio was sent may bill a second translation, and a session's audio cannot be
-resumed. The ambient [`CancelToken`](@ref)
+every wait for the next event. On OpenAI it is a single attempt, which `max_attempts` does not
+change: a retry after the session's audio was sent may bill a second translation, and a session's
+audio cannot be resumed. The ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
 call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
 """
 function translate(path::AbstractString; language::AbstractString="en",
-                   model::AbstractString="gpt-realtime-translate",
+                   model::Union{AbstractString,Nothing}=nothing,
                    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
                    config::Union{Nothing,RequestConfig}=nothing)
+    _translate(service, path, language, model, config)
+end
+
+# OpenAI: a Realtime translation session, on `gpt-realtime-translate` unless the call names another model.
+function _translate(service, path::AbstractString, language::AbstractString, model::Union{AbstractString,Nothing},
+                    config::Union{Nothing,RequestConfig})
     validate_capability(service, :realtime, "translate (OpenAI Realtime API)")
-    m = String(model)
+    m = String(something(model, "gpt-realtime-translate"))
     url = _realtime_translation_url(service, m)
     lang = _translation_language(language)
     pcm = _translation_pcm(path)
@@ -657,6 +795,36 @@ function translate(path::AbstractString; language::AbstractString="en",
     try
         r = _realtime_call(session -> _realtime_translate(session, pcm, lang), url, m, service, cfg, t0)
         r isa LLMRequestResponse ? r : _realtime_closed("session.closed")
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(AudioCallError, e)
+    end
+end
+
+const _OLLAMA_TRANSLATIONS_PATH = "/v1/audio/translations"   # Ollama's OpenAI-compatible translation route
+
+# Ollama (0.40.12 or later): the file as it is, the model and the target language as `to_language`, in one multipart
+# request, answered as a transcription is (https://docs.ollama.com/api/openai-compatibility). Retried as `transcribe`
+# is, each attempt building its form from the file.
+function _translate(service::OllamaEndpoint, path::AbstractString, language::AbstractString,
+                    model::Union{AbstractString,Nothing}, config::Union{Nothing,RequestConfig})
+    validate_capability(service, :audio, "translate (Ollama translation route)")
+    (isnothing(model) || isempty(strip(model))) && throw(ArgumentError(
+        "Ollama has no default translation model: name an installed model that hears audio, e.g. " *
+        "model = \"gemma4:e4b\""))
+    lang = _translation_language(language)
+    isfile(path) || throw(ArgumentError("file not found: $path"))
+    filesize(path) > 0 || throw(ArgumentError(
+        "$(basename(path)) is empty, and Ollama answers an empty upload with HTTP 400 \"audio file is empty\": " *
+        "translate a recording"))
+    file, m = String(path), String(model)
+    form() = HTTP.Form(Pair{String,Any}["file" => HTTP.Multipart(basename(file), IOBuffer(read(file)), _mime_for(file)),
+                                        "model" => m, "to_language" => lang])
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * _OLLAMA_TRANSLATIONS_PATH,
+                                  auth_header_multipart(service), _BodyFactory(form))
+        resp.status == 200 ? _transcription_success(_ollama_audio_json(resp), resp) : _failure(AudioFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)

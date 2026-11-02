@@ -216,7 +216,9 @@ What `speak` and `translate` return when they fail:
   reason in `error` and the close as `cause`, a timeout, a cancel, and a reply without usable audio.
   Audio received before a failure is never returned.
 
-Each makes one attempt. `total_deadline` bounds the whole call whatever the socket does,
+Each makes one attempt, which `max_attempts` does not change: a retry after the session's
+`response.create`, or after its audio, may bill a second response, and a session's audio cannot be
+resumed. `total_deadline` bounds the whole call whatever the socket does,
 `connect_timeout` the WebSocket's open, and `stream_idle_timeout` every send and every wait for the
 next event. Both observe the ambient [`CancelToken`](@ref): a token already cancelled sends
 nothing, and a cancel ends the call at once with an `AudioCallError` whose `cause` is a

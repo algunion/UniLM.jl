@@ -1748,6 +1748,38 @@ end
     end
 end
 
+# DeepSeek's capabilities and credentials, its base URL moved to a dead port: a request that got past a
+# refusal could reach no provider host, key or no key.
+struct _DeepSeekAtDeadPort <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::_DeepSeekAtDeadPort) = "http://127.0.0.1:1"
+UniLM.auth_header(::_DeepSeekAtDeadPort) = UniLM.auth_header(DeepSeekEndpoint())
+UniLM.provider_capabilities(::_DeepSeekAtDeadPort) = UniLM.provider_capabilities(DeepSeekEndpoint())
+struct _UndeclaredResponses <: UniLM.ServiceEndpoint end
+
+@testset "compact_response and count_input_tokens refuse an endpoint without the Responses API before any request" begin
+    # Both are routes of the Responses API (/v1/responses/compact, /v1/responses/input_tokens). An endpoint that
+    # declares its capabilities without :responses serves neither: it is refused by name, as `respond` refuses
+    # one, instead of being sent a request its server has no route for.
+    withenv("DEEPSEEK_API_KEY" => "sk-test") do
+        for (verb, call) in (("compact_response", () -> compact_response(input="hi"; service=_DeepSeekAtDeadPort())),
+                             ("count_input_tokens", () -> count_input_tokens(input="hi"; service=_DeepSeekAtDeadPort())))
+            e = try call(); nothing catch x; x end
+            @test e isa ArgumentError
+            @test e isa ArgumentError && startswith(e.msg, "$verb is not supported by _DeepSeekAtDeadPort")
+        end
+    end
+    # The refusal passes exactly the endpoints the Responses API's capability check passes: those that declare
+    # :responses, and those that declare nothing.
+    passes(check, s) = try check(s); true catch e; e isa ArgumentError || rethrow(); false end
+    for s in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, GEMINIServiceEndpoint,
+              ANTHROPICServiceEndpoint(), DeepSeekEndpoint(api_key="k"), MistralEndpoint(), OllamaEndpoint(),
+              GenericOpenAIEndpoint("http://127.0.0.1:1", ""), TYPESAFEServiceEndpoint, _DeepSeekAtDeadPort(),
+              _UndeclaredResponses)
+        @test passes(s -> UniLM._check_responses_route(s, "compact_response", "/v1/responses/compact"), s) ==
+              passes(s -> UniLM._validate_declared_capability(s, :responses, "Responses API"), s)
+    end
+end
+
 # ─── Expanded coverage: _parse_response_stream_chunk edge cases ──────────────
 
 @testset "_parse_response_stream_chunk edge cases" begin

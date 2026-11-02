@@ -1367,6 +1367,21 @@ end
     @test r isa LLMCallError
     @test r.cause isa KeyError                               # the missing key, not the stop
 end
+@testset "recorded LLM answers — each stream sent outside a scope has a source of its own" begin
+    # Outside every scope a stream is sent and recorded nowhere: its source lists no recording file, and no
+    # two requests share that list, so nothing one adds to its own reaches another stream.
+    url = "http://127.0.0.1:1/v1/chat/completions"
+    a, b = UniLM._stream_source("POST", url, "{}"), UniLM._stream_source("POST", url, "{}")
+    c = UniLM._attempt_source!(UniLM._StreamCtl(nothing, time_ns()), url, "{}")
+    try
+        @test isempty(a.record_to) && isempty(b.record_to) && isempty(c.record_to)
+        @test a.record_to !== b.record_to && a.record_to !== c.record_to && b.record_to !== c.record_to
+        push!(a.record_to, "a.json")
+        @test isempty(b.record_to) && isempty(c.record_to)
+    finally
+        foreach(s -> empty!(s.record_to), (a, b, c))
+    end
+end
 @testset "recorded LLM answers — a replayed stream arms no idle guard, so a slow parse never times it out" begin
     dir = _ra_dir("llm-stream-slow")
     live, _ = _rl_online(() -> with_recorded_answers(_rl_openai_stream, dir; mode=:record))

@@ -253,6 +253,7 @@ answer would carry no sign of the change.
 | a text over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
 | a name, instructions, an option, a level or the model's name over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
 | more than 128 pictures | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |
+| a picture whose data URL would be over 1,073,741,824 characters (about 768 MiB of image) | `OpenAI's Decisions API takes an image as a data URL of at most 1073741824 characters`: the schema's limit on an image's `image_url`, checked from the picture's size before it is encoded | downscale it, or re-encode it in a more compact format |
 | an option other than the three of [Options](@ref openai_decisions_options) | `OpenAI's Decisions API accepts the options` | one of the three, or none |
 | a `prompt_cache_key` or `safety_identifier` that is not a string, or longer than 64 or 128 characters | `as a String of at most` | a shorter string |
 | a `prompt_cache_options` that is not a `PromptCacheOptions`, sets `prewarm` or `comparison_response_id`, or has a `ttl` other than `"30m"` or `"12h"` | `as a PromptCacheOptions`, `takes prompt_cache_options mode and ttl only`, `accepts prompt_cache_options ttl` | a `PromptCacheOptions` of `mode` and `ttl` alone |

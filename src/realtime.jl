@@ -337,14 +337,17 @@ function _realtime_next(s::RealtimeSession)::Union{Dict{String,Any},HTTP.WebSock
 end
 
 # Sends one client event of a driven session, waiting at most stream_idle_timeout: a peer that stops
-# reading cannot park the session on a full socket buffer. `false` when the peer closed the session.
+# reading cannot park the session on a full socket buffer. `false` when the peer closed the session,
+# which a send can learn as a WebSocketError or, when the write fails before the close is read, as the
+# transport's own error (SystemError("write", EPIPE) over TCP, a TLS error over TLS): the events the
+# peer sent before closing are still there to read. A timeout is the call's own and is thrown.
 function _realtime_post(s::RealtimeSession, event::AbstractDict)::Bool
     limit = s.config.stream_idle_timeout
     r0 = time_ns()
     fired = try
         last(_with_deadline_reported(() -> realtime_send(s, event), () -> _realtime_drop!(s.ws), limit, :stream_idle))
     catch e
-        e isa HTTP.WebSockets.WebSocketError && return false
+        (e isa HTTP.WebSockets.WebSocketError || _is_transport_error(e)) && return false
         rethrow()
     end
     fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(r0), limit))

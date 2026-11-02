@@ -667,9 +667,10 @@ end
     _StreamRecording(headers, lines)
 
 A recorded stream: the response headers a recording keeps (`_KEPT_HEADERS`), and the
-body split at every `'\\n'`, so that the body is `join(lines, "\\n")` exactly — a CR
-before a newline stays at the end of its line, and a body that the server did not end
-with a newline ends with a non-empty line.
+body the driver read up to the stream's terminal event, split at every `'\\n'`, so that
+it is `join(lines, "\\n")` exactly — a CR before a newline stays at the end of its line,
+and a body that the server did not end with a newline ends with a non-empty line. Bytes
+the driver drains after the terminal event (`_await_body_end`) are not kept.
 """
 struct _StreamRecording
     headers::Vector{Pair{String,String}}
@@ -1081,8 +1082,9 @@ both `content` and `pending_delta` (the driver forwards the latter to the stream
 callback), refusal text to `refusal`, and records `finish_reason`, `usage`
 (a [`TokenUsage`](@ref)), the `model` the provider reports having served (the result's
 `model`; `nothing` when it reports none) and, for an in-band error, the decoded payload
-in `error`. `service_tier` holds the billed tier a chunk (or the response head) reported,
-for a handler whose provider reports it apart from the usage, and `continuation_token`
+in `error`. `service_tier` holds the billed tier the latest chunk reported, for a handler
+whose provider reports it apart from the usage, and `head_tier` the one the response head
+reported, which outranks it (Gemini's `x-gemini-service-tier`); `continuation_token`
 the token a provider returns for continuing a long generation in another request.
 `audio` is filled by the OpenAI-wire handler only, from a streamed audio reply's
 `delta.audio` updates, and becomes the message's [`AudioOutput`](@ref); a handler of
@@ -1132,9 +1134,11 @@ Public extension API (not exported); see the Custom Backends guide.
     # O(fragment) and joined onto `tool_calls` once, by `_tool_function!` —
     # re-concatenating a String per fragment is quadratic in the argument length.
     tool_fragments::Dict{Int,NTuple{2,IOBuffer}} = Dict{Int,NTuple{2,IOBuffer}}()
-    # The served model and the billed tier, as the stream's chunks report them.
+    # The served model and the billed tier, as the stream's chunks report them, and the billed tier
+    # the response head reported (`_stream_head!`), which outranks every chunk's (`_stream_tier`).
     model::Union{String,Nothing} = nothing
     service_tier::Union{String,Nothing} = nothing
+    head_tier::Union{String,Nothing} = nothing
     # A streamed audio reply as it arrives; the OpenAI-wire handler alone fills it.
     audio::Union{_StreamedAudio,Nothing} = nothing
     # The latest token the reply carried for continuing the generation in another request.
@@ -1302,9 +1306,20 @@ Completions (`extract_message`). A body that is not a valid reply should throw:
 [`chatrequest!`](@ref) reports the exception as an `LLMCallError` carrying it in `cause`,
 never as an empty success.
 
-Public extension API (not exported); see the Custom Backends guide.
+Public extension API (not exported); see the Custom Backends guide. An unstreamed
+[`chatrequest!`](@ref) on an endpoint with no method throws the `MethodError` for this
+function before anything is sent, as a missing [`encode_request`](@ref) does.
 """
 decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_message(resp)
+
+# The decoder an unstreamed Chat reads its reply with, checked before anything is sent: on an
+# endpoint without one the request would be sent, and billed, for a reply that cannot be read. It
+# is refused with the `MethodError` the decoder's call raises, as an endpoint without an encoder is.
+function _require_decoder(service)::Nothing
+    hasmethod(decode_response, Tuple{Core.Typeof(service),HTTP.Response}) ||
+        throw(MethodError(decode_response, (service, HTTP.Response(200))))
+    nothing
+end
 
 # The served model a decoder reported; optional in the seam's contract, so a decoder that
 # returns only the message and usage reports none.
@@ -1353,6 +1368,11 @@ _decoded_continuation(decoded)::Union{String,Nothing} =
 # What a stream's response head reports before the first chunk, for an endpoint whose provider
 # reports something there (Gemini's billed tier): recorded in `state`. The fallback reads nothing.
 _stream_head!(_, ::StreamState, ::HTTP.Response)::Nothing = nothing
+
+# The tier a streamed reply was billed at, which its usage takes: the one its response head named,
+# else the latest a chunk named.
+_stream_tier(state::StreamState)::Union{String,Nothing} =
+    isnothing(state.head_tier) ? state.service_tier : state.head_tier
 
 # A usage's fields by name.
 _usage_fields(u::TokenUsage) = NamedTuple{fieldnames(TokenUsage)}(ntuple(i -> getfield(u, i), Val(fieldcount(TokenUsage))))
@@ -1439,7 +1459,7 @@ end
 function _attempt_source!(ctl::_StreamCtl, url::String, body::String)::_StreamSource
     first = ctl.first
     isnothing(first) || (ctl.first = nothing; return first)
-    isnothing(_ANSWER_SCOPE[]) && return _LIVE_STREAM
+    isnothing(_ANSWER_SCOPE[]) && return _live_stream()
     iscancelled(ctl.stop) && throw(_stop_cause(ctl))
     _stream_source("POST", url, body)
 end
@@ -1725,7 +1745,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # The response head, once read, and the attempt's source, once known: a whole reply
     # recovered from its connection's teardown is recorded with them.
     head_ref = Ref{Union{Nothing,HTTP.Response}}(nothing)
-    src = _LIVE_STREAM
+    src = _live_stream()
     cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
     otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
     # Outside every recording scope the request is sent, and its headers are built first, as
@@ -2177,9 +2197,10 @@ none and is dispatched unvalidated), or when the provider's encoder rejects the
 request (e.g. an option the provider or model does not support);
 `InvalidConversationError` when `chat.history` is on and the conversation ends with an
 assistant message, so the reply could not be appended; and the `MethodError` of a
-seam method the endpoint type lacks — [`encode_request`](@ref), and on a stream
-[`handle_sse_event!`](@ref), whose missing method would otherwise drop every payload
-of the reply.
+seam method the endpoint type lacks — [`encode_request`](@ref), and the reply's decoder:
+[`decode_response`](@ref), whose missing method would otherwise leave a billed reply
+unread, or on a stream [`handle_sse_event!`](@ref), whose missing method would otherwise
+drop every payload of the reply.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
@@ -2189,7 +2210,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)
-    chat.stream === true && _require_stream_handler(chat.service)
+    chat.stream === true ? _require_stream_handler(chat.service) : _require_decoder(chat.service)
     cfg = _resolve_config(config, _model_default_config(chat.service, chat.model))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()

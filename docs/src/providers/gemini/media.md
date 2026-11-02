@@ -74,11 +74,13 @@ names it. The options every provider shares are on [Image Generation](@ref image
 
 ## [Audio](@id gemini_audio)
 
-[`speak`](@ref) with `service=GEMINIServiceEndpoint` reads text aloud through Gemini TTS: one
+[`speak`](@ref) with `service=GEMINIServiceEndpoint` reads text aloud through Gemini TTS: a
 generateContent request to `gemini-3.8-flash-tts`, unless `model` names another, in the voice `Kore`,
-unless `voice` names another. Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library
-ID, a custom Voice design ID (`voice_...`), or a Voice replication ID (`voice_...`, or optional
-stateless `voicekey_...`)" ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)):
+unless `voice` names another, sent again after a transient status or a transport failure, as a `Chat`
+is ([Timeouts & Retries](@ref timeouts_retries)). Gemini 3.8 TTS takes "a prebuilt voice name, an
+Extended Voice Library ID, a custom Voice design ID (`voice_...`), or a Voice replication ID
+(`voice_...`, or optional stateless `voicekey_...`)"
+([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)):
 one of the 30 studio voices that page lists goes as a prebuilt voice, any other as the request's
 `voice`. The Extended Voice Library's hundreds of voices are listed by `GET /v1beta/voices`, not by
 UniLM, so a voice is sent as given, and Gemini answers a name it does not have.

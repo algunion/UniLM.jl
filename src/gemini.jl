@@ -132,12 +132,14 @@ function _gemini_detail_level(detail)::Union{String,Nothing}
     String(detail)
 end
 
-# Which models take one: "Setting media_resolution on individual Part objects is supported on
-# Gemini 4 and Gemini 3 models." (generateContent page) and "Setting the resolution on individual
-# content items is supported on Gemini 4 and Gemini 3 models." (Interactions page), both pages
-# last updated 2026-10-13. That the earlier models still served — the Gemini 2.5 family and
-# Gemma 4 — take no per-part level is inferred from the pages naming only Gemini 4 and Gemini 3
-# (not probed on them): they refuse a level, by exact id, and any other id is left to the server.
+# Which models take one: Google's pages name Gemini 3 alone ("Setting media_resolution on individual
+# Part objects is exclusive to Gemini 3 models.", generateContent; "Setting the `resolution` on
+# individual content items is exclusive to Gemini 3 models.", Interactions; both read on
+# 2026-11-02), and gemini-4-argon was measured honouring a part's level too (countTokens on
+# 2026-10-26: an image's 1,120 tokens at its default resolution, 280 at MEDIA_RESOLUTION_LOW). That
+# the earlier models still served — the Gemini 2.5 family and Gemma 4 — take no per-part level is
+# inferred from the pages (not probed on them): they refuse a level, by exact id, and any other id
+# is left to the server.
 const _GEMINI_NO_PART_RESOLUTION = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
                                     "gemini-2.5-flash-image", "gemma-4-31b-it", "gemma-4-26b-a4b-it")
 
@@ -386,8 +388,8 @@ end
 # - system → concatenated top-level systemInstruction text
 # - user   → {role:"user", parts:[{inlineData}..., {text}]} (`_gemini_user_parts`)
 # - assistant → {role:"model", parts:[{text}?, {functionCall,thoughtSignature?}...]};
-#   a turn with no part to send (a refusal, a turn spent on thinking) is left out,
-#   because an empty-parts model turn breaks the follow-up request
+#   a turn with no part to send (a refusal) is left out, because an empty-parts
+#   model turn breaks the follow-up request
 # - consecutive tool results → ONE {role:"user"} of functionResponse parts
 # - a tool result with no preceding model functionCall of that id → loud ArgumentError.
 function _gemini_contents(messages)
@@ -727,18 +729,18 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
         end
     end
     u = get(ev, "usageMetadata", nothing)
-    u isa AbstractDict && (state.usage = _gemini_usage(u, state.service_tier))
+    u isa AbstractDict && (state.usage = _gemini_usage(u, _stream_tier(state)))
     :continue
 end
 
-# A stream's tier is also in its response head, read before the first chunk (`state.service_tier`),
+# A stream's tier is also in its response head, read before the first chunk (`state.head_tier`),
 # so the streamed usage names the tier the reply not streamed names.
 _stream_head!(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServiceEndpoint}}, state::StreamState,
-              head::HTTP.Response)::Nothing = (state.service_tier = _gemini_header_tier(head); nothing)
+              head::HTTP.Response)::Nothing = (state.head_tier = _gemini_header_tier(head); nothing)
 
 # The compatible endpoint's reply reads as the OpenAI wire's, its billed tier header first, as on
 # the native wire: the response head's x-gemini-service-tier, else the reply's service_tier — a
-# stream's head outranks every chunk's (`_chunk_tier!`). Neither named a tier in replies to flex
+# stream's head outranks every chunk's (`_stream_tier`). Neither named a tier in replies to flex
 # and priority requests on 2026-10-22, streamed or not, so such a reply reports none.
 function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Response)
     d = extract_message(resp)
@@ -746,8 +748,6 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
     usage = isnothing(tier) || isnothing(d.usage) ? d.usage : TokenUsage(; _usage_fields(d.usage)..., service_tier=tier)
     merge(d, (; usage))
 end
-_chunk_tier!(::Type{GEMINIOpenAIServiceEndpoint}, state::StreamState, tier::String)::Nothing =
-    (isnothing(state.service_tier) && (state.service_tier = tier); nothing)
 
 # A reply that names no tier was billed at the one its request asked for, so the result records
 # that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,

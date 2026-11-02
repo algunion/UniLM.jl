@@ -7,14 +7,17 @@
     UploadObject
 
 A resumable upload session: `id`, `status`, `filename`, and `bytes`; once the
-upload is completed, `file` holds the resulting [`FileObject`](@ref). `raw`
-holds the unparsed JSON response.
+upload is completed, `file` holds the resulting [`FileObject`](@ref), and
+`nothing` until then. `raw` holds the unparsed JSON response, the session's
+`created_at`, `expires_at` and `purpose` among it. A reply without `status`,
+`filename` or `bytes`, each of which OpenAI's Upload object requires, is no
+upload: the call returns an [`UploadCallError`](@ref) naming the field.
 """
 @kwdef struct UploadObject
     id::String
-    status::Union{String,Nothing} = nothing
-    filename::Union{String,Nothing} = nothing
-    bytes::Union{Int,Nothing} = nothing
+    status::String
+    filename::String
+    bytes::Int
     file::Union{FileObject,Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
 end
@@ -41,8 +44,8 @@ end
 
 function _parse_upload(d::AbstractDict)
     f = get(d, "file", nothing)
-    UploadObject(id=d["id"], status=get(d, "status", nothing), filename=get(d, "filename", nothing),
-        bytes=get(d, "bytes", nothing), file=(f isa AbstractDict ? _parse_file_object(f) : nothing), raw=Dict{String,Any}(d))
+    UploadObject(id=d["id"], status=d["status"], filename=d["filename"], bytes=d["bytes"],
+        file=(f isa AbstractDict ? _parse_file_object(f) : nothing), raw=Dict{String,Any}(d))
 end
 _upl_resp(resp) = resp.status == 200 ?
     UploadSuccess(response=_parse_upload(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :

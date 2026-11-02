@@ -176,7 +176,9 @@ end
         r = _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=JSON.json(partial))
         @test r isa FileCallError && occursin(key, r.error)
         @test _answered(() -> list_files(; service=URLProbe), 200; body=page(partial)) isa FileCallError
-        done = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "completed", "file" => partial))
+        done = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "completed", "bytes" => 3,
+                              "created_at" => 1, "expires_at" => 2, "filename" => "a.jsonl", "purpose" => "batch",
+                              "file" => partial))
         @test _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=done) isa
               UniLM.UploadCallError
     end

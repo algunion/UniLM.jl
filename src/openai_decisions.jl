@@ -107,12 +107,16 @@ _system_one_concurrency(::OpenAIDecisionsProtocol, service)::Int = 16
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
 # The limits of the published request schema (`DecisionRequest` in OpenAI's OpenAPI
-# description); lengths are in characters, as JSON Schema counts them.
+# description); lengths are in characters, as JSON Schema counts them. The image cap is not in
+# the schema: it is the API's own, which answers more images with HTTP 400 ("at most 128 input
+# images").
 const _DECISIONS_MAX_QUESTIONS = 400       # "Ask 1–400 questions about the input"
 const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
 const _DECISIONS_MAX_IMAGES = 128
 const _DECISIONS_MAX_INPUT = 10_485_760
+# An `input_image` part's `image_url`, the image's data URL (DecisionInputImage).
+const _DECISIONS_MAX_IMAGE_URL = 1_073_741_824
 # The model, and each question's name, string instructions, choice value and description and level label.
 const _DECISIONS_MAX_FIELD = 1_048_576
 # The string options, each of at most this many characters; `prompt_cache_options` follows them.
@@ -253,7 +257,24 @@ function _decisions_text(text::String, what::String)::String
     text
 end
 
-function _decisions_message(items::Union{AbstractVector,Tuple})::Vector{Any}
+# The length of the data URL of `nbytes` bytes of a `mime` image: "data:" (5 characters), the mime type,
+# ";base64," (8) and the padded base64 of the bytes, 4 characters for every 3 bytes begun. It follows from
+# the byte count, so an image too large for the schema is refused without being encoded.
+_decisions_image_url_length(mime::AbstractString, nbytes::Integer)::Int = 13 + ncodeunits(mime) + 4cld(nbytes, 3)
+
+function _check_decisions_image_url(mime::AbstractString, nbytes::Integer;
+                                    limit::Integer=_DECISIONS_MAX_IMAGE_URL)::Nothing
+    n = _decisions_image_url_length(mime, nbytes)
+    n <= limit || throw(ArgumentError(
+        "OpenAI's Decisions API takes an image as a data URL of at most $limit characters; this $mime " *
+        "image's would have $n. Downscale it, or re-encode it in a more compact format"))
+    nothing
+end
+
+# One user message of the state's text and image parts, in order. Each image is checked against `limit`
+# before it is encoded.
+function _decisions_message(items::Union{AbstractVector,Tuple};
+                            limit::Integer=_DECISIONS_MAX_IMAGE_URL)::Vector{Any}
     n = count(x -> x isa ImageAttachment, items)
     n <= _DECISIONS_MAX_IMAGES || throw(ArgumentError(
         "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_IMAGES) images per request; the state has $n. " *
@@ -262,6 +283,7 @@ function _decisions_message(items::Union{AbstractVector,Tuple})::Vector{Any}
     for x in items
         part = JSON.Object{String,Any}()
         if x isa ImageAttachment
+            _check_decisions_image_url(x.mime, length(x.data); limit)
             part["type"] = "input_image"
             part["image_url"] = string("data:", x.mime, ";base64,", base64encode(x.data))
             isnothing(x.detail) || (part["detail"] = x.detail)

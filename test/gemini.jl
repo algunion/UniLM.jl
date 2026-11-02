@@ -1128,6 +1128,25 @@ end
     @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
 end
 
+@testset "compat — a stream's billed tier: the response head's, else the latest a chunk names" begin
+    # A chunk may name the tier the reply was billed at. With no header the latest chunk's is the reply's, as on
+    # the OpenAI wire; a header outranks every chunk's.
+    usage = Dict("prompt_tokens" => 8, "completion_tokens" => 1, "total_tokens" => 9)
+    chunks = (Dict("model" => "gemini-3.8-flash", "service_tier" => "flex",
+                   "choices" => [Dict("index" => 0, "delta" => Dict("content" => "OK"), "finish_reason" => "stop")]),
+              Dict("model" => "gemini-3.8-flash", "service_tier" => "priority", "choices" => [], "usage" => usage))
+    for (service, head, want) in ((GEMINIOpenAIServiceEndpoint, Pair{String,String}[], "priority"),
+                                  (OPENAIServiceEndpoint, Pair{String,String}[], "priority"),
+                                  (GEMINIOpenAIServiceEndpoint, ["x-gemini-service-tier" => "standard"], "standard"))
+        state = StreamState()
+        UniLM._stream_head!(service, state, HTTP.Response(200, head))
+        for chunk in chunks
+            UniLM.handle_sse_event!(service, "", JSON.json(chunk), state)
+        end
+        @test state.usage.service_tier == want
+    end
+end
+
 @testset "compat — an unstreamed reply decodes as on the OpenAI wire, its log probabilities and moderation kept" begin
     # Only the usage may differ, by the tier the response head names; every other decoded field is the wire's.
     lp = Dict("content" => [Dict("token" => "OK", "logprob" => -0.1, "bytes" => [79, 75], "top_logprobs" => [])])

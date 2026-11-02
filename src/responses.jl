@@ -812,7 +812,9 @@ end
 """
     Respond(; model="", input, kwargs...)
 
-Configuration struct for an OpenAI Responses API request.
+Configuration struct for an agentic request, sent with [`respond`](@ref): to OpenAI's Responses API,
+the Responses API of an [`OllamaEndpoint`](@ref) or a [`GenericOpenAIEndpoint`](@ref) server, or
+Gemini Interactions on `GEMINIServiceEndpoint`.
 
 # Key Fields
 - `model::String`: Model to use; `""` (the default) resolves to the service's default
@@ -1737,9 +1739,19 @@ Parse `service`'s 200 response into the neutral [`ResponseObject`](@ref), whose
 valid response should throw: [`respond`](@ref) and the lifecycle operations report the
 exception as a `ResponseCallError` carrying it in `cause`.
 
-Public extension API (not exported); see the Custom Backends guide.
+Public extension API (not exported); see the Custom Backends guide. An unstreamed `respond`
+on an endpoint with no method throws the `MethodError` for this function before anything is
+sent, as an unstreamed [`chatrequest!`](@ref) does for a missing [`decode_response`](@ref).
 """
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
+
+# The decoder an unstreamed `respond` reads its reply with, checked before anything is sent, as an
+# unstreamed Chat's is (`_require_decoder`): the same refusal on both seams.
+function _require_agentic_decoder(service)::Nothing
+    hasmethod(decode_agentic, Tuple{Core.Typeof(service),HTTP.Response}) ||
+        throw(MethodError(decode_agentic, (service, HTTP.Response(200))))
+    nothing
+end
 
 # The response a result reports for a request that named `requested` (for a Chat result, the model
 # its reply named): as decoded, unless the endpoint answers under a name other than the one that
@@ -1763,7 +1775,8 @@ ends the streamed [`respond`](@ref) as a `ResponseCallError` with the exception 
 
 Public extension API (not exported); see the Custom Backends guide. A streamed `respond` on
 an endpoint with no method throws the `MethodError` for this function before anything is
-sent, as a streamed [`chatrequest!`](@ref) does for a missing [`handle_sse_event!`](@ref).
+sent, as a streamed [`chatrequest!`](@ref) does for a missing [`handle_sse_event!`](@ref), and
+an unstreamed `respond` for a missing [`decode_agentic`](@ref).
 """
 decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state)
@@ -1823,10 +1836,10 @@ when `callback` is passed without `r.stream === true` (it runs only on a stream,
 would be ignored), when `r.service` is an endpoint type that declares its capabilities
 and lists neither `:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or
 when the provider's encoder rejects the request (e.g. an option the provider or model
-does not support). A streamed call on an endpoint type with no
-[`decode_agentic_stream`](@ref) method throws that function's `MethodError` before any
-network I/O too, as a streamed [`chatrequest!`](@ref) does for a missing
-[`handle_sse_event!`](@ref).
+does not support). A call on an endpoint type without the decoder it reads its reply
+with — [`decode_agentic`](@ref), or on a stream [`decode_agentic_stream`](@ref) — throws
+that function's `MethodError` before any network I/O too, as [`chatrequest!`](@ref) does
+for a missing [`decode_response`](@ref) or [`handle_sse_event!`](@ref).
 
 # Examples
 ```julia
@@ -1843,7 +1856,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         throw(ArgumentError("callback requires stream=true"))
     _validate_agentic_capability(r.service)
     body = encode_agentic(r.service, r)
-    r.stream === true && _require_agentic_stream_decoder(r.service)
+    r.stream === true ? _require_agentic_stream_decoder(r.service) : _require_agentic_decoder(r.service)
     cfg = _resolve_config(config, _model_default_config(r.service, r.model)); tok = _resolve_cancel(cancel); t0 = time_ns()
     # Streaming path. cfg/t0 are resolved above so both paths share one budget
     # origin: the stream driver bounds the first byte, guards the byte gap, and
@@ -2155,6 +2168,11 @@ that can be passed as input to subsequent requests, reducing token usage in long
   `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
+The compaction is the Responses API's `/v1/responses/compact`: on an endpoint that declares its
+capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe, Google's
+OpenAI-compatible endpoint), which has no such route, the call throws `ArgumentError` before any
+request.
+
 Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
@@ -2175,11 +2193,12 @@ function compact_response(; model::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_responses_route(service, "compact_response", RESPONSES_PATH * "/compact")
     model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
+    url = _api_base_url(service) * RESPONSES_PATH * "/compact"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/compact"
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
         if resp.status == 200
@@ -2197,13 +2216,28 @@ end
 # The model a compaction that names none is sent with: OpenAI's default.
 _compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
 
+# `compact_response` and `count_input_tokens` call a route of the Responses API. An endpoint that
+# declares its capabilities without `:responses` has none: it is refused by name before any request,
+# as `respond` refuses an endpoint that lists neither agentic wire; one that declares nothing is sent
+# the request, as by `_validate_declared_capability`. Gemini declares `:agentic`, and `respond`
+# reaches it through the Interactions API, which has neither route.
+function _check_responses_route(service, verb::String, route::String)::Nothing
+    _capability_declared(service) && !has_capability(service, :responses) || return nothing
+    name = _service_name(service)
+    throw(ArgumentError("$verb is not supported by $name: it calls $route, a route of the Responses API " *
+        "that $name does not serve; call it with an endpoint that serves the Responses API, such as " *
+        "OPENAIServiceEndpoint"))
+end
+
 
 """
     count_input_tokens(; model, input, kwargs...)
 
 Count the number of input tokens a request would use without actually generating a response.
 Useful for estimating costs or checking whether input fits within the context window.
-`model` defaults to OpenAI's default model, `"gpt-6-sol"`.
+`model` defaults to OpenAI's default model, `"gpt-6-sol"`. The count is the Responses API's
+`/v1/responses/input_tokens`: on an endpoint that declares its capabilities without `:responses`,
+which has no such route, the call throws `ArgumentError` before any request.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
@@ -2224,10 +2258,11 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_responses_route(service, "count_input_tokens", RESPONSES_PATH * "/input_tokens")
+    url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
         d = Dict{Symbol,Any}(:model => model, :input => input)
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)

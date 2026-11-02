@@ -1075,7 +1075,8 @@ end
     mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
     markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
                                                             #   image to guide the edit; not with mask (ArgumentError); OpenAI
-                                                            #   states "Supports GPT Image 2.5" and judges the model
+                                                            #   states "Supports GPT Image 2.5" and judges the model (on
+                                                            #   2026-11-02 it answered HTTP 400 "Unknown parameter: 'markup'.")
     model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI

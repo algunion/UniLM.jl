@@ -406,7 +406,9 @@ when the edit is sent.
   part `markup`: "A transparent PNG overlaid on the first image to guide the edit. Must match that
   image's dimensions after orientation and contain transparent pixels" (the edit reference). It
   "Cannot be combined with mask": set beside one, [`edit_image`](@ref) throws `ArgumentError`, as it
-  does for bytes that are no PNG. OpenAI states it "Supports GPT Image 2.5"; the model is OpenAI's to check
+  does for bytes that are no PNG. OpenAI states it "Supports GPT Image 2.5"; the model is OpenAI's to check.
+  On 2026-11-02 the API answered it with HTTP 400, "Unknown parameter: 'markup'.", on
+  `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, in a multipart and a JSON edit alike
 - `size`, `quality`, `background`, `output_format`: as on [`ImageGeneration`](@ref)
 - `input_fidelity::Union{String,Nothing}`: how closely the edit keeps the input's
   features (`"high"`, `"low"`)

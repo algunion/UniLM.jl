@@ -82,7 +82,9 @@ the first image to guide the edit. Must match that image's dimensions after orie
 transparent pixels", which "Cannot be combined with mask", so a `markup` beside a `mask` is refused before
 anything is sent, as are bytes that are no PNG. The edit reference states it "Supports GPT Image 2.5":
 UniLM sends it on any model, for OpenAI to judge
-([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)).
+([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)). On 2 November
+2026 the API did not take it yet: it answered a markup with HTTP 400, "Unknown parameter: 'markup'.", on
+`gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, in a multipart and in a JSON edit request alike.
 `input_fidelity` is sent as given; OpenAI's reference documents it for `gpt-image-1.5` and
 `gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". An image, mask or markup path that
 is no file is refused before anything is sent, as `upload_file` and `transcribe` refuse one

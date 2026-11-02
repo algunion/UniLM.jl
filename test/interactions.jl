@@ -1275,3 +1275,16 @@ end
     end
     @test e isa ArgumentError && startswith(e.msg, "list_input_items is not supported by GEMINIServiceEndpoint")
 end
+
+@testset "compact_response and count_input_tokens — Gemini serves neither route, so nothing is sent" begin
+    # Both are routes of OpenAI's Responses API (/v1/responses/compact, /v1/responses/input_tokens); `respond`
+    # reaches Gemini through the Interactions API, which has neither. With no key, a call that got past the
+    # refusal would come back as a call error (a KeyError) and send nothing; a refusal throws, naming the route.
+    for (verb, route, call) in (
+            ("compact_response", "/v1/responses/compact", () -> compact_response(input="hi"; service=GEMINIServiceEndpoint)),
+            ("count_input_tokens", "/v1/responses/input_tokens", () -> count_input_tokens(input="hi"; service=GEMINIServiceEndpoint)))
+        e = withenv(() -> _ix_caught(call), "GEMINI_API_KEY" => nothing)
+        @test e isa ArgumentError
+        @test e isa ArgumentError && startswith(e.msg, "$verb is not supported by GEMINIServiceEndpoint") && occursin(route, e.msg)
+    end
+end

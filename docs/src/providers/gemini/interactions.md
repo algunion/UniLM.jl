@@ -323,8 +323,9 @@ your poll before taking it for a permission error.
 Google's Interactions API reads, cancels and deletes an interaction, and lists no input items
 ([Interactions API](https://ai.google.dev/api/interactions-api)), so [`list_input_items`](@ref)
 throws `ArgumentError` for this endpoint before sending anything; the input is the `input` you sent.
-[`compact_response`](@ref) and [`count_input_tokens`](@ref) send nothing for this endpoint, and
-return a `ResponseCallError`.
+[`compact_response`](@ref) and [`count_input_tokens`](@ref) are refused before any request: they are
+routes of OpenAI's Responses API (`/v1/responses/compact`, `/v1/responses/input_tokens`) that the
+Interactions API does not have, so each throws `ArgumentError` for this endpoint.
 
 ## [Request options](@id gemini_interactions_options)
 

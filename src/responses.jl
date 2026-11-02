@@ -2155,6 +2155,11 @@ that can be passed as input to subsequent requests, reducing token usage in long
   `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
+The compaction is the Responses API's `/v1/responses/compact`: on an endpoint that declares its
+capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe, Google's
+OpenAI-compatible endpoint), which has no such route, the call throws `ArgumentError` before any
+request.
+
 Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
@@ -2175,11 +2180,12 @@ function compact_response(; model::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_responses_route(service, "compact_response", RESPONSES_PATH * "/compact")
     model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
+    url = _api_base_url(service) * RESPONSES_PATH * "/compact"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/compact"
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
         if resp.status == 200
@@ -2197,13 +2203,28 @@ end
 # The model a compaction that names none is sent with: OpenAI's default.
 _compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
 
+# `compact_response` and `count_input_tokens` call a route of the Responses API. An endpoint that
+# declares its capabilities without `:responses` has none: it is refused by name before any request,
+# as `respond` refuses an endpoint that lists neither agentic wire; one that declares nothing is sent
+# the request, as by `_validate_declared_capability`. Gemini declares `:agentic`, and `respond`
+# reaches it through the Interactions API, which has neither route.
+function _check_responses_route(service, verb::String, route::String)::Nothing
+    _capability_declared(service) && !has_capability(service, :responses) || return nothing
+    name = _service_name(service)
+    throw(ArgumentError("$verb is not supported by $name: it calls $route, a route of the Responses API " *
+        "that $name does not serve; call it with an endpoint that serves the Responses API, such as " *
+        "OPENAIServiceEndpoint"))
+end
+
 
 """
     count_input_tokens(; model, input, kwargs...)
 
 Count the number of input tokens a request would use without actually generating a response.
 Useful for estimating costs or checking whether input fits within the context window.
-`model` defaults to OpenAI's default model, `"gpt-6-sol"`.
+`model` defaults to OpenAI's default model, `"gpt-6-sol"`. The count is the Responses API's
+`/v1/responses/input_tokens`: on an endpoint that declares its capabilities without `:responses`,
+which has no such route, the call throws `ArgumentError` before any request.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
@@ -2224,10 +2245,11 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_responses_route(service, "count_input_tokens", RESPONSES_PATH * "/input_tokens")
+    url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
         d = Dict{Symbol,Any}(:model => model, :input => input)
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)

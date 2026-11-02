@@ -912,6 +912,9 @@ count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothi
 
 Each makes a single bounded attempt (no retries) and observes the ambient
 [`with_cancel`](@ref) token; every call error carries its exception in `.cause`.
+`compact_response` and `count_input_tokens` are routes of the Responses API: on an endpoint that
+declares its capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe,
+Google's OpenAI-compatible endpoint) they throw `ArgumentError` before any request.
 
 ### ResponseObject
 

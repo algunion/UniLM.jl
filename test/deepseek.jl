@@ -7,7 +7,7 @@
 using UniLM
 using UniLM: encode_request, decode_response, StreamState, _build_stream_message,
              RoleAssistant, RoleTool, TOOL_CALLS, GPTFunction
-using Test, HTTP, JSON
+using Test, HTTP, JSON, JET
 
 const _DS = DeepSeekEndpoint("k")
 const _DS_TOOLS = [Tool(func=FunctionSignature(name="get_weather",
@@ -234,7 +234,9 @@ end
     @test (sub.base_url, sub.api_key, sub.key_env) == ("http://127.0.0.1:8000", "k", "")
     withenv("DEEPSEEK_API_KEY" => "sk-env-secret-1", "MISTRAL_API_KEY" => "sk-env-secret-2") do
         for ep in (DeepSeekEndpoint(), DeepSeekEndpoint(api_key="sk-given"), MistralEndpoint())
-            @test (@inferred UniLM.auth_header(ep)) isa Vector{Pair{String,String}}
+            # Its declared return type makes the call's result infer whatever its body does; JET checks the body,
+            # and what the body calls.
+            JET.@test_opt UniLM.auth_header(ep)
         end
         for (ep, var) in lazy
             shown = sprint(show, ep)

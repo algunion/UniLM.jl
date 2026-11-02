@@ -102,7 +102,7 @@ ignored" ([Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)). 
 pushed after the conversation started is sent in place, which DeepSeek takes: its Chat Completions API
 "does support inserting `system` messages mid-conversation"
 ([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)). What `push!` refuses is the same on
-every provider ([Chat Completions](@ref chat_guide)).
+every provider ([Conversations with Chat](@ref chat_guide)).
 
 ## [Streaming](@id deepseek_streaming)
 

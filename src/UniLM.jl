@@ -201,6 +201,7 @@ export
     PromptCacheOptions,
     ModerationConfig,
     ResponseObject,
+    ToolUsage,
     # Result types
     ResponseSuccess,
     ResponseFailure,
@@ -229,6 +230,7 @@ export
     response_status,
     incomplete_details,
     usage_details,
+    tool_usage,
     # Input helpers
     input_text,
     input_image,

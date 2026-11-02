@@ -3153,3 +3153,46 @@ end
         @test e isa ArgumentError && occursin("configuration_update", e.msg) && all(w -> occursin(w, e.msg), words)
     end
 end
+
+# An OpenAI-wire endpoint at the scripted local server (`_with_scripted`).
+struct _ToolUsageProbe <: UniLM.OpenAIWireEndpoint end
+UniLM._resolve_base_url(::Type{_ToolUsageProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{_ToolUsageProbe}) = ["Content-Type" => "application/json"]
+
+@testset "tool_usage reads the hosted tools' usage of a Responses reply, unstreamed and streamed" begin
+    # "Usage reported by hosted tools, separate from base model `usage`": `web_search.num_requests` "counts
+    # billable searches", `image_gen` sums the image generation calls' tokens (the Responses reference).
+    used = Dict("web_search" => Dict("num_requests" => 2),
+                "image_gen" => Dict("input_tokens" => 120, "input_tokens_details" => Dict("image_tokens" => 100, "text_tokens" => 20),
+                                    "output_tokens" => 4160, "total_tokens" => 4280, "cached_tokens" => 64,
+                                    "cached_tokens_details" => Dict("cached_image_tokens" => 60, "cached_text_tokens" => 4),
+                                    "output_tokens_details" => Dict("image_tokens" => 4000, "text_tokens" => 160)))
+    reply = Dict("id" => "resp_t", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                 "output" => [Dict("type" => "message", "role" => "assistant",
+                                   "content" => [Dict("type" => "output_text", "text" => "Done.")])],
+                 "usage" => Dict("input_tokens" => 10, "output_tokens" => 2, "total_tokens" => 12), "tool_usage" => used)
+    want = ToolUsage(web_search_requests=2, image_input_tokens=120, image_input_image_tokens=100, image_cached_tokens=64,
+                     image_cached_image_tokens=60, image_output_tokens=4160, image_output_image_tokens=4000)
+    cfg = RequestConfig(max_attempts=1)
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi"; kw...); config=cfg)
+    plain, _ = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(reply)))
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => reply)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && tool_usage(r) == want && tool_usage(r).web_search_requests == 2
+        @test tool_usage(r.response) == want
+    end
+    # The image counts are the reply's: no output split means every output token is an image token, and an
+    # omitted cache count, "cache usage is unknown", reads 0; a family with no usage has zero counts.
+    bare = Dict("web_search" => Dict("num_requests" => 0),
+                "image_gen" => Dict("input_tokens" => 50, "input_tokens_details" => Dict("image_tokens" => 40, "text_tokens" => 10),
+                                    "output_tokens" => 1000, "total_tokens" => 1050))
+    obj(raw) = UniLM.ResponseObject(id="r", status="completed", model="gpt-6-luna", output=Any[], raw=raw)
+    @test tool_usage(obj(Dict{String,Any}("tool_usage" => bare))) == ToolUsage(image_input_tokens=50,
+        image_input_image_tokens=40, image_output_tokens=1000, image_output_image_tokens=1000)
+    # "The field can be omitted when tool usage is unavailable": no usage, as a failure has none.
+    @test tool_usage(obj(Dict{String,Any}())) === nothing
+    @test tool_usage(ResponseFailure(response="{}", status=500)) === nothing
+    @test tool_usage(ResponseCallError(error="e")) === nothing
+end

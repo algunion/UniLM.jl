@@ -898,6 +898,22 @@ output_text(result::ResponseCallError)                      # throws LLMResultEr
 
 function_calls(result::ResponseSuccess)::Vector{Dict{String,Any}}   # empty on a failure result
 # Each dict has: "id", "call_id", "name", "arguments" (JSON string), "status"
+
+tool_usage(result::ResponseSuccess)::Union{ToolUsage,Nothing}   # OpenAI's hosted tools' usage (the reply's tool_usage),
+                                                                #   unstreamed or from response.completed; nothing when the
+                                                                #   reply has none, and on a failure result
+```
+
+```julia
+@kwdef struct ToolUsage                     # what the hosted tools used, apart from the model's own usage
+    web_search_requests::Int = 0            # billable web searches (web_search.num_requests)
+    image_input_tokens::Int = 0             # image generation tool: input tokens, text and image
+    image_input_image_tokens::Int = 0       #   of them image tokens
+    image_cached_tokens::Int = 0            #   input tokens read from the cache (0 when the reply omits the count)
+    image_cached_image_tokens::Int = 0      #   of them image tokens
+    image_output_tokens::Int = 0            #   output tokens
+    image_output_image_tokens::Int = 0      #   of them image tokens (all of them when the reply gives no split)
+end
 ```
 
 ### Response Management Functions
@@ -3000,7 +3016,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (402), grouped by area:
+Every exported symbol (404), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3011,7 +3027,7 @@ Every exported symbol (402), grouped by area:
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
 - *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`
 - *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
-- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`
+- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`
 
 **Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
 

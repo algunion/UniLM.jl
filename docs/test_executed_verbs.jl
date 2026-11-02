@@ -27,7 +27,7 @@ const LOCAL = Set{String}([
     "answer", "answers", "text", "output_text", "fim_text", "transcript_text", "embedding_vectors", "image_data",
     "function_calls", "reasoning_text", "reasoning_items", "reasoning_summaries", "refusals", "url_citations",
     "web_search_results", "file_search_results", "code_interpreter_outputs", "image_generation_results",
-    "mcp_approval_requests", "mcp_call_outputs", "incomplete_details", "response_status", "usage_details",
+    "mcp_approval_requests", "mcp_call_outputs", "incomplete_details", "response_status", "usage_details", "tool_usage",
     "token_usage", "estimated_cost", "cumulative_cost", "conversation_id", "vector_store_id", "is_flagged",
     "issuccess", "isfailure", "issendvalid", "iscancelled", "default_model", "has_capability",
     "provider_capabilities", "meanings", "meaning_gaps", "current_config", "get_url", "auth_header",

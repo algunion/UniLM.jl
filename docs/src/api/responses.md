@@ -62,6 +62,8 @@ refusals
 response_status
 incomplete_details
 usage_details
+tool_usage
+ToolUsage
 ```
 
 ## Request Functions

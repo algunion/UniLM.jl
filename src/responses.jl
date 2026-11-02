@@ -1283,6 +1283,72 @@ usage_details(::ResponseFailure) = nothing
 usage_details(::ResponseCallError) = nothing
 
 
+# ─── Hosted-tool usage ───────────────────────────────────────────────────────
+
+"""
+    ToolUsage(; web_search_requests=0, image_input_tokens=0, image_input_image_tokens=0,
+              image_cached_tokens=0, image_cached_image_tokens=0, image_output_tokens=0,
+              image_output_image_tokens=0)
+
+What OpenAI's hosted tools used for a Responses reply, "separate from base model `usage`": the
+reply's `tool_usage`, as [`tool_usage`](@ref) reads it.
+
+- `web_search_requests`: the web searches OpenAI bills (`web_search.num_requests`); "Discounted
+  searches and actions such as opening a page are excluded".
+- `image_input_tokens`: the image generation tool's input tokens, text and images
+  (`image_gen.input_tokens`), `image_input_image_tokens` of them image tokens.
+- `image_cached_tokens`: of the input tokens, those read from the cache, `image_cached_image_tokens`
+  of them image tokens; `0` when the reply omits the count, which "means cache usage is unknown".
+- `image_output_tokens`: the tool's output tokens, `image_output_image_tokens` of them image
+  tokens — all of them when the reply does not split them.
+
+OpenAI "sums available token counts across image generation calls", and "Calls with missing or
+incomplete usage records may be skipped". [`estimated_cost`](@ref) bills this usage on
+`OPENAIServiceEndpoint` ([Cost and usage](@ref openai_cost)).
+"""
+@kwdef struct ToolUsage
+    web_search_requests::Int = 0
+    image_input_tokens::Int = 0
+    image_input_image_tokens::Int = 0
+    image_cached_tokens::Int = 0
+    image_cached_image_tokens::Int = 0
+    image_output_tokens::Int = 0
+    image_output_image_tokens::Int = 0
+end
+
+"""
+    tool_usage(r) -> Union{ToolUsage,Nothing}
+
+The usage OpenAI's hosted tools report for a Responses reply — the web searches billed and the
+image generation tool's tokens — as a [`ToolUsage`](@ref), read from the reply's `tool_usage`,
+unstreamed or in a stream's `response.completed`. `nothing` when the reply has none ("The field
+can be omitted when tool usage is unavailable"), as on another provider's reply, and for a
+[`ResponseFailure`](@ref) or [`ResponseCallError`](@ref).
+"""
+tool_usage(r::ResponseObject)::Union{ToolUsage,Nothing} = _tool_usage(get(r.raw, "tool_usage", nothing))
+tool_usage(r::ResponseSuccess) = tool_usage(r.response)
+tool_usage(::ResponseFailure)::Nothing = nothing
+tool_usage(::ResponseCallError)::Nothing = nothing
+
+# A reply's `tool_usage` object. A count that is missing, null or not an integer reads as 0, as in a
+# reply's token usage (`_token_usage_from`).
+_tool_usage(_)::Nothing = nothing
+function _tool_usage(u::AbstractDict)::ToolUsage
+    int(x) = x isa Integer ? Int(x) : 0
+    at(d, key) = d isa AbstractDict ? get(d, key, nothing) : nothing
+    image = at(u, "image_gen")
+    output = int(at(image, "output_tokens"))
+    parts = at(image, "output_tokens_details")
+    ToolUsage(web_search_requests=int(at(at(u, "web_search"), "num_requests")),
+              image_input_tokens=int(at(image, "input_tokens")),
+              image_input_image_tokens=int(at(at(image, "input_tokens_details"), "image_tokens")),
+              image_cached_tokens=int(at(image, "cached_tokens")),
+              image_cached_image_tokens=int(at(at(image, "cached_tokens_details"), "cached_image_tokens")),
+              image_output_tokens=output,
+              image_output_image_tokens=parts isa AbstractDict ? int(get(parts, "image_tokens", nothing)) : output)
+end
+
+
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
 function parse_response(resp::HTTP.Response)::ResponseObject

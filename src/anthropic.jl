@@ -286,10 +286,13 @@ end
 # Where a system message after the conversation starts goes (see `_anthropic_messages`):
 # _HOIST joins every one into the top-level `system`; _IN_PLACE keeps one where the API
 # accepts it and hoists the rest; _APPEND_ONLY never edits the top-level `system` once an
-# assistant turn is sent. An id no row names is placed append-only: Anthropic asks every
-# integration to be append-only whatever the account
-# (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md), and a
-# newer model may check thinking blocks.
+# assistant turn is sent. An edit before a thinking block fails the prefix check of that block
+# and every later one (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md):
+# with no `thinking.block_binding`, Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 answer HTTP 400
+# on an account created on or after 00:00 UTC 31 August 2026, and on an older one pass the
+# failing blocks to the model, which reads and bills them as input; Mythos 5.1 answers HTTP 400
+# on every account. An id no row names is placed append-only: Anthropic asks every integration
+# to be append-only, and a newer model may check thinking blocks.
 @enum _SystemPlacement _HOIST _IN_PLACE _APPEND_ONLY
 _system_placement(::Nothing) = _APPEND_ONLY
 _system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? _APPEND_ONLY : fam.system ? _IN_PLACE : _HOIST
@@ -359,9 +362,11 @@ end
 #   `placement` says (`_system_placement`): in place as role "system" where the API
 #   accepts one (`_mid_system_fits`), unless the model has none (_HOIST); else into the
 #   top-level `system` — except under _APPEND_ONLY once an assistant turn is sent, where
-#   editing that prompt invalidates the thinking blocks of every later turn (an HTTP 400):
-#   there it moves forward to right after the next user turn, so each request extends the
-#   one before, and with no user turn after it the request is refused
+#   editing that prompt fails the prefix check of every later thinking block (an HTTP 400, or
+#   blocks the model reads and bills, by model and account: see `_system_placement`): there it
+#   is held back, then sent right after a later user turn, and the turns before each sent
+#   reply stay as they were in the request that got it; with no user turn after it the
+#   request is refused
 # - consecutive `tool` messages → collapsed into ONE user message of tool_result blocks
 # - assistant tool_calls → tool_use blocks; a tool_result referencing an id no
 #   preceding assistant emitted → loud ArgumentError

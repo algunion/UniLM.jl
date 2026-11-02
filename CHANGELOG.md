@@ -53,6 +53,8 @@
 - **Native Anthropic requests and `list_models` send the key as `Authorization: Bearer <key>`**, the header
   Anthropic's API overview names, instead of `x-api-key`, which Anthropic keeps as a legacy fallback. A proxy or
   gateway that reads or sets `x-api-key` must use `Authorization` instead.
+- **The hint on the bare `"Invalid request."` a Box question draws from Jev 1.13 names `jev-latest`**, which TypeSafe
+  now points at `jev-1.14.0`, as it does `jev-preview`: `… such as "jev-1.14.0", "jev-latest" or "jev-preview"`.
 
 ### Added
 - **Scheduled price changes take effect on their dates, without a new release.** Google doubles Gemini 4 Argon's
@@ -139,6 +141,10 @@
   Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, instead of being joined into the top-level `system` prompt.
 - **The documentation site forwards `/stable/guide/semantic_programs/`**, a page only v0.21.0 served, to the Route
   and Decide guide instead of answering 404.
+- **The DeepSeek page says JSON Output may answer with blank content.** DeepSeek replaces output it cannot recognize
+  as JSON with spaces, even when `finish_reason` is `stop`; the page shows the retry DeepSeek advises (`pop!(chat)`,
+  then `chatrequest!(chat)`). It also records that DeepSeek answered a strict tool whose schema set `minLength`, which
+  its strict mode lists as unsupported, so an answer does not show that a schema is supported.
 
 ## 0.29.0
 

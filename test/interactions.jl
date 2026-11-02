@@ -1293,3 +1293,165 @@ end
         @test e isa ArgumentError && startswith(e.msg, "$verb is not supported by GEMINIServiceEndpoint") && occursin(route, e.msg)
     end
 end
+
+# ─── Long decode: one interaction in several requests ────────────────────────
+# "continuation_token … Output: set when status is REQUIRES_CONTINUATION and decoding can be resumed.
+# Input: pass the latest token back unchanged in CreateInteraction to continue decoding."
+# (https://ai.google.dev/api/interactions-api)
+
+# The native Interactions wire, pointed at a scripted local server (`_with_scripted`).
+struct _IxHops <: UniLM.ServiceEndpoint end
+UniLM._agentic_url(::Type{_IxHops}) = _url_probe_base[] * "/v1beta/interactions"
+UniLM.auth_header(::Type{_IxHops}) = ["Content-Type" => "application/json"]
+UniLM.encode_agentic(::Type{_IxHops}, r::Respond) = UniLM.encode_agentic(GEMINIServiceEndpoint, r)
+UniLM.decode_agentic(::Type{_IxHops}, resp::HTTP.Response) = UniLM.decode_agentic(GEMINIServiceEndpoint, resp)
+UniLM._continued_reply(send, ::Type{_IxHops}, r::Respond, body::String, resp::HTTP.Response) =
+    UniLM._continued_reply(send, GEMINIServiceEndpoint, r, body, resp)
+
+const _IX_HOPS_CFG = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+
+_ix_text_step(type, text) = Dict("type" => type, "content" => [Dict("type" => "text", "text" => text)])
+
+# One request's interaction: its status and token, its answer and its usage, and any other field.
+function _ix_hop(id::String, status::String; text::String="", token=nothing, output::Int=5, thought::Int=0,
+                 steps=Any[_ix_text_step("model_output", text)],
+                 usage=Dict("total_input_tokens" => 10, "total_output_tokens" => output,
+                            "total_thought_tokens" => thought, "total_tokens" => 10 + output + thought),
+                 fields...)
+    d = Dict{String,Any}("id" => id, "object" => "interaction", "status" => status, "model" => "gemini-3.8-flash",
+                         "service_tier" => "standard", "steps" => steps, "usage" => usage)
+    isnothing(token) || (d["continuation_token"] = token)
+    for (k, v) in fields
+        d[string(k)] = v
+    end
+    JSON.json(d)
+end
+
+# `respond` against the scripted replies, the n-th request answered with the n-th: a body sent with
+# HTTP 200, or a (status, body) pair. Returns the result and the request bodies, parsed.
+function _ix_hops(replies; kw...)
+    answer(n, _) = (x = replies[min(n, length(replies))]; x isa Tuple ? _json(x...) : _json(200, x))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(; service=_IxHops, model="gemini-3.8-flash", input="Prove it.", kw...); config=_IX_HOPS_CFG)
+    end
+    r, [JSON.parse(s.body; dicttype=Dict{String,Any}) for s in seen]
+end
+
+const _IX_HOP1_USAGE = Dict("total_input_tokens" => 12, "initial_input_tokens" => 12, "total_output_tokens" => 5,
+    "total_thought_tokens" => 32_763, "total_tokens" => 32_780,
+    "input_tokens_by_modality" => [Dict("modality" => "text", "tokens" => 12)])
+const _IX_HOP2_USAGE = Dict("total_input_tokens" => 32_780, "initial_input_tokens" => 32_780,
+    "total_cached_tokens" => 31_000, "total_output_tokens" => 3, "total_thought_tokens" => 40, "total_tokens" => 32_823,
+    "input_tokens_by_modality" => [Dict("modality" => "text", "tokens" => 32_780)],
+    "cached_tokens_by_modality" => [Dict("modality" => "text", "tokens" => 31_000)])
+
+@testset "long decode — an interaction that requires continuation is sent on with its token, its requests folded into one" begin
+    hop1 = _ix_hop("v1_hop1", "requires_continuation"; token="T", usage=_IX_HOP1_USAGE, created="2026-11-02T10:00:00Z",
+        steps=Any[_ix_text_step("user_input", "Prove it."), Dict("type" => "thought", "signature" => "S1"),
+                  _ix_text_step("model_output", "The proof begins. ")])
+    hop2 = _ix_hop("v1_hop2", "completed"; usage=_IX_HOP2_USAGE, created="2026-11-02T10:00:06Z",
+        previous_interaction_id="v1_hop1",
+        steps=Any[_ix_text_step("user_input", "Prove it."), _ix_text_step("model_output", "It ends.")])
+    r, bodies = _ix_hops([hop1, hop2])
+    @test length(bodies) == 2
+    # The token goes back unchanged. The interaction is stored (store unset), so the request names the
+    # interaction that issued the token and sends no input: the server rebuilds the context from it.
+    @test bodies[2] == merge(delete!(copy(bodies[1]), "input"),
+                             Dict("continuation_token" => "T", "previous_interaction_id" => "v1_hop1"))
+    @test r isa ResponseSuccess
+    @test r isa ResponseSuccess && (r.response.id, r.response.status) == ("v1_hop2", "completed")
+    # One answer: the later request's repeated input step is dropped, so its text extends the first's.
+    @test r isa ResponseSuccess && output_text(r) == "The proof begins. It ends."
+    @test r isa ResponseSuccess &&
+          [s["type"] for s in r.response.raw["steps"]] == ["user_input", "thought", "model_output", "model_output"]
+    # Every request is billed: the counts summed, the first request's prompt kept as the initial input.
+    @test token_usage(r) == TokenUsage(prompt_tokens=32_792, completion_tokens=32_811, total_tokens=65_603,
+                                       cached_tokens=31_000, reasoning_tokens=32_803, service_tier="standard")
+    if r isa ResponseSuccess
+        u = r.response.raw["usage"]
+        @test u["initial_input_tokens"] == 12
+        @test u["input_tokens_by_modality"] == [Dict("modality" => "text", "tokens" => 32_792)]
+        @test u["cached_tokens_by_modality"] == [Dict("modality" => "text", "tokens" => 31_000)]
+        # The fields of the caller's request are the first request's: it continued no interaction.
+        @test r.response.raw["created"] == "2026-11-02T10:00:00Z"
+        @test !haskey(r.response.raw, "previous_interaction_id") && !haskey(r.response.raw, "continuation_token")
+    end
+end
+
+@testset "long decode — a conversation's turn and an unstored interaction are continued as Google's SDK continues them" begin
+    replies = [_ix_hop("v1_a", "requires_continuation"; text="A", token="T1"), _ix_hop("v1_b", "completed"; text="B")]
+    # The first request continues the caller's interaction; the next, the interaction that issued the token.
+    r, bodies = _ix_hops(replies; previous_response_id="v1_prev")
+    @test [get(b, "previous_interaction_id", nothing) for b in bodies] == ["v1_prev", "v1_a"]
+    @test !haskey(bodies[2], "input") && bodies[2]["continuation_token"] == "T1"
+    @test r isa ResponseSuccess && output_text(r) == "AB" && r.response.id == "v1_b"
+    # With store=false nothing is stored to rebuild the context from: the whole request goes again, with the token.
+    r, bodies = _ix_hops(replies; store=false)
+    @test length(bodies) == 2 && bodies[1]["store"] == false
+    @test bodies[2] == merge(bodies[1], Dict("continuation_token" => "T1"))
+    @test r isa ResponseSuccess && output_text(r) == "AB"
+end
+
+@testset "long decode — only Google's signal continues: requires_continuation, a token, and output produced" begin
+    done = _ix_hop("v1_z", "completed"; text="Z")
+    for first in (_ix_hop("v1_a", "requires_continuation"; text="A"),                 # no token
+                  _ix_hop("v1_a", "completed"; text="A", token="T1"),                 # another status
+                  _ix_hop("v1_a", "incomplete"; text="A", token="T1"),
+                  _ix_hop("v1_a", "requires_continuation"; token="T1", output=0))     # no progress
+        r, bodies = _ix_hops([first, done])
+        @test length(bodies) == 1
+        @test r isa ResponseSuccess && r.response.id == "v1_a"
+    end
+    # A request spent on thinking made progress: thinking is output.
+    r, bodies = _ix_hops([_ix_hop("v1_a", "requires_continuation"; token="T1", output=0, thought=32_768), done])
+    @test length(bodies) == 2 && r isa ResponseSuccess && output_text(r) == "Z"
+end
+
+@testset "long decode — the requests the output budget needs, at least 8; then the interaction so far" begin
+    # Google's SDK: "Foreground `interactions.create()` calls are capped per request by the server (32k output
+    # tokens unary, 64k streaming)". A turn takes cld(max_output_tokens, 32,768) + 1 requests, and at least 8.
+    replies = [_ix_hop("v1_$k", "requires_continuation"; text="part $k. ", token="token-$k") for k in 1:20]
+    for (max_output_tokens, n) in ((nothing, 8), (65_536, 8), (32_768 * 9 + 1, 11))
+        r, bodies = _ix_hops(replies; max_output_tokens)
+        @test length(bodies) == n
+        @test [get(b, "continuation_token", nothing) for b in bodies] == [nothing; ["token-$k" for k in 1:n-1]]
+        @test [get(b, "previous_interaction_id", nothing) for b in bodies] == [nothing; ["v1_$k" for k in 1:n-1]]
+        @test r isa ResponseSuccess && r.response.status == "requires_continuation" &&
+              r.response.raw["continuation_token"] == "token-$n"
+        @test r isa ResponseSuccess && output_text(r) == join("part $k. " for k in 1:n)
+        @test token_usage(r).prompt_tokens == 10n && token_usage(r).completion_tokens == 5n
+    end
+end
+
+@testset "long decode — a later request that fails ends the call with its failure" begin
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    r, bodies = _ix_hops([first, (500, "{\"error\":{\"code\":500,\"message\":\"internal\"}}")])
+    @test length(bodies) == 2 && r isa ResponseFailure && r.status == 500
+    r, bodies = _ix_hops([first, _ix_hop("v1_b", "failed"; text="B")])
+    @test length(bodies) == 2 && r isa ResponseFailure && r.status == 200
+    @test r isa ResponseFailure && JSON.parse(r.response)["status"] == "failed"
+    # A later reply that is not an interaction is a call error, never a success.
+    r, bodies = _ix_hops([first, "{}"])
+    @test length(bodies) == 2 && r isa ResponseCallError
+end
+
+@testset "long decode — a streamed interaction is not continued: it reports requires_continuation" begin
+    terminal = Dict("event_type" => "interaction.completed", "interaction" => Dict("id" => "v1_s", "object" => "interaction",
+        "status" => "requires_continuation", "model" => "gemini-3.8-flash", "continuation_token" => "T1",
+        "usage" => Dict("total_input_tokens" => 10, "total_output_tokens" => 5, "total_tokens" => 15)))
+    sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"A\"}}\n\n" *
+          "event: interaction.completed\ndata: $(JSON.json(terminal))\n\n"
+    server, url = _ix_sse_server(sse)
+    _IX_MOCK_URL[] = url
+    r = try
+        t = respond(Respond(service=_IxStreamMock, model="gemini-3.8-flash", input="hi", stream=true); config=_IX_HOPS_CFG)
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        fetch(t)
+    finally
+        close(server)
+    end
+    # Every request answers this stream, so a second one would add a second "A".
+    @test r isa ResponseSuccess && output_text(r) == "A"
+    @test r isa ResponseSuccess && r.response.status == "requires_continuation" &&
+          r.response.raw["continuation_token"] == "T1"
+end

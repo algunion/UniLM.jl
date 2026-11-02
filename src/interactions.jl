@@ -682,3 +682,110 @@ end
 # non-stream decode of the assembled steps, in first-seen step order.
 _assembled_interaction_output(state::AgenticStreamState)::Vector{Any} =
     _interaction_output(Any[_interaction_finalize_step!(state, idx) for idx in state.order])
+
+# ─── Long decode: one interaction in several requests ────────────────────────
+# "Foreground `interactions.create()` calls are capped per request by the server (32k output tokens
+# unary, 64k streaming) and stop with `status='requires_continuation'` plus a `continuation_token`"
+# (Google's SDK, https://github.com/googleapis/python-genai/commit/c85d5ae4d70d9b24c4155be0a92730499b23e79d),
+# a token to "pass … back unchanged in CreateInteraction to continue decoding"
+# (https://ai.google.dev/api/interactions-api). The next request is the one Google's SDK sends: the
+# turn's request with the token, which for a stored interaction (`store` unset or true) names the
+# interaction that issued the token as `previous_interaction_id` and sends no `input` ("the server
+# already has it"), and for an unstored one sends the input again. A turn takes the requests a
+# generateContent turn takes (`_request_cap`) at the cap of an unstreamed request, and a reply that
+# produced no output token, thinking included, ends it. A streamed `respond` is not continued.
+_interactions_request_cap(r::Respond)::Int = isnothing(r.max_output_tokens) ? _CONTINUATION_HOPS :
+    max(_CONTINUATION_HOPS, cld(r.max_output_tokens, _request_output_cap(GEMINIServiceEndpoint, false)) + 1)
+
+function _continued_reply(send, ::Type{GEMINIServiceEndpoint}, r::Respond, body::String,
+                          resp::HTTP.Response)::HTTP.Response
+    latest, hop = resp, 1   # the latest reply alone: its status, token and output decide the next request
+    while latest.status == 200
+        next = _interactions_next_request(r, hop, body, JSON.parse(latest.body; dicttype=Dict{String,Any}))
+        isnothing(next) && break
+        latest = send(next, time_ns())   # each request of the turn starts with the whole budget
+        latest.status == 200 || return latest
+        resp, hop = _join_interactions(resp, latest), hop + 1
+    end
+    resp
+end
+
+# The body of the request after a turn's `hop`-th, when its reply asks for one.
+function _interactions_next_request(r::Respond, hop::Int, body::String, reply)::Union{String,Nothing}
+    reply isa AbstractDict && hop < _interactions_request_cap(r) &&
+        get(reply, "status", nothing) == "requires_continuation" || return nothing
+    token = _wire_string(reply, "continuation_token")
+    usage = get(reply, "usage", nothing)
+    (isnothing(token) || !(usage isa AbstractDict) || _interaction_usage(usage)["output_tokens"] == 0) && return nothing
+    request = JSON.parse(body; dicttype=Dict{String,Any})
+    request["continuation_token"] = token
+    id = _wire_string(reply, "id")
+    if get(request, "store", true) !== false && !isnothing(id)
+        request["previous_interaction_id"] = id
+        delete!(request, "input")
+    end
+    JSON.json(request)
+end
+
+# One reply for an interaction sent in several requests, merged as Google's SDK merges them: the later
+# reply — its id, which a next turn continues, status, token, model and tier — holding the steps of
+# both in request order, the usage of both summed, and the earlier reply's previous_interaction_id,
+# created and input, which describe the caller's request. A later request's leading user_input steps
+# repeat the input, and would end the answer the steps after them extend (`_interaction_output`): they
+# are dropped.
+function _join_interactions(earlier::HTTP.Response, later::HTTP.Response)::HTTP.Response
+    a = JSON.parse(earlier.body; dicttype=Dict{String,Any})
+    b = JSON.parse(later.body; dicttype=Dict{String,Any})
+    (a isa Dict{String,Any} && b isa Dict{String,Any}) || return later
+    joined = copy(b)
+    steps = collect(Any, _as_iter(get(b, "steps", nothing)))
+    from = something(findfirst(s -> !(s isa AbstractDict && get(s, "type", nothing) == "user_input"), steps),
+                     length(steps) + 1)
+    joined["steps"] = vcat(collect(Any, _as_iter(get(a, "steps", nothing))), steps[from:end])
+    usage = _add_interaction_usage(get(a, "usage", nothing), get(b, "usage", nothing))
+    isnothing(usage) ? delete!(joined, "usage") : (joined["usage"] = usage)
+    for k in ("previous_interaction_id", "created", "input")
+        haskey(a, k) ? (joined[k] = a[k]) : delete!(joined, k)
+    end
+    HTTP.Response(200, later.headers, Vector{UInt8}(JSON.json(joined)))
+end
+
+# Two requests' usage as one: every count added, as is every entry of a per-modality list (by modality;
+# `grounding_tool_count` by tool type), since "each continuation hop re-prefills the conversation and
+# generated prefix, so input tokens are billed on every hop" (Google's SDK, above); initial_input_tokens,
+# "Number of input tokens used in the first turn of this interaction", is the first request's input.
+# A field of another kind is the later request's.
+const _INTERACTION_USAGE_LISTS = Dict{String,NTuple{2,String}}(
+    "input_tokens_by_modality" => ("modality", "tokens"), "cached_tokens_by_modality" => ("modality", "tokens"),
+    "output_tokens_by_modality" => ("modality", "tokens"), "tool_use_tokens_by_modality" => ("modality", "tokens"),
+    "grounding_tool_count" => ("type", "count"))
+
+_add_interaction_usage(a, b) = a isa AbstractDict ? (b isa AbstractDict ? _added_usage(a, b) : a) : b
+function _added_usage(a::AbstractDict, b::AbstractDict)::Dict{String,Any}
+    u = Dict{String,Any}(b)
+    for (k, v) in a
+        w = get(b, k, nothing)
+        if v isa Integer && (isnothing(w) || w isa Integer)
+            u[k] = v + something(w, 0)
+        elseif haskey(_INTERACTION_USAGE_LISTS, k) && v isa AbstractVector && (isnothing(w) || w isa AbstractVector)
+            u[k] = _added_counts(v, something(w, Any[]), _INTERACTION_USAGE_LISTS[k]...)
+        end
+    end
+    (haskey(a, "initial_input_tokens") || haskey(b, "initial_input_tokens")) &&
+        (u["initial_input_tokens"] = get(a, "initial_input_tokens", get(a, "total_input_tokens", nothing)))
+    u
+end
+
+function _added_counts(xs::AbstractVector, ys::AbstractVector, key::String, value::String)::Vector{Any}
+    out = Any[]
+    for c in Iterators.flatten((xs, ys))
+        c isa AbstractDict || continue
+        i = findfirst(d -> get(d, key, nothing) == get(c, key, nothing), out)
+        if isnothing(i)
+            push!(out, Dict{String,Any}(c))
+        elseif (n = get(c, value, nothing)) isa Integer && (m = get(out[i], value, nothing)) isa Integer
+            out[i][value] = m + n
+        end
+    end
+    out
+end

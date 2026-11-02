@@ -760,8 +760,15 @@ end
         Dict("text" => "No.", "thoughtSignature" => "c2ln")]))])
     m = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply)))).message
     @test m.content == "No." && reasoning_text(m) == "391 = 17 × 23, so it is not prime."
+    # A stream sends the summary in parts, an event each, then the answer with its signature.
     state = StreamState()
-    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(reply), state)
+    parts = [Dict("text" => "391 = 17 × 23, ", "thought" => true), Dict("text" => "so it is not prime.", "thought" => true),
+             Dict("text" => "No.", "thoughtSignature" => "c2ln")]
+    for (k, p) in enumerate(parts)
+        cand = Dict{String,Any}("content" => Dict("role" => "model", "parts" => [p]))
+        k == length(parts) && (cand["finishReason"] = "STOP")
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(Dict("candidates" => [cand])), state)
+    end
     streamed = _build_stream_message(state)
     @test streamed.content == "No." && reasoning_text(streamed) == reasoning_text(m)
 end

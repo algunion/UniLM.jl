@@ -209,9 +209,9 @@ SpeechRequest(; input::AbstractString, service::ServiceEndpointSpec=OPENAIServic
 end
 
 """
-    speak(s::SpeechRequest; config=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
+    speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
     speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
-          speed=nothing, instructions=nothing, config=nothing)
+          speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
 
 Synthesize speech from text; the keywords build a [`SpeechRequest`](@ref).
 
@@ -256,17 +256,21 @@ every send and every wait for the next event. On Gemini and Ollama, transient st
 (408/429/500/502–504/520–524/529) and transport failures are retried with backoff under the
 config's `max_attempts` and `total_deadline` (`retry-after-ms`, else `Retry-After`, honored), as
 [`chatrequest!`](@ref) retries them, each attempt on Gemini a billed `generateContent` request; a 429
-that no retry can serve is returned at once. All three observe the ambient [`CancelToken`](@ref)
-([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
-with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
-[`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.
+that no retry can serve is returned at once. Speech is not priced: [`token_usage`](@ref) and
+[`estimated_cost`](@ref) throw for a `SpeechSuccess`.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
-function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing)
+function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing,
+               cancel::Union{Nothing,CancelToken}=nothing)
     wire = _speech_wire(s.service)
     target = _speech_target(wire, s)    # the route is checked before any I/O
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _speak(wire, s, target, cfg, t0)
+        _with_resolved_cancel(() -> _speak(wire, s, target, cfg, t0), cancel)
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)
@@ -275,8 +279,9 @@ end
 speak(input::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
       model::Union{AbstractString,Nothing}=nothing, voice::Union{AbstractString,Nothing}=nothing,
       response_format::AbstractString="wav", speed::Union{Real,Nothing}=nothing,
-      instructions::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing) =
-    speak(SpeechRequest(service, model, input, voice, response_format, speed, instructions); config)
+      instructions::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
+      cancel::Union{Nothing,CancelToken}=nothing) =
+    speak(SpeechRequest(service, model, input, voice, response_format, speed, instructions); config, cancel)
 
 # Where a request goes; throws ArgumentError, before any I/O, for a service the wire cannot reach.
 function _speech_target(::_RealtimeSpeechWire, s::SpeechRequest)::String
@@ -698,8 +703,14 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 retries them, and each attempt sends the whole file again; a 429 that no retry can serve is
 returned at once. Pass `config::Union{Nothing,RequestConfig}` to override the timeout and
 retry budget for this call.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
-function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing)
+function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)
     # An endpoint that declares `:audio` transcribes too (`has_capability`), as does one that declares
     # `:transcription` alone.
     validate_capability(t.service, :transcription, "Audio API")
@@ -711,7 +722,8 @@ function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig
         # Retried as the endpoint's other inference verbs are. The attempt that sends a multipart
         # Form reads it to its end, so every attempt builds its own from the file (`_BodyFactory`).
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
-            auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t))))
+            auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t)));
+            cancel=_resolve_cancel(cancel))
         resp.status == 200 ? _transcription_success(_transcription_json(t.service, t, resp), resp) :
                              _failure(AudioFailure, resp)
     catch e
@@ -719,8 +731,9 @@ function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig
         _callerr(AudioCallError, e)
     end
 end
-transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
-    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
+transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+           cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
+    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config, cancel=cancel)
 
 # A 200 transcription or translation reply: the JSON object `{"text": …}`, or the bare text.
 function _transcription_success(json::Bool, resp::HTTP.Response)::TranscriptionSuccess
@@ -733,7 +746,7 @@ end
 
 """
     translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint,
-              config=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
+              config=nothing, cancel=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
 
 Translate the speech in the audio file at `path` into `language` and return the translation as
 text: a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref). `model` left `nothing`
@@ -783,15 +796,19 @@ names the close's status and reason), a timeout and a cancel are an [`AudioCallE
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
 every wait for the next event. On OpenAI it is a single attempt, which `max_attempts` does not
 change: a retry after the session's audio was sent may bill a second translation, and a session's
-audio cannot be resumed. The ambient [`CancelToken`](@ref)
-([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
-call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
+audio cannot be resumed.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
 function translate(path::AbstractString; language::AbstractString="en",
                    model::Union{AbstractString,Nothing}=nothing,
                    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-                   config::Union{Nothing,RequestConfig}=nothing)
-    _translate(service, path, language, model, config)
+                   config::Union{Nothing,RequestConfig}=nothing,
+                   cancel::Union{Nothing,CancelToken}=nothing)
+    _with_resolved_cancel(() -> _translate(service, path, language, model, config), cancel)
 end
 
 # OpenAI: a Realtime translation session, on `gpt-realtime-translate` unless the call names another model.

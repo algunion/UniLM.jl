@@ -91,10 +91,12 @@ _parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=get(d
 
 # Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
 # rethrows for the caller's catch). status_exception=false is imposed by _http.
-function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64; body::Union{String,Nothing}=nothing)
+function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
+                  body::Union{String,Nothing}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     headers = auth_header(service)
-    isnothing(body) ? _http(method, url, headers; cfg, remaining) :
-        _http(method, url, headers, body; cfg, remaining)
+    tok = _resolve_cancel(cancel)
+    isnothing(body) ? _http(method, url, headers; cfg, remaining, cancel=tok) :
+        _http(method, url, headers, body; cfg, remaining, cancel=tok)
 end
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
@@ -106,11 +108,14 @@ end
 Create a vector store. Returns `VectorStoreSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Union{Vector{String},Nothing}=nothing,
     expires_after::Union{AbstractDict,Nothing}=nothing, chunking_strategy::Union{AbstractDict,Nothing}=nothing,
     metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -120,7 +125,7 @@ function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Un
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(VectorStoreFailure, resp)
     catch e
@@ -133,12 +138,15 @@ end
     retrieve_vector_store(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0); cancel)
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(VectorStoreFailure, resp)
     catch e
@@ -151,9 +159,12 @@ end
     list_vector_stores(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -162,7 +173,7 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
         !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             stores = VectorStoreObject[_parse_vector_store(s) for s in get(data, "data", [])]
@@ -180,12 +191,15 @@ end
     delete_vector_store(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
@@ -202,15 +216,18 @@ end
     add_vector_store_file(vector_store_id, file_id; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_id => file_id)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         if resp.status == 200
             f = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreFileSuccess(response=VectorStoreFileObject(id=f["id"], status=get(f, "status", nothing), raw=Dict{String,Any}(f)))
@@ -227,15 +244,18 @@ end
     create_file_batch(vector_store_id, file_ids; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_ids => file_ids)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(VectorStoreFailure, resp)
     catch e
@@ -248,12 +268,15 @@ end
     retrieve_file_batch(vector_store_id, batch_id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id), service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id), service, cfg, _remaining_s(cfg, t0); cancel)
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(VectorStoreFailure, resp)
     catch e

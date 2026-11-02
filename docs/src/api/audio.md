@@ -119,10 +119,10 @@ reason in `error`, the close itself in `cause`), a timeout, a cancel and a reply
 usable audio are an [`AudioCallError`](@ref). Audio received before a failure is never returned. On
 OpenAI, `total_deadline` bounds the whole call whatever the socket does, `connect_timeout`
 the WebSocket open, and `stream_idle_timeout` every send and every wait for the next
-event. Both services observe the ambient [`CancelToken`](@ref): a token already
-cancelled sends nothing, and a cancel ends the call at once, with an `AudioCallError`
-whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced: [`token_usage`](@ref)
-and [`estimated_cost`](@ref) throw for a [`SpeechSuccess`](@ref).
+event. Both services take `cancel`, a [`CancelToken`](@ref), the ambient one unless
+given: a token already cancelled sends nothing, and a cancel ends the call at once, with
+an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
+[`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a [`SpeechSuccess`](@ref).
 
 ## Translation
 

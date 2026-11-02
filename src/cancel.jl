@@ -141,6 +141,11 @@ _current_cancel()::Union{Nothing,CancelToken} = _CANCEL_TOKEN[]
 _resolve_cancel(kw::Union{Nothing,CancelToken})::Union{Nothing,CancelToken} =
     kw === nothing ? _current_cancel() : kw
 
+# The same resolution as a scope, for a verb whose requests are sent by code that reads the ambient
+# token rather than taking one (a Realtime session): an explicit token is made ambient for `f`,
+# which is how it wins over an enclosing `with_cancel`, and `nothing` leaves the ambient token.
+_with_resolved_cancel(f::Function, kw::Union{Nothing,CancelToken}) = kw === nothing ? f() : with_cancel(f, kw)
+
 function _run_cancel_hook(f)::Nothing
     try
         f()

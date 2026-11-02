@@ -924,17 +924,19 @@ end
 ### Response Management Functions
 
 ```julia
-get_response(id::String; service=OPENAIServiceEndpoint, config=nothing)    -> ResponseSuccess | ResponseFailure | ResponseCallError
-delete_response(id::String; service=OPENAIServiceEndpoint, config=nothing) -> Dict | ResponseFailure | ResponseCallError
-list_input_items(id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint, config=nothing) -> Dict | ...
-cancel_response(id::String; service=OPENAIServiceEndpoint, config=nothing) -> ResponseSuccess | ...
-compact_response(; model=nothing, input, service=OPENAIServiceEndpoint, config=nothing) -> Dict | ...
+get_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing)    -> ResponseSuccess | ResponseFailure | ResponseCallError
+delete_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ResponseFailure | ResponseCallError
+list_input_items(id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
+cancel_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> ResponseSuccess | ...
+compact_response(; model=nothing, input, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
     # model nothing → "gpt-6-sol" (OpenAI's default), except on an OllamaEndpoint (no default model: ArgumentError before I/O)
-count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint, config=nothing) -> Dict | ...
+count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
 ```
 
-Each makes a single bounded attempt (no retries) and observes the ambient
-[`with_cancel`](@ref) token; every call error carries its exception in `.cause`.
+Each makes a single bounded attempt (no retries) and takes `cancel` (default: the ambient
+[`with_cancel`](@ref) token): a cancelled call returns `ResponseCallError(status=nothing,
+cause=UniLMCancelled(:token, …))`, sending nothing when the token was already cancelled; every call
+error carries its exception in `.cause`.
 `compact_response` and `count_input_tokens` are routes of the Responses API: on an endpoint that
 declares its capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe,
 Google's OpenAI-compatible endpoint) they throw `ArgumentError` before any request.
@@ -2547,11 +2549,11 @@ end
     content_type::String = ""                       # "audio/wav" | "audio/pcm"
 end
 
-speak(s::SpeechRequest; config=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
+speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
 speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
-      speed=nothing, instructions=nothing, config=nothing)
+      speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
 save_audio(r::SpeechSuccess, path)
-translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint, config=nothing)
+translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing)
     # model nothing → "gpt-realtime-translate" (OpenAI); Ollama has none (ArgumentError), e.g. "gemma4:e4b"
     -> TranscriptionSuccess | AudioFailure | AudioCallError
 
@@ -2568,8 +2570,8 @@ translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint, con
     keywords::Union{Vector{String},Nothing} = nothing  # no <, > or line breaks
 end
 
-transcribe(t::TranscriptionRequest; config=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
-transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, kwargs...)
+transcribe(t::TranscriptionRequest; config=nothing, cancel=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
+transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, kwargs...)
 transcript_text(r::TranscriptionSuccess) -> String
 ```
 
@@ -2615,10 +2617,10 @@ make a single bounded attempt (`total_deadline` the whole call, `connect_timeout
 `stream_idle_timeout` every send and every wait for the next event): a retry after the session's
 `response.create`, or after its audio, may bill a second response, and a session's audio cannot be
 resumed. `speak` on Gemini sends its request again after a retryable status or transport failure,
-under `max_attempts` and `total_deadline`, as `chatrequest!` does. Both observe the ambient
-`CancelToken` (`with_cancel`): a token already cancelled sends nothing, and a cancel ends the call at
-once with `cause = UniLMCancelled`. Speech is not priced: `token_usage` and `estimated_cost` throw for
-a `SpeechSuccess`.
+under `max_attempts` and `total_deadline`, as `chatrequest!` does. Both take `cancel` (default: the
+ambient `CancelToken` of `with_cancel`): a token already cancelled sends nothing, and a cancel ends the
+call at once with `cause = UniLMCancelled`. Speech is not priced: `token_usage` and `estimated_cost`
+throw for a `SpeechSuccess`.
 
 **Transcription.** The default model is `"gpt-transcribe"` on OpenAI, and on an endpoint of your own
 that declares `:audio` or `:transcription`; an `OllamaEndpoint` has none, so a request to it names an installed model
@@ -2775,11 +2777,16 @@ iscancelled(tok)::Bool              # iscancelled(nothing) == false
 with_cancel(f, tok)                 # tok is the ambient token inside f (and tasks spawned there)
 ```
 
-HTTP verbs take `cancel::Union{Nothing,CancelToken}=nothing` (`chatrequest!`,
-`respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
-`prefix_complete`, `ask`, `ask_each`, `list_models`, `poll_batch`, `poll_file_batch`, the tool
-loops, `nl_dispatch`, `nl_classify`, `@branch`); `nothing` resolves the ambient token, and every other
-HTTP verb observes the ambient token. A cancelled call returns its call-error result
+Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToken}=nothing`:
+`chatrequest!`, `respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
+`prefix_complete`, `ask`, `ask_each`, `list_models`, the Ollama model calls, `poll_batch`,
+`poll_file_batch`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
+lifecycle verb (files, uploads, vector stores, conversations, containers, batch, fine-tuning,
+`moderate`, `speak`, `transcribe`, `translate`, `mint_realtime_secret`, and `get_response`,
+`delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`).
+`nothing` resolves the ambient token, and an explicit token wins over it. The exception is
+`realtime_connect`, whose session observes no token; MCP calls take no keyword (an MCP call over
+HTTP observes the ambient token). A cancelled call returns its call-error result
 with `status = nothing` and `cause = UniLMCancelled(source, elapsed)` (`source` is
 `:token`, or `:callback` for a stream stopped with `close[] = true`), is never retried,
 commits nothing — unless the provider's completion marker already arrived on a stream:

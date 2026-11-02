@@ -72,10 +72,12 @@ _parse_conversation(d::AbstractDict) = ConversationObject(id=d["id"], created_at
     metadata=get(d, "metadata", nothing), raw=Dict{String,Any}(d))
 _parse_conv_item(d::AbstractDict) = ConversationItem(id=get(d, "id", nothing), type=get(d, "type", nothing), raw=Dict{String,Any}(d))
 
-function _conv_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64; body::Union{String,Nothing}=nothing)
+function _conv_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
+                    body::Union{String,Nothing}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     headers = auth_header(service)
-    isnothing(body) ? _http(method, url, headers; cfg, remaining) :
-        _http(method, url, headers, body; cfg, remaining)
+    tok = _resolve_cancel(cancel)
+    isnothing(body) ? _http(method, url, headers; cfg, remaining, cancel=tok) :
+        _http(method, url, headers, body; cfg, remaining, cancel=tok)
 end
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
@@ -87,16 +89,19 @@ Create a conversation. `items` is an optional vector of input items (e.g. `Input
 Returns `ConversationSuccess`, `ConversationFailure`, or `ConversationCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_conversation(; items::Union{Vector,Nothing}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}()
         !isnothing(items) && (d[:items] = items)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
     catch e
@@ -109,12 +114,15 @@ end
     retrieve_conversation(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0); cancel)
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
     catch e
@@ -127,13 +135,16 @@ end
     update_conversation(id, metadata; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function update_conversation(id::String, metadata::AbstractDict; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function update_conversation(id::String, metadata::AbstractDict; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0);
-            body=JSON.json(Dict{Symbol,Any}(:metadata => metadata)))
+            body=JSON.json(Dict{Symbol,Any}(:metadata => metadata)), cancel)
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
     catch e
@@ -146,12 +157,15 @@ end
     delete_conversation(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
@@ -170,13 +184,16 @@ end
 Append input items to a conversation. Returns `ConversationItemListSuccess`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function add_conversation_items(conv_id::String, items::Vector; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function add_conversation_items(conv_id::String, items::Vector; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items", service, cfg, _remaining_s(cfg, t0);
-            body=JSON.json(Dict{Symbol,Any}(:items => items)))
+            body=JSON.json(Dict{Symbol,Any}(:items => items)), cancel)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             its = ConversationItem[_parse_conv_item(i) for i in get(data, "data", [])]
@@ -195,10 +212,13 @@ end
     list_conversation_items(conversation_id; limit=nothing, order=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=nothing,
     order::Union{String,Nothing}=nothing, after::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -208,7 +228,7 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
         !isnothing(order) && push!(params, "order=$(_uripart(order))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             its = ConversationItem[_parse_conv_item(i) for i in get(data, "data", [])]
@@ -234,15 +254,18 @@ each sent as an `include[]` query parameter, as OpenAI's SDKs send it. Returns
 `ConversationFailure`, or `ConversationCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function retrieve_conversation_item(conv_id::String, item_id::String; include::Union{Vector{String},Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id)
         isnothing(include) || isempty(include) || (url *= "?" * join(("include%5B%5D=" * _uripart(i) for i in include), "&"))
-        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0); cancel)
         resp.status == 200 ? ConversationItemSuccess(response=_parse_conv_item(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
     catch e
@@ -258,12 +281,15 @@ Delete one item. The service answers with the updated conversation, so a success
 `ConversationSuccess` wrapping that [`ConversationObject`](@ref).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ConversationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function delete_conversation_item(conv_id::String, item_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function delete_conversation_item(conv_id::String, item_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id), service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id), service, cfg, _remaining_s(cfg, t0); cancel)
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
     catch e

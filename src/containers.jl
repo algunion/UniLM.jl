@@ -68,10 +68,13 @@ _cont_resp(resp) = resp.status == 200 ?
     create_container(; name, file_ids=nothing, expires_after=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_container(; name::String, file_ids::Union{Vector{String},Nothing}=nothing,
     expires_after::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -79,7 +82,7 @@ function create_container(; name::String, file_ids::Union{Vector{String},Nothing
         !isnothing(file_ids) && (d[:file_ids] = file_ids)
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
         _cont_resp(_http("POST", _api_base_url(service) * CONTAINERS_PATH, auth_header(service),
-            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)
@@ -90,13 +93,16 @@ end
     retrieve_container(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         _cont_resp(_http("GET", _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(id), auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0)))
+            cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)
@@ -107,8 +113,11 @@ end
     list_containers(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -117,7 +126,7 @@ function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{Strin
         !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         ContainerListSuccess(response=ContainerList(data=Vector{Dict{String,Any}}(get(data, "data", [])), has_more=get(data, "has_more", false), raw=data))
@@ -131,13 +140,16 @@ end
     delete_container(id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function delete_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function delete_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _http("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(id), auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0))
+            cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         ContainerDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
@@ -155,15 +167,18 @@ Upload the file at `path` into the container. A success is a `ContainerSuccess` 
 `ArgumentError` before any request, as in [`upload_file`](@ref).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     isfile(path) || throw(ArgumentError("file not found: $path"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
         form = HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
         url = _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(container_id) * "/files"
-        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         ContainerSuccess(response=_parse_container_file(JSON.parse(resp.body; dicttype=Dict{String,Any})))
     catch e

@@ -152,14 +152,20 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
 
 - **How an operation gets its token.** Pass `cancel=tok`, or run the code inside
   `with_cancel(tok) do … end`, which makes `tok` the ambient token for everything in
-  the block, tasks spawned inside it included; an explicit `cancel` wins. The
-  `cancel` keyword is on [`chatrequest!`](@ref), [`respond`](@ref),
+  the block, tasks spawned inside it included; an explicit `cancel` wins, and
+  `cancel=nothing`, the default, is the ambient token. Every verb that sends a
+  provider request takes the keyword: [`chatrequest!`](@ref), [`respond`](@ref),
   [`embeddingrequest!`](@ref), [`tool_loop!`](@ref) / [`tool_loop`](@ref),
   [`generate_image`](@ref), [`edit_image`](@ref), [`fim_complete`](@ref),
   [`prefix_complete`](@ref), [`ask`](@ref), [`list_models`](@ref),
-  [`nl_dispatch`](@ref), [`@branch`](@ref), [`poll_batch`](@ref) and
-  [`poll_file_batch`](@ref). Every other HTTP verb — the platform and lifecycle
-  calls — observes the ambient token.
+  [`nl_dispatch`](@ref), [`@branch`](@ref), Ollama's model calls, [`poll_batch`](@ref),
+  [`poll_file_batch`](@ref), and every platform and lifecycle verb: files, uploads,
+  vector stores, conversations, containers, batches, fine-tuning, [`moderate`](@ref),
+  [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),
+  [`mint_realtime_secret`](@ref) and the Responses lifecycle operations
+  ([`get_response`](@ref) and the others). The exception is [`realtime_connect`](@ref):
+  the session it opens observes no token ([a WebSocket session](@ref timeout_realtime)).
+  MCP calls take no keyword (Limits, below).
 - **What a cancelled call returns.** The verb's usual call-error result with
   `status = nothing` and `cause::UniLMCancelled` ([`UniLMCancelled`](@ref)): never
   retried, nothing committed to a `Chat`, no terminal callback. `cause.source` is

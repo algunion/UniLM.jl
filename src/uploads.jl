@@ -59,15 +59,18 @@ _upl_resp(resp) = resp.status == 200 ?
 `"evals"` naming the Evals API's shutdown on 2026-11-30.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns an `UploadCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     _check_file_purpose(purpose)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)
         _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH, auth_header(service),
-            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(UploadCallError, e)
@@ -78,14 +81,17 @@ end
     add_upload_part(upload_id, data::Vector{UInt8}; service=OPENAIServiceEndpoint)  (multipart)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns an `UploadCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function add_upload_part(upload_id::String, data::Vector{UInt8}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function add_upload_part(upload_id::String, data::Vector{UInt8}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         form = HTTP.Form(["data" => HTTP.Multipart("part", IOBuffer(data), "application/octet-stream")])
         url = _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/parts"
-        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(UploadFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         UploadPartSuccess(response=UploadPartObject(id=d["id"], raw=Dict{String,Any}(d)))
@@ -99,15 +105,18 @@ end
     complete_upload(upload_id, part_ids; md5=nothing, service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns an `UploadCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:part_ids => part_ids)
         !isnothing(md5) && (d[:md5] = md5)
         _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/complete",
-            auth_header(service), JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
+            auth_header(service), JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(UploadCallError, e)
@@ -118,13 +127,16 @@ end
     cancel_upload(upload_id; service=OPENAIServiceEndpoint)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns an `UploadCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/cancel",
-            auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(UploadCallError, e)

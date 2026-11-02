@@ -412,11 +412,11 @@ _decisions_no_field(i::Int, role::String, field::String, rule::String, fix::Stri
     "OpenAI's Decisions API has no field for a $role message's $field: $rule, and message $i of the state is a " *
     "$role message. $fix"))
 
-# One message's items: a system, user or assistant message is a message of its role — a user's text and images
-# `input_text` and `input_image` parts, an assistant's refusal a `refusal` part after its `output_text` — an
-# assistant's tool calls are `function_call` items after it, and a tool message is the `function_call_output` of
-# the call it answers. The constructor guarantees what is read with `::String`: a tool message's call id, and the
-# text of a message that has neither attachments, tool calls nor a refusal.
+# One message's items: a system, user or assistant message is a message of its role, its text the content — a
+# user's text and images `input_text` and `input_image` parts when it has images, an assistant's refusal a `refusal`
+# part after its `output_text` — an assistant's tool calls are `function_call` items after it, and a tool message is
+# the `function_call_output` of the call it answers. The constructor guarantees what is read with `::String`: a tool
+# message's call id, and the text of a message that has neither attachments, tool calls nor a refusal.
 function _decisions_turn!(items::Vector{Any}, calls::Set{String}, m::Message, i::Int)::Nothing
     role, text, refusal, attachments = m.role, m.content, m.refusal_message, m.attachments
     what = "message $i of the state"

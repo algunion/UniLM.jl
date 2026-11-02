@@ -295,6 +295,20 @@ function _check_openai_retention(model::String, rules::_OpenAIModelRules,
         join(("PromptCacheOptions(ttl=$(repr(ttl)))" for ttl in api.ttls), " or ")))
 end
 
+# The prompt_cache_retention values of the models OpenAI restricts to some: "for `gpt-5.5`, `gpt-5.5-pro`, and
+# future models, only `24h` is supported" (the Chat Completions and Responses references), and on 2026-11-02 the
+# API answered "in_memory" on gpt-5.5 with HTTP 400 on both ("This model is compatible only with 24h extended
+# prompt caching"). The later models' rows refuse the field outright (`_check_openai_retention`).
+const _OPENAI_CACHE_RETENTIONS = Dict{String,Vector{String}}("gpt-5.5" => ["24h"], "gpt-5.5-pro" => ["24h"])
+
+function _check_openai_retention_value(model::String, retention::Union{String,Nothing})::Nothing
+    taken = _openai_row(_OPENAI_CACHE_RETENTIONS, model)
+    (isnothing(retention) || isnothing(taken) || retention in taken) && return nothing
+    throw(ArgumentError("$model takes prompt_cache_retention $(join(repr.(taken), " or ")) only (got " *
+        "$(repr(retention))): OpenAI answers another value with HTTP 400, \"This model is compatible only with " *
+        "24h extended prompt caching\""))
+end
+
 # Ultrafast is a Responses tier of the models whose row serves it
 # (https://developers.openai.com/api/docs/guides/ultrafast-mode); the API answered HTTP 400
 # "Invalid service_tier argument" for gpt-5.6-sol and gpt-6-luna (2026-10-22).
@@ -363,6 +377,7 @@ function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     _check_openai_service_tier(chat.service_tier, _OPENAI_APIS.chat, chat.model, rules)
     _check_openai_user(chat.user)
     _check_openai_retention(chat.model, rules, chat.prompt_cache_retention, _OPENAI_CACHE_TTLS.chat)
+    _check_openai_retention_value(chat.model, chat.prompt_cache_retention)
     # The Chat Completions prompt_cache_options object has only mode and ttl.
     pco = chat.prompt_cache_options
     if !isnothing(pco) && (!isnothing(pco.prewarm) || !isnothing(pco.comparison_response_id))
@@ -383,6 +398,7 @@ function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
         e -> "reasoning=Reasoning(effort=$(repr(e)))")
     _check_openai_service_tier(r.service_tier, _OPENAI_APIS.responses, r.model, rules)
     _check_openai_retention(r.model, rules, r.prompt_cache_retention, _OPENAI_CACHE_TTLS.responses)
+    _check_openai_retention_value(r.model, r.prompt_cache_retention)
     _check_openai_user(r.user)
     _check_openai_cache_ttl(r.prompt_cache_options, _OPENAI_CACHE_TTLS.responses)
     _refuse_responses_seed(OPENAIServiceEndpoint, r)
@@ -413,6 +429,8 @@ const _OPENAI_PRICE_TERMS = let
         "gpt-6-astra" => current("ultrafast" => 6.0), "gpt-6.1-sol" => current("ultrafast" => 6.0),
         "gpt-6.1-terra" => current(),   # listed 2026-10-29
         "gpt-6-sol" => current(), "gpt-6-luna" => current(),
+        # GPT-6 Rosalind lists cache-write and long-context rates at Standard alone (2026-11-02).
+        "gpt-6-rosalind" => _OpenAIPriceTerms(cache_writes=true, long_context=true),
         "gpt-5.6-sol" => current(), "gpt-5.6-terra" => current(), "gpt-5.6-luna" => current(),
         # Earlier models bill no cache-write premium; Fast has no long-context price on the page.
         "gpt-5.5" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5, "fast" => 2.5),

@@ -319,7 +319,7 @@ through that accessor, never directly.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
 - **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
 - `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": a `Chat` with `mode="explicit"` throws `ArgumentError` when it is built, on every endpoint. `moderation` takes a [`ModerationConfig`](@ref).
-- `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
+- `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`) and for any value but `"24h"` on `gpt-5.5` and `gpt-5.5-pro` (the API answered `"in_memory"` with HTTP 400, "This model is compatible only with 24h extended prompt caching"); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
 
 ### Message
 
@@ -597,7 +597,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (the reference: "24h" only on gpt-5.5/gpt-5.5-pro, sent unchecked; refused on the gpt-6*/gpt-5.6* rule models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, another value refused; refused on the gpt-6*/gpt-5.6* rule models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
@@ -666,8 +666,12 @@ input_image(url=nothing; detail=nothing, file_id=nothing)             # → Dict
 input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)  # → Dict(:type=>"input_file", ...); pass one of url / id / file_data (base64)
 input_file(document::DocumentAttachment)                              # file_data = the PDF's data URL, filename = document.filename
 
-# Input item: change reasoning effort mid-conversation (GPT-6) without rewriting the cached prefix
-configuration_update(; effort)   # → Dict(:type=>"configuration_update", :reasoning=>Dict(:effort=>...)); effort: "none","minimal","low","medium","high","xhigh","max"
+# Input item: change reasoning effort and/or text format mid-conversation (GPT-6) without rewriting the cached prefix
+configuration_update(; effort=nothing, format=nothing)   # → Dict(:type=>"configuration_update", :reasoning=>Dict(:effort=>...), :text=>Dict(:format=>...));
+                                                         #   effort: "none","minimal","low","medium","high","xhigh","max"; format: text_format() or json_schema_format(…)
+                                                         #   (json_object, another type or a verbosity throws ArgumentError); neither given throws ArgumentError;
+                                                         #   OpenAI enables format updates per organization (otherwise HTTP 400 "Updates to
+                                                         #   'text.format' are not enabled for this organization.")
 ```
 
 `input_image` and `input_file` throw `ArgumentError` when none of their
@@ -831,10 +835,11 @@ endpoints send the object unchanged, the server's answer being the check. A `Cha
 
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
-snapshots), whose cache lifetime `prompt_cache_options` sets; on other models UniLM sends it
-unchecked, beside `prompt_cache_options` when that is set too (the Responses reference lists the
-two fields independently, and documents `prompt_cache_options` for gpt-5.6 and later), leaving
-both to the server — the reference takes only `"24h"` on `gpt-5.5` and `gpt-5.5-pro`. Explicit mode requires cache breakpoints in input
+snapshots), whose cache lifetime `prompt_cache_options` sets, and for any value but `"24h"` on `gpt-5.5`
+and `gpt-5.5-pro`, which the reference restricts to it (the API answered `"in_memory"` on `gpt-5.5` with
+HTTP 400); on other models UniLM sends it unchecked, beside `prompt_cache_options` when that is set too
+(the Responses reference lists the two fields independently, and documents `prompt_cache_options` for
+gpt-5.6 and later), leaving both to the server. Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
 Responses input part; a `Chat` sets none, so explicit mode would turn its caching off, and the
 `Chat` constructor refuses it. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
@@ -897,6 +902,22 @@ output_text(result::ResponseCallError)                      # throws LLMResultEr
 
 function_calls(result::ResponseSuccess)::Vector{Dict{String,Any}}   # empty on a failure result
 # Each dict has: "id", "call_id", "name", "arguments" (JSON string), "status"
+
+tool_usage(result::ResponseSuccess)::Union{ToolUsage,Nothing}   # OpenAI's hosted tools' usage (the reply's tool_usage),
+                                                                #   unstreamed or from response.completed; nothing when the
+                                                                #   reply has none, and on a failure result
+```
+
+```julia
+@kwdef struct ToolUsage                     # what the hosted tools used, apart from the model's own usage
+    web_search_requests::Int = 0            # billable web searches (web_search.num_requests)
+    image_input_tokens::Int = 0             # image generation tool: input tokens, text and image
+    image_input_image_tokens::Int = 0       #   of them image tokens
+    image_cached_tokens::Int = 0            #   input tokens read from the cache (0 when the reply omits the count)
+    image_cached_image_tokens::Int = 0      #   of them image tokens
+    image_output_tokens::Int = 0            #   output tokens
+    image_output_image_tokens::Int = 0      #   of them image tokens (all of them when the reply gives no split)
+end
 ```
 
 ### Response Management Functions
@@ -1053,6 +1074,10 @@ end
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
     mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
+    markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
+                                                            #   image to guide the edit; not with mask (ArgumentError); OpenAI
+                                                            #   states "Supports GPT Image 2.5" and judges the model (on
+                                                            #   2026-11-02 it answered HTTP 400 "Unknown parameter: 'markup'.")
     model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI
@@ -1320,10 +1345,17 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   tag of `cloud` or ending in `-cloud`, is priced by the requested name).
 
 The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
-`gpt-5-search-api` October 25, 2026, `gpt-5.2-pro` October 26, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
+`gpt-5-search-api` October 25, 2026, `gpt-5.2-pro` October 26, 2026, `gpt-6-rosalind` and `gpt-6-astra-law`, a promotional
+price through at least December 31, 2026, November 2, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
 September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
-UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) and
-hosted-tool fees are not included. A billed tier the provider's pricing page lists no price for
+UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) are not
+included. Of hosted-tool fees, OpenAI's are billed from the `tool_usage` a Responses result reports
+(`tool_usage`): each billable web search at \$10 per 1,000 calls (\$25 for `web_search_preview` on
+`gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates of its image
+model (the request's `image_generation_tool` model, else `gpt-image-2`; a model UniLM has no image rates
+for leaves the estimate at `0.0`, with one warning per model), neither scaled by the billed tier; file
+search, containers and Gemini's grounding (its free daily quota makes a per-call price wrong) are not
+included. A billed tier the provider's pricing page lists no price for
 (OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens) is estimated at
 the standard rates with one warning per model and tier. OpenAI estimates bill cache writes at 1.25× input
 (`"30m"`) or 2.5× (`"12h"`, `cache_write_extended_tokens`) on GPT-6 and GPT-5.6, a prompt
@@ -3013,7 +3045,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (402), grouped by area:
+Every exported symbol (404), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3024,7 +3056,7 @@ Every exported symbol (402), grouped by area:
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
 - *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`
 - *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
-- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`
+- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`
 
 **Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
 

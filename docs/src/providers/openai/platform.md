@@ -296,7 +296,8 @@ container it makes has OpenAI's default, `"1g"`; [`retrieve_container`](@ref),
 whose `response` is the file's record, its `path` where the code sees it; a path that is no file is
 refused before anything is sent ([Limits and refusals](@ref openai_platform_limits)). It does not
 wrap the endpoints that list, read or delete the files in a container. A container bills "1 GB
-\$0.03, 4 GB \$0.12, 16 GB \$0.48, 64 GB \$1.92 per 20-minute session per container"
+\$0.03, 4 GB \$0.12, 16 GB \$0.48, 64 GB \$1.92 per 20-minute session per container", and
+"Eligible container sessions will be billed by the minute, with a 5-minute minimum per session"
 ([pricing](https://developers.openai.com/api/docs/pricing#built-in-tools)), which
 [`estimated_cost`](@ref) leaves out ([Cost and usage](@ref openai_cost)).
 

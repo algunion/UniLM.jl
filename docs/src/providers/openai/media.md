@@ -8,7 +8,7 @@ using UniLM
 
 [`generate_image`](@ref) sends an [`ImageGeneration`](@ref) to OpenAI's Images API,
 `POST /v1/images/generations`, and [`edit_image`](@ref) an [`ImageEdit`](@ref) to
-`POST /v1/images/edits`, as `multipart/form-data` with each image and the mask as a file. Both
+`POST /v1/images/edits`, as `multipart/form-data` with each image, the mask and a markup as a file. Both
 take `gpt-image-2.5-sunburst` unless the request names another `model`; the request's `model`
 field stays `""` until the request is serialized, so `JSON.json(ig)` shows the model that goes.
 OpenAI's options are sent as given, for OpenAI to judge:
@@ -77,9 +77,17 @@ eu = token_usage(edited)
 transparent area marks what to change: "The image to edit and mask must be of the same format and
 size (less than 50MB in size)", and "The mask image must also contain an alpha channel"
 ([image generation](https://developers.openai.com/api/docs/guides/image-generation#mask-requirements)).
+`markup` is a PNG, its path or its bytes, sent as the form part `markup`: "A transparent PNG overlaid on
+the first image to guide the edit. Must match that image's dimensions after orientation and contain
+transparent pixels", which "Cannot be combined with mask", so a `markup` beside a `mask` is refused before
+anything is sent, as are bytes that are no PNG. The edit reference states it "Supports GPT Image 2.5":
+UniLM sends it on any model, for OpenAI to judge
+([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)). On 2 November
+2026 the API did not take it yet: it answered a markup with HTTP 400, "Unknown parameter: 'markup'.", on
+`gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, in a multipart and in a JSON edit request alike.
 `input_fidelity` is sent as given; OpenAI's reference documents it for `gpt-image-1.5` and
-`gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". An image or mask path that is no
-file is refused before anything is sent, as `upload_file` and `transcribe` refuse one
+`gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". An image, mask or markup path that
+is no file is refused before anything is sent, as `upload_file` and `transcribe` refuse one
 ([Limits and refusals](@ref openai_media_limits)).
 
 [`token_usage`](@ref) reads the reply's usage: the prompt's text tokens, and an edit's input image
@@ -333,7 +341,8 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | `aspect_ratio` or `resolution` on an image request | `the OpenAI Images API has no`: OpenAI sizes an image with one `WIDTHxHEIGHT`; those fields are Gemini's | `size="WIDTHxHEIGHT"` |
 | a `safety_identifier` of no character or of more than 128 on an image request | `the OpenAI Images API takes a safety_identifier of 1 to 128 characters`: OpenAI reads an empty one as none, and its guide keeps it to 128 | a hash of your user's id: a SHA-256 hex digest is 64 characters |
 | `edit_image` with an empty vector of images | `an image edit needs at least one input image` | a path, or a vector of paths |
-| `edit_image` with an image or a `mask` path that is no file | `image not found:`, `mask not found:` | the path of the file |
+| `edit_image` with an image, a `mask` or a `markup` path that is no file | `image not found:`, `mask not found:`, `markup not found:` | the path of the file |
+| `edit_image` with both a `mask` and a `markup`, or `markup` bytes that are no PNG | `takes a mask or a markup, not both`, `these bytes are no PNG`: the markup "Cannot be combined with mask" and is "A transparent PNG" | one of the two; a PNG |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |
 | a `voice` that is not one of the ten built-in voices, a custom voice among them | `OpenAI Realtime voices are`: UniLM sends the built-in voices only | one of them |
 | a `speak` `response_format` other than `"wav"` and `"pcm"` | `response_format must be "wav"`: the session's audio is 24 kHz PCM, which UniLM returns as a WAV file or as samples | `"wav"` or `"pcm"` |
@@ -346,4 +355,4 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | `transcribe` on an endpoint that declares no capabilities, or declares them without `:audio` or `:transcription`: of the endpoints UniLM ships, every one but `OPENAIServiceEndpoint`, `OllamaEndpoint` and `GenericOpenAIEndpoint` (`MistralEndpoint()` included), among them `AZUREServiceEndpoint`, `GEMINIOpenAIServiceEndpoint` and `DeepSeekEndpoint` | `Audio API is not supported by`: the endpoint has no transcription route | `OPENAIServiceEndpoint` |
 | `translate` with a blank `language` | `translate needs a target language` | a language code, such as `"fr"` |
 | `translate` with a file that is not 16-bit PCM WAV, or that holds no samples | `cannot translate`, `holds no audio samples`: a translation session takes 24 kHz PCM16, which UniLM makes from a 16-bit PCM WAV file only | a 16-bit PCM WAV file, as `ffmpeg -i in.m4a -c:a pcm_s16le out.wav` makes |
-| `realtime_connect`, `translate` or `speak` on another endpoint that declares its capabilities (`speak` but on `GEMINIServiceEndpoint`, which speaks through Gemini TTS), and `mint_realtime_secret` on one that declares them without `:realtime` | `is not supported by`, `supports only OPENAIServiceEndpoint`, `has no speech route`: the Realtime WebSocket is served by `api.openai.com`, and another endpoint's key must not be sent there | `OPENAIServiceEndpoint` |
+| `realtime_connect`, `translate` or `speak` on another endpoint that declares its capabilities (`speak` but on `GEMINIServiceEndpoint`, which speaks through Gemini TTS, and `speak` and `translate` but on `OllamaEndpoint`, which serves them through its audio routes), and `mint_realtime_secret` on one that declares them without `:realtime` | `is not supported by`, `supports only OPENAIServiceEndpoint`, `has no speech route`: the Realtime WebSocket is served by `api.openai.com`, and another endpoint's key must not be sent there | `OPENAIServiceEndpoint` |

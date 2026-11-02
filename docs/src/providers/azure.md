@@ -114,7 +114,7 @@ A system message pushed after the conversation started is sent in place. Azure's
 system messages; "You should not use both a developer message and a system message in the same API
 request" ([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)),
 and UniLM sends no developer message. What `push!` refuses is the same on every provider
-([Chat Completions](@ref chat_guide)).
+([Conversations with Chat](@ref chat_guide)).
 
 A reply that holds audio (`audio_output`) goes back to Azure by the audio's id, `"audio": {"id": …}`
 beside the turn's transcript, as Azure's quickstart adds "a history message referencing the previous
@@ -255,7 +255,14 @@ them:
   long, common prompt prefixes".
 - `prompt_cache_options`: its `ttl` "`30m` value is the default and the only supported value", and
   "Models before the GPT-5.6 family don't support `prompt_cache_options` or `prompt_cache_breakpoint`.
-  Requests that include these parameters return a `400` error".
+  Requests that include these parameters return a `400` error". On GPT-5.6 and later, Azure documents
+  explicit cache breakpoints: "Standard pay-as-you-go deployments support prompt cache breakpoints.
+  Provisioned Throughput managed (PTU-M) deployments don't support prompt cache breakpoints", and with
+  `mode` `"explicit"`, "Azure OpenAI uses only explicit breakpoints for cache reads and writes. If the
+  request contains no explicit breakpoints, it doesn't use prompt caching or incur cache-write charges"
+  (the guide of 11 August 2026). A `Chat` cannot mark a breakpoint, so a `Chat` with `mode="explicit"`
+  throws `ArgumentError` when it is built, on Azure as on every endpoint. These are Azure's statements:
+  without an Azure key, UniLM has not run them against the service.
 - `prompt_cache_retention`: `in_memory` or `24h` on the models before GPT-5.6, where it "selects a
   maximum-retention policy".
 

@@ -146,9 +146,12 @@ with status `"incomplete"`, possibly before any visible text.
 
 `Reasoning` also takes OpenAI's persisted reasoning, `context` (`"auto"`, `"current_turn"` or
 `"all_turns"`), and its execution mode, `mode` (`"standard"` or `"pro"`), and a `Respond` input may hold
-a [`configuration_update`](@ref) item, which changes the effort of later responses without rewriting
-the request-level effort, so the cached prompt prefix stays reusable; OpenAI supports it on "the GPT-6
-model family in standard, single-agent mode"
+a [`configuration_update`](@ref) item, which changes the effort of later responses, their text format
+([`text_format`](@ref)`()` or [`json_schema_format`](@ref)), or both, without rewriting the request-level
+settings, so the cached prompt prefix stays reusable; OpenAI supports it on "the GPT-6
+model family in standard, single-agent mode", and enables format updates per organization: for one it
+has not, it answered HTTP 400, "Updates to 'text.format' are not enabled for this organization."
+(2 November 2026), and took an effort update
 ([change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation)).
 
 ## [Prompt caching](@id openai_caching)
@@ -255,17 +258,32 @@ warning ([Audio replies](@ref chat_audio_output)):
 Main.ProviderFacts.openai_audio_rates()
 ```
 
+The estimate of a `Respond` result adds what its hosted tools bill, from the `tool_usage` the reply
+reports ([`tool_usage`](@ref)): each billable web search at "\$10.00 / 1k calls", or "\$25.00 / 1k
+calls" for the legacy `web_search_preview` tool on a non-reasoning model (of the models below,
+`gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates OpenAI's
+pricing page lists for its image model: the one the request's [`image_generation_tool`](@ref) names,
+else the tool's default, `gpt-image-2`. Neither is scaled by the billed tier. UniLM has image rates
+for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini`
+and `chatgpt-image-latest`; the tokens of another image model leave the estimate at `0.0`, with one
+warning per model.
+
 [`cumulative_cost`](@ref) is a lower bound of the bill: it adds nothing for an attempt UniLM retried, a
 failure, or a stream stopped before its usage arrived ([Streaming](@ref openai_streaming)), and no
-estimate includes the fees of hosted tools — web search, file search and containers bill per call or
-per session — or the 10% uplift OpenAI charges on its regional-processing endpoints for the models
-released since 5 March 2026 ([pricing](https://developers.openai.com/api/docs/pricing)). A model with no
+estimate includes the fees of the hosted tools a reply does not report — file search bills per call, and
+containers by the minute, with a 5-minute minimum per session — or the 10% uplift OpenAI charges on its
+regional-processing endpoints for the models released since 5 March 2026, and from 1 November 2026 on
+its FedRAMP endpoints too ("Starting Nov 1, 2026, FedRAMP endpoints are also charged a 10% uplift",
+[pricing](https://developers.openai.com/api/docs/pricing)). A model with no
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 
-The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October); prices
-change, so check OpenAI's [pricing page](https://developers.openai.com/api/docs/pricing) before relying
-on an estimate.
+The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October,
+`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November); prices change, so check OpenAI's
+[pricing page](https://developers.openai.com/api/docs/pricing) before relying on an estimate.
+`gpt-6-astra-law`'s is a promotional price, "available at least through December 31, 2026", with no
+later price published yet. OpenAI lists `gpt-6-rosalind` at Standard rates alone, and "Access is limited
+to approved internal research through the trusted-access program".
 
 ```@eval
 Main.ProviderFacts.price_table(:openai)
@@ -297,6 +315,7 @@ no row names meets only the other rules.
 | `prompt_cache_options` with `mode="explicit"` on a `Chat`, when it is built | `prompt_cache_options mode="explicit" caches only the prefixes a request marks with cache breakpoints, and a Chat cannot mark one`: without one the request "does not use prompt caching" | `mode="implicit"` or unset, or a `Respond` whose `input_text(text; cache_breakpoint=true)` marks one ([Prompt caching](@ref openai_caching)) |
 | a `prompt_cache_options` `ttl` of `"5m"` or `"1h"`, or `"12h"` on a `Chat` | `OpenAI Chat Completions accepts prompt_cache_options ttl`, `OpenAI Responses accepts prompt_cache_options ttl`: the API answers HTTP 400 for it | `"30m"`, or `"12h"` on a `Respond` |
 | `prompt_cache_retention` on a `Chat` or a `Respond` whose model's `prompt_cache_retention` cell is "—" | `takes its cache lifetime from prompt_cache_options`: OpenAI deprecates the field, "Use `prompt_cache_options.ttl` instead" | `prompt_cache_options=PromptCacheOptions(ttl="30m")`, or `"12h"` on a `Respond` |
+| `prompt_cache_retention` other than `"24h"` on a `Chat` or a `Respond` for `gpt-5.5` or `gpt-5.5-pro` | `takes prompt_cache_retention "24h" only`: "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported", and the API answered `"in_memory"` on `gpt-5.5` with HTTP 400 on both APIs, "This model is compatible only with 24h extended prompt caching" (2 November 2026) | `"24h"`, or no `prompt_cache_retention` |
 | `seed` on a `Respond` | `Responses API takes no seed`: the Responses API has no seed, while Chat Completions has one | a `Chat`, or no seed |
 | `conversation` and `previous_response_id` together on a `Respond` | `conversation and previous_response_id cannot be combined`: `previous_response_id` "Cannot be used in conjunction with `conversation`" | one of them |
 | an `ImageAttachment`, `AudioAttachment` or `DocumentAttachment` in a `Respond`'s input | `cannot be written as JSON`: the Responses API takes an image as an `input_image` part and a document as an `input_file` part, and UniLM sends it no audio | `input_image` with a data URL, `input_file(document)`; audio on a `Chat` ([Input](@ref openai_responses_input)) |
@@ -305,6 +324,7 @@ no row names meets only the other rules.
 | `input_image` with neither `url` nor `file_id`; `input_file` with none of `url`, `id` and `file_data` | `must be provided`: a part needs its content | one of them |
 | a `FunctionTool` `allowed_callers` other than `"direct"` and `"programmatic"` | `FunctionTool allowed_callers must be`: UniLM sends only those two invocation contexts | one of them |
 | a `Reasoning` `context` or `mode`, or a `configuration_update` effort, outside OpenAI's values | `reasoning context must be`, `reasoning mode must be`, `configuration_update effort must be one of`: UniLM sends only the values the message lists | one of those values |
+| a `configuration_update` with neither `effort` nor `format`, or a `format` that is not plain text or a JSON schema (`json_object_format()`), or that sets a `verbosity` | `configuration_update needs an effort, a format or both`, `configuration_update format must be plain text`, `configuration_update takes a text format without a verbosity`: the item's text format is "oneOf" text and a JSON schema, and its text holds the format alone | an `effort`, `text_format()` or `json_schema_format(…)`; a verbosity on the request's `text` |
 | an `image_generation_tool` `action`, `moderation`, `partial_images` or `input_fidelity` outside its values | `image_generation action must be`, `image_generation moderation must be`, `image_generation partial_images must be`, `image_generation input_fidelity must be`: UniLM sends only the values the message lists | one of those values |
 | a `ModerationConfig` `input_mode` or `output_mode` other than `"score"` and `"block"` | `moderation input_mode must be`, `moderation output_mode must be`: a moderation policy's mode is one of the two | `"score"` or `"block"` |
 | an image or a sound clip in an `Embeddings` input | `the OpenAI Embeddings API takes text only`: the Embeddings API embeds text | text ([Embeddings](@ref openai_embeddings)) |

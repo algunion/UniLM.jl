@@ -137,24 +137,6 @@ Responses API documents no file inputs and refuses an `input_file` part before a
 """
 input_file(a::DocumentAttachment) = input_file(; file_data=_data_url(a), filename=a.filename)
 
-"""
-    configuration_update(; effort::String)
-
-Build a `configuration_update` input item,
-`{"type": "configuration_update", "reasoning": {"effort": effort}}`, that changes the
-reasoning effort of this and later responses without rewriting the request-level
-`reasoning.effort`, so the cached prompt prefix stays reusable. Place it in `input`
-before the next user message. Supported by the GPT-6 model family in standard,
-single-agent requests; the API rejects two adjacent updates. `effort` must be one of
-`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`.
-See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
-"""
-function configuration_update(; effort::String)
-    effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
-        "configuration_update effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
-    Dict{Symbol,Any}(:type => "configuration_update", :reasoning => Dict{Symbol,Any}(:effort => effort))
-end
-
 
 # ─── Tool Types ───────────────────────────────────────────────────────────────
 
@@ -735,6 +717,52 @@ Create a JSON object output format (unstructured).
 """
 json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
+"""
+    configuration_update(; effort=nothing, format=nothing)
+
+Build a `configuration_update` input item,
+`{"type": "configuration_update", "reasoning": {"effort": effort}, "text": {"format": format}}`
+with the part not given left out, that changes the reasoning effort, the text output format, or
+both, of this and later responses without rewriting the request-level `reasoning.effort` or
+`text`, so the cached prompt prefix stays reusable: "Each setting stays in effect until a later
+update replaces it." Place it in `input` before the next user message. Supported by the GPT-6
+model family in standard, single-agent requests; the API rejects two adjacent updates.
+
+- `effort` must be one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`.
+- `format` is a [`TextConfig`](@ref) that [`text_format`](@ref)`()` (plain text) or
+  [`json_schema_format`](@ref) (a JSON Schema) builds; the item carries its format, which OpenAI
+  takes as "a JSON schema for structured output or text to return to plain text". A
+  [`json_object_format`](@ref)`()`, another format type, or a `verbosity` throws `ArgumentError`:
+  the item's text holds a text or JSON-schema format alone. OpenAI enables format updates per
+  organization: for one it has not, the API answered HTTP 400, "Updates to 'text.format' are not
+  enabled for this organization." (param `input[0].text.format`, 2026-11-02), while it took an
+  effort update.
+
+Neither given throws `ArgumentError`.
+See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
+"""
+function configuration_update(; effort::Union{String,Nothing}=nothing, format::Union{TextConfig,Nothing}=nothing)
+    isnothing(effort) && isnothing(format) && throw(ArgumentError(
+        "configuration_update needs an effort, a format or both: it changes the reasoning effort or the text " *
+        "format of later responses"))
+    item = Dict{Symbol,Any}(:type => "configuration_update")
+    if !isnothing(effort)
+        effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+            "configuration_update effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
+        item[:reasoning] = Dict{Symbol,Any}(:effort => effort)
+    end
+    if !isnothing(format)
+        type = format.format.type
+        type in ("text", "json_schema") || throw(ArgumentError("configuration_update format must be plain text " *
+            "(text_format()) or a JSON schema (json_schema_format(name, description, schema)), the formats OpenAI's " *
+            "configuration update takes (got $(repr(type)))"))
+        isnothing(format.verbosity) || throw(ArgumentError("configuration_update takes a text format without a " *
+            "verbosity, which its text does not hold: set verbosity on the request's text"))
+        item[:text] = Dict{Symbol,Any}(:format => format.format)
+    end
+    item
+end
+
 
 """
     Reasoning(; effort=nothing, summary=nothing, generate_summary=nothing, context=nothing, mode=nothing)
@@ -858,8 +886,10 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
-  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported". UniLM
-  sends the field unchecked on those two and on any model without a rule row. OpenAI
+  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported": on those two
+  (and their dated snapshots) the native endpoint throws `ArgumentError` for `"in_memory"`,
+  which the API answered on `gpt-5.5` with HTTP 400 (2026-11-02), and UniLM sends the field
+  unchecked on any model without a rule. OpenAI
   deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`,
   `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots),
   whose cache lifetime
@@ -1256,6 +1286,72 @@ incomplete_details(::ResponseCallError) = nothing
 usage_details(r::ResponseSuccess) = usage_details(r.response)
 usage_details(::ResponseFailure) = nothing
 usage_details(::ResponseCallError) = nothing
+
+
+# ─── Hosted-tool usage ───────────────────────────────────────────────────────
+
+"""
+    ToolUsage(; web_search_requests=0, image_input_tokens=0, image_input_image_tokens=0,
+              image_cached_tokens=0, image_cached_image_tokens=0, image_output_tokens=0,
+              image_output_image_tokens=0)
+
+What OpenAI's hosted tools used for a Responses reply, "separate from base model `usage`": the
+reply's `tool_usage`, as [`tool_usage`](@ref) reads it.
+
+- `web_search_requests`: the web searches OpenAI bills (`web_search.num_requests`); "Discounted
+  searches and actions such as opening a page are excluded".
+- `image_input_tokens`: the image generation tool's input tokens, text and images
+  (`image_gen.input_tokens`), `image_input_image_tokens` of them image tokens.
+- `image_cached_tokens`: of the input tokens, those read from the cache, `image_cached_image_tokens`
+  of them image tokens; `0` when the reply omits the count, which "means cache usage is unknown".
+- `image_output_tokens`: the tool's output tokens, `image_output_image_tokens` of them image
+  tokens — all of them when the reply does not split them.
+
+OpenAI "sums available token counts across image generation calls", and "Calls with missing or
+incomplete usage records may be skipped". [`estimated_cost`](@ref) bills this usage on
+`OPENAIServiceEndpoint` ([Cost and usage](@ref openai_cost)).
+"""
+@kwdef struct ToolUsage
+    web_search_requests::Int = 0
+    image_input_tokens::Int = 0
+    image_input_image_tokens::Int = 0
+    image_cached_tokens::Int = 0
+    image_cached_image_tokens::Int = 0
+    image_output_tokens::Int = 0
+    image_output_image_tokens::Int = 0
+end
+
+"""
+    tool_usage(r) -> Union{ToolUsage,Nothing}
+
+The usage OpenAI's hosted tools report for a Responses reply — the web searches billed and the
+image generation tool's tokens — as a [`ToolUsage`](@ref), read from the reply's `tool_usage`,
+unstreamed or in a stream's `response.completed`. `nothing` when the reply has none ("The field
+can be omitted when tool usage is unavailable"), as on another provider's reply, and for a
+[`ResponseFailure`](@ref) or [`ResponseCallError`](@ref).
+"""
+tool_usage(r::ResponseObject)::Union{ToolUsage,Nothing} = _tool_usage(get(r.raw, "tool_usage", nothing))
+tool_usage(r::ResponseSuccess) = tool_usage(r.response)
+tool_usage(::ResponseFailure)::Nothing = nothing
+tool_usage(::ResponseCallError)::Nothing = nothing
+
+# A reply's `tool_usage` object. A count that is missing, null or not an integer reads as 0, as in a
+# reply's token usage (`_token_usage_from`).
+_tool_usage(_)::Nothing = nothing
+function _tool_usage(u::AbstractDict)::ToolUsage
+    int(x) = x isa Integer ? Int(x) : 0
+    at(d, key) = d isa AbstractDict ? get(d, key, nothing) : nothing
+    image = at(u, "image_gen")
+    output = int(at(image, "output_tokens"))
+    parts = at(image, "output_tokens_details")
+    ToolUsage(web_search_requests=int(at(at(u, "web_search"), "num_requests")),
+              image_input_tokens=int(at(image, "input_tokens")),
+              image_input_image_tokens=int(at(at(image, "input_tokens_details"), "image_tokens")),
+              image_cached_tokens=int(at(image, "cached_tokens")),
+              image_cached_image_tokens=int(at(at(image, "cached_tokens_details"), "cached_image_tokens")),
+              image_output_tokens=output,
+              image_output_image_tokens=parts isa AbstractDict ? int(get(parts, "image_tokens", nothing)) : output)
+end
 
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────

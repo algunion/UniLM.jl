@@ -1078,3 +1078,88 @@ end
         @test cost === pinned
     end
 end
+
+@testset "OpenAI cost: hosted tools bill each web search and the image tool's tokens at its image model's rates" begin
+    # OpenAI's pricing page (2026-11-02), Tools: "Web search (all models) | $10.00 / 1k calls"; "Web search preview
+    # (reasoning models, including `gpt-5`, `o-series`) | $10.00 / 1k calls"; "Web search preview (non-reasoning
+    # models) | $25.00 / 1k calls". Image generation models, Standard, per 1M tokens: gpt-image-2 (the tool's
+    # default model) image input $8.00, output $30.00, cached $2.00, text input $5.00, cached $1.25;
+    # gpt-image-1.5 image output $32.00 and text output $10.00.
+    function result(model, used; tools=Any[Dict("type" => "web_search")], service=OPENAIServiceEndpoint)
+        raw = Dict{String,Any}("tools" => tools)
+        isnothing(used) || (raw["tool_usage"] = used)
+        ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model=model, output=Any[],
+            usage=Dict{String,Any}("input_tokens" => 1_000, "output_tokens" => 100, "total_tokens" => 1_100), raw=raw),
+            service=service)
+    end
+    no_image = Dict("input_tokens" => 0, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 0),
+                    "output_tokens" => 0, "total_tokens" => 0)
+    searches(n) = Dict("web_search" => Dict("num_requests" => n), "image_gen" => no_image)
+    without = estimated_cost(result("gpt-6-luna", nothing))
+    @test without ≈ (1_000 * 0.10 + 100 * 0.50) / 1e6
+    @test estimated_cost(result("gpt-6-luna", searches(0))) == without
+    @test estimated_cost(result("gpt-6-luna", searches(2))) == without + 2 * 10.0 / 1000
+    # The legacy preview tool bills $25 per 1,000 calls on a non-reasoning model and $10 on the others;
+    # the web search tool $10 on every model.
+    preview = Any[Dict("type" => "web_search_preview")]
+    for (model, tools, per_call) in (("gpt-4.1", preview, 25.0), ("gpt-4.1-mini-2025-04-14", preview, 25.0),
+                                     ("gpt-6-luna", preview, 10.0), ("o3", preview, 10.0),
+                                     ("gpt-4.1", Any[Dict("type" => "web_search")], 10.0))
+        @test estimated_cost(result(model, searches(4); tools)) == estimated_cost(result(model, nothing; tools)) + 4 * per_call / 1000
+    end
+    # The image tool's tokens: input split into text and image, cache reads of each at its cached rate,
+    # output image tokens and, where the model writes text, text output.
+    image = Dict("web_search" => Dict("num_requests" => 0),
+                 "image_gen" => Dict("input_tokens" => 1_000, "input_tokens_details" => Dict("image_tokens" => 600, "text_tokens" => 400),
+                                     "cached_tokens" => 300, "cached_tokens_details" => Dict("cached_image_tokens" => 200, "cached_text_tokens" => 100),
+                                     "output_tokens" => 5_000, "output_tokens_details" => Dict("image_tokens" => 4_800, "text_tokens" => 200),
+                                     "total_tokens" => 6_000))
+    gen(model) = Any[Dict("type" => "image_generation", "model" => model)]
+    tokens(image_out, text_out) = (300 * 5.0 + 100 * 1.25 + 400 * 8.0 + 200 * 2.0 + 4_800 * image_out + 200 * text_out) / 1e6
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=Any[Dict("type" => "image_generation")])),
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2, the default
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-2.5-sunburst-2026-09-08"))),
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # a dated snapshot
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-1.5"))),
+                   without + tokens(32.0, 10.0); rtol=1e-12)
+    # An image model without rates leaves the call unpriced, with a warning, as unpriced audio does.
+    @test (@test_logs (:warn, r"image generation tool") estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-9")))) == 0.0
+    # Only OpenAI's Responses API reports them: a result built by hand, priced by its model's name, adds no fee.
+    @test estimated_cost(result("gpt-6-luna", searches(2); service=nothing)) ==
+          estimated_cost(result("gpt-6-luna", nothing; service=nothing))
+end
+
+@testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin
+    # OpenAI's pricing page (2026-11-02), Life sciences, Standard only: "| gpt-6-rosalind | $15.00 | $75.00 | $1.50 |
+    # $18.75 | $37.50 | $30.00 | $112.50 | $3.00 | $37.50 | $75.00 |" (input, output, cached input, 30m and 12h writes,
+    # then the same over 272K input tokens); Legal model configurations: "| gpt-6-astra-law | $10.00 | $50.00 | $1.00 |",
+    # its promotional pricing "available at least through December 31, 2026", with no later price.
+    @test DEFAULT_PRICING["gpt-6-rosalind"] == UniLM._price(15.0, 1.50, 75.0)
+    @test DEFAULT_PRICING["gpt-6-astra-law"] == UniLM._price(10.0, 1.0, 50.0)
+    @test !haskey(UniLM._PRICE_CHANGES, "gpt-6-astra-law")
+    short = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, cache_write_tokens=4_000, cache_write_extended_tokens=1_000,
+                       completion_tokens=100, total_tokens=10_100)
+    long = TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000, completion_tokens=1_000,
+                      total_tokens=301_000)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", short)),
+                   (5_000 * 15.0 + 1_000 * 1.50 + 3_000 * 18.75 + 1_000 * 37.50 + 100 * 75.0) / 1e6; rtol=1e-12)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", long)),
+                   (150_000 * 30.0 + 100_000 * 3.00 + 50_000 * 37.50 + 1_000 * 112.50) / 1e6; rtol=1e-12)
+    # No Flex price for it on the page: estimated at the standard rates, with the warning.
+    @test (@test_logs (:warn, r"service tier") estimated_cost(_oa_result("gpt-6-rosalind", _oa_tiered(1_000, 100, "flex")))) ≈
+          (1_000 * 15.0 + 100 * 75.0) / 1e6
+    # The page gives astra-law three rates and no cache-write or long-context term.
+    @test isapprox(estimated_cost(_oa_result("gpt-6-astra-law", long)), (200_000 * 10.0 + 100_000 * 1.0 + 1_000 * 50.0) / 1e6;
+                   rtol=1e-12)
+    # Both are OpenAI's ids. The per-model rules resolve an exact id or a dated snapshot alone, so neither takes
+    # another model's row: gpt-6-astra-law is not checked as gpt-6-astra, which refuses effort "none" before sending.
+    for id in ("gpt-6-rosalind", "gpt-6-astra-law")
+        @test any(p -> startswith(id, p), UniLM._MODEL_ID_PREFIXES.openai)
+        @test UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id) === nothing
+        r = Respond(model=id, input="hi", reasoning=Reasoning(effort="none"), temperature=0.5)
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["reasoning"] == Dict("effort" => "none")
+    end
+    @test UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, "gpt-6-astra-law") === nothing
+    @test_throws ArgumentError UniLM.encode_agentic(OPENAIServiceEndpoint,
+        Respond(model="gpt-6-astra", input="hi", reasoning=Reasoning(effort="none")))
+end

@@ -3127,3 +3127,96 @@ end
         HTTP.forceclose(srv.server)
     end
 end
+
+@testset "configuration_update changes the text format: plain text or a JSON schema, not json_object" begin
+    # The item takes "reasoning, text, or both"; its text format is "oneOf" ResponseFormatText and
+    # TextResponseFormatJsonSchema (the Responses reference's ResponseConfigurationUpdateItemParam).
+    schema = Dict("type" => "object", "properties" => Dict("n" => Dict("type" => "integer")),
+                  "required" => ["n"], "additionalProperties" => false)
+    item = configuration_update(format=json_schema_format("count", "A count", schema; strict=true))
+    @test JSON.parse(JSON.json(item)) == Dict("type" => "configuration_update", "text" => Dict("format" =>
+        Dict("type" => "json_schema", "name" => "count", "description" => "A count", "schema" => schema, "strict" => true)))
+    @test JSON.parse(JSON.json(configuration_update(effort="low", format=text_format()))) == Dict(
+        "type" => "configuration_update", "reasoning" => Dict("effort" => "low"), "text" => Dict("format" => Dict("type" => "text")))
+    r = Respond(model="gpt-6-luna", input=[configuration_update(format=json_schema_format(Dict("name" => "count",
+        "schema" => schema))), InputMessage(role="user", content="How many?")])
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["input"][1] == Dict("type" => "configuration_update",
+        "text" => Dict("format" => Dict("type" => "json_schema", "name" => "count", "schema" => schema)))
+    # Neither setting is no update; json_object is no format the item takes; nor is a verbosity, which
+    # the item's text object does not hold.
+    err(f) = try f(); nothing catch e; e end
+    for (f, words) in ((() -> configuration_update(), ("effort", "format")),
+                       (() -> configuration_update(format=json_object_format()), ("json_object", "json_schema_format")),
+                       (() -> configuration_update(format=text_format(type="xml")), ("\"xml\"", "text_format")),
+                       (() -> configuration_update(effort="low", format=text_format(verbosity="low")), ("verbosity",)))
+        e = err(f)
+        @test e isa ArgumentError && occursin("configuration_update", e.msg) && all(w -> occursin(w, e.msg), words)
+    end
+end
+
+# An OpenAI-wire endpoint at the scripted local server (`_with_scripted`).
+struct _ToolUsageProbe <: UniLM.OpenAIWireEndpoint end
+UniLM._resolve_base_url(::Type{_ToolUsageProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{_ToolUsageProbe}) = ["Content-Type" => "application/json"]
+
+@testset "tool_usage reads the hosted tools' usage of a Responses reply, unstreamed and streamed" begin
+    # "Usage reported by hosted tools, separate from base model `usage`": `web_search.num_requests` "counts
+    # billable searches", `image_gen` sums the image generation calls' tokens (the Responses reference).
+    used = Dict("web_search" => Dict("num_requests" => 2),
+                "image_gen" => Dict("input_tokens" => 120, "input_tokens_details" => Dict("image_tokens" => 100, "text_tokens" => 20),
+                                    "output_tokens" => 4160, "total_tokens" => 4280, "cached_tokens" => 64,
+                                    "cached_tokens_details" => Dict("cached_image_tokens" => 60, "cached_text_tokens" => 4),
+                                    "output_tokens_details" => Dict("image_tokens" => 4000, "text_tokens" => 160)))
+    reply = Dict("id" => "resp_t", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                 "output" => [Dict("type" => "message", "role" => "assistant",
+                                   "content" => [Dict("type" => "output_text", "text" => "Done.")])],
+                 "usage" => Dict("input_tokens" => 10, "output_tokens" => 2, "total_tokens" => 12), "tool_usage" => used)
+    want = ToolUsage(web_search_requests=2, image_input_tokens=120, image_input_image_tokens=100, image_cached_tokens=64,
+                     image_cached_image_tokens=60, image_output_tokens=4160, image_output_image_tokens=4000)
+    cfg = RequestConfig(max_attempts=1)
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi"; kw...); config=cfg)
+    plain, _ = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(reply)))
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => reply)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && tool_usage(r) == want && tool_usage(r).web_search_requests == 2
+        @test tool_usage(r.response) == want
+    end
+    # The image counts are the reply's: no output split means every output token is an image token, and an
+    # omitted cache count, "cache usage is unknown", reads 0; a family with no usage has zero counts.
+    bare = Dict("web_search" => Dict("num_requests" => 0),
+                "image_gen" => Dict("input_tokens" => 50, "input_tokens_details" => Dict("image_tokens" => 40, "text_tokens" => 10),
+                                    "output_tokens" => 1000, "total_tokens" => 1050))
+    obj(raw) = UniLM.ResponseObject(id="r", status="completed", model="gpt-6-luna", output=Any[], raw=raw)
+    @test tool_usage(obj(Dict{String,Any}("tool_usage" => bare))) == ToolUsage(image_input_tokens=50,
+        image_input_image_tokens=40, image_output_tokens=1000, image_output_image_tokens=1000)
+    # "The field can be omitted when tool usage is unavailable": no usage, as a failure has none.
+    @test tool_usage(obj(Dict{String,Any}())) === nothing
+    @test tool_usage(ResponseFailure(response="{}", status=500)) === nothing
+    @test tool_usage(ResponseCallError(error="e")) === nothing
+end
+
+@testset "prompt_cache_retention on gpt-5.5 and gpt-5.5-pro: \"24h\" only, another value refused before sending" begin
+    # The references: "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported"; on 2026-11-02 the
+    # API answered "in_memory" on gpt-5.5 with HTTP 400 on Chat Completions and on Responses, "This model is
+    # compatible only with 24h extended prompt caching".
+    err(f) = try f(); nothing catch e; e end
+    chat(model, retention) = Chat(model=model, messages=[Message(Val(:user), "hi")], prompt_cache_retention=retention)
+    for model in ("gpt-5.5", "gpt-5.5-pro", "gpt-5.5-2026-04-23")
+        r, c = Respond(model=model, input="hi", prompt_cache_retention="in_memory"), chat(model, "in_memory")
+        for e in (err(() -> UniLM.encode_agentic(r.service, r)), err(() -> UniLM.encode_request(c.service, c)))
+            @test e isa ArgumentError && occursin(model, e.msg) && occursin("\"24h\"", e.msg) && occursin("in_memory", e.msg)
+        end
+        r, c = Respond(model=model, input="hi", prompt_cache_retention="24h"), chat(model, "24h")
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_retention"] == "24h"
+        @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "24h"
+    end
+    # A model OpenAI states no such rule for keeps either value, the server being the check; so does another
+    # endpoint, whose server may serve the name differently.
+    r = Respond(model="gpt-5.4", input="hi", prompt_cache_retention="in_memory")
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_retention"] == "in_memory"
+    c = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="gpt-5.5",
+             messages=[Message(Val(:user), "hi")], prompt_cache_retention="in_memory")
+    @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "in_memory"
+end

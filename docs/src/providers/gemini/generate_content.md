@@ -75,9 +75,12 @@ for the thought summaries — "You can enable thought summaries by setting `incl
 in your request configuration"
 ([thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries)) — which
 come back as parts marked `thought`, and [`reasoning_text`](@ref) reads them; a `Chat` without
-`reasoning_effort` asks for none, so `reasoning_text` gives `nothing`. They add nothing to the bill:
-"pricing is based on the full thought tokens the model needs to generate to create a summary,
-despite only the summary being output from the API" (the same page). A `Respond` asks for them with
+`reasoning_effort` asks for none, so `reasoning_text` gives `nothing`. They add nothing to the reply's
+bill: "pricing is based on the full thought tokens the model needs to generate to create a summary,
+despite only the summary being output from the API" (the same page). The next turn of the `Chat` sends
+them back with the reply's other parts ([Conversations](@ref gemini_conversations)), where they bill as
+input: an 895-character summary added 365 input tokens to the next request on `gemini-3.8-flash`, as
+many as the same text sent as a plain model part (observed 2 November 2026). A `Respond` asks for them with
 `Reasoning(summary="auto")`, and [`reasoning_summaries`](@ref) reads them
 ([Thinking on the Interactions API](@ref gemini_interactions_thinking)).
 

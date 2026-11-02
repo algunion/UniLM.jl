@@ -14,6 +14,14 @@
   scope; System One calls on TypeSafe and OpenAI's Decisions API take their 60 s per attempt and 150 s in all again,
   and a Gemini 4 call its 1,200 s; the keyword form of `set_default_config!` merges over the field defaults. Both
   return `nothing`.
+- **Every platform, lifecycle and audio verb takes `cancel=`**, as the inference verbs do: files, uploads, vector
+  stores, conversations, containers, batches, fine-tuning jobs, `moderate`, `speak`, `transcribe`, `translate`,
+  `mint_realtime_secret` and the Responses lifecycle operations (`get_response`, `delete_response`,
+  `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`). They observed only the ambient
+  `with_cancel` token; each now takes `cancel::Union{Nothing,CancelToken}=nothing` as its last keyword, an explicit
+  token winning over the ambient one. A cancelled call returns its family's call error with a `UniLMCancelled` cause:
+  it sends nothing when the token was already cancelled, and ends at once when cancelled mid-request.
+  `realtime_connect` keeps its exception: it takes no `cancel`, and the session it opens observes no token.
 
 ### Changed
 - **`with_system_one` checks its provider options when the scope opens, before `f` runs.** An option the backend's

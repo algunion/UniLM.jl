@@ -46,6 +46,10 @@
   the shipped one and gets the change).
 - **OpenAI Decisions counts a request's images together.** The 128-image cap includes the questions' instructions and
   a conversation's user messages, and is counted before any image is encoded.
+- **`configuration_update()` with neither `effort` nor `format` throws `ArgumentError`**, where the missing `effort`
+  keyword was an `UndefKeywordError`: `effort` is now optional, since an update may change the text format alone.
+- **`ImageEdit` has a `markup` field after `mask`**, so its positional constructor takes one more argument there;
+  keyword construction, the documented form, is unchanged.
 
 ### Added
 - **Scheduled price changes take effect on their dates, without a new release.** Google doubles Gemini 4 Argon's
@@ -73,6 +77,30 @@
   0.40.12 or later); `languages`, `keywords` and other formats are still refused, now in Ollama's words.
 - **`OllamaModelInfo.voices::Vector{String}`** (Ollama 0.40.11 or later), empty for a model that is not a speech
   model. It comes before `raw`, so positional construction gains an argument.
+- **`tool_usage(r)` reads what OpenAI's hosted tools used for a Responses reply**, apart from the model's usage: a
+  `ToolUsage` with the billable web searches (`web_search.num_requests`) and the image generation tool's input,
+  cached and output tokens, text and image, from an unstreamed reply and from a stream's `response.completed` alike;
+  `nothing` when the reply has none, and for a failure.
+- **`estimated_cost` bills OpenAI's hosted tools on a Responses result.** Each billable web search adds \$10 per 1,000
+  calls (\$25 for the legacy `web_search_preview` tool on `gpt-4.1` and `gpt-4.1-mini`, the non-reasoning models
+  priced), and the image generation tool's tokens bill at the Standard rates of its image model (the request's, else
+  `gpt-image-2`), neither scaled by the billed tier. Tokens of an image model UniLM has no rates for leave the estimate
+  at `0.0` with one warning per model, as unpriced audio does. File search, containers and Gemini's grounding are not
+  billed.
+- **`configuration_update(; effort, format)` changes the text format of later responses**: `format` is
+  `text_format()` or `json_schema_format(…)`, alone or with an `effort`; a `json_object` format, another format type
+  or a `verbosity` throws `ArgumentError`, as OpenAI's item takes text or a JSON schema only. OpenAI enables format
+  updates per organization: one without them gets HTTP 400 "Updates to 'text.format' are not enabled for this
+  organization" (observed 2026-11-02).
+- **An OpenAI image edit takes a `markup`**, a transparent PNG (a path or its bytes) overlaid on the first image to
+  guide the edit, sent as the form part `markup`. Beside a `mask`, as bytes that are no PNG, as a path that is no
+  file, or on Gemini, it throws `ArgumentError` before any request. OpenAI's reference documents it for GPT Image 2.5
+  since 2026-10-28; its API answered "Unknown parameter: 'markup'" on 2026-11-02, so the field reaches users as OpenAI
+  enables it.
+- **`gpt-6-rosalind` and `gpt-6-astra-law` are priced**: Rosalind at \$15.00 / \$1.50 / \$75.00 per 1M input,
+  cached-input and output tokens with GPT-6's cache-write and long-context terms, at Standard only; Astra for Law at
+  \$10.00 / \$1.00 / \$50.00, a promotional price at least through 2026-12-31. Neither takes another model's request
+  rules.
 
 ### Fixed
 - **`speak` and `translate` on OpenAI read the provider's error after a send fails at the transport.** When a write
@@ -89,6 +117,10 @@
 - **System One on Ollama sends a blank text state without images instead of refusing it.** The model's encoding
   decides: d3 models answer one; others answer HTTP 400 `state must not be empty`, which comes back as a
   `SystemOneFailure`.
+- **`prompt_cache_retention` other than `"24h"` on `gpt-5.5` and `gpt-5.5-pro` throws `ArgumentError` before the
+  request**, on Chat Completions and on Responses. OpenAI's references allow only `"24h"` there, and the API answered
+  `"in_memory"` on `gpt-5.5` with HTTP 400 ("This model is compatible only with 24h extended prompt caching"); UniLM
+  sent it unchecked.
 
 ## 0.29.0
 

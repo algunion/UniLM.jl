@@ -598,9 +598,14 @@ function _per_million(rate::Float64)::String
     string(whole, '.', rpad(rstrip(frac, '0'), 2, '0'))
 end
 
-# A price table row: the model id, then its input, cached-input and output rates.
-_price_row(id::String, r::UniLM.PriceRow)::Vector{Any} =
-    Any[_cell(_code(id)), (_cell(_per_million(rate)) for rate in (r.input, r.cached_input, r.output))...]
+# A price table row: the model id, then its input, cached-input and output rates, each followed by the
+# changes `UniLM._PRICE_CHANGES` schedules for it: "2.00; from 2026-12-01: 4.00".
+function _price_row(id::String, r::UniLM.PriceRow)::Vector{Any}
+    changes = get(UniLM._PRICE_CHANGES, id, ())
+    rate(f::Symbol)::String =
+        join([_per_million(getfield(r, f)); ["from $(c.from): $(_per_million(getfield(c.row, f)))" for c in changes]], "; ")
+    Any[_cell(_code(id)), (_cell(rate(f)) for f in (:input, :cached_input, :output))...]
+end
 
 """
     price_rows(table::Symbol) -> Vector{String}
@@ -618,7 +623,9 @@ end
     price_table(table::Symbol) -> Markdown.MD
 
 One row per model of `price_rows(table)`, sorted by id: its input, cached-input and output
-rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file was loaded.
+rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file was loaded,
+each followed by every change `UniLM._PRICE_CHANGES` schedules for it, which an estimate bills
+from its date: "2.00; from 2026-12-01: 4.00".
 """
 function price_table(table::Symbol)::Markdown.MD
     _table(["Model", "Input (USD per 1M tokens)", "Cached input (USD per 1M tokens)", "Output (USD per 1M tokens)"],

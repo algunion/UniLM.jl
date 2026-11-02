@@ -1267,7 +1267,7 @@ token_usage(result::LLMRequestResponse)::TokenUsage   # never Nothing — zero u
 estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)   # per-call cost estimate (Float64)
 cumulative_cost(chat::Chat)::Float64                             # running total for a Chat instance
 
-DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
+DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): the shipped rows
                   # where PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Float64}
 ```
 
@@ -1290,6 +1290,11 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
   `pop!`, `empty!`, `keys` and `length` work as on a `Dict`, iteration walks a
   snapshot, and `copy` / `merge` / `filter` return a plain `Dict`. `pricing=` accepts
   any `AbstractDict{String, PriceRow}`.
+- **`DEFAULT_PRICING` holds the rows shipped with this release; an estimate bills the price
+  in effect on the day it is computed.** A change a provider has scheduled for a shipped row
+  (Google's Gemini prices, below) applies from 00:00 UTC on its date in every estimate computed
+  on or after that day, to the row in `DEFAULT_PRICING` or a copy of it in `pricing=`; a row you
+  set yourself is never replaced, and a row equal to the shipped one counts as the shipped one.
 - **`DEFAULT_PRICING` values are USD *per token*, not per 1M tokens** — provider
   list prices divided by `1_000_000` (e.g. `"gpt-6-sol"` is
   `(input = 2.0e-6, cached_input = 2.0e-7, output = 1.0e-5)`). A `pricing=`
@@ -1364,8 +1369,12 @@ requests is one turn whose usage is the requests' summed, priced at the last rep
 streamed Chat turn accrues cost when its stream reports usage: OpenAI, DeepSeek and
 `GEMINIOpenAIServiceEndpoint` streams request it automatically, native Anthropic and Gemini report
 it, and other OpenAI-compatible servers need `stream_options=Dict("include_usage" => true)`.
-Gemini 4 Argon's introductory rates hold through November 30, 2026 and Gemini 3.8 and 3.6
-Flash's through December 31, 2026; refresh pricing before estimating later calls.
+Google's scheduled Gemini prices bill from 00:00 UTC on their dates, per 1M input / cache-hit /
+output tokens: Gemini 4 Argon \$2.00 / \$0.10 / \$10.00 through November 30, 2026, \$4.00 / \$0.20 /
+\$20.00 from December 1, 2026; Gemini 3.8 and 3.6 Flash (and the routed `gemini-3.7-flash` and
+`gemini-3.5-flash`) \$0.75 / \$0.075 / \$3.75 through December 31, 2026, \$1.50 / \$0.15 / \$7.50 from
+January 1, 2027; Robotics-ER 2 Preview \$1.00 / \$0.10 / \$5.00, then \$2.00 / \$0.20 / \$10.00 from
+January 1, 2027.
 
 ### Cost Tracking Example
 

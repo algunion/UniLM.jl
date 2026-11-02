@@ -119,6 +119,13 @@ on their own task — so it is safe to read and write from any task: add or repl
 `length` as on a `Dict`. Iteration walks a snapshot, and `copy`, `merge` and `filter` return
 a plain `Dict`.
 
+The table holds the rows shipped with this release, and keeps them: the row printed below is the
+shipped one. Where a provider has scheduled a new price for a row — Google has, for several Gemini
+models ([Cost and usage](@ref gemini_cost) gives the dates) — `estimated_cost` bills the new rates in
+every estimate computed on or after its date, from 00:00 UTC, for the row in the table or a copy of it
+such as `merge(DEFAULT_PRICING, …)`. A row you set yourself is never replaced; a row equal to the
+shipped one counts as the shipped one.
+
 A model id is looked up exactly first, then without a dated snapshot suffix — `-YYYY-MM-DD` or
 `-YYYYMMDD` — so a snapshot is priced at its model's row. Only those date suffixes are stripped, so
 custom names stay unpriced rather than matching a row by accident. A provider's own fallback, where it

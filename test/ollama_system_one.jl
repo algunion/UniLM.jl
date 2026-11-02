@@ -256,7 +256,6 @@ struct _Os1Odd <: SystemOneQuestion end
             "one option"            => (a("s", choice("Which?", ["a"])), "Ollama's API reference gives a Choice 2 to 255 options"),
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
-            "blank state"           => (a(" \n ", q), "blank `state`"),
             "image after a text"    => (a(["Photo:", img], q), "an image after a text"),
             "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "images in the state only"),
             "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "images in the state only"),
@@ -295,7 +294,7 @@ struct _Os1Odd <: SystemOneQuestion end
               wire(choice("  ", ["a", "b"])), wire(choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])),
               wire(noul("Is it?"; no=Dict("d" => "no"))), wire(score("How?", ["low", Dict("d" => "high")])),
               wire(choice("Which?", ["a"])), wire(choice("Which?", many(27))), wire(score("How?", ["only"])),
-              wire(score("How?", rungs(11))), wire(q; state=" \n "))
+              wire(score("How?", rungs(11))))
         @test !isnothing(_os1_invalid(b))
     end
 end
@@ -586,7 +585,7 @@ end
     @test _os1_caught(() -> enc("q" => choice(["a" => "A", "b" => "B"]))) isa ArgumentError           # no instructions: required
     @test _os1_caught(() -> enc("q" => choice("   ", ["a" => "A", "b" => "B"]))) isa ArgumentError  # blank instructions
     @test _os1_caught(() -> enc("q" => score("How?", ["l$i" for i in 1:11]))) isa ArgumentError       # 2–10 levels
-    @test _os1_caught(() -> enc("q" => noul("Is it?"); state="   ")) isa ArgumentError                # blank text state
+    @test enc("q" => noul("Is it?"); state="   ") isa UniLM.SystemOneWire                             # blank text state: the server's
     @test _os1_caught(() -> enc([("q$i" => noul("Is it?")) for i in 1:65]...)) isa ArgumentError
 end
 
@@ -604,6 +603,23 @@ end
 _os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}("model" => model,
     "answers" => Dict{String,Any}(name => _os1_answer(q) for (name, q) in b["questions"]),
     "usage" => Dict("input_tokens" => 10, "output_tokens" => 0))))
+
+# Refuted if: a blank state is refused before any request — Ollama decides by the model's encoding: d3 answers one
+# ("decision: allow empty state for vllm-d3", Ollama 0.40.11), the other encodings answer HTTP 400 "state must not be
+# empty" — or that 400 does not come back as a SystemOneFailure carrying the server's message.
+@testset "Ollama System One — a blank state is the server's to judge, by the model's encoding" begin
+    blank(n, req) = let b = JSON.parse(_os1_text(req))
+        startswith(b["model"], "d3:") ? _os1_any_reply(b) : _os1_error(400, "state must not be empty")
+    end
+    r, sent = _os1_serve(; respond=blank) do ep, seen
+        (ask("", "billing" => noul("Is this a billing issue?"); service=ep, model="d3:2b", config=_OS1_CFG), copy(seen))
+    end
+    @test r isa SystemOneSuccess && length(sent) == 1 && JSON.parse(only(sent).body)["state"] == ""
+    f, sent = _os1_serve(; respond=blank) do ep, seen
+        (ask(" \n ", "billing" => noul("Is this a billing issue?"); service=ep, model="d1:3b", config=_OS1_CFG), copy(seen))
+    end
+    @test f isa SystemOneFailure && f.status == 400 && f.message == "state must not be empty" && length(sent) == 1
+end
 
 @testset "a cloud model keeps its tag in the result, so it is not priced as local" begin
     # Ollama's cloud answered "clef" for a "clef:cloud" request in its published example.

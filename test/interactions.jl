@@ -1467,3 +1467,21 @@ end
         @test r isa ResponseCallError && r.request_id == id
     end
 end
+
+@testset "long decode — a cancel during a later request is timed from the call's start, as chatrequest!'s is" begin
+    # The first request takes 0.5 s; the token is cancelled once the second has reached the server.
+    tok = CancelToken()
+    first = _ix_hop("v1_a", "requires_continuation"; text="A", token="T1")
+    answer(n, _) = n == 1 ? (sleep(0.5); _json(200, first)) :
+                            (cancel!(tok); sleep(2.0); _json(200, _ix_hop("v1_b", "completed"; text="B")))
+    r, seen = _with_scripted(answer) do
+        respond(Respond(service=_IxHops, model="gemini-3.8-flash", input="Prove it."); config=_IX_HOPS_CFG, cancel=tok)
+    end
+    @test length(seen) == 2
+    @test r isa ResponseCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    # The call's 0.5 s before the second request count; that request alone had run for a few milliseconds.
+    elapsed = r isa ResponseCallError && r.cause isa UniLMCancelled ? r.cause.elapsed : NaN
+    @test elapsed >= 0.5
+    @test r isa ResponseCallError && r.error == sprint(showerror, r.cause)
+end
+

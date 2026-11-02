@@ -1,9 +1,10 @@
 # ─── OpenAI Chat audio replies — live ────────────────────────────────────────
-# Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips). Four calls on
+# Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips). Four to six calls on
 # gpt-audio-1.5 ($2.50 / $10 per 1M text tokens, $32 / $64 per 1M audio tokens): a
 # one-word spoken reply, streamed and not, each capped at 100 completion tokens; a text
-# follow-up that sends the first reply back by its id; and a follow-up naming an id
-# OpenAI never issued, which it refuses with HTTP 400. Under two cents at the caps.
+# follow-up that sends the first reply back by its id, asked up to three times while its answer
+# does not name the spoken word; and a follow-up naming an id OpenAI never issued, which it
+# refuses with HTTP 400. Under two cents at the caps.
 
 using Logging
 
@@ -41,19 +42,33 @@ HTTP.close_idle_connections!()
     @test cumulative_cost(chat) == estimated_cost(r)
 
     # The audio turn goes back as its transcript and its id; the follow-up is answered in text.
-    follow = Chat(model=_AUDIO_LIVE_MODEL, max_completion_tokens=20, messages=copy(r.self.messages))
-    push!(follow, Message(Val(:user), _AUDIO_LIVE_ASK))
-    sent = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, follow))
-    @test sent["messages"][3] == Dict("role" => "assistant", "content" => a.transcript, "audio" => Dict("id" => a.id))
-    f = @test_logs min_level=Logging.Warn chatrequest!(follow; config=_AUDIO_LIVE_CFG)
+    function ask_follow_up()
+        follow = Chat(model=_AUDIO_LIVE_MODEL, max_completion_tokens=20, messages=copy(r.self.messages))
+        push!(follow, Message(Val(:user), _AUDIO_LIVE_ASK))
+        sent = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, follow))
+        @test sent["messages"][3] == Dict("role" => "assistant", "content" => a.transcript, "audio" => Dict("id" => a.id))
+        @test_logs min_level=Logging.Warn chatrequest!(follow; config=_AUDIO_LIVE_CFG)
+    end
+    # The answer names the word the spoken reply said. It has come back empty at this cap (twice in the
+    # 0.29.0 release gate), and as a lone special token, "<|image_is_upsampled|>" (two follow-ups of six on
+    # 2 November 2026), so an answer that does not name the word is asked again, on a fresh Chat, up to three
+    # times in all; a failed call is not.
+    said = [m.match for m in eachmatch(r"\p{L}+", a.transcript)]
+    names_it(f) = !isempty(said) && all(w -> occursin(Regex("\\b$w\\b", "i"), something(f.message.content, "")), said)
+    f = ask_follow_up()
+    for _ in 2:3
+        f isa LLMSuccess && !names_it(f) || break
+        f = ask_follow_up()
+    end
     @test f isa LLMSuccess
     @test !isempty(strip(something(f.message.content, ""))) && isnothing(f.message.audio_output)
     @info "Chat audio live follow-up" text = f.message.content usage = f.usage
-    # The answer names the word the spoken reply said.
-    said = [m.match for m in eachmatch(r"\p{L}+", a.transcript)]
-    @test !isempty(said) && all(w -> occursin(Regex("\\b$w\\b", "i"), something(f.message.content, "")), said)
+    @test names_it(f)
     # The audio sent back by its id is audio input; the text answer has no audio output.
     @test 0 < f.usage.prompt_audio_tokens <= f.usage.prompt_tokens && f.usage.completion_audio_tokens == 0
+    # Observed, not documented (in each of eleven runs to 2 November 2026): the audio sent back by its id bills
+    # as exactly the audio tokens it billed as output, the sign that it went back by id rather than as text.
+    @test f.usage.prompt_audio_tokens == r.usage.completion_audio_tokens
     @test estimated_cost(f) > 0 && isapprox(estimated_cost(f), _audio_live_bill(f.usage); rtol=1e-12)
 
     # The server resolves the id it is sent: one it never issued is a 400. The turn carries the real

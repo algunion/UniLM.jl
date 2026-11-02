@@ -1137,7 +1137,17 @@ end
     _rl_offline(() -> with_recorded_answers(outer) do
         with_recorded_answers(_rl_openai_stream, inner; mode=:record_missing)
     end)
+    # The same files, holding the same request, response head and stream: the time each was written aside, and
+    # what follows the terminal `data: [DONE]` line. A live recording keeps all its last read held (here the
+    # event's closing blank line, as the connection delivered it); a replay stops reading at that line.
+    function answer(file)
+        rec = JSON.parsefile(file)
+        res, stream = rec["response"], rec["response"]["stream"]
+        (rec["request"], Dict(k => v for (k, v) in res if k != "stream"),
+         stream[1:something(findfirst(==("data: [DONE]"), stream), length(stream))])
+    end
     @test readdir(inner) == readdir(outer)
+    @test [answer(f) for f in readdir(inner; join=true)] == [answer(f) for f in readdir(outer; join=true)]
 end
 @testset "recorded answers — an old recording without kept headers still replays as today" begin
     for f in readdir(_RA_COMMITTED)

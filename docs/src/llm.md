@@ -1893,8 +1893,9 @@ Each wrapper's rules, refused before any I/O (on every backend also a `DocumentA
   still, ≤ 16 MiB, 280–1568 px a side, a JPEG ending with its end-of-image
   marker (FF D9); ≤ 64 levels of nesting in state/instructions/criteria; body
   ≤ 32 MiB; a Box needs an image in the request (and Jev 1.14+:
-  `"jev-1.14.0"`/`"jev-preview"`); one option, `long_context::Bool`. Pin a
-  model, e.g. `"jev-1.13.0"`, to keep tuned thresholds meaningful.
+  `"jev-1.14.0"`/`"jev-latest"`/`"jev-preview"`); one option,
+  `long_context::Bool`. Pin a model, e.g. `"jev-1.13.0"`, to keep tuned
+  thresholds meaningful.
 - **OpenAI:** 1–400 questions; `instructions` on every question: a string, or
   1–16,384 parts (an image, a JSON object, or a vector/tuple of strings, images
   and objects or arrays of objects → `input_text` / `input_image` / `input_json`;
@@ -1938,8 +1939,9 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   image comes back as the request's `ImageAttachment`. A recording is keyed on the
   JSON part plus one `asset-k <sha256>` line per image (`key_extra`), never on or
   with the bytes. `box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
-  `"jev-preview"`; a 1.13 model's 400 `"Invalid request."` gets a hint naming
-  them) and an image in the request; an inside-out box is a `SystemOneCallError`.
+  `"jev-latest"`, `"jev-preview"`; a 1.13 model's 400 `"Invalid request."` gets
+  a hint naming them) and an image in the request; an inside-out box is a
+  `SystemOneCallError`.
   `long_context = true` sends `TypeSafe-Danger-Zone-Long-Context: true` (32k
   tokens per question and 64k per request → 262k, same price, slower); a 400
   `max_tokens_exceeded` failure's message names it. A one-option Choice was

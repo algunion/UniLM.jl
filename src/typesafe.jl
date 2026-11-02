@@ -545,7 +545,8 @@ function _typesafe_hint(f::SystemOneFailure, request::SystemOneRequest)::Union{N
             "The request is longer than the context of 64k tokens per request and 32k for the state with any " *
             "one question; `long_context = true` raises both to 262k at the same price per token"
     elseif f.message == "Invalid request." && any(((_, q),) -> q isa BoxQuestion, request.questions)
-        "Box questions need a Jev model that supports them, 1.14 or later, such as \"jev-1.14.0\" or \"jev-preview\""
+        "Box questions need a Jev model that supports them, 1.14 or later, such as \"jev-1.14.0\", " *
+        "\"jev-latest\" or \"jev-preview\""
     end
 end
 

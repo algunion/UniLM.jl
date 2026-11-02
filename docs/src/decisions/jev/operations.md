@@ -264,7 +264,7 @@ end
 | a `SystemOneFailure` with status 401 and `error_type` `"authentication_error"` | the key is not valid | a key from the TypeSafe console |
 | status 400, `"Unknown model: …"` | a model name TypeSafe does not know | a name `list_models` returns, or a versioned id |
 | status 400, `error_type` `"max_tokens_exceeded"`, and a message naming the limits, and `long_context` when the request did not set it | the request is longer than its context | shorten the state, split the questions, or `long_context = true` |
-| status 400, `"Invalid request."`, and a hint naming `jev-1.14.0` and `jev-preview` | a Box question to Jev 1.13 | `model = "jev-1.14.0"` |
+| status 400, `"Invalid request."`, and a hint naming `jev-1.14.0`, `jev-latest` and `jev-preview` | a Box question to Jev 1.13 | `model = "jev-1.14.0"` |
 | status 413 | over a size limit UniLM cannot check before sending: all images as TypeSafe re-encodes them, the request with each reference replaced by its picture, or the references' total length ([Images](https://docs.typesafe.ai/images)) | fewer or smaller pictures, and a picture several questions need in the state once |
 | status 422, a message of `"<field path>: <reason>"` entries | TypeSafe's schema refuses what UniLM's checks let through, such as a `RawQuestion` | the field the message names |
 | status 429 after the retries, with `retry_after`, the wait TypeSafe asked for | over the organization's rate limits | fewer requests in flight (`ntasks`), or higher limits |

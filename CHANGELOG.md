@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.30.0
+
+### Breaking
+- **An upload object without `status`, `filename` or `bytes` is an `UploadCallError`, not a success holding
+  `nothing`.** OpenAI's Upload object requires `id`, `bytes`, `created_at`, `expires_at`, `filename`, `purpose` and
+  `status`; only `file` may be null. `UploadObject.status` and `.filename` are now `String` and `.bytes` `Int`, with
+  no default, and `create_upload`, `complete_upload` and `cancel_upload` return an `UploadCallError` naming the field
+  a reply lacks. `created_at`, `expires_at` and `purpose` stay in `raw`. Upgrading: read these fields directly instead
+  of checking for `nothing`; code that builds an `UploadObject` passes all three.
+- **`compact_response` and `count_input_tokens` throw `ArgumentError` before any request on an endpoint without the
+  Responses API.** Both call a Responses API route (`/v1/responses/compact`, `/v1/responses/input_tokens`). On native
+  Gemini, Anthropic, Azure and Google's OpenAI-compatible endpoint they returned a `ResponseCallError` without sending
+  anything; on DeepSeek and TypeSafe they sent a request their server has no route for. Every endpoint that declares
+  its capabilities without `:responses` is now refused by name before any I/O; OpenAI, Ollama, generic servers and
+  endpoints of your own that declare nothing are sent the request as before. Upgrading: catch the `ArgumentError`, or
+  call these verbs on an endpoint that serves them.
+- **An endpoint of your own without a decoder is refused before the request is sent.** An unstreamed `chatrequest!`
+  with no `decode_response`, or `respond` with no `decode_agentic`, sent its request, was billed for the reply, and
+  returned a call error whose `cause` was the `MethodError`. Both now throw that `MethodError` before any I/O.
+  Built-in endpoints and `OpenAIWireEndpoint` subtypes, which inherit the decoders, are unaffected.
+
+### Changed
+- **`moderate`, and `speak` on Gemini, retry a transient failure.** Moderation is free and changes nothing when sent
+  again; Gemini TTS is a billed `generateContent` request, the same trade-off `chatrequest!` and `transcribe` make. A
+  transient status (408, 429, 500, 502–504, 520–524, 529) or a transport failure is now sent again under the call's
+  `RequestConfig`. `speak` and `translate` on OpenAI's Realtime API keep a single attempt, now documented: a retry
+  after the session's `response.create`, or after its audio, may bill a second response, and a session's audio
+  cannot be resumed.
+
+### Fixed
+- **`speak` and `translate` on OpenAI read the provider's error after a send fails at the transport.** When a write
+  fails before the close is read, the send raises `SystemError("write", EPIPE)` rather than a `WebSocketError`, and
+  that ended the call without reading the `error` event already received. The event is now read and returned as an
+  `AudioFailure`, and a close as an `AudioCallError`.
+- **An OpenAI Decisions image whose data URL would exceed the schema's 1,073,741,824 characters is refused before it
+  is encoded** (about 768 MiB of image); the `ArgumentError` names the limit and the length the URL would have.
+- **A streamed reply on Google's OpenAI-compatible endpoint is billed at the latest tier a chunk names, unless the
+  response head names one.** The head's tier now has its own field, `StreamState.head_tier`.
+- **A `ReplayMissError` for an OpenAI Decisions request names its questions, not the model.**
+- **Each stream sent outside a recording scope has a source of its own.** Every such stream shared one list of
+  recording files, so anything added to it would have made every later live stream record.
+
 ## 0.29.0
 
 ### Breaking

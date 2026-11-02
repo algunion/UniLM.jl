@@ -205,7 +205,9 @@ non-strict tool, each with a call of the strict one. The loop every provider sha
 
 `UniLM.json_object()` sends `{"type": "json_object"}`, DeepSeek's JSON Output, which "guarantees the
 message the model generates is valid JSON"; DeepSeek adds that "you must also instruct the model to
-produce JSON yourself via a system or user message"
+produce JSON yourself via a system or user message", and that "If the model's output cannot be
+recognized as JSON, the API replaces the non-JSON content with spaces (`U+0020`). As a result, the
+message content may contain only spaces (appearing empty), even when `finish_reason` is `stop`"
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)):
 
 ```@example deepseek
@@ -214,6 +216,10 @@ push!(chat, Message(Val(:system), "Answer in JSON with the keys name and year.")
 push!(chat, Message(Val(:user), "Who wrote the first published computer program, and in which year?"))
 JSON.parse(text(chatrequest!(chat)))
 ```
+
+`JSON.parse` throws on a blank reply, and DeepSeek's advice is to "retry the request"
+([JSON Output](https://api-docs.deepseek.com/guides/json_mode)): `pop!(chat)` drops the blank reply,
+and `chatrequest!(chat)` sends the turn again.
 
 DeepSeek's `response_format` takes two types, `text` and `json_object`. A JSON Schema format,
 `UniLM.json_schema(…)`, goes out as `json_schema` all the same: UniLM does not refuse it, and

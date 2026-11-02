@@ -883,8 +883,10 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
-  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported". UniLM
-  sends the field unchecked on those two and on any model without a rule row. OpenAI
+  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported": on those two
+  (and their dated snapshots) the native endpoint throws `ArgumentError` for `"in_memory"`,
+  which the API answered on `gpt-5.5` with HTTP 400 (2026-11-02), and UniLM sends the field
+  unchecked on any model without a rule. OpenAI
   deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`,
   `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots),
   whose cache lifetime

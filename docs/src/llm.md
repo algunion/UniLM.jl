@@ -318,7 +318,7 @@ through that accessor, never directly.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
 - **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
 - `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": a `Chat` with `mode="explicit"` throws `ArgumentError` when it is built, on every endpoint. `moderation` takes a [`ModerationConfig`](@ref).
-- `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
+- `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`) and for any value but `"24h"` on `gpt-5.5` and `gpt-5.5-pro` (the API answered `"in_memory"` with HTTP 400, "This model is compatible only with 24h extended prompt caching"); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
 
 ### Message
 
@@ -596,7 +596,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (the reference: "24h" only on gpt-5.5/gpt-5.5-pro, sent unchecked; refused on the gpt-6*/gpt-5.6* rule models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, another value refused; refused on the gpt-6*/gpt-5.6* rule models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
@@ -832,10 +832,11 @@ endpoints send the object unchanged, the server's answer being the check. A `Cha
 
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
-snapshots), whose cache lifetime `prompt_cache_options` sets; on other models UniLM sends it
-unchecked, beside `prompt_cache_options` when that is set too (the Responses reference lists the
-two fields independently, and documents `prompt_cache_options` for gpt-5.6 and later), leaving
-both to the server — the reference takes only `"24h"` on `gpt-5.5` and `gpt-5.5-pro`. Explicit mode requires cache breakpoints in input
+snapshots), whose cache lifetime `prompt_cache_options` sets, and for any value but `"24h"` on `gpt-5.5`
+and `gpt-5.5-pro`, which the reference restricts to it (the API answered `"in_memory"` on `gpt-5.5` with
+HTTP 400); on other models UniLM sends it unchecked, beside `prompt_cache_options` when that is set too
+(the Responses reference lists the two fields independently, and documents `prompt_cache_options` for
+gpt-5.6 and later), leaving both to the server. Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
 Responses input part; a `Chat` sets none, so explicit mode would turn its caching off, and the
 `Chat` constructor refuses it. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with

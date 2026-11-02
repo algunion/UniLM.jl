@@ -3196,3 +3196,27 @@ UniLM.auth_header(::Type{_ToolUsageProbe}) = ["Content-Type" => "application/jso
     @test tool_usage(ResponseFailure(response="{}", status=500)) === nothing
     @test tool_usage(ResponseCallError(error="e")) === nothing
 end
+
+@testset "prompt_cache_retention on gpt-5.5 and gpt-5.5-pro: \"24h\" only, another value refused before sending" begin
+    # The references: "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported"; on 2026-11-02 the
+    # API answered "in_memory" on gpt-5.5 with HTTP 400 on Chat Completions and on Responses, "This model is
+    # compatible only with 24h extended prompt caching".
+    err(f) = try f(); nothing catch e; e end
+    chat(model, retention) = Chat(model=model, messages=[Message(Val(:user), "hi")], prompt_cache_retention=retention)
+    for model in ("gpt-5.5", "gpt-5.5-pro", "gpt-5.5-2026-04-23")
+        r, c = Respond(model=model, input="hi", prompt_cache_retention="in_memory"), chat(model, "in_memory")
+        for e in (err(() -> UniLM.encode_agentic(r.service, r)), err(() -> UniLM.encode_request(c.service, c)))
+            @test e isa ArgumentError && occursin(model, e.msg) && occursin("\"24h\"", e.msg) && occursin("in_memory", e.msg)
+        end
+        r, c = Respond(model=model, input="hi", prompt_cache_retention="24h"), chat(model, "24h")
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_retention"] == "24h"
+        @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "24h"
+    end
+    # A model OpenAI states no such rule for keeps either value, the server being the check; so does another
+    # endpoint, whose server may serve the name differently.
+    r = Respond(model="gpt-5.4", input="hi", prompt_cache_retention="in_memory")
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_retention"] == "in_memory"
+    c = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="gpt-5.5",
+             messages=[Message(Val(:user), "hi")], prompt_cache_retention="in_memory")
+    @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "in_memory"
+end

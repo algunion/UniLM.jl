@@ -733,7 +733,10 @@ model family in standard, single-agent requests; the API rejects two adjacent up
   [`json_schema_format`](@ref) (a JSON Schema) builds; the item carries its format, which OpenAI
   takes as "a JSON schema for structured output or text to return to plain text". A
   [`json_object_format`](@ref)`()`, another format type, or a `verbosity` throws `ArgumentError`:
-  the item's text holds a text or JSON-schema format alone.
+  the item's text holds a text or JSON-schema format alone. OpenAI enables format updates per
+  organization: for one it has not, the API answered HTTP 400, "Updates to 'text.format' are not
+  enabled for this organization." (param `input[0].text.format`, 2026-11-02), while it took an
+  effort update.
 
 Neither given throws `ArgumentError`.
 See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).

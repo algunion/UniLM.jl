@@ -668,7 +668,9 @@ input_file(document::DocumentAttachment)                              # file_dat
 # Input item: change reasoning effort and/or text format mid-conversation (GPT-6) without rewriting the cached prefix
 configuration_update(; effort=nothing, format=nothing)   # → Dict(:type=>"configuration_update", :reasoning=>Dict(:effort=>...), :text=>Dict(:format=>...));
                                                          #   effort: "none","minimal","low","medium","high","xhigh","max"; format: text_format() or json_schema_format(…)
-                                                         #   (json_object, another type or a verbosity throws ArgumentError); neither given throws ArgumentError
+                                                         #   (json_object, another type or a verbosity throws ArgumentError); neither given throws ArgumentError;
+                                                         #   OpenAI enables format updates per organization (otherwise HTTP 400 "Updates to
+                                                         #   'text.format' are not enabled for this organization.")
 ```
 
 `input_image` and `input_file` throw `ArgumentError` when none of their

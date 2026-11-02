@@ -149,7 +149,9 @@ with status `"incomplete"`, possibly before any visible text.
 a [`configuration_update`](@ref) item, which changes the effort of later responses, their text format
 ([`text_format`](@ref)`()` or [`json_schema_format`](@ref)), or both, without rewriting the request-level
 settings, so the cached prompt prefix stays reusable; OpenAI supports it on "the GPT-6
-model family in standard, single-agent mode"
+model family in standard, single-agent mode", and enables format updates per organization: for one it
+has not, it answered HTTP 400, "Updates to 'text.format' are not enabled for this organization."
+(2 November 2026), and took an effort update
 ([change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation)).
 
 ## [Prompt caching](@id openai_caching)

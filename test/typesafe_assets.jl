@@ -417,7 +417,7 @@ end
         # The bare "Invalid request." a Box question draws from Jev 1.13 names the models that answer one…
         (box_req, "45-box-jev-latest.response.json", 400, "api_usage_error",
             "Invalid request. Box questions need a Jev model that supports them, 1.14 or later, such as " *
-            "\"jev-1.14.0\" or \"jev-preview\""),
+            "\"jev-1.14.0\", \"jev-latest\" or \"jev-preview\""),
         # …and only when the request holds a Box question.
         (_ts_request_02(), "45-box-jev-latest.response.json", 400, "api_usage_error", "Invalid request."),
         # A context overflow names long_context and the limits, or, with it on, the long limit.

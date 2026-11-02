@@ -144,12 +144,13 @@ account ([Models](https://docs.typesafe.ai/models)).
 log it, since an alias moving is otherwise invisible, and a threshold tuned
 against one version is a claim about that version only.
 
-In October 2026 `jev-latest` answers as `jev-1.13.0` and `jev-preview` as
-`jev-1.14.0` (Jev 1.14, available from October 14, 2026). Both read images; a
-[`box`](@ref) question needs Jev 1.14 or later — `model = "jev-1.14.0"` or
-`"jev-preview"`. Jev 1.13 answers a request with one with HTTP 400 and the bare
-message `"Invalid request."`, which [`ask`](@ref) returns with a hint naming those
-models. `long_context = true` works on both ([Limits](@ref system_one_typesafe_limits)).
+On November 2, 2026 TypeSafe points both `jev-latest` and `jev-preview` at
+`jev-1.14.0` (Jev 1.14, available from October 14, 2026), and has no preview build.
+Jev 1.13 and 1.14 both read images; a [`box`](@ref) question needs Jev 1.14 or
+later — `model = "jev-1.14.0"`, `"jev-latest"` or `"jev-preview"`. Jev 1.13 answers
+a request with one with HTTP 400 and the bare message `"Invalid request."`, which
+[`ask`](@ref) returns with a hint naming those models. `long_context = true` works
+on both ([Limits](@ref system_one_typesafe_limits)).
 
 ### [Limits](@id system_one_typesafe_limits)
 
@@ -223,7 +224,7 @@ whichever arrived, and `error_type` is filled in only by the object shape.
 
 | Status | What it means | `error_type` / `message` |
 | :--- | :--- | :--- |
-| 400 | Unknown model, or a request the schema accepted but the service rejected: a bare noul; a Box question on a Jev before 1.14; an image it cannot read or whose size is out of range; nesting deeper than 64 levels | `"api_usage_error"` with `"Unknown model: …"`, `"Invalid request."` (on a Box question, with a hint naming `jev-1.14.0` and `jev-preview`), `"Invalid image request."` or `"Invalid image dimensions."`; or `nothing` with the plain-string reason |
+| 400 | Unknown model, or a request the schema accepted but the service rejected: a bare noul; a Box question on a Jev before 1.14; an image it cannot read or whose size is out of range; nesting deeper than 64 levels | `"api_usage_error"` with `"Unknown model: …"`, `"Invalid request."` (on a Box question, with a hint naming `jev-1.14.0`, `jev-latest` and `jev-preview`), `"Invalid image request."` or `"Invalid image dimensions."`; or `nothing` with the plain-string reason |
 | 400 | The request is longer than its context | `"max_tokens_exceeded"`, and no message from the service: the `message` is that type with a hint naming `long_context = true` and the limits |
 | 401 | The API key was present but not valid | `"authentication_error"` |
 | 403 | No `Authorization` header reached the service | `"authentication_error"` |

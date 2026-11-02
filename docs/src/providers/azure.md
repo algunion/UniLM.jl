@@ -114,7 +114,7 @@ A system message pushed after the conversation started is sent in place. Azure's
 system messages; "You should not use both a developer message and a system message in the same API
 request" ([reasoning models](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning)),
 and UniLM sends no developer message. What `push!` refuses is the same on every provider
-([Chat Completions](@ref chat_guide)).
+([Conversations with Chat](@ref chat_guide)).
 
 A reply that holds audio (`audio_output`) goes back to Azure by the audio's id, `"audio": {"id": …}`
 beside the turn's transcript, as Azure's quickstart adds "a history message referencing the previous

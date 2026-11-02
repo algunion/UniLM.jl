@@ -66,19 +66,30 @@ if !haskey(ENV, "GEMINI_API_KEY")
 else
 
 @testset "Gemini images — gemini-nano-banana-2.1 draws a square 1K image" begin
-    r = generate_image(ImageGeneration(service=GEMINIServiceEndpoint, prompt="a red circle on white",
-                                       aspect_ratio="1:1", resolution="1K", safety_identifier="unilm-test"))
+    # Gemini's recitation filter refused "a red circle on white" again and again (finishReason
+    # IMAGE_RECITATION, which Google does not bill: "You will not be charged for this request"); this
+    # prompt drew 3 images in 3 runs on 2 November 2026. A recitation refusal is asked again, up to three
+    # times in all.
+    r = nothing
+    for _ in 1:3
+        r = generate_image(ImageGeneration(service=GEMINIServiceEndpoint,
+                                           prompt="three small blue squares in a row on a light grey background",
+                                           aspect_ratio="1:1", resolution="1K", safety_identifier="unilm-test"))
+        r isa ImageCallError && occursin("IMAGE_RECITATION", r.error) || break
+    end
     @test r isa ImageSuccess
-    @info "Gemini image live usage" usage = get(r.response.raw, "usageMetadata", nothing)
-    @test startswith(r.response.raw["modelVersion"], "gemini-nano-banana-2.1")
-    bytes = base64decode(only(image_data(r)))
-    # Gemini answers JPEG (observed), and says so in the part's mimeType.
-    @test _gemini_image_mimes(r) == ["image/jpeg"]
-    @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
-    @test _jpeg_size(bytes) == (1024, 1024)              # 1:1 at 1K, per Gemini's size table
-    # usageMetadata is the result's usage, counted as on Gemini Chat; a 1K image is 1,120 tokens.
-    @test _gemini_image_counts(token_usage(r)) == _gemini_image_counts(UniLM._gemini_usage(r.response.raw["usageMetadata"]))
-    @test token_usage(r).completion_tokens >= 1120
+    if r isa ImageSuccess
+        @info "Gemini image live usage" usage = get(r.response.raw, "usageMetadata", nothing)
+        @test startswith(r.response.raw["modelVersion"], "gemini-nano-banana-2.1")
+        bytes = base64decode(only(image_data(r)))
+        # Gemini answers JPEG (observed), and says so in the part's mimeType.
+        @test _gemini_image_mimes(r) == ["image/jpeg"]
+        @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
+        @test _jpeg_size(bytes) == (1024, 1024)              # 1:1 at 1K, per Gemini's size table
+        # usageMetadata is the result's usage, counted as on Gemini Chat; a 1K image is 1,120 tokens.
+        @test _gemini_image_counts(token_usage(r)) == _gemini_image_counts(UniLM._gemini_usage(r.response.raw["usageMetadata"]))
+        @test token_usage(r).completion_tokens >= 1120
+    end
 end
 
 @testset "Gemini image edits — gemini-nano-banana-2.1 edits an input image" begin

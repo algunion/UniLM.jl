@@ -430,11 +430,14 @@ protocol error: the client receives `isError: true` with the text
 are willing to show it. An exception from a resource or prompt handler, or from
 dispatch itself, is answered with a generic JSON-RPC `-32603` `"Internal error"` and
 logged on the server, so no exception text (file paths, argument values) reaches the
-peer. An `InterruptException` is never converted: it propagates. Frames (stdio) and
-request bodies (HTTP) are capped at 16 MiB: stdio answers an oversized frame with
-`-32600`, HTTP with `413 Payload Too Large`. `initialize` answers the revision the
-client requested when it is supported, otherwise 2025-11-25; a JSON-RPC response sent
-to the server is accepted without an answer (HTTP `202`).
+peer. Neither a [`ReplayMissError`](@ref) nor a [`RecordingWriteError`](@ref) from a
+tool handler is a tool result, since the model cannot correct either: the client gets
+the generic `-32603` and the server logs the error. An `InterruptException` is never
+converted: it propagates. Frames (stdio) and request bodies (HTTP) are capped at
+16 MiB: stdio answers an oversized frame with `-32600`, HTTP with
+`413 Payload Too Large`. `initialize` answers the revision the client requested when it
+is supported, otherwise 2025-11-25; a JSON-RPC response sent to the server is accepted
+without an answer (HTTP `202`).
 
 ---
 

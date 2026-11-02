@@ -832,8 +832,9 @@ _model_default_config(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServi
 
 # A billed tier's prices as multiples of a model's standard rates, from the Flex and Priority
 # tables of https://ai.google.dev/gemini-api/docs/pricing (2026-10-22): input and output bill at
-# half the standard rates on Flex and at 1.8 times on Priority (Gemini 3.8 Flash $1.35/$6.75 for
-# $0.75/$3.75, Gemini 4 Argon $3.60/$18.00 for $2.00/$10.00), and so does a cache hit, except on
+# half the standard rates on Flex and at 1.8 times on Priority (Gemini 3.1 Flash-Lite $0.45/$2.70 for
+# $0.25/$1.50; Gemini 4 Argon $3.60/$18.00 for $2.00/$10.00 through 2026-11-30 and $7.20/$36.00 for
+# $4.00/$20.00 from 2026-12-01, when its standard rates double), and so does a cache hit, except on
 # the models whose table lists another cache-hit price: `cache` holds those, as multiples of the
 # model's standard cache-hit rate.
 const _GEMINI_TIER_PRICES = Dict{String,@NamedTuple{multiple::Float64, cache::Dict{String,Float64}}}(

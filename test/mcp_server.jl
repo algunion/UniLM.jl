@@ -1394,57 +1394,62 @@ _rpc(id, method, params=Dict{String,Any}()) = Dict{String,Any}("jsonrpc" => "2.0
     # concurrent iteration aborted the process). Each round, three dispatch loops race a
     # fourth task registering 1000 tools (and resources, templates, prompts) on a fresh
     # server, so every registry grows — and rehashes — while it is being read. Every
-    # response must be well formed and every registration must land.
-    list = _rpc(1, "tools/list")
-    others = [_rpc(2, "resources/list"), _rpc(3, "resources/templates/list"), _rpc(4, "prompts/list"),
-              _rpc(5, "resources/read", Dict{String,Any}("uri" => "race://seed")),
-              _rpc(6, "resources/read", Dict{String,Any}("uri" => "nomatch://x")),
-              _rpc(7, "initialize", Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION))]
-    reqs = collect(Iterators.flatten([list, list, list, o] for o in others))
-    well_formed(r) = haskey(r, "result") || r["error"]["code"] == -32002   # nomatch → not found
-    function race_round()
-        server = MCPServer("race", "1.0.0")
-        register_resource!(server, "race://seed", "seed", () -> "seed")
-        foreach(req -> UniLM._dispatch_mcp(server, req), reqs)   # compiled before the race starts
-        stop = Threads.Atomic{Bool}(false)
-        served, anomalies = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
-        readers = [Threads.@spawn begin
-            while !stop[]
-                for req in reqs
-                    ok = try
-                        well_formed(UniLM._dispatch_mcp(server, req))
-                    catch e
-                        e isa InterruptException && rethrow()
-                        false
+    # response must be well formed and every registration must land. The readers never
+    # yield, so on one thread the first of them runs forever and no round ends.
+    if Threads.nthreads() < 2
+        @test_skip "needs --threads=2 or more: a data race needs threads"
+    else
+        list = _rpc(1, "tools/list")
+        others = [_rpc(2, "resources/list"), _rpc(3, "resources/templates/list"), _rpc(4, "prompts/list"),
+                  _rpc(5, "resources/read", Dict{String,Any}("uri" => "race://seed")),
+                  _rpc(6, "resources/read", Dict{String,Any}("uri" => "nomatch://x")),
+                  _rpc(7, "initialize", Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION))]
+        reqs = collect(Iterators.flatten([list, list, list, o] for o in others))
+        well_formed(r) = haskey(r, "result") || r["error"]["code"] == -32002   # nomatch → not found
+        function race_round()
+            server = MCPServer("race", "1.0.0")
+            register_resource!(server, "race://seed", "seed", () -> "seed")
+            foreach(req -> UniLM._dispatch_mcp(server, req), reqs)   # compiled before the race starts
+            stop = Threads.Atomic{Bool}(false)
+            served, anomalies = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
+            readers = [Threads.@spawn begin
+                while !stop[]
+                    for req in reqs
+                        ok = try
+                            well_formed(UniLM._dispatch_mcp(server, req))
+                        catch e
+                            e isa InterruptException && rethrow()
+                            false
+                        end
+                        Threads.atomic_add!(ok ? served : anomalies, 1)
                     end
-                    Threads.atomic_add!(ok ? served : anomalies, 1)
+                end
+            end for _ in 1:3]
+            writer = Threads.@spawn for i in 1:1000
+                register_tool!(server, "t$i", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
+                if i % 10 == 0
+                    register_resource!(server, "race://r$i", "r$i", () -> "r")
+                    register_resource_template!(server, "race$i://{x}", "tmpl$i", p -> "t")
+                    register_prompt!(server, "p$i", _ -> Dict{String,Any}[])
                 end
             end
-        end for _ in 1:3]
-        writer = Threads.@spawn for i in 1:1000
-            register_tool!(server, "t$i", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
-            if i % 10 == 0
-                register_resource!(server, "race://r$i", "r$i", () -> "r")
-                register_resource_template!(server, "race$i://{x}", "tmpl$i", p -> "t")
-                register_prompt!(server, "p$i", _ -> Dict{String,Any}[])
-            end
+            finished = timedwait(() -> istaskdone(writer), 10.0)
+            stop[] = true
+            readers_done = timedwait(() -> all(istaskdone, readers), 25.0)
+            (; finished, readers_done, served = served[], anomalies = anomalies[],
+               sizes = (length(server.tools), length(server.resources),
+                        length(server.resource_templates), length(server.prompts)))
         end
-        finished = timedwait(() -> istaskdone(writer), 10.0)
-        stop[] = true
-        readers_done = timedwait(() -> all(istaskdone, readers), 25.0)
-        (; finished, readers_done, served = served[], anomalies = anomalies[],
-           sizes = (length(server.tools), length(server.resources),
-                    length(server.resource_templates), length(server.prompts)))
+        t0 = time()
+        rounds = [race_round()]
+        while length(rounds) < 8 && time() - t0 < 6.0
+            push!(rounds, race_round())
+        end
+        @test all(r -> r.finished === :ok && r.readers_done === :ok, rounds)
+        @test sum(r -> r.anomalies, rounds) == 0
+        @test all(r -> r.served > 0, rounds)
+        @test all(r -> r.sizes == (1000, 101, 100, 100), rounds)
     end
-    t0 = time()
-    rounds = [race_round()]
-    while length(rounds) < 8 && time() - t0 < 6.0
-        push!(rounds, race_round())
-    end
-    @test all(r -> r.finished === :ok && r.readers_done === :ok, rounds)
-    @test sum(r -> r.anomalies, rounds) == 0
-    @test all(r -> r.served > 0, rounds)
-    @test all(r -> r.sizes == (1000, 101, 100, 100), rounds)
 end
 
 """POST `body` to 127.0.0.1:`port` over a fresh raw TCP connection; returns the raw

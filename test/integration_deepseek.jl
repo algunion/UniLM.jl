@@ -1,7 +1,23 @@
 # ─── DeepSeek Integration Tests ──────────────────────────────────────────────
 # Requires UNILM_LIVE=1 and DEEPSEEK_API_KEY (both, or the suite skips).
-# Seven billed calls on deepseek-flash; what they cost, estimated at DeepSeek's peak rates (it bills
-# half of them off-peak), is logged at the end.
+# Seven billed calls on deepseek-flash, nine at most when JSON Output answers blank; what they cost,
+# estimated at DeepSeek's peak rates (it bills half of them off-peak), is logged at the end.
+
+# DeepSeek's JSON Output may answer blank content: "the API replaces the non-JSON content with spaces"
+# (https://api-docs.deepseek.com/api/create-chat-completion), and its advice is to "retry the request"
+# (https://api-docs.deepseek.com/guides/json_mode). A blank reply is dropped from `chat` and the turn sent
+# again, up to three requests in all, each logged. Defined outside the key guard, so a keyless run can check it.
+function _ds_json_reply(send::Function, chat::Chat)
+    r = nothing
+    for attempt in 1:3
+        r = send()
+        blank = r isa LLMSuccess && isempty(strip(something(r.message.content, "")))
+        @info "DeepSeek JSON Output" attempt blank reply = (r isa LLMSuccess ? r.message.content : r)
+        blank && attempt < 3 || break
+        pop!(chat)                    # the blank reply goes; the turn is sent again
+    end
+    r
+end
 
 if !haskey(ENV, "DEEPSEEK_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping DeepSeek integration tests (set UNILM_LIVE=1 and DEEPSEEK_API_KEY to run live)"
@@ -106,7 +122,7 @@ end
     push!(chat, Message(Val(:system), "Always respond in JSON format."))
     push!(chat, Message(Val(:user), "Tell me a joke with keys 'setup' and 'punchline'."))
 
-    result = _ds_billed(chatrequest!(chat))
+    result = _ds_json_reply(() -> _ds_billed(chatrequest!(chat)), chat)
     @test result isa LLMSuccess
     parsed = JSON.parse(result.message.content)
     @test parsed isa AbstractDict

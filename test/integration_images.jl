@@ -71,11 +71,12 @@ else
     # prompt drew 3 images in 3 runs on 2 November 2026. A recitation refusal is asked again, up to three
     # times in all.
     r = nothing
-    for _ in 1:3
+    for attempt in 1:3
         r = generate_image(ImageGeneration(service=GEMINIServiceEndpoint,
                                            prompt="three small blue squares in a row on a light grey background",
                                            aspect_ratio="1:1", resolution="1K", safety_identifier="unilm-test"))
         r isa ImageCallError && occursin("IMAGE_RECITATION", r.error) || break
+        @info "Gemini image: a recitation refusal" attempt error = r.error
     end
     @test r isa ImageSuccess
     if r isa ImageSuccess

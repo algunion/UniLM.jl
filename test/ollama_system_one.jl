@@ -276,7 +276,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "image after a text"    => (a(["Photo:", img], q), "an image after a text"),
             "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "images in the state only"),
             "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "images in the state only"),
-            "Box"                   => (a(img, box("the circle")), "Box questions are not supported by Ollama"),
+            "Box"                   => (a(img, bounding_box("the circle")), "Box questions are not supported by Ollama"),
             "unknown kind"          => (a("s", "odd" => _Os1Odd()), "Ollama cannot send \"odd\""),
             "unknown option"        => (a("s", q; num_ctx=4096), "one System One option, `keep_alive`"),
         ]

@@ -387,7 +387,7 @@ export
     choice,
     score,
     noul,
-    box,
+    bounding_box,
     SystemOneRequest,
     ask,
     ask_each,

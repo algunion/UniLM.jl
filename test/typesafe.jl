@@ -470,7 +470,7 @@ end
     # `jev-preview` both point to `jev-1.14.0` (https://docs.typesafe.ai/models, 2026-11-02).
     scene = ImageAttachment(joinpath(@__DIR__, "fixtures", "typesafe", "images", "scene-512.png"))
     bare = SystemOneFailure(response="", status=400, message="Invalid request.")
-    @test UniLM._typesafe_hint(bare, SystemOneRequest(scene, ["rect" => box("the red rectangle")]; model="jev-1.13.0")) ==
+    @test UniLM._typesafe_hint(bare, SystemOneRequest(scene, ["rect" => bounding_box("the red rectangle")]; model="jev-1.13.0")) ==
           "Box questions need a Jev model that supports them, 1.14 or later, such as \"jev-1.14.0\", \"jev-latest\" " *
           "or \"jev-preview\""
 end

@@ -16,7 +16,7 @@ const RECORDABLE = Set{String}([
 
 const LOCAL = Set{String}([
     # constructors and builders
-    "MistralEndpoint", "choice", "score", "noul", "box", "@nl_str", "fork",
+    "MistralEndpoint", "choice", "score", "noul", "bounding_box", "@nl_str", "fork",
     "function_tool", "custom_tool", "web_search", "file_search", "code_interpreter", "computer_tool", "shell",
     "apply_patch_tool", "image_generation_tool", "mcp_tool", "gemini_code_execution", "gemini_google_search",
     "gemini_url_context", "input_text", "input_image", "input_file", "configuration_update", "tool_result",

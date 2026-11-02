@@ -42,7 +42,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [Questions](@id <entry>_questions)
 
-> Template: The question kinds answered (`choice`, `score`, `noul`, `box`, `RawQuestion`), what of a question reaches the model (its name, its options' names), and the limits of each, named and linked to Limits and refusals.
+> Template: The question kinds answered (`choice`, `score`, `noul`, `bounding_box`, `RawQuestion`), what of a question reaches the model (its name, its options' names), and the limits of each, named and linked to Limits and refusals.
 
 ## [Images](@id <entry>_images)
 

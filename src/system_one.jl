@@ -41,7 +41,7 @@ Abstract supertype of the questions a System One request asks:
 that a statement is true), [`BoxQuestion`](@ref) (where something is in an
 image), and [`RawQuestion`](@ref), the hatch for a question kind this version
 does not know. Build them with [`choice`](@ref), [`score`](@ref),
-[`noul`](@ref) and [`box`](@ref).
+[`noul`](@ref) and [`bounding_box`](@ref).
 
 The types hold only what every backend requires; how many options or levels a
 backend accepts is its wrapper's rule, checked when the request is sent.
@@ -174,7 +174,7 @@ One question that locates something in an image of the state: the answer is a
 width. `instructions` says what to locate and is required — a string that is not
 blank, an object, an array or an image; a box with no target is not a question.
 
-Constructed through [`box`](@ref). Not every backend answers Box questions;
+Constructed through [`bounding_box`](@ref). Not every backend answers Box questions;
 those that cannot refuse the request with an `ArgumentError` before it is sent.
 """
 struct BoxQuestion <: SystemOneQuestion
@@ -367,7 +367,7 @@ noul(instructions; yes=nothing, no=nothing) = NoulQuestion(instructions, _noul_c
 noul(; yes=nothing, no=nothing) = NoulQuestion(nothing, _noul_criteria(yes, no))
 
 """
-    box(instructions) -> BoxQuestion
+    bounding_box(instructions) -> BoxQuestion
 
 Build a Box question: where in an image of the state is what `instructions`
 names. The answer is a [`BoxAnswer`](@ref) — a [`BoxCoordinates`](@ref) of
@@ -376,10 +376,10 @@ reports one. `instructions` is required: a string that is not blank, an object,
 an array or an image.
 
 ```julia
-box("the dent on the front bumper")
+bounding_box("the dent on the front bumper")
 ```
 """
-box(instructions) = BoxQuestion(instructions)
+bounding_box(instructions) = BoxQuestion(instructions)
 
 # ─── The System One JSON form ────────────────────────────────────────────────
 # The object form the System One wire is written in (TypeSafe's published wire, which
@@ -447,7 +447,7 @@ _question_name(k) = throw(ArgumentError("question names must be a String or a Sy
 
 _question_value(q::SystemOneQuestion) = q
 _question_value(q) = throw(ArgumentError(
-    "a question must be a SystemOneQuestion (built with choice, score, noul or box, or a RawQuestion); " *
+    "a question must be a SystemOneQuestion (built with choice, score, noul or bounding_box, or a RawQuestion); " *
     "got $(typeof(q))"))
 
 function _questions_from_items(items)::Vector{Pair{String,SystemOneQuestion}}

@@ -146,7 +146,7 @@ against one version is a claim about that version only.
 
 On November 2, 2026 TypeSafe points both `jev-latest` and `jev-preview` at
 `jev-1.14.0` (Jev 1.14, available from October 14, 2026), and has no preview build.
-Jev 1.13 and 1.14 both read images; a [`box`](@ref) question needs Jev 1.14 or
+Jev 1.13 and 1.14 both read images; a [`bounding_box`](@ref) question needs Jev 1.14 or
 later — `model = "jev-1.14.0"`, `"jev-latest"` or `"jev-preview"`. Jev 1.13 answers
 a request with one with HTTP 400 and the bare message `"Invalid request."`, which
 [`ask`](@ref) returns with a hint naming those models. `long_context = true` works
@@ -173,7 +173,7 @@ after the image), a state nested 65 levels deep.
 The question types themselves set no upper bound — other System One backends have
 other limits, which their wrappers check the same way — so [`choice`](@ref) and
 [`score`](@ref) build such questions; only sending one to TypeSafe is refused. A
-[`box`](@ref) question needs an image in the request to locate in, so one in a
+[`bounding_box`](@ref) question needs an image in the request to locate in, so one in a
 request without an image is refused as well: TypeSafe answers it anyway, with
 HTTP 200 and a box at a low confidence — 0.05 to 0.10 in probes on 2026-10-19
 and 2026-10-20 — that locates nothing. A Box answer turned inside out
@@ -539,7 +539,7 @@ SystemOneQuestion
 choice
 score
 noul
-box
+bounding_box
 ChoiceQuestion
 ScoreQuestion
 NoulQuestion

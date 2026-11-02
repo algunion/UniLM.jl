@@ -717,7 +717,7 @@ end
          _s1_caught(() -> ask("s", "c" => choice("pick", (a = (weight = Inf,),)); service=_S1Mock)),
          _s1_caught(() -> ask("s", " " => q; service=_S1Mock)),
          _s1_caught(() -> ask("s", q; service=_S1Mock, confg=_S1_CFG)),       # a misspelt keyword is an option
-         _s1_caught(() -> ask("s", "w" => box(ImageAttachment(UInt8[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01])); service=_S1Mock)),
+         _s1_caught(() -> ask("s", "w" => bounding_box(ImageAttachment(UInt8[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01])); service=_S1Mock)),
          _s1_caught(() -> ask(_S1_PNG, q; service=_S1Mock)),
          _s1_caught(() -> ask("s", "c" => choice("pick", ["a" => _S1_PNG, "b" => nothing]); service=_S1Mock))]
     end
@@ -917,7 +917,7 @@ struct _RefusingProtocol <: UniLM.SystemOneProtocol end
 UniLM._allows_refusal(::_RefusingProtocol) = true
 
 @testset "System One — the checks of Box answers and refusals" begin
-    req = SystemOneRequest(_S1_PNG, ["where" => box("the dent"), "ok" => noul("Is it fine?")]; model="m")
+    req = SystemOneRequest(_S1_PNG, ["where" => bounding_box("the dent"), "ok" => noul("Is it fine?")]; model="m")
     resp(a; ok=NoulAnswer(0.5, Dict{String,Any}())) =
         SystemOneResponse("m", Dict{String,SystemOneAnswer}("where" => a, "ok" => ok), TokenUsage(), nothing, Dict{String,Any}())
     ts = UniLM.TypeSafeProtocol()
@@ -944,10 +944,16 @@ UniLM._allows_refusal(::_RefusingProtocol) = true
           "BoxAnswer(BoxCoordinates(top=0.29, bottom=0.71, left=0.18, right=0.56), confidence=nothing)"
     @test sprint(show, refusal) == "RefusalAnswer(1 fields)"
     # A Box question names its target.
-    @test_throws ArgumentError box(nothing)
-    @test_throws ArgumentError box("  ")
-    @test_throws ArgumentError box(42)
-    @test box((what = "the dent", where = "front")) isa BoxQuestion && box(_S1_PNG).instructions === _S1_PNG
+    @test_throws ArgumentError bounding_box(nothing)
+    @test_throws ArgumentError bounding_box("  ")
+    @test_throws ArgumentError bounding_box(42)
+    @test bounding_box((what = "the dent", where = "front")) isa BoxQuestion && bounding_box(_S1_PNG).instructions === _S1_PNG
+end
+
+@testset "System One — bounding_box builds a Box question; box, its former name, is gone, with no alias" begin
+    @test bounding_box("x") isa BoxQuestion && bounding_box("x").instructions == "x"
+    @test !isdefined(UniLM, :box)
+    @test_throws UndefVarError UniLM.box
 end
 
 struct _S1Holder          # a caller's own struct, which no wire maps
@@ -960,9 +966,9 @@ end
                                                TYPESAFEServiceEndpoint)
     caught(f) = try f(); nothing catch e; e end
     # Nothing to locate in: refused before anything is sent, on any backend.
-    e = caught(() -> call("no image in here", "where" => box("the dent")))
+    e = caught(() -> call("no image in here", "where" => bounding_box("the dent")))
     @test e isa ArgumentError && occursin("carries none", e.msg)
-    @test call((photo = img,), "where" => box("the red square")) isa UniLM._SystemOneCall
+    @test call((photo = img,), "where" => bounding_box("the red square")) isa UniLM._SystemOneCall
     # An image inside a struct of the caller's own is reached by no mapping: refused, never
     # written as the array of numbers JSON.jl would make of its bytes.
     e = caught(() -> call((note = "see the photo", held = _S1Holder(img)), "q" => choice(["a", "b"])))

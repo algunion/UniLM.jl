@@ -88,7 +88,7 @@ image's bytes into the JSON as numbers ([Limits and refusals](@ref jev_limits)).
 **The job:** find where something is in a picture: the dent on a parcel, the
 signature on a form. **Without Jev:** an object detector trained on your
 classes, or a vision LLM asked for coordinates as text. **With Jev:** a
-[`box`](@ref) question names what to locate, and the answer is a
+[`bounding_box`](@ref) question names what to locate, and the answer is a
 [`BoxAnswer`](@ref): the box's edges as fractions of the image, and a
 confidence.
 
@@ -100,7 +100,8 @@ question drew HTTP 400 and `"Invalid request."`; [`ask`](@ref) returns that
 [`SystemOneFailure`](@ref) with a hint naming the models that answer one.
 
 ```@example jev
-r = ask(scene, "rectangle" => box("the red rectangle"), "disc" => box("the blue disc"); model = "jev-1.14.0")
+r = ask(scene, "rectangle" => bounding_box("the red rectangle"), "disc" => bounding_box("the blue disc");
+        model = "jev-1.14.0")
 
 for name in ("rectangle", "disc")
     b = r[name]
@@ -125,7 +126,7 @@ one without before anything is sent ([Limits and refusals](@ref jev_limits)):
 
 ```@example jev
 try
-    ask("The parcel arrived with a dent on its left side.", "dent" => box("the dent"); model = "jev-1.14.0")
+    ask("The parcel arrived with a dent on its left side.", "dent" => bounding_box("the dent"); model = "jev-1.14.0")
 catch err
     println(sprint(showerror, err))
 end

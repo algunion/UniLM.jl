@@ -341,7 +341,7 @@ end
          one(score("Rate.", ["l$i" for i in 1:11])),                                    # 9
          one(score("Rate.", ["low", (label = "high",)])),                               # 10
          one(score(["low", "high"])),                                                   # 11
-         one(box("the dent")),                                                          # 12
+         one(bounding_box("the dent")),                                                 # 12
          one(RawQuestion(Dict("type" => "predicate", "name" => "other", "instructions" => "x"))),   # 13
          _od_caught(() -> ask("s", ["q$i" => noul("Is it $i?") for i in 1:401]; service=_ODMock))]  # 14
     end

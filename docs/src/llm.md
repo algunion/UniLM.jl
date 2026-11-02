@@ -1971,7 +1971,7 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   "Dreamer-ready", not yet ready for production). Each use of an image is billed. A Score `legend` entry that is an
   image comes back as the request's `ImageAttachment`. A recording is keyed on the
   JSON part plus one `asset-k <sha256>` line per image (`key_extra`), never on or
-  with the bytes. `box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
+  with the bytes. `bounding_box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
   `"jev-latest"`, `"jev-preview"`; a 1.13 model's 400 `"Invalid request."` gets
   a hint naming them) and an image in the request; an inside-out box is a
   `SystemOneCallError`.
@@ -2154,7 +2154,7 @@ score(instructions, levels::AbstractVector) -> ScoreQuestion
 score(levels::AbstractVector) -> ScoreQuestion
 noul(instructions; yes=nothing, no=nothing) -> NoulQuestion
 noul(; yes=nothing, no=nothing) -> NoulQuestion
-box(instructions) -> BoxQuestion
+bounding_box(instructions) -> BoxQuestion
 RawQuestion(fields::AbstractDict)                   # copied into a JSON.Object (a plain Dict sorted)
 
 SystemOneRequest(state, questions; model=nothing, options=(;))
@@ -3098,7 +3098,7 @@ Every exported symbol (404), grouped by area:
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
-**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `box`, `SystemOneRequest`, `ask`, `ask_each`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
+**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `bounding_box`, `SystemOneRequest`, `ask`, `ask_each`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 

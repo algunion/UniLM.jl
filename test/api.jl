@@ -512,8 +512,8 @@ end
     @test UniLM.GEMINIOpenAIServiceEndpoint <: UniLM.ServiceEndpoint
 
     @testset "DeepSeekEndpoint keyword constructor" begin
-        # api.jl:379 — the kwarg ctor. Passing api_key explicitly means the ENV["DEEPSEEK_API_KEY"]
-        # default is never evaluated (zero-spend), and the key must round-trip into the struct.
+        # A given key is kept as is. Without one the field is `nothing` and the key is read from
+        # DEEPSEEK_API_KEY each time a request is built (test/deepseek.jl).
         ds = DeepSeekEndpoint(api_key="explicit-key")
         @test ds isa UniLM.DeepSeekEndpoint
         @test ds.api_key == "explicit-key"

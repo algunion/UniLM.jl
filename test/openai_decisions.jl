@@ -657,6 +657,27 @@ end
                             "got a Dict{String, String}"
 end
 
+@testset "OpenAI Decisions — a with_system_one scope takes the options a request takes, and refuses the rest first" begin
+    ran = Ref(0)
+    for options in ((prompt_cache_key = "k"^64, safety_identifier = "u"^128,
+                     prompt_cache_options = PromptCacheOptions(mode="explicit", ttl="12h")),
+                    (prompt_cache_options = PromptCacheOptions(mode="implicit", ttl="30m"),),
+                    (prompt_cache_options = PromptCacheOptions(),), (safety_identifier = "",), (;))
+        @test with_system_one(() -> (ran[] += 1), OPENAIServiceEndpoint; options...) == ran[]
+    end
+    @test ran[] == 5
+    q = "q" => noul("Is it?")
+    for options in ((temperature = 0,), (prompt_cache_key = "k"^65,), (safety_identifier = 7,),
+                    (prompt_cache_options = PromptCacheOptions(ttl="1h"),),
+                    (prompt_cache_options = PromptCacheOptions(prewarm=true),),
+                    (prompt_cache_options = Dict("ttl" => "12h"),))
+        e = _od_caught(() -> with_system_one(() -> (ran[] += 1), OPENAIServiceEndpoint; options...))
+        sent = _od_caught(() -> UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test ran[] == 5                                      # refused before f ran
+end
+
 # ─── Decoding ────────────────────────────────────────────────────────────────
 
 const _OD_REQ = SystemOneRequest("Export fails in Safari but works in Chrome.", [

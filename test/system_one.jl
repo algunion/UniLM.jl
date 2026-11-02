@@ -567,9 +567,26 @@ end
     @test long.(seen) == [true, false, false, true, true, false]
     # With no options the wire is what it was, byte for byte.
     @test _s1_text(seen[6]) == """{"state":"s","model":"jev-latest","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
-    # An option the backend does not accept is refused when the request is sent, by name.
+    # An option the backend does not accept is refused, by name.
     e = _s1_caught(() -> with_system_one(() -> ask("s", q), _S1Mock; temperature=0))
     @test e isa ArgumentError && contains(e.msg, "temperature")
+end
+
+@testset "System One — with_system_one checks its options when the scope opens, before f runs" begin
+    ran = Ref(false)
+    q = "q" => noul("Is it?")
+    # The mock speaks TypeSafe's wire, whose wrapper takes one option, `long_context`, a Bool: the
+    # scope refuses what it does not take with the message a request carrying it gets when encoded.
+    for options in ((temperature = 0,), (long_context = 1,), (long_context = true, confg = 1))
+        e = _s1_caught(() -> with_system_one(() -> (ran[] = true), _S1Mock; options...))
+        sent = _s1_caught(() -> UniLM.encode_system_one(UniLM.TypeSafeProtocol(), _S1Mock,
+                                                       SystemOneRequest("s", q; model="m", options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test !ran[]
+    # A protocol UniLM does not wrap checks its options, if at all, when it sends: the scope runs f.
+    @test with_system_one(() -> (ran[] = true; :ran), _XEndpoint; temperature=0, anything="goes") === :ran
+    @test ran[]
 end
 
 _s1_route(::Val{:refund}, ticket) = :refund

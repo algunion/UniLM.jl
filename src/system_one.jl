@@ -1334,10 +1334,12 @@ Run `f()` with `service` as the System One backend of every verb inside it that
 names none — [`ask`](@ref), [`list_models`](@ref), [`nl_dispatch`](@ref),
 [`nl_classify`](@ref) and [`@branch`](@ref) — `model`, when given, as the
 model of those calls that name none, and any other keyword as
-the provider options of those calls that name none (see [`ask`](@ref); checked
-by the backend's wrapper when each request is sent); return `f()`'s value.
-`service` must declare `:system_one` and `model` must not be blank, or this is
-an `ArgumentError` before `f` runs.
+the provider options of those calls that name none (see [`ask`](@ref)); return
+`f()`'s value. `service` must declare `:system_one`, `model` must not be blank,
+and the backend's wrapper must accept the options — TypeSafe's, OpenAI's Decisions
+API's and Ollama's refuse here what they would refuse in each request, with the
+same message — or this is an `ArgumentError` before `f` runs. A backend UniLM
+does not wrap checks its options only when it sends a request.
 
 A call resolves its backend, model and options this way:
 
@@ -1361,8 +1363,15 @@ function with_system_one(f::Function, service; model::Union{Nothing,AbstractStri
     service isa ServiceEndpointSpec || throw(ArgumentError(
         "with_system_one takes an endpoint (a ServiceEndpoint type or instance); got $(typeof(service))"))
     _check_system_one_service(service)
+    _validate_system_one_options(system_one_protocol(service)::SystemOneProtocol, values(options))
     with(f, _SYSTEM_ONE_TARGET => _SystemOneTarget(service, _model_name(model), values(options)))
 end
+
+# The provider options a backend's wrapper accepts, the one rule its encoder holds each
+# request to and `with_system_one` holds a scope's options to when the scope opens, so
+# both refuse with the same message. A protocol UniLM does not wrap checks its options,
+# if at all, when it encodes a request.
+_validate_system_one_options(::SystemOneProtocol, ::NamedTuple)::Nothing = nothing
 
 # The backend, model and options of a call: the call's own, then the ambient scope's —
 # whose model and options apply only with its own backend — then TypeSafe and its default.

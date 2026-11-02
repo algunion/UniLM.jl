@@ -2189,8 +2189,10 @@ ask_each(requests::AbstractVector{<:SystemOneRequest}; service=nothing, config=n
 
 with_system_one(f, service; model=nothing, options...)   # -> f(); the backend of every call inside f
     # that names no service, spawned tasks included, and for those calls the model and the provider options
-    # (ask's keywords) when the call names none; service must declare :system_one, model must not be blank;
-    # options are checked by the backend's wrapper when each request is sent
+    # (ask's keywords) when the call names none; service must declare :system_one, model must not be blank,
+    # and the backend's wrapper must accept the options (TypeSafe, OpenAI, Ollama: by the rule and with the
+    # message each request gets), or ArgumentError before f runs; a backend UniLM does not wrap checks its
+    # options only when it sends a request
 
 list_models(; service=nothing, config=nothing, cancel=nothing)
     # -> TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError (TypeSafe);

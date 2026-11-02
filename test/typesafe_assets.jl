@@ -204,6 +204,21 @@ end
     end
 end
 
+@testset "TypeSafe long context — a with_system_one scope takes the option a request takes, and refuses the rest first" begin
+    ran = Ref(0)
+    for options in ((long_context = true,), (long_context = false,), (;))
+        @test with_system_one(() -> (ran[] += 1), TYPESAFEServiceEndpoint; options...) == ran[]
+    end
+    @test ran[] == 3
+    q = "fox" => noul("Is the text about a fox?")
+    for options in ((confg = 1,), (a = 1, b = 2), (long_context = "true",), (long_context = nothing,))
+        e = _ta_caught(() -> with_system_one(() -> (ran[] += 1), TYPESAFEServiceEndpoint; options...))
+        sent = _ta_caught(() -> _ta_wire(SystemOneRequest("text", q; model="m", options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test ran[] == 3                                      # refused before f ran
+end
+
 # A value nested `n` levels deep: `n` arrays around a string.
 _ta_nest(n::Int) = foldl((a, _) -> Any[a], 1:n; init="x")
 

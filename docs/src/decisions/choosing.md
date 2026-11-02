@@ -120,8 +120,8 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
-| Guidance | strings, objects, arrays and pictures, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
-| Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state only: an image, or a vector or tuple of strings and images | the state only, the images before the texts; vision models only |
+| Guidance | strings, objects, arrays and pictures, anywhere | `instructions` on every question: a string, or text, pictures and JSON objects as its parts; strings elsewhere; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
+| Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state (an image, or a vector or tuple of strings and images) and a question's instructions | the state only, the images before the texts; vision models only |
 | Box | Jev 1.14 | refused | refused |
 | Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |
@@ -134,10 +134,10 @@ and `tev1:0.8b` means nothing to TypeSafe.
 | Status, 25 October 2026 | `jev-latest` and `jev-preview` are Jev 1.14; images "dreamer-ready" | generally available | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026) |
 
 The Where a picture may stand row is what UniLM sends. TypeSafe takes a picture "anywhere text can go in a System
-One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API also takes pictures in a question's
-instructions, one of the additions its guide lists since the public beta
+One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API takes pictures in the input and in a
+question's instructions, the latter one of the additions its guide lists since the public beta
 ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#include-images-in-question-instructions)),
-which UniLM refuses. Ollama takes a request's pictures as one list, `images`, shared by every question
+and UniLM sends both. Ollama takes a request's pictures as one list, `images`, shared by every question
 ([System One](https://docs.ollama.com/api/systemone)), apart from the state's text, and by Ollama's source Clef reads
 them before that text ([decision/clef.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/clef.go)); UniLM
 refuses a picture after a text on every model. Each entry has the rest: [Jev's Images](@ref jev_images),

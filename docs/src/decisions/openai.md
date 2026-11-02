@@ -10,9 +10,8 @@ the input and no output ([Decisions guide](https://developers.openai.com/api/doc
 `OPENAIServiceEndpoint`, the endpoint of the [OpenAI](@ref openai_start) language-model entry, speaks it at
 `POST /v1/decisions` for [`ask`](@ref) and the verbs built on it, with the same key, and no decision verb refuses
 the endpoint. Of the API, UniLM does not wrap a conversation as input (messages, tool calls and their outputs),
-`input_json` parts, image URLs, pictures in a question's instructions, a score level's
-description, explicit cache breakpoints, the organization's Decisions usage endpoint or GPT-Live's Decisions
-integration.
+an `input_json` part in the input, image URLs, a score level's description, explicit cache breakpoints, the
+organization's Decisions usage endpoint or GPT-Live's Decisions integration.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:openai_decisions)
@@ -51,8 +50,7 @@ OpenAI's guide, fetched on 25 October 2026, opens with "The Decisions API is now
 what the API gained "since the public beta": prompt caching, pictures in question instructions, JSON input, up to
 400 questions per request, image URLs, conversation history, usage reporting, GPT-Live's integration and Private
 Link ([What's new](https://developers.openai.com/api/docs/guides/decisions#whats-new)). UniLM sends up to 400
-questions, and still refuses what the beta refused: a picture anywhere but the state
-([Limits and refusals](@ref openai_decisions_limits)).
+questions, and pictures and JSON data in a question's instructions ([Questions](@ref openai_decisions_questions)).
 
 ## [Options](@id openai_decisions_options)
 
@@ -167,9 +165,24 @@ What reaches the model:
 - **Option names and descriptions travel.** A Choice's option names and their descriptions are both in the request;
   OpenAI's guide asks for "distinct values and descriptions that explain when each option applies"
   ([Select from fixed options](https://developers.openai.com/api/docs/guides/decisions#select-from-fixed-options)).
-- **Guidance is text.** Every question needs instructions, a string; an option's description and a Score level are
-  strings; and a predicate has no place for a Noul's `yes` and `no`, so fold them into its instructions. Each is a
-  refusal ([Limits and refusals](@ref openai_decisions_limits)).
+- **Instructions may hold pictures and data.** Every question needs instructions: a string, or the parts that stand
+  in its place — a picture, a JSON object, or a vector or tuple of strings, pictures and JSON objects (or arrays of
+  objects), sent in order as `input_text`, `input_image` and `input_json` parts. OpenAI's guide puts the evidence
+  every question shares in the input, and gives each question its own picture to compare against it
+  ([Include images in question instructions](https://developers.openai.com/api/docs/guides/decisions#include-images-in-question-instructions)).
+- **Other guidance is text.** An option's description and a Score level are strings, and a predicate has no place
+  for a Noul's `yes` and `no`, so fold them into its instructions. Anything else is a refusal
+  ([Limits and refusals](@ref openai_decisions_limits)).
+
+A question with a picture of its own, compared against the one the state holds for every question (this block is not
+run when the manual is built):
+
+```julia
+reference, candidate = ImageAttachment("reference.png"), ImageAttachment("candidate.png")
+ask(["The shared image is reference image A.", reference],
+    "variant" => noul(["Is candidate image B a derivative or variant of reference image A?", candidate]);
+    service = OPENAIServiceEndpoint)
+```
 
 A Choice takes 2 to 255 options
 ([Create a decision](https://developers.openai.com/api/reference/resources/decisions/methods/create)) and a Score 2 to
@@ -177,7 +190,7 @@ A Choice takes 2 to 255 options
 request 1 to 400 questions
 ([Ask multiple questions](https://developers.openai.com/api/docs/guides/decisions#ask-multiple-questions)); a
 request outside these is refused before it is sent ([Limits and refusals](@ref openai_decisions_limits)). A picture
-goes in the state only, as the table shows; where each provider takes one is on
+goes in the state, as the table shows, or in a question's instructions; where each provider takes one is on
 [Choosing a decision provider](@ref system_one_backends). Reading the answers and the decision rules on them
 are on [Route and Decide](@ref system_one_guide).
 
@@ -209,7 +222,7 @@ end
 
 Had OpenAI declined either question, the `fallback` and the `_` line would have answered `:person`.
 [`nl_dispatch`](@ref) sends the arguments it dispatches on as a JSON object, which OpenAI receives as its JSON text;
-a picture among them is refused, since a picture goes in the state only: pass `state = [image, "…"]` to send one
+a picture among them is refused, since that text holds no picture: pass `state = [image, "…"]` to send one
 ([Limits and refusals](@ref openai_decisions_limits)). A verb whose call offers a single option is refused too, since a
 Choice takes two or more ([Limits and refusals](@ref openai_decisions_limits)): add a fallback option such as
 `"other"`, which OpenAI's guide advises "when your categories don't cover every possible input"
@@ -227,9 +240,10 @@ sending:
 | Questions | 1 to 400 per request | yes |
 | Choice options | 2 to 255 per question | yes |
 | Score levels | 2 to 10 per question | yes |
-| Text | 10,485,760 characters for the input, and for each text part of a message | yes |
-| Guidance | 1,048,576 characters for a question's instructions and its name, an option's value and description, a level's label, and the model's name | yes (a `RawQuestion`'s own fields are sent as written) |
-| Images | in the input, or in a question's instructions; no number on OpenAI's pages | in the input only, at most 128: UniLM refuses more |
+| Text | 10,485,760 characters for the input, and for each text part of a message or of a question's instructions | yes |
+| Guidance | 1,048,576 characters for a question's string instructions and its name, an option's value and description, a level's label, and the model's name | yes (a `RawQuestion`'s own fields are sent as written) |
+| Instruction parts | 1 to 16,384 per question; an `input_json` part holds at most 32 levels of objects and arrays, 10,000 values and 256 KiB of compact JSON | yes |
+| Images | in the input, and in a question's instructions, which "share the request's image limits with images in `input`"; no number on OpenAI's pages | yes: at most 128 in all |
 | Rate limits | per organization and project, varying by model | no ([When something fails](@ref openai_decisions_failures)) |
 
 [`ask`](@ref), [`ask_each`](@ref) and the verbs built on them throw these `ArgumentError`s before anything is sent.
@@ -239,7 +253,10 @@ answer would carry no sign of the change.
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | more than 400 questions | `OpenAI's Decisions API takes at most 400 questions per request` | split them across requests |
-| a question without instructions, or with instructions that are not a string | `every question needs`, `must be a string, not`: OpenAI requires a question's instructions, and UniLM sends them as a string | write the question as text, as the first argument of `choice`, `score` or `noul` |
+| a question without instructions | `every question needs`: OpenAI requires a question's instructions | write the question, as the first argument of `choice`, `score` or `noul` |
+| instructions of no part, or of more than 16,384 | `its instructions are`, `parts, and a question takes 1 to 16384` | a string, or fewer parts |
+| an instruction part that is not a string, a picture, or a JSON object or array of objects | `part` *n* `of its instructions is a`: a question's part is text, a picture or JSON data | write it as text, or put it in an object |
+| an `input_json` part of more than 32 levels, 10,000 values or 256 KiB of compact JSON, or that holds a picture | `levels deep`, `JSON values`, `bytes of compact JSON`, `holds an image inside JSON`: OpenAI reads JSON data as text, and fetches no picture named in it | trim it, or send it as text; make the picture a part of its own |
 | a Noul with `yes` or `no` | `a predicate has no true/false criteria`: a predicate question has no field for them | fold what they say into its instructions |
 | a Choice of fewer than 2 or more than 255 options | `a choice offers 2 to 255 options, and it has` | add an option such as `"other"`, or narrow the options |
 | an option described by anything but a string or `nothing` | `the description of its option`: an option's description is a string | describe it in words |
@@ -247,12 +264,12 @@ answer would carry no sign of the change.
 | a Score level that is not a string | `must be a string, the level's label`: a level is sent as its label | write the level as text |
 | a `box` question | `it is a Box question, and the API answers predicate, choice and score questions only` | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `the API answers predicate, choice and score questions; a RawQuestion is sent verbatim` | build it as a `RawQuestion` |
-| a `RawQuestion` that holds a picture | `it holds an image, and images go in the state only` | put the picture in the state |
+| a `RawQuestion` that holds a picture | `it holds an image, which a RawQuestion, sent as written, cannot carry` | put the picture in the state, or in the instructions of a `choice`, `score` or `noul` |
 | a `RawQuestion` whose `"name"` field differs from its name | `and the answer is matched to the question by the name it echoes` | drop the field, or name the question as it does |
 | a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a vector or tuple of strings and images |
-| a text over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
+| a text — the input, or a text part of the state or of a question's instructions — over 10,485,760 characters | `OpenAI's Decisions API takes text of at most 10485760 characters` | shorten it |
 | a name, instructions, an option, a level or the model's name over 1,048,576 characters | `OpenAI's Decisions API takes at most 1048576 characters in`, then the field | shorten it |
-| more than 128 pictures | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |
+| more than 128 pictures, the state's and the instructions' together | `OpenAI's Decisions API takes at most 128 images per request`: the limit of OpenAI's published schema during the beta, which its pages no longer state | split them across requests |
 | a picture whose data URL would be over 1,073,741,824 characters (about 768 MiB of image) | `OpenAI's Decisions API takes an image as a data URL of at most 1073741824 characters`: the schema's limit on an image's `image_url`, checked from the picture's size before it is encoded | downscale it, or re-encode it in a more compact format |
 | an option other than the three of [Options](@ref openai_decisions_options) | `OpenAI's Decisions API accepts the options` | one of the three, or none |
 | a `prompt_cache_key` or `safety_identifier` that is not a string, or longer than 64 or 128 characters | `as a String of at most` | a shorter string |

@@ -26,17 +26,25 @@ The request:
   `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a vector or
   tuple of strings and images, as one user message of `input_text` and `input_image`
   parts (base64 data URLs, each with its `detail` when the image sets one), in
-  order. Images go there and nowhere else, at most
-  128 of them; each text — the input, or each text part of the message — is at
-  most 10,485,760 characters.
+  order. Each text — the input, or each text part of the message — is at most
+  10,485,760 characters.
 - each question is one entry of `questions`, in order, carrying its name: a
   [`NoulQuestion`](@ref) a `predicate`; a [`ChoiceQuestion`](@ref) a `choice` of
   2 to 255 options, each option's name its `value` and a string description its
   `description` (none for `nothing`); a [`ScoreQuestion`](@ref) a `score` of 2
   to 10 levels, each level its `label`; a [`RawQuestion`](@ref) verbatim, with
   its name added as `"name"` when it has none. At most 400 questions; each
-  question's name, instructions, option names and descriptions and level labels,
-  and the model's name, at most 1,048,576 characters.
+  question's name, string instructions, option names and descriptions and level
+  labels, and the model's name, at most 1,048,576 characters.
+- a question's `instructions` are a string as it is, or else the 1 to 16,384 parts
+  that stand in its place: an image an `input_image` part, a JSON object (a
+  `NamedTuple` too) an `input_json` part, and a vector or tuple the parts of its
+  items, in order — a string an `input_text` of at most 10,485,760 characters, an
+  image an `input_image`, an object or an array of objects an `input_json`. An
+  `input_json` part holds no image and at most 32 levels of objects and arrays,
+  10,000 values and 256 KiB of compact JSON.
+- images go in the state and in the questions' instructions, at most 128 of them
+  in all.
 - provider options are keywords of [`ask`](@ref): `prompt_cache_key`, a `String`
   of at most 64 characters; `safety_identifier`, at most 128; and
   `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and `ttl`, `"30m"` or
@@ -45,9 +53,10 @@ The request:
   cache breakpoint, so OpenAI caches none of it.
 
 What the wire has no form for is an `ArgumentError` before any I/O, naming
-OpenAI's rule and the fix: a question without string `instructions`; a Noul's
+OpenAI's rule and the fix: a question without `instructions`, or with
+instructions beyond those forms and limits; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
-[`BoxQuestion`](@ref); an image outside the state; a [`DocumentAttachment`](@ref)
+[`BoxQuestion`](@ref); an image anywhere but the state and the instructions; a [`DocumentAttachment`](@ref)
 anywhere (the API takes no files), as on every System One backend; a
 `prompt_cache_options` with another `ttl`, `prewarm` or
 `comparison_response_id`; any other option.
@@ -109,7 +118,8 @@ _system_one_concurrency(::OpenAIDecisionsProtocol, service)::Int = 16
 # The limits of the published request schema (`DecisionRequest` in OpenAI's OpenAPI
 # description); lengths are in characters, as JSON Schema counts them. The image cap is not in
 # the schema: it is the API's own, which answers more images with HTTP 400 ("at most 128 input
-# images").
+# images"), and OpenAI's guide counts a question's images with the input's ("Question images
+# share the request's image limits with images in `input`").
 const _DECISIONS_MAX_QUESTIONS = 400       # "Ask 1–400 questions about the input"
 const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
@@ -119,6 +129,12 @@ const _DECISIONS_MAX_INPUT = 10_485_760
 const _DECISIONS_MAX_IMAGE_URL = 1_073_741_824
 # The model, and each question's name, string instructions, choice value and description and level label.
 const _DECISIONS_MAX_FIELD = 1_048_576
+# Instructions as parts (DecisionQuestionInputPart), and an `input_json` part's data: "Limited to 32
+# container levels, 10,000 values, and 256 KiB of compact UTF-8 JSON" (DecisionInputJson).
+const _DECISIONS_PARTS = 1:16_384
+const _DECISIONS_JSON_LEVELS = 32
+const _DECISIONS_JSON_VALUES = 10_000
+const _DECISIONS_JSON_BYTES = 262_144
 # The string options, each of at most this many characters; `prompt_cache_options` follows them.
 const _DECISIONS_OPTIONS = (prompt_cache_key = 64, safety_identifier = 128)
 const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (k, n) in pairs(_DECISIONS_OPTIONS)), ", ") *
@@ -139,18 +155,70 @@ end
 const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector or Tuple of strings and ImageAttachments, which is " *
                                "sent as one user message of text and image parts in order"
 
-# The fix for guidance that is not text: write it as text, and move an image to the state.
+# The fix for guidance that is not text: write it as text, and move an image to the state or the instructions.
 _decisions_as_text(x)::String = "Write it as text" *
-    (x isa ImageAttachment ? "; an image belongs in the state, as $(_DECISIONS_IMAGE_FORMS)" : "")
+    (x isa ImageAttachment ? "; an image belongs in the state, as $(_DECISIONS_IMAGE_FORMS), or in the question's " *
+                             "instructions" : "")
 
-# Every question carries instructions, as a string (the `instructions` OpenAI requires).
-function _decisions_instructions(name::String, instructions)::String
+# Every question carries the `instructions` OpenAI requires: a string as it is, any other entry as the parts that
+# stand in its place (DecisionQuestionInputPart) — a vector or tuple the parts of its items, in order, an image or a
+# JSON object one part. Each image is checked against `limit` before it is encoded.
+function _decisions_instructions(name::String, instructions;
+                                 limit::Integer=_DECISIONS_MAX_IMAGE_URL)::Union{String,Vector{Any}}
     instructions isa AbstractString && return _decisions_field(instructions, "the instructions of $(repr(name))")
-    _decisions_refuse(name, isnothing(instructions) ?
-        "every question needs `instructions`, a string. Give them as the first argument, as in " *
-        "`choice(\"Which team should handle this?\", options)`" :
-        "its `instructions` must be a string, not $(typeof(instructions)). $(_decisions_as_text(instructions))")
+    isnothing(instructions) && _decisions_refuse(name,
+        "every question needs `instructions`, a string or parts of text, images and JSON. Give them as the first " *
+        "argument, as in `choice(\"Which team should handle this?\", options)`")
+    parts = instructions isa Union{AbstractVector,Tuple} ? instructions : (instructions,)
+    n = length(parts)
+    n in _DECISIONS_PARTS || _decisions_refuse(name,
+        "its instructions are $n parts, and a question takes $(first(_DECISIONS_PARTS)) to $(last(_DECISIONS_PARTS)). " *
+        (n < first(_DECISIONS_PARTS) ? "Give it one, or a string" : "Merge them, or split the question"))
+    Any[_decisions_part(name, i, x; limit) for (i, x) in enumerate(parts)]
 end
+
+# One part of a question's instructions: a string an `input_text`, an image an `input_image`, and a JSON object,
+# or an array of objects, an `input_json`.
+_decisions_part(name::String, i::Int, x::AbstractString; limit::Integer)::JSON.Object{String,Any} =
+    _decisions_text_part(x, "part $i of the instructions of $(repr(name))")
+_decisions_part(::String, ::Int, x::ImageAttachment; limit::Integer)::JSON.Object{String,Any} =
+    _decisions_image_part(x; limit)
+_decisions_part(name::String, i::Int, x::Union{AbstractDict,NamedTuple}; limit::Integer)::JSON.Object{String,Any} =
+    _decisions_json_part(name, i, x)
+_decisions_part(name::String, i::Int, x::Union{AbstractVector,Tuple}; limit::Integer)::JSON.Object{String,Any} =
+    all(v -> v isa Union{AbstractDict,NamedTuple}, x) ? _decisions_json_part(name, i, x) : _decisions_no_part(name, i, x)
+_decisions_part(name::String, i::Int, x; limit::Integer) = _decisions_no_part(name, i, x)
+
+_decisions_no_part(name::String, i::Int, x) = _decisions_refuse(name,
+    "part $i of its instructions is a $(typeof(x)), and a part is a string, an ImageAttachment, or a JSON object or " *
+    "array of objects. Write it as text, or put it in an object")
+
+# An `input_json` part. The levels are counted first, so data that holds itself is refused rather than walked
+# forever; then an image in the data, which the API would read as text, never as an image; then the bytes of the
+# compact JSON, and the values the data holds — itself, and every object, array and scalar inside it.
+function _decisions_json_part(name::String, i::Int, data)::JSON.Object{String,Any}
+    what = "part $i of its instructions"
+    _nests_deeper(data, _DECISIONS_JSON_LEVELS) && _decisions_refuse(name,
+        "$what nests objects and arrays more than $(_DECISIONS_JSON_LEVELS) levels deep, the most an `input_json` " *
+        "part takes. Flatten it, or send it as text")
+    isempty(_collect_images!(ImageAttachment[], data)) || _decisions_refuse(name,
+        "$what holds an image inside JSON, which the API reads as text and fetches no image from. Make the image " *
+        "a part of its own, as in `noul([\"Does the photo match the record?\", record, image])`")
+    text = _system_one_body(data)
+    n = sizeof(text)
+    n <= _DECISIONS_JSON_BYTES || _decisions_refuse(name,
+        "$what is $n bytes of compact JSON, and an `input_json` part takes at most $(_DECISIONS_JSON_BYTES) " *
+        "(256 KiB). Trim it, or send it as text")
+    held = _json_values(JSON.parse(text))
+    held <= _DECISIONS_JSON_VALUES || _decisions_refuse(name,
+        "$what holds $held JSON values, and an `input_json` part takes at most $(_DECISIONS_JSON_VALUES). Trim it, " *
+        "or send it as text")
+    JSON.Object{String,Any}("type" => "input_json", "data" => data)
+end
+
+_json_values(x::AbstractDict)::Int = 1 + sum(_json_values, values(x); init=0)
+_json_values(x::AbstractVector)::Int = 1 + sum(_json_values, x; init=0)
+_json_values(_)::Int = 1
 
 function _decisions_head(type::String, name::String, instructions)::JSON.Object{String,Any}
     o = JSON.Object{String,Any}()
@@ -216,7 +284,8 @@ _decisions_question(name::String, ::BoxQuestion) = _decisions_refuse(name,
 # Sent as it is, named: every answer is matched to its question by the name it echoes.
 function _decisions_question(name::String, q::RawQuestion)::JSON.Object{String,Any}
     isempty(_collect_images!(ImageAttachment[], q.fields)) || _decisions_refuse(name,
-        "it holds an image, and images go in the state only: $(_DECISIONS_IMAGE_FORMS)")
+        "it holds an image, which a RawQuestion, sent as written, cannot carry: an image goes in the state, as " *
+        "$(_DECISIONS_IMAGE_FORMS), or in the instructions of a `choice`, `score` or `noul`")
     given = get(q.fields, "name", nothing)
     isnothing(given) || given == name || _decisions_refuse(name,
         "its \"name\" field is $(repr(given)), and the answer is matched to the question by the name it echoes. " *
@@ -275,29 +344,30 @@ end
 # before it is encoded.
 function _decisions_message(items::Union{AbstractVector,Tuple};
                             limit::Integer=_DECISIONS_MAX_IMAGE_URL)::Vector{Any}
-    n = count(x -> x isa ImageAttachment, items)
-    n <= _DECISIONS_MAX_IMAGES || throw(ArgumentError(
-        "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_IMAGES) images per request; the state has $n. " *
-        "Split it into several requests"))
-    parts = Any[]
-    for x in items
-        part = JSON.Object{String,Any}()
-        if x isa ImageAttachment
-            _check_decisions_image_url(x.mime, length(x.data); limit)
-            part["type"] = "input_image"
-            part["image_url"] = string("data:", x.mime, ";base64,", base64encode(x.data))
-            isnothing(x.detail) || (part["detail"] = x.detail)
-        else
-            part["type"] = "input_text"
-            part["text"] = _decisions_text(String(x), "a text part of the state")
-        end
-        push!(parts, part)
-    end
-    message = JSON.Object{String,Any}()
-    message["role"] = "user"
-    message["content"] = parts
-    Any[message]
+    parts = Any[x isa ImageAttachment ? _decisions_image_part(x; limit) : _decisions_text_part(x, "a text part of the state")
+                for x in items]
+    Any[JSON.Object{String,Any}("role" => "user", "content" => parts)]
 end
+
+_decisions_text_part(text::AbstractString, what::String)::JSON.Object{String,Any} =
+    JSON.Object{String,Any}("type" => "input_text", "text" => _decisions_text(String(text), what))
+
+# An `input_image` part: the image's data URL, checked against `limit` before it is encoded, and its `detail`
+# when it sets one.
+function _decisions_image_part(x::ImageAttachment; limit::Integer=_DECISIONS_MAX_IMAGE_URL)::JSON.Object{String,Any}
+    _check_decisions_image_url(x.mime, length(x.data); limit)
+    part = JSON.Object{String,Any}("type" => "input_image", "image_url" => _data_url(x))
+    isnothing(x.detail) || (part["detail"] = x.detail)
+    part
+end
+
+# The images a request sends, counted before any is encoded: an image, or the images among the items of a vector or
+# tuple — in the state, and in each question's instructions.
+_decisions_images(::ImageAttachment)::Int = 1
+_decisions_images(x::Union{AbstractVector,Tuple})::Int = count(i -> i isa ImageAttachment, x)
+_decisions_images(_)::Int = 0
+_decisions_question_images(q::Union{ChoiceQuestion,ScoreQuestion,NoulQuestion})::Int = _decisions_images(q.instructions)
+_decisions_question_images(::SystemOneQuestion)::Int = 0
 
 # The options as the body writes them: in one order whatever the caller's, so the same
 # request always has the same bytes, and the same recording key.
@@ -341,6 +411,10 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
     for (name, _) in request.questions
         _decisions_field(name, "a question's name")
     end
+    images = _decisions_images(request.state) + sum(((_, q),) -> _decisions_question_images(q), request.questions; init=0)
+    images <= _DECISIONS_MAX_IMAGES || throw(ArgumentError(
+        "OpenAI's Decisions API takes at most $(_DECISIONS_MAX_IMAGES) images per request, the state's and the " *
+        "questions' instructions' together; this one has $images. Split it into several requests"))
     questions = Any[_decisions_question(name, q) for (name, q) in request.questions]
     body = JSON.Object{String,Any}()
     body["model"] = _decisions_field(_system_one_model(p, service, request), "the model's name")

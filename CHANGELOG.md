@@ -29,6 +29,9 @@
   call, a call id outside 1–64 characters, a function name outside the schema's pattern, or more than 131,072 items.
   TypeSafe and Ollama still send such a state as data. Upgrading: pass `JSON.json(messages)` as the state to keep the
   old request.
+- **`transcribe` on Ollama reads the reply by its `Content-Type` and needs Ollama 0.40.12 or later.** Earlier releases
+  labelled their JSON `application/x-ndjson`; such a reply is now an `AudioCallError` naming the label (those servers
+  would also ignore `temperature` and the new formats). Upgrading: run Ollama 0.40.12 or later.
 
 ### Changed
 - **`moderate`, and `speak` on Gemini, retry a transient failure.** Moderation is free and changes nothing when sent
@@ -58,6 +61,18 @@
   tuple of strings, images and objects is sent as `input_text`, `input_image` and `input_json` parts, in order. Checked
   before any request: 1–16,384 parts; a text part of at most 10,485,760 characters; an `input_json` part of at most 32
   levels, 10,000 values and 256 KiB of compact JSON, with no image inside. String instructions are sent unchanged.
+- **`speak` on Ollama.** `OllamaEndpoint` declares `:speech`; one POST to `/v1/audio/speech` (Ollama 0.40.9 or later)
+  returns the bytes as Ollama streams them: 16-bit mono 24 kHz WAV (its header carries maximal size fields) or raw PCM.
+  There is no default model. An input over 4,096 characters, a speed other than 1, any `instructions` and formats other
+  than wav/pcm are refused before the request, naming Ollama; an unknown voice is Ollama's 400, as an `AudioFailure`.
+- **`translate` on Ollama.** It uploads the file as is to `/v1/audio/translations` (Ollama 0.40.12 or later), with
+  `language` sent as `to_language`, and returns a `TranscriptionSuccess` whose `raw` holds the reply. `translate`'s
+  `model` now defaults to `nothing` (OpenAI resolves it to `gpt-realtime-translate`). On Ollama a missing model, a blank
+  language or a missing or empty file is refused before the request.
+- **Ollama's transcription contract.** `temperature` and `response_format` "text" and "verbose_json" are sent (Ollama
+  0.40.12 or later); `languages`, `keywords` and other formats are still refused, now in Ollama's words.
+- **`OllamaModelInfo.voices::Vector{String}`** (Ollama 0.40.11 or later), empty for a model that is not a speech
+  model. It comes before `raw`, so positional construction gains an argument.
 
 ### Fixed
 - **`speak` and `translate` on OpenAI read the provider's error after a send fails at the transport.** When a write
@@ -71,6 +86,9 @@
 - **A `ReplayMissError` for an OpenAI Decisions request names its questions, not the model.**
 - **Each stream sent outside a recording scope has a source of its own.** Every such stream shared one list of
   recording files, so anything added to it would have made every later live stream record.
+- **System One on Ollama sends a blank text state without images instead of refusing it.** The model's encoding
+  decides: d3 models answer one; others answer HTTP 400 `state must not be empty`, which comes back as a
+  `SystemOneFailure`.
 
 ## 0.29.0
 

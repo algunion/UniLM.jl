@@ -213,8 +213,12 @@ end
     loose = function_tool("get_time", "Get time")
     gen(tools, tc=nothing) = get(JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
         Respond(service=GEMINIServiceEndpoint, input="x", tools=tools, tool_choice=tc))), "generation_config", nothing)
-    mode(tools, tc=nothing) = gen(tools, tc)["tool_choice"]["allowed_tools"]
-    @test gen([strict]) == Dict("tool_choice" => Dict("allowed_tools" => Dict("mode" => "validated")))
+    # The reference takes a mode as a ToolChoiceType string or as a ToolChoiceConfig's allowed_tools: one request.
+    function mode(tools, tc=nothing)
+        sent = gen(tools, tc)["tool_choice"]
+        sent isa AbstractString ? Dict("mode" => sent) : sent["allowed_tools"]
+    end
+    @test collect(keys(gen([strict]))) == ["tool_choice"] && mode([strict]) == Dict("mode" => "validated")
     @test mode([loose, strict], "auto") == Dict("mode" => "validated")       # one strict tool is enough
     @test mode([UniLM.CallableTool(strict, (n, a) -> "x")]) == Dict("mode" => "validated")   # a tool loop's
     @test mode([strict], "required") == Dict("mode" => "any")

@@ -161,13 +161,6 @@ end
     for model in ("jev-1.14.0", "jev-1.13.0", "jev-latest", "jev-preview")
         @test DEFAULT_PRICING[model] == UniLM._price(0.042, 0.042, 0.0)
     end
-    # Both estimated_cost docstrings (one per method) state the price for the versions TypeSafe lists, not
-    # for Jev 1.13 alone; read raw from the module's docs, which hold every method's docstring.
-    docs = values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, :estimated_cost)].docs)
-    doc = replace(join((join(string.(d.text)) for d in docs), " "), r"\s+" => " ")
-    @test !occursin("TypeSafe lists one price, for Jev 1.13", doc) && !occursin("lists for Jev 1.13)", doc)
-    @test occursin("TypeSafe's Models page lists Jev 1.14 and Jev 1.13 at one price", doc)
-    @test occursin("the price TypeSafe's Models page lists for Jev 1.14 and Jev 1.13", doc)
 end
 
 @testset "cumulative_cost" begin

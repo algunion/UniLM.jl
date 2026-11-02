@@ -156,12 +156,13 @@ end
     @test cloud.base_url == "https://ollama.com:443"
     json = "Content-Type" => "application/json"
     withenv("OLLAMA_API_KEY" => "test-key") do
+        # Header order carries no meaning on the wire, so the headers are compared sorted.
         for ep in (cloud, OllamaEndpoint(base_url="https://ollama.com"), OllamaEndpoint(base_url="https://Ollama.COM/"))
-            @test UniLM.auth_header(ep) == ["Authorization" => "Bearer test-key", json]
+            @test sort(UniLM.auth_header(ep)) == sort(["Authorization" => "Bearer test-key", json])
         end
         @test UniLM.auth_header_multipart(cloud) == ["Authorization" => "Bearer test-key"]   # transcription
-        @test UniLM._stream_headers(cloud) == ["Authorization" => "Bearer test-key", json,  # a streamed chat
-                                               "Accept-Encoding" => "identity"]
+        @test sort(UniLM._stream_headers(cloud)) ==                                          # a streamed chat
+              sort(["Authorization" => "Bearer test-key", json, "Accept-Encoding" => "identity"])
         # Any other server gets no key, the variable set or not: it is the cloud's credential.
         for url in ("http://127.0.0.1:11434", "https://gpu-box:11434", "https://ollama.com.example.net",
                     "https://api.ollama.com", "http://ollama.com")
@@ -204,8 +205,8 @@ end
         @test !issuccess(r) && r.cause isa UniLMCancelled
     end
     @test UniLM._ollama_auth(cloud; required=false) == [json]                          # unset: no header, no refusal
-    @test withenv(() -> UniLM._ollama_auth(cloud; required=false), "OLLAMA_API_KEY" => "test-key") ==
-          ["Authorization" => "Bearer test-key", json]
+    @test sort(withenv(() -> UniLM._ollama_auth(cloud; required=false), "OLLAMA_API_KEY" => "test-key")) ==
+          sort(["Authorization" => "Bearer test-key", json])
     # A server of the caller's own sees no Authorization header, the variable set or not.
     auth = String[]
     srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req

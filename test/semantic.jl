@@ -326,12 +326,22 @@ end
 # ─── 4. @branch on a failed call ─────────────────────────────────────────────
 
 @testset "semantic — @branch's model: the scope's without a service, else the backend's default; Ollama has none" begin
-    doc = replace(join((join(string.(d.text)) for d in
-                        values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, Symbol("@branch"))].docs)), " "), r"\s+" => " ")
-    @test !occursin("omitted, the client default applies", doc)
-    @test occursin("when omitted, the [`with_system_one`](@ref) scope's model applies (only when `service` is not " *
-                   "given), else the backend's default", doc)
-    @test occursin("Ollama has none, so an omitted model is an `ArgumentError` before the request", doc)
+    # In a scope, an @branch that names no service sends the scope's model, and one that names a service sends
+    # that backend's default.
+    _, seen = _with_semantic_mock() do
+        with_system_one(SemanticMock; model="jev-scoped") do
+            scoped = @branch "s" config=_SEM_CFG begin
+                "alpha" => :alpha
+                "beta"  => :beta
+            end
+            named = @branch "s" service=SemanticMock config=_SEM_CFG begin
+                "alpha" => :alpha
+                "beta"  => :beta
+            end
+            (scoped, named)
+        end
+    end
+    @test [s["body"]["model"] for s in seen] == ["jev-scoped", UniLM.default_typesafe_model()]
     # Ollama has no default System One model: an @branch that names none is refused before any request (the
     # endpoint's port takes no connection, so a request would be a SystemOneError instead).
     e = try

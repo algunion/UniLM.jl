@@ -424,10 +424,12 @@ end
   naming Ollama, the rule and the fix for what Ollama's route refuses in its shared
   checks or documents as its maximum (Ollama 0.40.6): more than 64 questions; a
   Choice of more than 255 options; a Score of fewer than 2 or more than 10 levels;
-  a blank text `state` without images; a Box question, which Ollama does not
-  answer. By Ollama's source, a Kev model on Ollama's own runner (such as
-  `kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
-  state; that is untested. It also refuses what Ollama's API reference does not
+  a Box question, which Ollama does not answer. By Ollama's source, a Kev model on
+  Ollama's own runner (such as `kev:0.8b-mxfp8`) skips the shared checks and takes
+  1 to 255 levels and a blank state; that is untested. A blank text `state`
+  without images is sent, for the model's encoding to decide: since Ollama 0.40.11,
+  d3 models answer one, and the other encodings answer 400 `state must not be
+  empty`, a [`SystemOneFailure`](@ref). It also refuses what Ollama's API reference does not
   list, though some models read it: `instructions` given as anything but a string,
   an object or an array; an option described by anything but a string or
   `nothing`; a Score level or a Noul criterion that is not a string (on Ollama
@@ -445,7 +447,7 @@ end
 | Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
-| `state` | a string, a JSON object or array, or images then texts; a blank string is refused unless images come with it |
+| `state` | a string, a JSON object or array, or images then texts; a blank string without images is sent, and the model's encoding decides (d3 answers one; the others answer 400) |
 | Images | in the state: an image, or a vector of images then texts; refused after a text, inside a JSON object or array, beside values that are not texts, and in a question |
 | Box questions | refused: the route answers Choice, Score and Noul |
 | Options | `keep_alive` only |

@@ -298,7 +298,7 @@ checks before sending:
 | Choice options | 2 to 255 per question, by the API reference; fewer for most models (below) | yes |
 | Score levels | 2 to 10 per question | yes |
 | Instructions | required, a string, an object or an array that is not blank | yes |
-| State | a string, a JSON object or array, or pictures then texts; a blank string only with pictures | yes |
+| State | a string, a JSON object or array, or pictures then texts; a blank string without pictures as the model's encoding allows (below) | yes, except a blank string, which the server judges |
 | Text and schema, pictures excluded | 64 KiB for a local request | no: the server answers 413 |
 | The whole request | 32 MiB, base64 and JSON included, for a local request | no: the server answers 413 |
 | Context | "The complete input must fit the loaded context window"; "Input is never truncated" | no: the server answers 400 |
@@ -331,7 +331,6 @@ would ask a question you did not write.
 | a picture after a text in the state | `Ollama takes a request's images in a list apart from its text`: it could only be moved | put the pictures first, `[image, "What is in it?"]` |
 | pictures beside values that are not texts | `Ollama takes a state of images then texts, and this one mixes images with` | write the other values as text, after the pictures |
 | a picture inside a JSON object or array | `not inside a JSON object or array` | the pictures and texts as the state itself, or `state = [image, …texts]` to `nl_dispatch` |
-| a blank text state without pictures | `Ollama refuses a blank`: the state holds what the questions are about | send the content |
 | a provider option other than `keep_alive` | `accepts one System One option` | `keep_alive`, or no option |
 | a `keep_alive` that is not a number of seconds from 0 to 1e9, or `Inf` | `is a number of seconds from 0 to 1e9, or Inf` | seconds, `0`, or `Inf` |
 
@@ -374,6 +373,12 @@ A 76,284-byte state came back as a 413 `text and schema must not exceed 64 KiB` 
 GGUF Kev), `d1-omni:600m` and `tev1:0.8b`. By Ollama's source, a Kev model on Ollama's own runner (such as
 `kev:0.8b-mxfp8`) skips the shared checks, and takes 1 to 255 levels and a blank state
 ([decision/kev.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/kev.go)); that is untested.
+A blank text state without pictures is sent, and the model's encoding decides: since Ollama 0.40.11, d3 models
+answer one ([decision/d3.go](https://github.com/ollama/ollama/blob/v0.40.13/decision/d3.go)), and the other
+encodings answer 400 `state must not be empty`, which comes back as a [`SystemOneFailure`](@ref)
+([decision/systemone.go](https://github.com/ollama/ollama/blob/v0.40.13/decision/systemone.go)): on Ollama 0.40.13
+(2 November 2026), `d3:2b` answered a Noul asked of an empty state, and `d1:3b` answered 400 `state must not be
+empty`. UniLM cannot know a model's encoding without asking the server first, so it leaves the check to the server.
 
 !!! details "Evidence"
     Measured with Ollama 0.40.6 on an Apple M4 Max on 21 October 2026, on the nine models of

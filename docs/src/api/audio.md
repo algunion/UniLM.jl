@@ -1,12 +1,12 @@
 # [Audio API](@id audio_api)
 
 Synthesize speech from text, transcribe audio to text, and translate speech into
-another language. [`speak`](@ref) runs on OpenAI's Realtime API or on Gemini TTS and
-returns 24 kHz, 16-bit mono audio, as a WAV file or as raw PCM. [`transcribe`](@ref)
-uploads an audio file to OpenAI and, with a local model that hears audio, to Ollama
-([Audio](@ref ollama_transcription)). [`translate`](@ref) streams a
-WAV file through an OpenAI Realtime translation session and returns the translated
-text.
+another language. [`speak`](@ref) runs on OpenAI's Realtime API, on Gemini TTS or on a
+local Ollama speech model, and returns 24 kHz, 16-bit mono audio, as a WAV file or as raw
+PCM. [`transcribe`](@ref) uploads an audio file to OpenAI and, with a local model that
+hears audio, to Ollama ([Audio](@ref ollama_transcription)). [`translate`](@ref) streams a
+WAV file through an OpenAI Realtime translation session, or uploads an audio file to
+Ollama, and returns the translated text.
 
 ## Request Types
 
@@ -57,8 +57,10 @@ t isa TranscriptionSuccess && println(transcript_text(t))
 # Translate speech into French text (into English when no language is named)
 t = translate("bonjour.wav"; language="fr")
 
-# Transcribe on your own machine: Ollama, with an installed model that hears audio
-t = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b")
+# On your own machine: Ollama, with installed models (ollama pull gemma4:e4b phonon)
+t = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", response_format="text")
+r = speak("Hello from UniLM."; service=OllamaEndpoint(), model="phonon", voice="Zoey")
+t = translate("memo.wav"; language="fr", service=OllamaEndpoint(), model="gemma4:e4b")
 ```
 
 ## Speech
@@ -67,14 +69,16 @@ t = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b")
 |:--|:--|:--|:--|:--|:--|
 | `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
 | `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key, sent as given | none |
+| [`OllamaEndpoint`](@ref) | Ollama's `/v1/audio/speech` (Ollama 0.40.9 or later) | none: name an installed speech model, such as `phonon` | the model's own (`voice` is not sent) | one of the model's voices, which [`model_info`](@ref) lists as `voices`, sent as given | `1` only |
 
-Both services produce 16-bit mono PCM at 24 kHz: `response_format = "wav"` (the
-default) wraps it in a 44-byte WAV header, `"pcm"` returns the samples
-(`content_type` `"audio/pcm"`). Any other format, a voice the Realtime session does not have
-(`nova`, `onyx` and `fable` are not Realtime voices), a blank Gemini voice, a speed out of range, any
-`speed` on Gemini, and an empty `input` throw `ArgumentError` before any request, as does
-`GEMINIOpenAIServiceEndpoint`: Google's OpenAI-compatible API has no speech route, so the
-error points to `GEMINIServiceEndpoint`.
+Every service produces 16-bit mono PCM at 24 kHz: `response_format = "wav"` (the
+default) returns it as a WAV file — on OpenAI and Gemini UniLM writes a 44-byte header, and
+Ollama's header, streamed before the length is known, holds the maximum size — and `"pcm"`
+returns the samples (`content_type` `"audio/pcm"`). Any other format, a voice the Realtime
+session does not have (`nova`, `onyx` and `fable` are not Realtime voices), a blank Gemini or
+Ollama voice, a speed out of range, any `speed` on Gemini, and an empty `input` throw
+`ArgumentError` before any request, as does `GEMINIOpenAIServiceEndpoint`: Google's
+OpenAI-compatible API has no speech route, so the error points to `GEMINIServiceEndpoint`.
 
 On OpenAI, `speak` opens a Realtime WebSocket session, sets the voice, PCM output and
 instructions to read the text word for word, adds the text as a user message and
@@ -91,6 +95,17 @@ On Gemini, `speak` sends one `generateContent` request with `responseModalities`
 reads the text verbatim; `instructions` become the text's speech style, which is also
 where the pace goes (`"speaking slowly"`): Gemini TTS has no speed parameter
 ([speech generation](https://ai.google.dev/gemini-api/docs/speech-generation)).
+
+On Ollama, `speak` sends one POST to `/v1/audio/speech` with the model, the text, the
+format, and the voice and speed when set ([speech](https://docs.ollama.com/capabilities/speech));
+there is no default model, so name an installed speech model such as `phonon`. Ollama answers
+with HTTP 400 what its model does not support, so UniLM refuses before the request, naming
+Ollama, a request without a model, an `input` of more than 4,096 characters, a `speed` other
+than 1, any `instructions` and a format other than `"wav"` and `"pcm"`. A voice is each model's
+own and is sent as given: Ollama answers one the model does not have with a 400
+[`AudioFailure`](@ref) that names the voices it has. The reply's bytes come back as Ollama
+streamed them, and a reply under another `Content-Type` is an [`AudioCallError`](@ref);
+transient statuses are retried as on Gemini.
 
 An error the provider reports is an [`AudioFailure`](@ref): an HTTP error status (a
 WebSocket upgrade the server refuses included: a bad key is a 401), a Gemini reply whose
@@ -111,8 +126,8 @@ and [`estimated_cost`](@ref) throw for a [`SpeechSuccess`](@ref).
 
 ## Translation
 
-`translate(path; language="en", model="gpt-realtime-translate")` opens a Realtime
-translation session (`wss://api.openai.com/v1/realtime/translations`), sets the
+`translate(path; language="en")` on OpenAI (`model` `gpt-realtime-translate` unless named)
+opens a Realtime translation session (`wss://api.openai.com/v1/realtime/translations`), sets the
 target language (`audio.output.language`), streams the audio in 200 ms frames, closes
 the session and joins the translated transcript into the text of a
 [`TranscriptionSuccess`](@ref). The session also returns translated speech, which
@@ -131,6 +146,16 @@ bounds and the cancellation are those of speech on OpenAI. Translation replaces
 OpenAI's file-upload translation endpoint, which shuts down on February 26, 2027
 ([Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)).
 
+On [`OllamaEndpoint`](@ref) (Ollama 0.40.12 or later), `translate` uploads the file as it is
+to Ollama's `/v1/audio/translations`, with the model and the target `language` as
+`to_language`, the "ISO 639-1 code of the output language"
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and returns the
+reply's `text`, its JSON in `raw`. Ollama decodes a WAV file itself and passes any other
+container to the model whole. There is no default model: name an installed model that hears
+audio, such as `gemma4:e4b`; a call without one, a blank `language` and a missing or empty file
+throw `ArgumentError` before the request. A language Ollama does not translate into is its 400,
+an [`AudioFailure`](@ref), and transient statuses are retried as a transcription's are.
+
 ## Transcription
 
 Transcription takes the service's default model when `model` is left `nothing`:
@@ -140,16 +165,15 @@ is translated to a one-element `languages` list for this model; older models kee
 their singular field. Setting both forms raises `ArgumentError`.
 
 Ollama has no default: name a model that hears audio, such as `gemma4:e4b`. Its
-`/v1/audio/transcriptions` transcribes at temperature 0 and reads one `language`
-and a `prompt`, and UniLM asks it for JSON only, the one form in which Ollama
-reports a failure that arrives after its reply has begun, as an
-[`AudioCallError`](@ref) (by Ollama 0.40.6's source; untested here).
-`response_format = "text"` throws `ArgumentError` before the request — such a
-failure would read as an empty transcript — and so do `temperature`, `languages`,
-`keywords` and any other format: leave `response_format` unset and read the text
-with [`transcript_text`](@ref). Ollama labels its replies `application/x-ndjson`, so
-they are read as JSON whatever the label. An endpoint declares transcription with
-the capability `:transcription`, which `:audio` implies.
+`/v1/audio/transcriptions` (Ollama 0.40.12 or later) reads one `language`, a `prompt`,
+`temperature` (its default 0) and a `response_format` of `json`, `text` or `verbose_json`
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and UniLM reads
+the reply by its `Content-Type`: JSON, or the bare text for `"text"`. A reply labelled
+otherwise is an [`AudioCallError`](@ref) naming the label: Ollama before 0.40.12 labelled
+its JSON `application/x-ndjson`. `languages`, `keywords` and any other format (`srt`,
+`vtt`, `diarized_json`) throw `ArgumentError` before the request, in Ollama's words. An
+endpoint declares transcription with the capability `:transcription`, which `:audio`
+implies.
 
 OpenAI deprecated `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`,
 `gpt-4o-transcribe-diarize`, and `whisper-1` on August 26, 2026, with shutdown

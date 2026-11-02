@@ -7,11 +7,11 @@ using UniLM
 [Ollama](https://ollama.com) runs open models on your own machine, and `OllamaEndpoint` speaks its
 native API: a `Chat` goes to `/api/chat` and an `Embeddings` request to `/api/embed`, the routes that
 take the context window, how long a model stays loaded, thinking and truncation. `respond`,
-`compact_response`, `fim_complete` and `transcribe` reach Ollama's OpenAI-compatible routes instead,
-which carry none of the endpoint's options. No key is sent to a server of your own, and a local model
-costs nothing unless you give it a price. A verb that needs a capability the table below lists as not available refuses this
-endpoint, `speak` among them, though Ollama serves speech at `/v1/audio/speech`; `respond`, which takes
-`responses` or `agentic`, and `transcribe`, which takes `transcription` or `audio`, reach Ollama. Of Ollama's own
+`compact_response`, `fim_complete`, `transcribe`, `speak` and `translate` reach Ollama's OpenAI-compatible
+routes instead, which carry none of the endpoint's options. No key is sent to a server of your own, and a local model
+costs nothing unless you give it a price. A verb that needs a capability the table below lists as not available
+refuses this endpoint; `respond`, which takes `responses` or `agentic`, `transcribe`, which takes `transcription` or
+`audio`, and `translate`, which takes `realtime` on OpenAI and `audio` here, reach Ollama. Of Ollama's own
 API, UniLM does not wrap `/api/generate`, `/api/version`, creating, copying or pushing a model, or web
 search and web fetch. The decision models `ask` reaches through the same endpoint have an entry of their
 own: [Local decision models](@ref ollama_decisions_start).
@@ -32,6 +32,8 @@ Main.ProviderFacts.at_a_glance(:ollama)
 | [ask about an image or a recording](@ref ollama_media) | `ImageAttachment`, `AudioAttachment` | an answer about what the model saw or heard |
 | [embed texts, images and sound](@ref ollama_embeddings) | `Embeddings` with a `task`, and `embeddingrequest!` | one unit-length vector per item, written for its task |
 | [transcribe a recording](@ref ollama_transcription) | `transcribe(path; service=OllamaEndpoint(), model=…)` | the words the model heard |
+| [read a text aloud](@ref ollama_speech) | `speak(text; service=OllamaEndpoint(), model=…)` | the speech, as a WAV file or raw samples |
+| [translate a recording](@ref ollama_translation) | `translate(path; language=…, service=OllamaEndpoint(), model=…)` | the translation, as text |
 | [use respond, or fill in the middle](@ref ollama_respond) | `respond`, `fim_complete` | answers from Ollama's OpenAI-compatible routes |
 | [know what a call cost](@ref ollama_cost) | `estimated_cost`, `cumulative_cost` | `0.0` for a local model unless you price it; a cloud model priced by its name |
 | [set the context window, keep a model loaded, or pin its runner](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | every request of the endpoint carrying them |
@@ -402,30 +404,77 @@ provided, but model does not support multimodal requests."
 
 ## [Audio](@id ollama_transcription)
 
-Of UniLM's audio verbs, only `transcribe` reaches Ollama: a model that hears audio transcribes it,
-while `speak` and `translate` refuse the endpoint before sending anything. A transcription is not
-recorded by [`with_recorded_answers`](@ref), so its output here is quoted from a live run:
+`transcribe`, `speak` and `translate` reach Ollama's OpenAI-compatible audio routes
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), each with an installed model:
+Ollama has no default, and a call that names none throws `ArgumentError` before anything is sent. None of
+the three is recorded by [`with_recorded_answers`](@ref), so the outputs below are quoted from live runs on
+2 November 2026 with UniLM's development branch after 0.29.0 and Ollama 0.40.13.
+
+| Verb | Route | Ollama | A model that serves it |
+| :--- | :--- | :--- | :--- |
+| [`transcribe`](@ref) | `/v1/audio/transcriptions` | 0.40.12 or later | one that hears audio, such as `gemma4:e4b` |
+| [`speak`](@ref) | `/v1/audio/speech` | 0.40.9 or later | a speech model, such as `phonon` |
+| [`translate`](@ref) | `/v1/audio/translations` | 0.40.12 or later | one that hears audio, such as `gemma4:e4b` |
+
+### Transcription
 
 ```julia
-r = transcribe("secret_word.wav"; service=OllamaEndpoint(), model="gemma4:e4b")
+r = transcribe("secret_word.wav"; service=OllamaEndpoint(), model="gemma4:e4b",
+               temperature=0.0, response_format="text")
 r isa TranscriptionSuccess || error("the transcription failed: $r")
 transcript_text(r)
-# Transcribed on 25 October 2026 with UniLM's development branch after 0.26.0 and Ollama 0.40.11,
-# the recording above:
 # "The secret word is banana"
 ```
 
-The request goes to `/v1/audio/transcriptions`, a route Ollama's
-[OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility) page does not list; Ollama
-0.40.11 answered it, as above. There is no default model: name one that hears. Ollama transcribes at
-temperature 0 and reads one `language` and a `prompt` (by Ollama 0.40.6's source). UniLM asks for the
-transcript as JSON, the only form in which Ollama reports a failure that arrives after its reply has
-begun, as an [`AudioCallError`](@ref) (by the same source; untested), and reads the reply as JSON,
-though Ollama labels it `application/x-ndjson`. `response_format = "text"` is refused before the
-request, since such a failure would read as an empty transcript: leave `response_format` unset and
-read the text with [`transcript_text`](@ref). `temperature`, `languages`, `keywords` and any other
-format are refused too ([Limits and refusals](@ref ollama_limits)). A transcription is sent again
-after a transient status, as a chat request is, the whole file each time.
+The request carries the file, the model, and the `language`, `prompt`, `temperature` (Ollama's default 0)
+and `response_format` you set: `"json"` (the default), `"text"` or `"verbose_json"`, whose `raw` holds
+Ollama's segments, one per piece of audio it transcribed. UniLM reads the reply by its `Content-Type`: JSON,
+or the bare text for `"text"`. Ollama before 0.40.12 labelled its JSON `application/x-ndjson`, and such a
+reply is an [`AudioCallError`](@ref) naming the label, not a transcript. `languages`, `keywords` and the
+other formats, `"srt"` and `"vtt"` among them, are refused before the request, in Ollama's words
+([Limits and refusals](@ref ollama_limits)). A transcription is sent again after a transient status, as a
+chat request is, the whole file each time.
+
+### [Speech](@id ollama_speech)
+
+```julia
+r = speak("Hello from UniLM."; service=OllamaEndpoint(), model="phonon", voice="Zoey")
+r isa SpeechSuccess || error("speech failed: $r")
+save_audio(r, "hello.wav")
+r.content_type, length(r.audio)
+# ("audio/wav", 96044)
+```
+
+[Phonon](https://ollama.com/library/phonon), the model of Ollama's
+[speech](https://docs.ollama.com/capabilities/speech) page (`ollama pull phonon`, 113 MB), speaks English in
+38 voices, which [`model_info`](@ref) lists as `voices`. A request sends the model, the text, the format, and
+the `voice` and `speed` you set; without a voice the model speaks in its own. The reply is 16-bit mono PCM at
+24 kHz as Ollama streamed it: for `"wav"`, a WAV file whose header, written before the length is known, holds
+the maximum value in its size fields; for `"pcm"`, the bare samples. Ollama answers with HTTP 400 what a model
+does not support, so a request without a `model`, an `input` of more than 4,096 characters, a `speed` other
+than 1, any `instructions` and a format other than `"wav"` and `"pcm"` are refused before it is sent. A voice
+the model does not have is Ollama's 400, an [`AudioFailure`](@ref) whose message lists the voices it has:
+`voice "Nobody At All" not found; available voices: Alfie, Azgorath, …`. A reply under another
+`Content-Type` is an [`AudioCallError`](@ref), and a transient status is sent again, as a chat request is.
+
+### [Translation](@id ollama_translation)
+
+```julia
+r = translate("secret_word.wav"; language="fr", service=OllamaEndpoint(), model="gemma4:e4b")
+r isa TranscriptionSuccess || error("the translation failed: $r")
+transcript_text(r)
+# "Le mot secret est banane."
+```
+
+The file goes as it is, with the model and the target `language` as Ollama's `to_language`, the "ISO 639-1
+code of the output language", and the translation is the reply's `text`, its JSON in `raw`. Ollama decodes a
+WAV file itself and passes any other container to the model whole, so any audio file goes, unlike on OpenAI.
+Ollama's own `language` field, the spoken language, and its `prompt` and `temperature` have no keyword in
+`translate`, which sends none of them. How well a model translates is its own: asked for the same French
+translation of the recording, `lfm3-audio`, the Liquid AI audio model whose Ollama release notes name
+translation, answered in English in each of four requests, `"The Z grid word is banana."`. A language Ollama
+does not translate into is its 400, an [`AudioFailure`](@ref), and a transient status is sent again, the
+whole file each time.
 
 ## [respond and FIM](@id ollama_respond)
 
@@ -549,8 +598,11 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | an EmbeddingGemma request without a `task`, a `dimensions` it was not trained for, or a `title` with a task other than `:document` | `expects a task prompt`, `returns 768, 512, 256, 128 dimensions`, `reads with task = :document only` | what the [task prompts](@ref ollama_embeddings) say |
 | an `Embeddings` request with a `title`, or a `task` other than `:none`, for a model whose prompts UniLM does not know | `has no task prompts, so a title has nowhere to go`, `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | no title, and `task = :none` with the model's own prefix in the text |
 | a transcription without a `model` | `Ollama has no default transcription model` | a model that hears audio, such as `"gemma4:e4b"` |
-| a transcription with `temperature`, `languages` or `keywords` | `runs at temperature 0 and takes no`, `takes one`, `takes no` | remove it; one `language` is taken |
-| a transcription `response_format` other than `"json"` | `reports a failure that arrives after its reply has begun only as JSON`, `transcribes to JSON only` | leave it unset, and read the text with `transcript_text` |
+| a transcription with `languages` or `keywords` | `takes one`, `lists no`: Ollama's OpenAI-compatibility page lists one `language` and no `keywords` | one `language`, or none to let the model detect it |
+| a transcription `response_format` other than `"json"`, `"text"` and `"verbose_json"`, such as `"srt"` or `"vtt"` | `Ollama answers HTTP 400 "response_format … is not supported, use json, text or verbose_json"` | one of those three |
+| `speak` without a `model` | `Ollama has no default speech model` | an installed speech model, such as `"phonon"` |
+| `speak` with an `input` of more than 4,096 characters, a `speed` other than 1, any `instructions`, a `response_format` other than `"wav"` and `"pcm"`, or a blank `voice` | `reads at most 4,096 characters`, `speaks at speed 1.0 only`, `"instructions are not supported"`, `is not supported, use wav or pcm`, `takes a voice by name`: Ollama answers each with HTTP 400 | the text in parts, no `speed`, no `instructions`, `"wav"` or `"pcm"`, a voice [`model_info`](@ref) lists, or none |
+| `translate` without a `model`, with a blank `language`, or of an empty file | `Ollama has no default translation model`, `needs a target language`, `"audio file is empty"` | a model that hears audio, such as `"gemma4:e4b"`; a code such as `"fr"`; a recording |
 | [`load_model`](@ref) through an endpoint with `keep_alive=0` | `would unload the model`: Ollama reads such a request as an unload | `keep_alive` unset, or a number of seconds |
 
 The examples of First call, Tools, Structured output, Reasoning and Attachments were recorded on 21 October

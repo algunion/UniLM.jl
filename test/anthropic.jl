@@ -1190,8 +1190,8 @@ _thinking_reply(text, sig) = Message(role=RoleAssistant, content=text, finish_re
 @testset "encode — append-only placement never moves a later system message into the top-level prompt" begin
     # On the prefix-checked models a thinking block is valid only while the top-level system
     # prompt, the tools and the messages before it are unchanged; an id no row names is treated
-    # the same. A system message after an assistant turn that cannot stay in place therefore
-    # moves forward to right after the next user turn; one before the first assistant turn may
+    # the same. A system message after an assistant turn that cannot stay in place is therefore
+    # held back and sent right after a later user turn; one before the first assistant turn may
     # join the top-level prompt (no thinking block precedes it).
     s(x) = Message(Val(:system), x)
     u(x) = Message(Val(:user), x)

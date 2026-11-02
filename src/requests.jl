@@ -191,8 +191,8 @@ end
 
 # Header names whose VALUE is a credential. HTTP.jl masks only Authorization,
 # Proxy-Authorization and Cookie when it renders a request, so a provider that
-# authenticates with its own header — Anthropic `x-api-key`, Gemini native
-# `x-goog-api-key`, Azure `api-key` — has its key printed verbatim inside the
+# authenticates with its own header — Gemini native `x-goog-api-key`, Azure
+# `api-key`, Anthropic's legacy `x-api-key` — has its key printed verbatim inside the
 # request dump that some transport exceptions carry in their message. Matches the
 # wire form (`name: value`) and the Julia pair form (`"name" => "value"`). The
 # leading `\b` holds a name to header position, so a longer word merely ENDING in

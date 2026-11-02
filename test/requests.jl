@@ -1546,7 +1546,7 @@ Base.showerror(io::IO, e::_DumpingError) = print(io, e.dump)
     # A mid-exchange transport failure can render as a FULL request dump — every
     # header and the body — and HTTP.jl's own masking covers only Authorization,
     # Proxy-Authorization and Cookie. Providers that authenticate with their own
-    # header (Anthropic x-api-key, Gemini native x-goog-api-key, Azure api-key)
+    # header (Gemini native x-goog-api-key, Azure api-key, Anthropic's legacy x-api-key)
     # would have the key in cleartext inside `.error`. A stand-in exception whose
     # showerror IS such a dump is the testable contract of the redaction layer.
     anth  = "sk-ant-api03-SECRETVALUE0123456789"

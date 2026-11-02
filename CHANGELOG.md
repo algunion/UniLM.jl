@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.31.0
+
+### Breaking
+- **`bounding_box` replaces `box`, with no alias.** An exported `box` collides with packages that export their own,
+  such as Luxor, which then has to be written `UniLM.box`. `bounding_box(instructions)` builds the same `BoxQuestion`,
+  and the wire is unchanged (`"type": "box"`), so recorded requests keep their bytes and their keys. Upgrading: rename
+  each `box(…)` call to `bounding_box(…)`.
+
+### Added
+- **`reset_default_config!()` and `set_default_config!(nothing)` clear the process default config.** After a clear,
+  calls resolve exactly as if no default had ever been set: `current_config()` returns the field defaults outside every
+  scope; System One calls on TypeSafe and OpenAI's Decisions API take their 60 s per attempt and 150 s in all again,
+  and a Gemini 4 call its 1,200 s; the keyword form of `set_default_config!` merges over the field defaults. Both
+  return `nothing`.
+
+### Changed
+- **`with_system_one` checks its provider options when the scope opens, before `f` runs.** An option the backend's
+  wrapper does not take was refused only when a request inside the scope was encoded, after `f` had started; it is
+  now the same `ArgumentError`, with the same message, before `f` runs: on TypeSafe anything but a Boolean
+  `long_context`; on OpenAI's Decisions API anything but `prompt_cache_key`, `safety_identifier` and
+  `prompt_cache_options` within their limits; on Ollama anything but a `keep_alive` of 0 to 1e9 seconds or `Inf`.
+  Endpoints whose protocol UniLM does not wrap are unaffected.
+
 ## 0.30.0
 
 ### Breaking

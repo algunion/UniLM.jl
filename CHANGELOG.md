@@ -14,12 +14,14 @@
   Gemini, Anthropic, Azure and Google's OpenAI-compatible endpoint they returned a `ResponseCallError` without sending
   anything; on DeepSeek and TypeSafe they sent a request their server has no route for. Every endpoint that declares
   its capabilities without `:responses` is now refused by name before any I/O; OpenAI, Ollama, generic servers and
-  endpoints of your own that declare nothing are sent the request as before. Upgrading: catch the `ArgumentError`, or
-  call these verbs on an endpoint that serves them.
+  endpoints of your own that declare nothing are sent the request as before, except one with no base URL, whose
+  `ArgumentError` is now thrown before any I/O instead of returned as a `ResponseCallError`. Upgrading: catch the
+  `ArgumentError`, or call these verbs on an endpoint that serves them.
 - **An endpoint of your own without a decoder is refused before the request is sent.** An unstreamed `chatrequest!`
   with no `decode_response`, or `respond` with no `decode_agentic`, sent its request, was billed for the reply, and
   returned a call error whose `cause` was the `MethodError`. Both now throw that `MethodError` before any I/O.
-  Built-in endpoints and `OpenAIWireEndpoint` subtypes, which inherit the decoders, are unaffected.
+  Built-in endpoints and `OpenAIWireEndpoint` subtypes, which inherit the decoders, are unaffected. Upgrading: define
+  `decode_response` (and `decode_agentic`, for `respond`) for the endpoint, or subtype `OpenAIWireEndpoint`.
 - **On OpenAI's Decisions API, a state that is a vector of `Message`s is sent as a conversation, not as its JSON
   text.** Each system, user and assistant message goes as a message of its role; a user's images become `input_image`
   parts after its text, an assistant's refusal a `refusal` part; each assistant tool call becomes a `function_call`
@@ -31,7 +33,7 @@
   old request.
 - **`transcribe` on Ollama reads the reply by its `Content-Type` and needs Ollama 0.40.12 or later.** Earlier releases
   labelled their JSON `application/x-ndjson`; such a reply is now an `AudioCallError` naming the label (those servers
-  would also ignore `temperature` and the new formats). Upgrading: run Ollama 0.40.12 or later.
+  also fix `temperature` at 0). Upgrading: run Ollama 0.40.12 or later.
 
 ### Changed
 - **`moderate`, and `speak` on Gemini, retry a transient failure.** Moderation is free and changes nothing when sent
@@ -72,14 +74,17 @@
   levels, 10,000 values and 256 KiB of compact JSON, with no image inside. String instructions are sent unchanged.
 - **`speak` on Ollama.** `OllamaEndpoint` declares `:speech`; one POST to `/v1/audio/speech` (Ollama 0.40.9 or later)
   returns the bytes as Ollama streams them: 16-bit mono 24 kHz WAV (its header carries maximal size fields) or raw PCM.
-  There is no default model. An input over 4,096 characters, a speed other than 1, any `instructions` and formats other
-  than wav/pcm are refused before the request, naming Ollama; an unknown voice is Ollama's 400, as an `AudioFailure`.
+  There is no default model. An input over 4,096 characters, a speed other than 1, non-empty `instructions` and formats
+  other than wav/pcm are refused before the request; an unknown voice is Ollama's 400, as an `AudioFailure`. A
+  transient status is sent again, as `transcribe` is.
 - **`translate` on Ollama.** It uploads the file as is to `/v1/audio/translations` (Ollama 0.40.12 or later), with
   `language` sent as `to_language`, and returns a `TranscriptionSuccess` whose `raw` holds the reply. `translate`'s
   `model` now defaults to `nothing` (OpenAI resolves it to `gpt-realtime-translate`). On Ollama a missing model, a blank
-  language or a missing or empty file is refused before the request.
-- **Ollama's transcription contract.** `temperature` and `response_format` "text" and "verbose_json" are sent (Ollama
-  0.40.12 or later); `languages`, `keywords` and other formats are still refused, now in Ollama's words.
+  language or a missing or empty file is refused before the request. A transient status is sent again, as `transcribe`
+  is.
+- **Ollama's transcription contract.** `temperature`, any finite number (OpenAI's range of 0 to 1 is not Ollama's),
+  and `response_format` "text" and "verbose_json" are sent (Ollama 0.40.12 or later); `languages`, `keywords` and other
+  formats are still refused, now in Ollama's words.
 - **`OllamaModelInfo.voices::Vector{String}`** (Ollama 0.40.11 or later), empty for a model that is not a speech
   model. It comes before `raw`, so positional construction gains an argument.
 - **`tool_usage(r)` reads what OpenAI's hosted tools used for a Responses reply**, apart from the model's usage: a
@@ -111,7 +116,8 @@
   Google's SDK does. For a stored interaction, the request names the interaction that issued the token as
   `previous_interaction_id` and omits `input`; with `store=false` it repeats the whole request. It sends at most
   `max(8, cld(max_output_tokens, 32_768) + 1)` requests, each with the whole `RequestConfig` budget. It returns one
-  interaction: the last request's id, status and tier, every request's steps, and their usage summed. A reply that
+  interaction: the last request's id, status and tier, every request's steps but the input a later request repeats,
+  and their usage summed. A reply that
   produced no output token ends the sequence, and a streamed `respond` is not continued.
 
 ### Fixed

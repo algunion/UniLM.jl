@@ -1854,6 +1854,12 @@ end
 # bills (an Ollama cloud model; see `_ollama_billed_model`).
 _billed_response(_, ::AbstractString, x) = x
 
+# The reply to an unstreamed Respond, for an endpoint whose provider caps a request's output and
+# continues the generation in further requests (Gemini Interactions' long decode): that endpoint
+# sends them with `send(body, start)`, each with the whole budget, and joins the replies into one.
+# The fallback is the reply as received.
+_continued_reply(send, _, ::Respond, ::String, resp::HTTP.Response)::HTTP.Response = resp
+
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
 
@@ -1901,6 +1907,14 @@ raises a `TaskFailedException` whose `task.exception` is that error.
 
 Per-call `config::RequestConfig` overrides timeouts and the retry budget
 (`max_attempts`); the process/scoped defaults apply otherwise.
+
+An interaction that Gemini stops at its per-request output cap (status
+`requires_continuation` with a `continuation_token`, on `GEMINIServiceEndpoint`) is
+continued inside an unstreamed call: the request is sent on with the token, at most
+`max(8, cld(max_output_tokens, 32_768) + 1)` requests in all (8 without
+`max_output_tokens`), each with the whole `config` budget, and the result is one
+interaction, the replies' steps joined and their usage summed. A later request that
+fails ends the call with its failure. A streamed call is not continued.
 
 For streaming, set `stream=true` and pass a `callback`:
 ```julia
@@ -1962,9 +1976,10 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
     local resp
     try
         url = get_url(r.service, r)
-        resp = _recorded_exchange("POST", url, body, t0, tok) do
-            _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
+        send(request::String, start::UInt64) = _recorded_exchange("POST", url, request, start, tok) do
+            _http_with_retries(cfg, start, "POST", url, auth_header(r.service), request; cancel=tok)
         end
+        resp = _continued_reply(send, r.service, r, body, send(body, t0))
         if resp.status == 200
             decoded = _billed_response(r.service, r.model, decode_agentic(r.service, resp))
             return _response_result(r.service, decoded, resp)

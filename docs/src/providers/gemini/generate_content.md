@@ -75,9 +75,12 @@ for the thought summaries — "You can enable thought summaries by setting `incl
 in your request configuration"
 ([thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#summaries)) — which
 come back as parts marked `thought`, and [`reasoning_text`](@ref) reads them; a `Chat` without
-`reasoning_effort` asks for none, so `reasoning_text` gives `nothing`. They add nothing to the bill:
-"pricing is based on the full thought tokens the model needs to generate to create a summary,
-despite only the summary being output from the API" (the same page). A `Respond` asks for them with
+`reasoning_effort` asks for none, so `reasoning_text` gives `nothing`. They add nothing to the reply's
+bill: "pricing is based on the full thought tokens the model needs to generate to create a summary,
+despite only the summary being output from the API" (the same page). The next turn of the `Chat` sends
+them back with the reply's other parts ([Conversations](@ref gemini_conversations)), where they bill as
+input: an 895-character summary added 365 input tokens to the next request on `gemini-3.8-flash`, as
+many as the same text sent as a plain model part (observed 2 November 2026). A `Respond` asks for them with
 `Reasoning(summary="auto")`, and [`reasoning_summaries`](@ref) reads them
 ([Thinking on the Interactions API](@ref gemini_interactions_thinking)).
 
@@ -364,7 +367,11 @@ The same ids are the ones a `Chat` may end with an assistant turn on ([Conversat
 - `seed` becomes `generationConfig.seed`, an int32; a seed outside its range is refused.
 - `store` is the request's `store`, which "Configures the logging behavior for a given request. If
   set, it takes precedence over the project-level logging config"
-  ([generateContent reference](https://ai.google.dev/api/generate-content)).
+  ([generateContent reference](https://ai.google.dev/api/generate-content)). Since 26 October 2026,
+  "New projects using the Generate Content API … on the paid tier now store requests by default
+  (`store=true`), matching the Interactions API. Existing projects keep their current setting. To opt
+  out, set `store=false` on individual requests"
+  ([changelog](https://ai.google.dev/gemini-api/docs/changelog)).
 - `safety_identifier` becomes the request label `safety_identifier`, the key Google names for "Safety
   identifiers from aggregators", whose values "can be no longer than 63 characters (Unicode
   codepoints) and can only contain lowercase letters, numeric characters, underscores, and dashes"
@@ -445,7 +452,8 @@ and UniLM bills it at the cached-input rate and the rest of the prompt at the in
 premium for writing the cache ([Cost and usage](@ref gemini_cost)). A `Chat` sends its whole
 conversation each turn, so the next turn starts with the previous one's parts while the system
 messages and the earlier turns stay as they were; on Gemini 4, "Gemini caches the full previous
-request only if the new request adds at least 2,050 tokens"
+request only if the new request adds at least 2,050 tokens", and "For smaller additions, Gemini
+re-processes the last 2,050 tokens of the previous request at the standard input rate"
 ([context caching](https://ai.google.dev/gemini-api/docs/caching)). Explicit caching — cached
 contents, created ahead and named in a request — is an API of its own that UniLM does not wrap, so
 `prompt_cache_options` has nowhere to go and is refused, on a `Chat` and a `Respond`

@@ -56,8 +56,10 @@ prices; `token_usage` reads the interaction's `usage` in the shape every result 
 `service_tier` the interaction's `service_tier`, the tier that billed it. They are priced as on
 generateContent ([Cost and usage](@ref gemini_cost)). `respond` returns an interaction whose `status`
 is `"failed"` as a `ResponseFailure`, and one that is `"completed"`, `"requires_action"`,
-`"incomplete"`, `"in_progress"` or `"cancelled"` as a `ResponseSuccess`, whose `status` says which;
-`get_response` and `cancel_response` return an interaction they read the same way
+`"requires_continuation"`, `"incomplete"`, `"in_progress"` or `"cancelled"` as a `ResponseSuccess`,
+whose `status` says which; an unstreamed `respond` sends an interaction that requires continuation on
+itself ([Long generations](@ref gemini_interactions_long_decode)). `get_response` and
+`cancel_response` return an interaction they read the same way
 ([Background requests](@ref gemini_background)).
 
 ## [Conversations](@id gemini_interactions_conversations)
@@ -291,6 +293,31 @@ and empty `model_output` steps when aggregating text from the final model turn, 
 ([python-genai 180c3453](https://github.com/googleapis/python-genai/commit/180c3453f91e4734b828534950fa7f8526934b59)).
 A tool's step or a `user_input` step ends the message, and [`output_text`](@ref) joins the messages
 with a newline; this holds for an unstreamed interaction too.
+
+## [Long generations](@id gemini_interactions_long_decode)
+
+Google caps the output of one request: "Foreground `interactions.create()` calls are capped per
+request by the server (32k output tokens unary, 64k streaming) and stop with
+`status='requires_continuation'` plus a `continuation_token`"
+([python-genai c85d5ae](https://github.com/googleapis/python-genai/commit/c85d5ae4d70d9b24c4155be0a92730499b23e79d)).
+The status means "The interaction requires at least one more request for it to be completed", and the
+token is to be passed "back unchanged in CreateInteraction to continue decoding"
+([Interactions API](https://ai.google.dev/api/interactions-api)). An unstreamed `respond` continues
+such an interaction itself, with the request Google's SDK sends: the token, and for a stored
+interaction the one that issued it as `previous_interaction_id` and no `input` ("the server already has
+it"), or with `store=false` the whole request again. It sends at most
+`max(8, cld(max_output_tokens, 32_768) + 1)` requests (8 without `max_output_tokens`), each with the
+whole `RequestConfig` budget, and returns one interaction: the last request's id, which continues the
+conversation, its status and tier; the steps of every request in order, a later one's leading
+`user_input` steps dropped; and the usage of all of them summed, since "each continuation hop
+re-prefills the conversation and generated prefix, so input tokens are billed on every hop". Only that
+status with a token continues. An interaction still unfinished after the last request, or after one
+that produced no output token, thinking included, comes back with the status `"requires_continuation"`
+and its `continuation_token` in `response.raw`; a later request that fails ends the call with its
+failure, and the requests before it were billed. A streamed `respond` is not continued: its result
+reports the status and the token the same way. Continuation is exercised against a local mock: a live
+`requires_continuation` reply has not been observed for this release. In the background, Google's
+server continues the interaction itself ([Background requests](@ref gemini_background)).
 
 ## [Background requests](@id gemini_background)
 

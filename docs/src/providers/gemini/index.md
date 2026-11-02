@@ -282,8 +282,8 @@ names meets only the other rules.
 | a `Respond` field with no Interactions counterpart: `parallel_tool_calls`, `truncation`, `metadata`, `user`, `include`, `max_tool_calls`, `top_logprobs`, `prompt_cache_key`, `prompt_cache_retention`, `conversation`, `context_management`, `stream_options`, `moderation` | `Gemini Interactions does not support the Respond field(s)` | remove it |
 | `max_output_tokens` above 65,536 on a `gemini-4-argon` `Respond` without `background=true` | `takes max_output_tokens above 65536 only in the background` | `background=true` ([Background requests](@ref gemini_background)), or a lower `max_output_tokens` |
 | `background=true` with `store=false` | `background=true requires a stored response`: the API answers it with HTTP 400 | leave `store` unset |
-| `list_input_items` with `service=GEMINIServiceEndpoint` | `list_input_items is not supported by GEMINIServiceEndpoint`: the Interactions API lists no input items | keep the `input` you sent ([Background requests](@ref gemini_background)) |
-| `compact_response` or `count_input_tokens` with `service=GEMINIServiceEndpoint` | `compact_response is not supported by GEMINIServiceEndpoint`, `count_input_tokens is not supported by GEMINIServiceEndpoint`: routes of the Responses API that the Interactions API does not have | an endpoint that serves the Responses API; on Gemini, a reply's `usage` gives its token counts |
+| `list_input_items` on `GEMINIServiceEndpoint` | `list_input_items is not supported by GEMINIServiceEndpoint`: the Interactions API lists no input items | keep the `input` you sent ([Background requests](@ref gemini_background)) |
+| `compact_response` or `count_input_tokens` on `GEMINIServiceEndpoint` | `compact_response is not supported by GEMINIServiceEndpoint`, `count_input_tokens is not supported by GEMINIServiceEndpoint`: routes of the Responses API that the Interactions API does not have | an endpoint that serves the Responses API; on Gemini, a reply's `usage` gives its token counts |
 | a `Reasoning` with `context` or `mode`, or with a `summary` other than `"auto"` | `does not support reasoning context or mode`, `supports only Reasoning(summary="auto")` | `Reasoning(effort=…, summary="auto")` |
 | a `text` format with `verbosity`, or whose type is not `text`, `json_object` or `json_schema` with a schema | `does not support text verbosity`, `supports text formats text, json_object, or json_schema` | a JSON Schema `text` format |
 | a tool that is neither a `FunctionTool` nor a `Dict`, such as `web_search()` or `file_search(…)` | `supports only FunctionTool/Dict tools` | a function tool, a hosted Gemini tool ([Hosted tools](@ref gemini_hosted_tools)) or a `Dict` in the API's shape |
@@ -298,7 +298,7 @@ names meets only the other rules.
 | an `aspect_ratio` or a `resolution` outside Gemini's lists, or a resolution the model does not render | `Gemini aspect_ratio must be one of`, `must be one of` | a value the [Image generation](@ref gemini_images) section lists |
 | `speak` with a blank `voice`, any `speed`, a `response_format` other than `"wav"` and `"pcm"`, or an empty input | `Gemini TTS takes a voice by name or id`, `has no speed control`, `response_format must be "wav"`, `speak needs text to read`: Gemini TTS has these formats, and no speed | a voice's name or id, the pace in `instructions`, `"wav"` or `"pcm"`, some text ([Audio](@ref gemini_audio)) |
 | an `EmbeddingInput` with an image or a sound clip, on `GEMINIOpenAIServiceEndpoint` | `takes text only`: the compatible wire carries text | the text alone ([Embeddings](@ref gemini_embeddings)) |
-| `speak` through `GEMINIOpenAIServiceEndpoint` | `GEMINIOpenAIServiceEndpoint has no speech route` | `service=GEMINIServiceEndpoint` |
+| `speak` through `GEMINIOpenAIServiceEndpoint` | `GEMINIOpenAIServiceEndpoint has no speech route` | the service `GEMINIServiceEndpoint` |
 
 ## [When something fails](@id gemini_failures)
 

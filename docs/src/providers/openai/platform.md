@@ -38,10 +38,10 @@ These calls are not recorded, so their output on this page is quoted from dated 
   failure, as a `Chat` is ([Timeouts & Retries](@ref timeouts_retries)).
 - **The key** is read when the call is made: without `OPENAI_API_KEY` the result is the family's
   call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)).
-- **Cancellation.** With the key set, the ambient [`CancelToken`](@ref) of [`with_cancel`](@ref) ends
-  a call: a token already cancelled sends nothing, and a cancel during the call aborts it, either way
-  with the call error, whose `cause` is a [`UniLMCancelled`](@ref)
-  ([Cancellation](@ref concurrency_cancellation)).
+- **Cancellation.** Each takes `cancel`, a [`CancelToken`](@ref): the ambient one of
+  [`with_cancel`](@ref) unless given. With the key set, a token already cancelled sends nothing, and a
+  cancel during the call aborts it, either way with the call error, whose `cause` is a
+  [`UniLMCancelled`](@ref) ([Cancellation](@ref concurrency_cancellation)).
 - **Cost.** The results carry no usage: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for
   them. What OpenAI charges for storage, containers and batches is on its
   [pricing page](https://developers.openai.com/api/docs/pricing).

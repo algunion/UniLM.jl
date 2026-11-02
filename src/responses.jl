@@ -2109,6 +2109,11 @@ request passes through the recordings: one the scope cannot replay throws
 [`ReplayMissError`](@ref), and an answer whose recording cannot be written throws
 [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
+
 # Examples
 ```julia
 result = get_response("resp_abc123")
@@ -2146,6 +2151,11 @@ request passes through the recordings: one the scope cannot replay throws
 [`ReplayMissError`](@ref), and an answer whose recording cannot be written throws
 [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
+
 # Examples
 ```julia
 result = delete_response("resp_abc123")
@@ -2182,6 +2192,11 @@ input items. Inside a [`with_recorded_answers`](@ref) scope the
 request passes through the recordings, keyed with its `limit`, `order` and `after`: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
 be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 
 # Examples
 ```julia
@@ -2237,6 +2252,11 @@ read back, or a `ResponseFailure` when that response's `status` is `"failed"`, a
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
 be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
+
 # Examples
 ```julia
 # Start a background response, then cancel it
@@ -2290,6 +2310,11 @@ Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. Inside a
 [`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
 scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
 be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 
 # Examples
 ```julia
@@ -2359,6 +2384,11 @@ Inside a [`with_recorded_answers`](@ref) scope the request passes through the re
 one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording
 cannot be written throws [`RecordingWriteError`](@ref), instead of returning a
 `ResponseCallError`.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns a `ResponseCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 
 # Examples
 ```julia

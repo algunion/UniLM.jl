@@ -209,9 +209,9 @@ SpeechRequest(; input::AbstractString, service::ServiceEndpointSpec=OPENAIServic
 end
 
 """
-    speak(s::SpeechRequest; config=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
+    speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
     speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
-          speed=nothing, instructions=nothing, config=nothing)
+          speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
 
 Synthesize speech from text; the keywords build a [`SpeechRequest`](@ref).
 
@@ -256,10 +256,13 @@ every send and every wait for the next event. On Gemini and Ollama, transient st
 (408/429/500/502–504/520–524/529) and transport failures are retried with backoff under the
 config's `max_attempts` and `total_deadline` (`retry-after-ms`, else `Retry-After`, honored), as
 [`chatrequest!`](@ref) retries them, each attempt on Gemini a billed `generateContent` request; a 429
-that no retry can serve is returned at once. All three observe the ambient [`CancelToken`](@ref)
-([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
-with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
-[`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.
+that no retry can serve is returned at once. Speech is not priced: [`token_usage`](@ref) and
+[`estimated_cost`](@ref) throw for a `SpeechSuccess`.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
 function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing,
                cancel::Union{Nothing,CancelToken}=nothing)
@@ -700,6 +703,11 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 retries them, and each attempt sends the whole file again; a 429 that no retry can serve is
 returned at once. Pass `config::Union{Nothing,RequestConfig}` to override the timeout and
 retry budget for this call.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
 function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing,
                     cancel::Union{Nothing,CancelToken}=nothing)
@@ -738,7 +746,7 @@ end
 
 """
     translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint,
-              config=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
+              config=nothing, cancel=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
 
 Translate the speech in the audio file at `path` into `language` and return the translation as
 text: a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref). `model` left `nothing`
@@ -788,9 +796,12 @@ names the close's status and reason), a timeout and a cancel are an [`AudioCallE
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
 every wait for the next event. On OpenAI it is a single attempt, which `max_attempts` does not
 change: a retry after the session's audio was sent may bill a second translation, and a session's
-audio cannot be resumed. The ambient [`CancelToken`](@ref)
-([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
-call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
+audio cannot be resumed.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make
+the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
+[`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
+when mid-request (never retried).
 """
 function translate(path::AbstractString; language::AbstractString="en",
                    model::Union{AbstractString,Nothing}=nothing,

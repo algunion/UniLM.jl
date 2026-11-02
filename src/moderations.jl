@@ -91,6 +91,8 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `
 `retry-after-ms`, else `Retry-After`, honored), as [`chatrequest!`](@ref) retries them: moderation is
 free, and a request sent again changes nothing. A 429 that no retry can serve is returned at once.
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for this call.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ModerationCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)

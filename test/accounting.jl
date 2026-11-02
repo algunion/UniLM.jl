@@ -1078,3 +1078,53 @@ end
         @test cost === pinned
     end
 end
+
+@testset "OpenAI cost: hosted tools bill each web search and the image tool's tokens at its image model's rates" begin
+    # OpenAI's pricing page (2026-11-02), Tools: "Web search (all models) | $10.00 / 1k calls"; "Web search preview
+    # (reasoning models, including `gpt-5`, `o-series`) | $10.00 / 1k calls"; "Web search preview (non-reasoning
+    # models) | $25.00 / 1k calls". Image generation models, Standard, per 1M tokens: gpt-image-2 (the tool's
+    # default model) image input $8.00, output $30.00, cached $2.00, text input $5.00, cached $1.25;
+    # gpt-image-1.5 image output $32.00 and text output $10.00.
+    function result(model, used; tools=Any[Dict("type" => "web_search")], service=OPENAIServiceEndpoint)
+        raw = Dict{String,Any}("tools" => tools)
+        isnothing(used) || (raw["tool_usage"] = used)
+        ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model=model, output=Any[],
+            usage=Dict{String,Any}("input_tokens" => 1_000, "output_tokens" => 100, "total_tokens" => 1_100), raw=raw),
+            service=service)
+    end
+    no_image = Dict("input_tokens" => 0, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 0),
+                    "output_tokens" => 0, "total_tokens" => 0)
+    searches(n) = Dict("web_search" => Dict("num_requests" => n), "image_gen" => no_image)
+    without = estimated_cost(result("gpt-6-luna", nothing))
+    @test without ≈ (1_000 * 0.10 + 100 * 0.50) / 1e6
+    @test estimated_cost(result("gpt-6-luna", searches(0))) == without
+    @test estimated_cost(result("gpt-6-luna", searches(2))) == without + 2 * 10.0 / 1000
+    # The legacy preview tool bills $25 per 1,000 calls on a non-reasoning model and $10 on the others;
+    # the web search tool $10 on every model.
+    preview = Any[Dict("type" => "web_search_preview")]
+    for (model, tools, per_call) in (("gpt-4.1", preview, 25.0), ("gpt-4.1-mini-2025-04-14", preview, 25.0),
+                                     ("gpt-6-luna", preview, 10.0), ("o3", preview, 10.0),
+                                     ("gpt-4.1", Any[Dict("type" => "web_search")], 10.0))
+        @test estimated_cost(result(model, searches(4); tools)) == estimated_cost(result(model, nothing; tools)) + 4 * per_call / 1000
+    end
+    # The image tool's tokens: input split into text and image, cache reads of each at its cached rate,
+    # output image tokens and, where the model writes text, text output.
+    image = Dict("web_search" => Dict("num_requests" => 0),
+                 "image_gen" => Dict("input_tokens" => 1_000, "input_tokens_details" => Dict("image_tokens" => 600, "text_tokens" => 400),
+                                     "cached_tokens" => 300, "cached_tokens_details" => Dict("cached_image_tokens" => 200, "cached_text_tokens" => 100),
+                                     "output_tokens" => 5_000, "output_tokens_details" => Dict("image_tokens" => 4_800, "text_tokens" => 200),
+                                     "total_tokens" => 6_000))
+    gen(model) = Any[Dict("type" => "image_generation", "model" => model)]
+    tokens(image_out, text_out) = (300 * 5.0 + 100 * 1.25 + 400 * 8.0 + 200 * 2.0 + 4_800 * image_out + 200 * text_out) / 1e6
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=Any[Dict("type" => "image_generation")])),
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2, the default
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-2.5-sunburst-2026-09-08"))),
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # a dated snapshot
+    @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-1.5"))),
+                   without + tokens(32.0, 10.0); rtol=1e-12)
+    # An image model without rates leaves the call unpriced, with a warning, as unpriced audio does.
+    @test (@test_logs (:warn, r"image generation tool") estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-9")))) == 0.0
+    # Only OpenAI's Responses API reports them: a result built by hand, priced by its model's name, adds no fee.
+    @test estimated_cost(result("gpt-6-luna", searches(2); service=nothing)) ==
+          estimated_cost(result("gpt-6-luna", nothing; service=nothing))
+end

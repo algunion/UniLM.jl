@@ -1339,8 +1339,14 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
 The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
 `gpt-5-search-api` October 25, 2026, `gpt-5.2-pro` October 26, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
 September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
-UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) and
-hosted-tool fees are not included. A billed tier the provider's pricing page lists no price for
+UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) are not
+included. Of hosted-tool fees, OpenAI's are billed from the `tool_usage` a Responses result reports
+(`tool_usage`): each billable web search at \$10 per 1,000 calls (\$25 for `web_search_preview` on
+`gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates of its image
+model (the request's `image_generation_tool` model, else `gpt-image-2`; a model UniLM has no image rates
+for leaves the estimate at `0.0`, with one warning per model), neither scaled by the billed tier; file
+search, containers and Gemini's grounding (its free daily quota makes a per-call price wrong) are not
+included. A billed tier the provider's pricing page lists no price for
 (OpenAI's Scale; Fast on `gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens) is estimated at
 the standard rates with one warning per model and tier. OpenAI estimates bill cache writes at 1.25× input
 (`"30m"`) or 2.5× (`"12h"`, `cache_write_extended_tokens`) on GPT-6 and GPT-5.6, a prompt

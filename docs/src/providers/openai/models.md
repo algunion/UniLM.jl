@@ -256,10 +256,20 @@ warning ([Audio replies](@ref chat_audio_output)):
 Main.ProviderFacts.openai_audio_rates()
 ```
 
+The estimate of a `Respond` result adds what its hosted tools bill, from the `tool_usage` the reply
+reports ([`tool_usage`](@ref)): each billable web search at "\$10.00 / 1k calls", or "\$25.00 / 1k
+calls" for the legacy `web_search_preview` tool on a non-reasoning model (of the models below,
+`gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates OpenAI's
+pricing page lists for its image model: the one the request's [`image_generation_tool`](@ref) names,
+else the tool's default, `gpt-image-2`. Neither is scaled by the billed tier. UniLM has image rates
+for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini`
+and `chatgpt-image-latest`; the tokens of another image model leave the estimate at `0.0`, with one
+warning per model.
+
 [`cumulative_cost`](@ref) is a lower bound of the bill: it adds nothing for an attempt UniLM retried, a
 failure, or a stream stopped before its usage arrived ([Streaming](@ref openai_streaming)), and no
-estimate includes the fees of hosted tools — web search, file search and containers bill per call or
-per session — or the 10% uplift OpenAI charges on its regional-processing endpoints for the models
+estimate includes the fees of the hosted tools a reply does not report — file search and containers
+bill per call or per session — or the 10% uplift OpenAI charges on its regional-processing endpoints for the models
 released since 5 March 2026 ([pricing](https://developers.openai.com/api/docs/pricing)). A model with no
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).

@@ -64,7 +64,9 @@ tokens than text tokens and cached audio together, so that its split is unknown 
 estimate at `0.0`, with one warning per model and endpoint.
 `GEMINIOpenAIServiceEndpoint` reports no audio count, so its audio input is priced at the text
 rate, a lower bound where the model's audio price is its own; such a request warns once per model.
-Off-peak discounts, other multimodal rates and hosted-tool fees are not included.
+Off-peak discounts and other multimodal rates are not included. Of hosted-tool fees, [`estimated_cost`](@ref)
+bills those an OpenAI Responses result reports in its [`tool_usage`](@ref) — web searches and the image
+generation tool's tokens — and no other: not file search, containers or Gemini's grounding.
 
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
 `DEFAULT_PRICING[model] = row` from any task while requests are running."""
@@ -275,6 +277,16 @@ yourself is never replaced; a row equal to the shipped one counts as the shipped
 The row's rates bill fresh input tokens and cache writes at `input`, cache reads at
 `cached_input` and completion tokens at `output`, except where UniLM models a provider's
 surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref)).
+
+A Responses result from `OPENAIServiceEndpoint` also bills what its hosted tools used, as the
+reply's [`tool_usage`](@ref) reports it ([pricing](https://developers.openai.com/api/docs/pricing)):
+each billable web search at USD 10 per 1,000 calls — USD 25 for the legacy `web_search_preview` tool on
+`gpt-4.1` and `gpt-4.1-mini`, the non-reasoning models UniLM prices — and the image generation
+tool's tokens at the Standard rates of its image model, the one the request's
+[`image_generation_tool`](@ref) names, else the tool's default, `gpt-image-2`; neither is scaled
+by the billed tier. Image tokens of a model UniLM has no image rates for leave the estimate at
+`0.0`, with one warning per model. File search, containers and Gemini's grounding (its free daily
+quota makes a per-call price wrong) are not billed.
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,
@@ -290,7 +302,9 @@ function estimated_cost(result::LLMRequestResponse;
     _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
-    _billed_cost(service, mdl, u, rates)
+    billed = _billed_cost(service, mdl, u, rates)
+    tools = _hosted_tool_cost(service, result, mdl)
+    isnothing(tools) ? 0.0 : billed + tools
 end
 
 # A reply that reported no usage leaves nothing to price, and a silent 0.0 would read as a free
@@ -335,6 +349,86 @@ function _unpriced_audio(service, model::String)::Float64
     @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model endpoint _id = Symbol(
         "unilm_unpriced_audio_", endpoint, "_", model) maxlog = 1
     0.0
+end
+
+# ─── OpenAI hosted tools ─────────────────────────────────────────────────────
+# What OpenAI's hosted tools bill beyond the model's tokens, as a Responses reply reports them in its
+# `tool_usage` (https://developers.openai.com/api/docs/pricing, 2026-11-02, "Tools" and "Image generation
+# models"). Neither is scaled by the billed tier or a long prompt: the page gives a web search one price,
+# and the image models Standard and Batch rates alone, of which a Responses call bills the Standard ones.
+
+# USD per billable web search: "$10.00 / 1k calls" for web search on every model and for the legacy web
+# search preview on reasoning models, "$25.00 / 1k calls" for the preview on non-reasoning models — of the
+# models UniLM prices, gpt-4.1 and gpt-4.1-mini, whose model pages give them "low latency without a
+# reasoning step".
+const _OPENAI_WEB_SEARCH_CALL = 10.0 / 1000
+const _OPENAI_WEB_SEARCH_PREVIEW_CALL = 25.0 / 1000
+const _OPENAI_NON_REASONING = Dict("gpt-4.1" => true, "gpt-4.1-mini" => true)
+
+# The image generation tool's rates, USD per token, of each image model the pricing page lists (Standard):
+# text and image input, cached text and image input, image output, and text output where the page gives
+# one ("-" elsewhere: those models write no text). The tool runs `gpt-image-2` unless the request names
+# another model ("Default: `gpt-image-2`", the image generation tool's reference).
+const _OpenAIImageRates = @NamedTuple{text_input::Float64, text_cached::Float64, image_input::Float64,
+                                      image_cached::Float64, image_output::Float64, text_output::Float64}
+_image_rates(text_input, text_cached, image_input, image_cached, image_output, text_output=0.0)::_OpenAIImageRates =
+    (text_input=text_input / 1e6, text_cached=text_cached / 1e6, image_input=image_input / 1e6,
+     image_cached=image_cached / 1e6, image_output=image_output / 1e6, text_output=text_output / 1e6)
+const _OPENAI_IMAGE_TOOL_RATES = Dict{String,_OpenAIImageRates}(
+    "gpt-image-2.5-sunburst" => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
+    "gpt-image-2.5-flare"    => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
+    "gpt-image-2"            => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
+    "gpt-image-1.5"          => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0),
+    "gpt-image-1-mini"       => _image_rates(2.0, 0.20, 2.5, 0.25, 8.0),
+    "chatgpt-image-latest"   => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0))
+const _OPENAI_IMAGE_TOOL_DEFAULT = "gpt-image-2"
+
+# What a result's hosted tools bill beyond its tokens: only an OpenAI Responses reply reports their usage.
+# Gemini's grounding is not billed here: its free daily quota makes a per-call price wrong. `nothing`: the
+# image tool ran a model UniLM has no rates for, which leaves the call unpriced, as unpriced audio does.
+_hosted_tool_cost(_, ::LLMRequestResponse, ::String)::Union{Float64,Nothing} = 0.0
+function _hosted_tool_cost(::Type{OPENAIServiceEndpoint}, r::ResponseSuccess, model::String)::Union{Float64,Nothing}
+    used = tool_usage(r)
+    isnothing(used) && return 0.0
+    # The reply repeats the request's tools, which tell the web search tool and the image model.
+    tools = let t = get(r.response.raw, "tools", nothing); t isa AbstractVector ? t : Any[] end
+    searches = used.web_search_requests * _web_search_call(tools, model)
+    used.image_input_tokens == used.image_output_tokens == 0 && return searches
+    image_model = _image_tool_model(tools)
+    rates = _openai_row(_OPENAI_IMAGE_TOOL_RATES, image_model)
+    isnothing(rates) && return _unpriced_image_tool(image_model)
+    searches + _image_tool_bill(rates, used)
+end
+
+function _web_search_call(tools::AbstractVector, model::String)::Float64
+    preview = any(t -> t isa AbstractDict && startswith(string(get(t, "type", "")), "web_search_preview"), tools)
+    preview && !isnothing(_openai_row(_OPENAI_NON_REASONING, model)) ? _OPENAI_WEB_SEARCH_PREVIEW_CALL :
+        _OPENAI_WEB_SEARCH_CALL
+end
+
+function _image_tool_model(tools::AbstractVector)::String
+    i = findfirst(t -> t isa AbstractDict && get(t, "type", nothing) == "image_generation", tools)
+    m = isnothing(i) ? nothing : get(tools[i], "model", nothing)
+    m isa AbstractString && !isempty(m) ? String(m) : _OPENAI_IMAGE_TOOL_DEFAULT
+end
+
+# The image tool's tokens at its model's rates: cache reads at the cached rates, output text at the text
+# output rate. A cache count without its split bills as text.
+function _image_tool_bill(r::_OpenAIImageRates, u::ToolUsage)::Float64
+    image_in = min(u.image_input_image_tokens, u.image_input_tokens)
+    text_in = u.image_input_tokens - image_in
+    cached_image = min(u.image_cached_image_tokens, image_in)
+    cached_text = clamp(u.image_cached_tokens - cached_image, 0, text_in)
+    image_out = min(u.image_output_image_tokens, u.image_output_tokens)
+    (text_in - cached_text) * r.text_input + cached_text * r.text_cached +
+        (image_in - cached_image) * r.image_input + cached_image * r.image_cached +
+        image_out * r.image_output + (u.image_output_tokens - image_out) * r.text_output
+end
+
+function _unpriced_image_tool(model::String)::Nothing
+    @warn "no image-token rates for the image generation tool's model; its estimated cost is 0.0" model _id = Symbol(
+        "unilm_unpriced_image_tool_", model) maxlog = 1
+    nothing
 end
 
 # Exact id, then the dated-snapshot alias (OpenAI answers an alias with a

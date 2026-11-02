@@ -20,6 +20,15 @@
   with no `decode_response`, or `respond` with no `decode_agentic`, sent its request, was billed for the reply, and
   returned a call error whose `cause` was the `MethodError`. Both now throw that `MethodError` before any I/O.
   Built-in endpoints and `OpenAIWireEndpoint` subtypes, which inherit the decoders, are unaffected.
+- **On OpenAI's Decisions API, a state that is a vector of `Message`s is sent as a conversation, not as its JSON
+  text.** Each system, user and assistant message goes as a message of its role; a user's images become `input_image`
+  parts after its text, an assistant's refusal a `refusal` part; each assistant tool call becomes a `function_call`
+  item after its message, and each tool message the `function_call_output` of the earlier call it answers. What a role
+  has no field for is an `ArgumentError` before any request: a `name`, a user's audio or document, a refusal or tool
+  calls off an assistant message, a `tool_call_id` off a tool message, an output with no earlier call, a non-function
+  call, a call id outside 1–64 characters, a function name outside the schema's pattern, or more than 131,072 items.
+  TypeSafe and Ollama still send such a state as data. Upgrading: pass `JSON.json(messages)` as the state to keep the
+  old request.
 
 ### Changed
 - **`moderate`, and `speak` on Gemini, retry a transient failure.** Moderation is free and changes nothing when sent
@@ -28,6 +37,27 @@
   `RequestConfig`. `speak` and `translate` on OpenAI's Realtime API keep a single attempt, now documented: a retry
   after the session's `response.create`, or after its audio, may bill a second response, and a session's audio
   cannot be resumed.
+- **`DEFAULT_PRICING` holds the rows shipped with the release; an estimate bills the price in effect on the day it is
+  computed.** The table keeps the shipped row after a scheduled change; a row you set yourself, in `DEFAULT_PRICING` or
+  a `pricing=` table, is never replaced (a row equal to the shipped one, as in `merge(DEFAULT_PRICING, …)`, counts as
+  the shipped one and gets the change).
+- **OpenAI Decisions counts a request's images together.** The 128-image cap includes the questions' instructions and
+  a conversation's user messages, and is counted before any image is encoded.
+
+### Added
+- **Scheduled price changes take effect on their dates, without a new release.** Google doubles Gemini 4 Argon's
+  introductory rates on 1 December 2026 (\$2.00 / \$0.10 / \$10.00 → \$4.00 / \$0.20 / \$20.00 per 1M input, cache-hit
+  and output tokens), and on 1 January 2027 those of Gemini 3.8 and 3.6 Flash, of `gemini-3.7-flash` and
+  `gemini-3.5-flash`, which it serves as them (\$0.75 / \$0.075 / \$3.75 → \$1.50 / \$0.15 / \$7.50), and of Gemini
+  Robotics-ER 2 Preview (\$1.00 / \$0.10 / \$5.00 → \$2.00 / \$0.20 / \$10.00). `estimated_cost` and `cumulative_cost`
+  bill the new rates from 00:00 UTC on each date (Google's page names no time zone); Flex, Priority and audio input
+  scale the rates then in effect; the price tables list each change beside the shipped price.
+- **`gemini-embedding-001` is priced** at \$0.15 per 1M input tokens (Batch's \$0.075 is not modeled); a reply that
+  counted its tokens was estimated at `0.0` with the unpriced-model warning.
+- **OpenAI Decisions: a question's instructions may hold images and JSON.** An image, a JSON object, or a vector or
+  tuple of strings, images and objects is sent as `input_text`, `input_image` and `input_json` parts, in order. Checked
+  before any request: 1–16,384 parts; a text part of at most 10,485,760 characters; an `input_json` part of at most 32
+  levels, 10,000 values and 256 KiB of compact JSON, with no image inside. String instructions are sent unchanged.
 
 ### Fixed
 - **`speak` and `translate` on OpenAI read the provider's error after a send fails at the transport.** When a write

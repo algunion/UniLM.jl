@@ -664,16 +664,15 @@ end
           form("s", choice("Which?", ["a" => ["x", "y"], "b" => nothing]))
     @test form("s", score("How?", ["low", ("high", "urgent")])) == form("s", score("How?", ["low", ["high", "urgent"]]))
     @test form(("a", "b"), noul("Is it?")) == form(["a", "b"], noul("Is it?"))
-    # Each backend sends the tuple as the vector: Ollama's array instructions, and OpenAI's refusal of
-    # instructions that are not a string.
+    # Each backend sends the tuple as the vector: Ollama's array instructions, and OpenAI's instruction parts.
     ollama = OllamaEndpoint(base_url="http://box:11434")
     enc(p, ep, q) = UniLM.encode_system_one(p, ep, SystemOneRequest("s", "q" => q; model="m")).body
     @test enc(UniLM.OllamaSystemOneProtocol(), ollama, noul(("Is it", "red?"))) ==
           enc(UniLM.OllamaSystemOneProtocol(), ollama, noul(["Is it", "red?"]))
     @test enc(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, choice("Which?", ["a" => ("x", "y"), "b" => nothing])) ==
           enc(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, choice("Which?", ["a" => ["x", "y"], "b" => nothing]))
-    e = _s1_caught(() -> enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(("Is it", "red?"))))
-    @test e isa ArgumentError && contains(e.msg, "its `instructions` must be a string, not Tuple{String, String}")
+    @test enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(("Is it", "red?"))) ==
+          enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(["Is it", "red?"]))
 end
 
 @testset "System One — score refuses levels that are not a vector with an ArgumentError, as choice refuses its criteria" begin

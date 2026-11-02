@@ -189,17 +189,33 @@ end
                           prompt_audio_tokens=12, completion_audio_tokens=17)
 end
 
+# DeepSeek's own endpoint, its auth_header and encoder included, sending to the scripted local server.
+struct _DSLocal <: UniLM.OpenAIWireEndpoint
+    real::DeepSeekEndpoint
+end
+UniLM.provider_capabilities(s::_DSLocal) = UniLM.provider_capabilities(s.real)
+UniLM.get_url(::_DSLocal, ::Chat) = _url_probe_base[] * UniLM.CHAT_COMPLETIONS_PATH
+UniLM.auth_header(s::_DSLocal) = UniLM.auth_header(s.real)
+UniLM.encode_request(s::_DSLocal, chat::Chat) = UniLM.encode_request(s.real, chat)
+
 @testset "DeepSeekEndpoint and MistralEndpoint read their key when a request is sent" begin
     withenv("DEEPSEEK_API_KEY" => nothing, "MISTRAL_API_KEY" => nothing) do
         @test DeepSeekEndpoint() isa DeepSeekEndpoint                 # no KeyError at construction
         @test MistralEndpoint() isa GenericOpenAIEndpoint
-        r = chatrequest!(Chat(service=DeepSeekEndpoint(), messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]);
-                         config=RequestConfig(max_attempts=1))
-        @test r isa LLMCallError && occursin("DEEPSEEK_API_KEY", r.error)
-        @test_throws KeyError UniLM.auth_header(MistralEndpoint())    # a missing variable throws: no request goes out without it
-        r = chatrequest!(Chat(service=MistralEndpoint(), model="mistral-large-latest",
-                              messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]); config=RequestConfig(max_attempts=1))
-        @test r isa LLMCallError && occursin("MISTRAL_API_KEY", r.error)
+        @test_throws KeyError UniLM.auth_header(MistralEndpoint())    # a missing variable throws
+        # No request goes out without the key. Each endpoint's key handling sends to a local server, which a
+        # request that went out anyway would reach: never DeepSeek's or Mistral's host.
+        msgs = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+        (ds, mistral), seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            here = GenericOpenAIEndpoint(_url_probe_base[], MistralEndpoint().api_key, MistralEndpoint().key_env)
+            (chatrequest!(Chat(service=_DSLocal(DeepSeekEndpoint()), model="deepseek-flash", messages=copy(msgs));
+                          config=RequestConfig(max_attempts=1)),
+             chatrequest!(Chat(service=here, model="mistral-large-latest", messages=copy(msgs));
+                          config=RequestConfig(max_attempts=1)))
+        end
+        @test ds isa LLMCallError && occursin("DEEPSEEK_API_KEY", ds.error)
+        @test mistral isa LLMCallError && occursin("MISTRAL_API_KEY", mistral.error)
+        @test isempty(seen)
     end
     withenv("DEEPSEEK_API_KEY" => "sk-test-1", "MISTRAL_API_KEY" => "sk-test-2") do
         @test ("Authorization" => "Bearer sk-test-1") in UniLM.auth_header(DeepSeekEndpoint())

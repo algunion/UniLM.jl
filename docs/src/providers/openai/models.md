@@ -268,9 +268,10 @@ warning per model.
 
 [`cumulative_cost`](@ref) is a lower bound of the bill: it adds nothing for an attempt UniLM retried, a
 failure, or a stream stopped before its usage arrived ([Streaming](@ref openai_streaming)), and no
-estimate includes the fees of the hosted tools a reply does not report — file search and containers
-bill per call or per session — or the 10% uplift OpenAI charges on its regional-processing endpoints for the models
-released since 5 March 2026 ([pricing](https://developers.openai.com/api/docs/pricing)). A model with no
+estimate includes the fees of the hosted tools a reply does not report — file search bills per call, and
+containers by the minute, with a 5-minute minimum per session — or the 10% uplift OpenAI charges on its
+regional-processing endpoints for the models released since 5 March 2026
+([pricing](https://developers.openai.com/api/docs/pricing)). A model with no
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 

@@ -137,9 +137,9 @@ with approvals, a request for one is an `mcp_approval_request` item, and an
 [`mcp_approval_response`](@ref) in the next request's input answers it
 ([MCP servers](https://developers.openai.com/api/docs/guides/tools-connectors-mcp#approvals)). The
 hosted tools bill beyond the tokens — web search and file search per call, the image generation tool by
-its image model's tokens, containers per session. A reply reports the web searches and the image
-tokens in its `tool_usage`, which [`tool_usage`](@ref) reads as a [`ToolUsage`](@ref) and
-[`estimated_cost`](@ref) bills; file search and containers it leaves out
+its image model's tokens, containers by the minute with a 5-minute minimum per session. A reply
+reports the web searches and the image tokens in its `tool_usage`, which [`tool_usage`](@ref) reads as
+a [`ToolUsage`](@ref) and [`estimated_cost`](@ref) bills; file search and containers it leaves out
 ([Cost and usage](@ref openai_cost)).
 
 ## [Structured output on Responses](@id openai_responses_structured_output)

@@ -30,6 +30,17 @@
   `long_context`; on OpenAI's Decisions API anything but `prompt_cache_key`, `safety_identifier` and
   `prompt_cache_options` within their limits; on Ollama anything but a `keep_alive` of 0 to 1e9 seconds or `Inf`.
   Endpoints whose protocol UniLM does not wrap are unaffected.
+- **A continued Gemini Interactions call's later requests keep the first request's bytes.** When Google continues an
+  unstreamed `respond`, each later request is the first request's JSON in its key order, with only
+  `continuation_token` and `previous_interaction_id` added and, for a stored interaction, `input` dropped. It was
+  re-serialized with its keys sorted. Upgrading: a later request recorded with `with_recorded_answers` under 0.30.0
+  no longer replays; record it again.
+
+### Fixed
+- **A cancel during a later request of a continued Gemini Interactions call is timed from the call's start.** The
+  `UniLMCancelled` cause of the returned `ResponseCallError` reported the time since that request began (such as
+  "cancelled by token after 0.002 s" in a call that had run for seconds); it now reports the time since `respond` was
+  called, as `chatrequest!` does.
 
 ## 0.30.0
 

@@ -89,6 +89,17 @@ function _os1l_score(ps)
 end
 _os1l_entropy(ps) = clamp(1 + sum(p * log(p) for p in ps if p > 0) / log(length(ps)), 0.0, 1.0)
 
+# Whether a decision model reports TypeSafe's confidence itself: one whose metadata names its own decision head
+# (`<architecture>.decision.type`, as Kev's and d1's do) does; Ollama's own decision encodings over a model's
+# letter probabilities (tev1, clef, strands, a plain template) report 1 − H(p)/ln n. What the model is decides,
+# not the runner its listing names.
+function _os1l_own_head(model::String)::Bool
+    r = model_info(model; service=_OS1L_EP)
+    r isa OllamaSuccess || error("Ollama System One live witnesses: model_info(\"$model\") failed: $(r)")
+    meta = get(r.response.raw, "model_info", nothing)
+    meta isa AbstractDict && any(k -> endswith(k, ".decision.type"), keys(meta))
+end
+
 const _OS1L_INTENT = (refund  = "the customer wants a refund",
                       bug     = "the customer reports a software bug",
                       pricing = "the customer asks about prices")
@@ -164,15 +175,15 @@ _os1l_relay(_OS1L_EP.base_url) do ep, sent
     @test 0 <= u.score <= 2 && 0 <= f.noul <= 1 && all(p -> 0 <= p <= 1, [ps; ls])
     @test d.confidence ≈ _os1l_choice(ps) atol = 1e-12
     @test u.confidence ≈ _os1l_score(ls) atol = 1e-12
-    if info.runner === :mlx
-        # Ollama's MLX decision encodings report 1 − H(p)/ln n; the surface's confidence
-        # replaces it, the raw keeps it (for tev1:0.8b's split on this ticket, measurably).
-        @test d.raw["confidence"] ≈ _os1l_entropy(ps) atol = 1e-9
-        model == "tev1:0.8b" && @test abs(d.confidence - d.raw["confidence"]) > 1e-3
-    else
-        # Kev and the models on the llama.cpp path report TypeSafe's formula themselves.
+    if _os1l_own_head(model)
+        # A model with its own decision head reports TypeSafe's formula itself.
         @test abs(d.confidence - d.raw["confidence"]) <= 1e-6
         @test abs(u.confidence - u.raw["confidence"]) <= 1e-6
+    else
+        # Ollama's encodings report 1 − H(p)/ln n; the surface's confidence replaces it, the raw keeps it
+        # (for tev1:0.8b's split on this ticket, measurably).
+        @test d.raw["confidence"] ≈ _os1l_entropy(ps) atol = 1e-9
+        model == "tev1:0.8b" && @test abs(d.confidence - d.raw["confidence"]) > 1e-3
     end
     u_ = token_usage(r)
     @test u_.prompt_tokens > 0 && u_.total_tokens == u_.prompt_tokens + u_.completion_tokens

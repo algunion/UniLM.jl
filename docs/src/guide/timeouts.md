@@ -250,14 +250,14 @@ result = fetch(task)     # LLMSuccess, or a call-error carrying the UniLMTimeout
 
 Automatic retries apply to the inference verbs — `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `transcribe`, `speak` on `GEMINIServiceEndpoint`, `ask`,
-`list_models`, and the `tool_loop` family through them (streams retry only before the first
-callback fires) — and to `moderate`, which is free and changes nothing when it is sent again.
-Every other verb makes a single bounded attempt and `max_attempts` has
+`generate_image`, `edit_image`, `transcribe`, `speak` when it sends one HTTP request
+(`generateContent`), `ask`, `list_models`, and the `tool_loop` family through them (streams retry
+only before the first callback fires) — and to `moderate`, which is free and changes nothing when
+it is sent again. Every other verb makes a single bounded attempt and `max_attempts` has
 no effect on it: the platform and lifecycle verbs (batch, container, conversation, file,
 fine-tuning, upload, vector-store, realtime, and the Responses lifecycle operations), including
 `upload_file` — a create is never retried, because a POST that timed out or drew a gateway 5xx
-may already have stored the file — and speech and translation on OpenAI's Realtime API (`speak`,
+may already have stored the file — and speech and translation over a Realtime session (`speak`,
 `translate`), since a retry after the session's `response.create` or its audio may bill a second
 response, and a session's audio cannot be resumed. The polling
 helpers [`poll_batch`](@ref) and [`poll_file_batch`](@ref) instead poll through

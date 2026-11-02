@@ -246,9 +246,11 @@ text(result), result.usage.prompt_audio_tokens
 An image's `detail` is its media resolution, the part's `mediaResolution`: `"low"` and `"high"`
 are `MEDIA_RESOLUTION_LOW` and `MEDIA_RESOLUTION_HIGH`, and `"auto"` sends none, leaving the model's
 default. Google documents a resolution per part for "Gemini 3 only"
-([media resolution](https://ai.google.dev/gemini-api/docs/generate-content/media-resolution)); UniLM
-refuses a level on the Gemini 2.5 and Gemma 4 models, and `"original"` on every model, and sends a
-level for any other id ([Limits and refusals](@ref gemini_limits)). UniLM checks no size: Google
+([media resolution](https://ai.google.dev/gemini-api/docs/generate-content/media-resolution)), and
+`gemini-4-argon` was measured honouring one too: `countTokens` counted an image at 1,120 tokens at its
+default resolution and at 280 with `"low"` (26 October 2026). UniLM refuses a level on the Gemini 2.5
+and Gemma 4 models, and `"original"` on every model, and sends a level for any other id
+([Limits and refusals](@ref gemini_limits)). UniLM checks no size: Google
 bounds inline data by the request, "Inline image data limits your total request size (text prompts,
 system instructions, and inline bytes) to 20MB"
 ([image understanding](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding#inline-image)).

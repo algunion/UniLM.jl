@@ -2580,6 +2580,8 @@ timestamps) are documented only for `whisper-1` and `diarized_json` (speaker lab
 # /generated:provider-contracts
 ```
 
+---
+
 ## Provider Capabilities
 
 Each endpoint declares supported features. Request functions validate before

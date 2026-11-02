@@ -618,6 +618,31 @@ end
     end
 end
 
+# A socket whose every send fails at the transport, as a write to a connection the peer has closed can:
+# HTTP.jl raises the transport's own error (SystemError("write", EPIPE) over TCP) when a write fails
+# before the close is read. The events the peer sent before closing are still there to read.
+struct _BrokenPipeWS
+    events::Vector{String}
+end
+HTTP.WebSockets.send(::_BrokenPipeWS, ::Any) = throw(SystemError("write", Libc.EPIPE))
+HTTP.WebSockets.receive(ws::_BrokenPipeWS) = isempty(ws.events) ?
+    throw(HTTP.WebSockets.WebSocketError(HTTP.WebSockets.CloseFrameBody(1006, ""))) : popfirst!(ws.events)
+
+@testset "speak and translate on OpenAI: a send that fails at the transport still reads the peer's error" begin
+    err = _sp_event("error"; error=Dict("type" => "invalid_request_error", "code" => "test_code",
+                                        "message" => "The test peer ends this session.", "param" => nothing))
+    cfg = RequestConfig(stream_idle_timeout=Inf, total_deadline=Inf)
+    for drive in (s -> UniLM._realtime_speak(s, SpeechRequest(input="Hi.")),
+                  s -> UniLM._realtime_translate(s, zeros(UInt8, 9_600), "fr"))
+        r = try drive(RealtimeSession(_BrokenPipeWS([JSON.json(err)]), "m", cfg)) catch e; e end
+        @test r isa UniLM.AudioFailure
+        @test r isa UniLM.AudioFailure && isnothing(r.status) && JSON.parse(r.response; dicttype=Dict{String,Any}) == err
+        # Without one, the close is the call's error.
+        r2 = try drive(RealtimeSession(_BrokenPipeWS(String[]), "m", cfg)) catch e; e end
+        @test r2 isa UniLM.AudioCallError && r2.cause isa HTTP.WebSockets.WebSocketError
+    end
+end
+
 @testset "speak on OpenAI: a silent peer ends the call at its idle bound or its deadline" begin
     cfg = RequestConfig(connect_timeout=10.0, stream_idle_timeout=1.0, total_deadline=Inf)
     t = time()

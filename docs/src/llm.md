@@ -1894,12 +1894,21 @@ Each wrapper's rules, refused before any I/O (on every backend also a `DocumentA
   ≤ 32 MiB; a Box needs an image in the request (and Jev 1.14+:
   `"jev-1.14.0"`/`"jev-preview"`); one option, `long_context::Bool`. Pin a
   model, e.g. `"jev-1.13.0"`, to keep tuned thresholds meaningful.
-- **OpenAI:** 1–400 questions; string `instructions` on every question;
-  Choice 2–255 options, descriptions strings or `nothing`; Score 2–10 levels,
-  each a string; Noul `yes`/`no` criteria and Box refused; images only in the
-  state (an `ImageAttachment`, or a vector or tuple of strings and images; ≤ 128),
-  each sent with its `detail` level when it sets one; each text — the input, or
-  each text part — ≤ 10,485,760 characters; the model's name and each question's
+- **OpenAI:** 1–400 questions; `instructions` on every question: a string, or
+  1–16,384 parts (an image, a JSON object, or a vector/tuple of strings, images
+  and objects or arrays of objects → `input_text` / `input_image` / `input_json`;
+  an `input_json` ≤ 32 levels, ≤ 10,000 values, ≤ 256 KiB of compact JSON, and no
+  image inside); Choice 2–255 options, descriptions strings or `nothing`; Score
+  2–10 levels, each a string; Noul `yes`/`no` criteria and Box refused; images
+  only in the state (an `ImageAttachment`, or a vector or tuple of strings and
+  images, or a user message's attachments in a conversation) and in instructions,
+  ≤ 128 in all, each sent with its `detail` level when it sets one; each text — the
+  input, each text part, each message's text — ≤ 10,485,760 characters; in a
+  conversation, a message's `name`, a user's audio or document, a refusal or tool
+  calls off an assistant message, a `tool_call_id` off a tool message, a tool output
+  with no earlier call, a call that is not a function call, a call id outside 1–64
+  characters and a function name outside `^[a-zA-Z0-9_.-]{1,128}$` refused; a tool
+  call's arguments, the model's name and each question's
   name, string instructions, option names and descriptions and level labels
   ≤ 1,048,576 characters (a `RawQuestion`'s own fields are sent as written); options
   `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128),
@@ -1940,11 +1949,19 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   recorded). `input` is the state string,
   a JSON value's JSON text, or — for an `ImageAttachment` or a vector or tuple of
   strings and images — one user message of `input_text` and `input_image` (data URL,
-  with `detail` when the image sets one) parts; a recording keys and stores each data URL as `data:<mime>;sha256,<hex>`.
+  with `detail` when the image sets one) parts, or — for a vector of `Message`s (or a
+  vector/tuple holding Messages alone) — the conversation, ≤ 131,072 items: `{role,
+  content}` per system/user/assistant message (a user's images → `input_image` parts
+  after an `input_text`; an assistant's refusal → `[{type: "output_text", text},
+  {type: "refusal", refusal}]`), each assistant tool call → `{type: "function_call",
+  call_id, name, arguments}` after its message, each tool message → `{type:
+  "function_call_output", call_id, output}` (TypeSafe and Ollama send the same state as
+  data, its messages as JSON objects); a recording keys and stores each data URL as `data:<mime>;sha256,<hex>`.
   `questions` is an array in request order, each entry carrying its name:
   `noul` → `predicate`, `choice` → `choice` (`choices: [{value, description?}]`),
   `score` → `score` (`levels: [{label}]`), a `RawQuestion` verbatim with `name`
-  added. Answers are matched by name and must come in the order asked; a
+  added; `instructions` is the string, or the parts above (`{type: "input_text",
+  text}`, `{type: "input_image", image_url, detail?}`, `{type: "input_json", data}`). Answers are matched by name and must come in the order asked; a
   `predicate` reads as a `NoulAnswer`, a `refusal` as a `RefusalAnswer`, and a
   score's `legend` maps each level to its label. Usage counts input, cached,
   cache-write (`cache_write_tokens`; 12-hour ones in `cache_write_extended_tokens`),

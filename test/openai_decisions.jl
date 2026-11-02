@@ -218,7 +218,8 @@ end
     @test parts((_OD_PNG, "What is it?")) == parts(Any[_OD_PNG, "What is it?"])
     @test [p["type"] for p in parts(("first", _OD_PNG, "", _OD_JPEG))] == ["input_text", "input_image", "input_text", "input_image"]
 
-    # An image anywhere but there has no form on the wire: refused before any I/O.
+    # An image anywhere but there, or as a part of a question's instructions, has no form on the wire: refused
+    # before any I/O.
     refusals, seen = _od_serve(_od_valid) do
         [_od_caught(() -> ask(Dict("photo" => _OD_PNG), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any[Dict("photo" => _OD_PNG), "text"], "q" => noul("Is it?"); service=_ODMock)),
@@ -226,7 +227,7 @@ end
          _od_caught(() -> ask((photo = _OD_PNG,), "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(Any["text", [_OD_PNG]], "q" => noul("Is it?"); service=_ODMock)),
          _od_caught(() -> ask(fill(_OD_PNG, 129), "q" => noul("Is it?"); service=_ODMock)),
-         _od_caught(() -> ask("s", "q" => choice(_OD_PNG, ["a", "b"]); service=_ODMock)),
+         _od_caught(() -> ask("s", "q" => choice(Dict("reference" => _OD_PNG), ["a", "b"]); service=_ODMock)),
          _od_caught(() -> ask("s", "q" => choice("Which?", ["a" => _OD_PNG, "b" => nothing]); service=_ODMock)),
          _od_caught(() -> ask("s", "q" => RawQuestion(Dict("type" => "predicate", "instructions" => "x", "img" => _OD_PNG));
                               service=_ODMock)),
@@ -239,11 +240,14 @@ end
     @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector or Tuple of strings and ImageAttachments"),
               refusals[1:5])
     @test contains(refusals[6].msg, "at most 128 images") && contains(refusals[6].msg, "129")
-    @test contains(refusals[7].msg, "must be a string") && contains(refusals[8].msg, "description of its option \"a\"")
+    @test contains(refusals[7].msg, "part 1 of its instructions holds an image inside JSON") &&
+          contains(refusals[8].msg, "description of its option \"a\"")
     @test all(e -> contains(e.msg, "an image belongs in the state") &&
-                   contains(e.msg, "Vector or Tuple of strings and ImageAttachments"), refusals[[7, 8, 12]])
+                   contains(e.msg, "Vector or Tuple of strings and ImageAttachments") &&
+                   contains(e.msg, "or in the question's instructions"), refusals[[8, 12]])
     @test contains(refusals[12].msg, "level 1 must be a string")
-    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector or Tuple of strings")
+    @test contains(refusals[9].msg, "which a RawQuestion, sent as written, cannot carry") &&
+          contains(refusals[9].msg, "Vector or Tuple of strings")
     @test contains(refusals[10].msg, "10485760 characters") && contains(refusals[10].msg, "10485761")
     @test contains(refusals[11].msg, "JSON")
     @test length(input("x"^10_485_760)) == 10_485_760
@@ -329,7 +333,7 @@ end
         [one(noul("Is the customer frustrated?"; yes = "Impatient", no = "Calm")),     # 1
          one(noul(; yes = "Impatient")),                                                # 2
          one(choice(["a", "b"])),                                                       # 3
-         one(choice(Dict("text" => "Which?"), ["a", "b"])),                             # 4
+         one(choice(Any["Which?", 7], ["a", "b"])),                                     # 4
          one(choice("Pick.", ["only"])),                                                # 5
          one(choice("Pick.", ["o$i" for i in 1:256])),                                  # 6
          one(choice("Pick.", ["a" => (why = "structured",), "b" => nothing])),         # 7
@@ -345,7 +349,7 @@ end
     @test all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
     @test all(e -> contains(e.msg, "the question \"q\""), refused[1:13])
     @test contains(refused[1].msg, "true/false criteria") && contains(refused[2].msg, "true/false criteria")
-    @test contains(refused[3].msg, "needs `instructions`") && contains(refused[4].msg, "must be a string")
+    @test contains(refused[3].msg, "needs `instructions`") && contains(refused[4].msg, "part 2 of its instructions is a Int64")
     @test contains(refused[5].msg, "2 to 255 options, and it has 1") && contains(refused[5].msg, "Add one")
     @test contains(refused[6].msg, "2 to 255 options, and it has 256") && contains(refused[6].msg, "Split it")
     @test contains(refused[7].msg, "description of its option \"a\" must be a string or `nothing`")
@@ -382,6 +386,193 @@ end
     @test contains(refused[3].msg, "the instructions of \"q\"") && contains(refused[4].msg, "an option's name in \"q\"")
     @test contains(refused[5].msg, "the description of the option \"a\" in \"q\"")
     @test contains(refused[6].msg, "the label of level 1 of \"q\"") && contains(refused[7].msg, "the model's name")
+end
+
+@testset "OpenAI Decisions — instructions that are not a string are sent as the question's parts" begin
+    # OpenAI's OpenAPI description (since 22 October 2026): a question's `instructions` is a string or 1 to 16,384
+    # parts, `input_text`, `input_image` and `input_json` (`DecisionQuestionInputPart`); its guide: "To give each
+    # question a different image, set its `instructions` to a nonempty array of `input_text` and `input_image` parts".
+    instructions(q) = only(_od_sent(SystemOneRequest("s", "q" => q))["questions"])["instructions"]
+    png = UniLM._data_url(_OD_PNG)
+    r, seen = _od_serve(_od_valid) do
+        ask(Any["The shared image is reference image A.", _OD_PNG],
+            "derivative" => noul(["Is candidate image B a derivative or variant of reference image A?", _OD_JPEG]);
+            service=_ODMock, config=_OD_CFG)
+    end
+    @test r isa SystemOneSuccess && r["derivative"] isa NoulAnswer
+    @test JSON.json(only(_od_body(only(seen))["questions"])["instructions"]) ==
+          """[{"type":"input_text","text":"Is candidate image B a derivative or variant of reference image A?"},""" *
+          """{"type":"input_image","image_url":"$(UniLM._data_url(_OD_JPEG))"}]"""
+    # An image alone is one part, sent with its detail level; a tuple is taken as a vector is.
+    @test instructions(choice(_OD_PNG, ["a", "b"])) == [Dict("type" => "input_image", "image_url" => png)]
+    @test instructions(score(("Rate the damage.", ImageAttachment(_OD_PNG.data; detail="low")), ["none", "some"])) ==
+          [Dict("type" => "input_text", "text" => "Rate the damage."),
+           Dict("type" => "input_image", "image_url" => png, "detail" => "low")]
+    # Structured data is an `input_json` part holding it, "a JSON object or an array of objects".
+    @test JSON.json(instructions(noul((order = (charges = [49, 49],),)))) ==
+          """[{"type":"input_json","data":{"order":{"charges":[49,49]}}}]"""
+    @test JSON.json(instructions(choice(["Which order does the ticket mean?", Dict("ticket" => "refund"),
+                                         [(id = 1,), (id = 2,)]], ["first", "second"]))) ==
+          """[{"type":"input_text","text":"Which order does the ticket mean?"},{"type":"input_json","data":{"ticket":"refund"}},""" *
+          """{"type":"input_json","data":[{"id":1},{"id":2}]}]"""
+    # A string stays a string, so no request sent before changes a byte.
+    @test instructions(noul("Is it?")) == "Is it?"
+    # Recorded with each image as its digest, never its bytes.
+    dir = mktempdir()
+    _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask("s", "q" => noul(["Is it red?", _OD_PNG]); service=_ODMock, config=_OD_CFG), dir;
+                              mode=:record)
+    end
+    text = read(only(readdir(dir; join=true)), String)
+    @test !contains(text, base64encode(_OD_PNG.data))
+    @test JSON.parse(text)["request"]["body"]["questions"][1]["instructions"][2]["image_url"] == UniLM._media_digest(_OD_PNG)
+end
+
+@testset "OpenAI Decisions — instruction parts are held to the reference's limits before sending" begin
+    # 1 to 16,384 parts; a text part of at most 10,485,760 characters; an `input_json` part "Limited to 32 container
+    # levels, 10,000 values, and 256 KiB of compact UTF-8 JSON" (DecisionInputJson); "Question images share the
+    # request's image limits with images in `input`" (OpenAI's guide).
+    instructions(q; state="s") = only(_od_sent(SystemOneRequest(state, "q" => q))["questions"])["instructions"]
+    nest(n) = n == 1 ? Dict("x" => 1) : Dict("x" => nest(n - 1))           # n levels of objects
+    framed(n) = Dict("t" => "a"^(n - 8))                                    # {"t":"a…"}: n bytes of JSON
+    # At each limit: 16,384 parts; 10,485,760 characters; 32 levels; 10,000 values (the object, the array and
+    # 9,998 numbers); 262,144 bytes; 128 images, 100 in the state and 28 in the instructions.
+    @test length(instructions(noul(fill("x", 16_384)))) == 16_384
+    @test length(only(instructions(noul(["x"^10_485_760])))["text"]) == 10_485_760
+    @test only(instructions(noul(nest(32))))["type"] == "input_json"
+    @test length(only(instructions(noul(Dict("v" => zeros(Int, 9_998)))))["data"]["v"]) == 9_998
+    @test sizeof(JSON.json(framed(262_144))) == 262_144 && only(instructions(noul(framed(262_144))))["type"] == "input_json"
+    many = Any["Which of these matches the reference?", fill(_OD_PNG, 28)...]
+    @test count(p -> p["type"] == "input_image", instructions(noul(many); state=fill(_OD_PNG, 100))) == 28
+
+    refused, seen = _od_serve(_od_valid) do
+        one(q; state="s") = _od_caught(() -> ask(state, "q" => q; service=_ODMock))
+        [one(noul(String[])),                                                   # 1: no part
+         one(noul(fill("x", 16_385))),                                          # 2
+         one(noul(["x"^10_485_761])),                                           # 3
+         one(noul(nest(33))),                                                   # 4
+         one(noul(Dict("v" => zeros(Int, 9_999)))),                             # 5
+         one(noul(framed(262_145))),                                            # 6
+         one(noul(["Do these match?", [1, 2]])),                                # 7: no object
+         one(noul(["Is it?", 7])),                                              # 8: no part at all
+         one(noul(Dict("reference" => _OD_PNG))),                               # 9: an image as data
+         one(noul(Any[many..., _OD_PNG]); state=fill(_OD_PNG, 100))]            # 10: 129 images
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
+    @test all(e -> contains(e.msg, "the question \"q\""), refused[[1, 2, 4, 5, 6, 7, 8, 9]])
+    @test contains(refused[1].msg, "its instructions are 0 parts, and a question takes 1 to 16384") &&
+          contains(refused[2].msg, "its instructions are 16385 parts")
+    @test contains(refused[3].msg, "text of at most 10485760 characters; part 1 of the instructions of \"q\" has 10485761")
+    @test contains(refused[4].msg, "more than 32 levels deep")
+    @test contains(refused[5].msg, "10001 JSON values") && contains(refused[5].msg, "at most 10000")
+    @test contains(refused[6].msg, "262145 bytes of compact JSON") && contains(refused[6].msg, "at most 262144")
+    @test contains(refused[7].msg, "part 2 of its instructions is a Vector{Int64}") &&
+          contains(refused[8].msg, "part 2 of its instructions is a Int64")
+    @test contains(refused[9].msg, "part 1 of its instructions holds an image inside JSON")
+    @test contains(refused[10].msg, "at most 128 images per request") && contains(refused[10].msg, "has 129")
+    e = _od_caught(() -> ask("s", "q" => noul(Dict("x" => NaN)); service=_ODMock))
+    @test e isa ArgumentError && contains(e.msg, "JSON")
+    # An image's data URL is checked before it is encoded, in the instructions as in the state.
+    n = length(UniLM._data_url(_OD_PNG))
+    @test only(UniLM._decisions_instructions("q", [_OD_PNG]; limit=n))["image_url"] == UniLM._data_url(_OD_PNG)
+    e = _od_caught(() -> UniLM._decisions_instructions("q", ["What is it?", _OD_PNG]; limit=n - 1))
+    @test e isa ArgumentError && contains(e.msg, "at most $(n - 1) characters")
+end
+
+@testset "OpenAI Decisions — a vector of Messages is sent as the conversation it holds" begin
+    # OpenAI's OpenAPI description (since 22 October 2026): `input` is a string or "an ordered array of messages,
+    # function calls and outputs, or custom tool calls and outputs" — a message per role (DecisionInputMessage,
+    # discriminated by `role`), and `function_call` and `function_call_output` items; "Each tool output must identify
+    # a matching call by call ID".
+    input(state) = _od_sent(SystemOneRequest(state, "q" => noul("Is the customer satisfied?")))["input"]
+    talk = [Message(Val(:user), "My order #4471 arrived broken."),
+            Message(role=RoleAssistant, content="I am sorry: a refund is on its way.")]
+    r, seen = _od_serve(_od_valid) do
+        ask(talk, "satisfied" => noul("Is the customer satisfied?"); service=_ODMock, config=_OD_CFG)
+    end
+    @test r isa SystemOneSuccess && r["satisfied"] isa NoulAnswer
+    @test JSON.json(_od_body(only(seen))["input"]) ==
+          """[{"role":"user","content":"My order #4471 arrived broken."},""" *
+          """{"role":"assistant","content":"I am sorry: a refund is on its way."}]"""
+    # A tool call and its result: a function_call item after the assistant's message, and the output of the call
+    # it answers; a system message keeps its role.
+    lookup = ToolCall(id="call_1", func=UniLM.GPTFunction("get_order", Dict("id" => 4471)))
+    tools = [Message(Val(:system), "You are a support agent."),
+             Message(Val(:user), "Where is my order #4471?"),
+             Message(role=RoleAssistant, content="Let me check.", tool_calls=[lookup]),
+             Message(role=UniLM.RoleTool, content="{\"status\":\"lost\"}", tool_call_id="call_1"),
+             Message(role=RoleAssistant, content="It was lost in transit; a refund is on its way.")]
+    @test JSON.json(input(tools)) == "[" * join([
+        """{"role":"system","content":"You are a support agent."}""",
+        """{"role":"user","content":"Where is my order #4471?"}""",
+        """{"role":"assistant","content":"Let me check."}""",
+        """{"type":"function_call","call_id":"call_1","name":"get_order","arguments":"{\\"id\\":4471}"}""",
+        """{"type":"function_call_output","call_id":"call_1","output":"{\\"status\\":\\"lost\\"}"}""",
+        """{"role":"assistant","content":"It was lost in transit; a refund is on its way."}"""], ",") * "]"
+    # An assistant's turn of tool calls alone is its calls; a user's pictures are `input_image` parts after its text;
+    # an assistant's refusal is a `refusal` part after its text; a vector of any type, or a tuple, that holds Messages
+    # alone is a conversation too.
+    @test input(Any[Message(role=RoleAssistant, tool_calls=[lookup]), tools[4]]) == [
+        Dict("type" => "function_call", "call_id" => "call_1", "name" => "get_order", "arguments" => "{\"id\":4471}"),
+        Dict("type" => "function_call_output", "call_id" => "call_1", "output" => "{\"status\":\"lost\"}")]
+    shot = Message(Val(:user), "This is what arrived.", ImageAttachment(_OD_PNG.data; detail="high"))
+    declined = Message(role=RoleAssistant, content="I can help with the order.", refusal_message="I cannot share card numbers.")
+    @test input((shot, declined)) == [
+        Dict("role" => "user", "content" => [Dict("type" => "input_text", "text" => "This is what arrived."),
+             Dict("type" => "input_image", "image_url" => UniLM._data_url(_OD_PNG), "detail" => "high")]),
+        Dict("role" => "assistant", "content" => [Dict("type" => "output_text", "text" => "I can help with the order."),
+             Dict("type" => "refusal", "refusal" => "I cannot share card numbers.")])]
+    # Up to 131,072 items.
+    @test length(input(fill(Message(Val(:user), "x"), 131_072))) == 131_072
+    # A vector that holds other values beside Messages is JSON text, as before.
+    @test input(Any[talk[1], "a note"]) isa String && input(Any[]) == "[]"
+    # TypeSafe and Ollama take the same state as data, as before: its messages as JSON objects.
+    req = SystemOneRequest(talk, "q" => noul("Is the customer satisfied?"); model="m")
+    as_data = JSON.parse(JSON.json(talk))
+    @test JSON.parse(UniLM.encode_system_one(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, req).body)["state"] == as_data
+    @test JSON.parse(UniLM.encode_system_one(UniLM.OllamaSystemOneProtocol(), OllamaEndpoint(), req).body)["state"] == as_data
+end
+
+@testset "OpenAI Decisions — what a conversation's message has no field for is refused before sending" begin
+    pdf = DocumentAttachment(joinpath(@__DIR__, "fixtures", "documents", "secret_word.pdf"))
+    wav = AudioAttachment(joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav"))
+    call(id="call_1", name="get_order"; type="function", arguments=Dict("id" => 1)) =
+        ToolCall(id=id, type=type, func=UniLM.GPTFunction(name, arguments))
+    asks(calls...) = Message(role=RoleAssistant, tool_calls=collect(ToolCall, calls))
+    refused, seen = _od_serve(_od_valid) do
+        one(state...) = _od_caught(() -> ask(collect(Message, state), "q" => noul("Is it?"); service=_ODMock))
+        [one(Message(role=RoleUser, content="Hi", name="alice")),                                    # 1: a name
+         one(Message(Val(:user), "Listen.", wav)),                                                   # 2: audio
+         one(Message(Val(:user), "Read this.", pdf)),                                                # 3: a document
+         one(Message(Val(:user), "Hi"), Message(role=UniLM.RoleTool, content="42", tool_call_id="call_9")),    # 4: no such call
+         one(Message(role=UniLM.RoleTool, content="42", tool_call_id="call_1"), asks(call())),            # 5: before its call
+         one(asks(call(; type="custom"))),                                                           # 6
+         one(asks(call("call_1", "get order"))),                                                     # 7
+         one(asks(call("c"^65))),                                                                    # 8
+         one(Message(role=RoleUser, content="Hi", tool_calls=[call()])),                             # 9
+         one(Message(role=RoleUser, content="Hi", refusal_message="No.")),                           # 10
+         one(Message(role=RoleSystem, content="Be brief.", tool_call_id="call_1")),                  # 11
+         one(Message(role=RoleUser, content="Look.", attachments=Attachment[fill(_OD_PNG, 129)...])),    # 12
+         one(Message(Val(:user), "x"^10_485_761)),                                                   # 13
+         one(asks(call(; arguments=Dict("a" => "x"^1_048_576))))]                                    # 14
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError && contains(e.msg, "OpenAI's Decisions API"), refused)
+    @test contains(refused[1].msg, "no field for a message's `name`") && contains(refused[1].msg, "named \"alice\"")
+    @test all(e -> contains(e.msg, "takes text and images in a user message"), refused[2:3])
+    @test all(e -> contains(e.msg, "matches a tool output to an earlier call by its id"), refused[4:5])
+    @test contains(refused[4].msg, "message 2 of the state answers \"call_9\"") &&
+          contains(refused[5].msg, "message 1 of the state answers \"call_1\"")
+    @test contains(refused[6].msg, "makes a \"custom\" call") && contains(refused[7].msg, "calls \"get order\"")
+    @test contains(refused[8].msg, "a call id of 1 to 64 characters") && contains(refused[8].msg, "an id of 65")
+    @test contains(refused[9].msg, "no field for a user message's tool calls: only an assistant message makes tool calls")
+    @test contains(refused[10].msg, "no field for a user message's refusal: only an assistant message carries a refusal")
+    @test contains(refused[11].msg, "no field for a system message's `tool_call_id`: only a tool message answers a call")
+    @test contains(refused[12].msg, "at most 128 images per request") && contains(refused[12].msg, "has 129")
+    @test contains(refused[13].msg, "text of at most 10485760 characters; message 1 of the state has 10485761")
+    @test contains(refused[14].msg, "at most 1048576 characters in the arguments of a call in message 1 of the state")
+    @test all(e -> contains(e.msg, "message 1 of the state"), refused[[1, 2, 3, 6, 7, 8, 9, 10, 11]])
+    e = _od_caught(() -> _od_sent(SystemOneRequest(fill(Message(Val(:user), "x"), 131_073), "q" => noul("Is it?"))))
+    @test e isa ArgumentError && contains(e.msg, "at most 131072 items") && contains(e.msg, "131073")
 end
 
 @testset "OpenAI Decisions — the provider options, written in one order whatever the caller's" begin

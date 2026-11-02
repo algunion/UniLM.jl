@@ -323,20 +323,31 @@ end
 | Generic surface | Decisions wire |
 | :--- | :--- |
 | `state`: a string, or a JSON value | `input`: the string, or the value's JSON text |
-| `state`: an image, or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
+| `state`: an image, or a vector or tuple of strings and images | one user message of `input_text` and `input_image` parts, in order |
+| `state`: a vector of [`Message`](@ref)s, or a vector or tuple that holds messages alone | the conversation, in order: a `{role, content}` message per system, user and assistant message (a user's images `input_image` parts after its text, an assistant's refusal a `refusal` part after its `output_text`), each tool call of an assistant a `function_call` item after its message, each tool message the `function_call_output` of the earlier call it answers; at most 131,072 items |
+| a question's `instructions` | a string as it is; an image, a JSON object, or a vector or tuple of strings, images and objects (or arrays of objects) as 1 to 16,384 parts in order: `input_text`, `input_image`, `input_json` |
 | [`noul`](@ref) | `predicate` |
 | [`choice`](@ref) | `choice` of 2–255 options: the name is the `value`, a string description the `description` |
 | [`score`](@ref) | `score` of 2–10 levels, each a string: its `label` |
 | [`RawQuestion`](@ref) | sent verbatim, with the question's name added as `name` |
 | keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128), `prompt_cache_options` (a [`PromptCacheOptions`](@ref) of `mode` and `ttl`) |
 
-Every question needs string `instructions`, and at most 400 go in one request.
-`prompt_cache_options` takes a `ttl` of `"30m"` or `"12h"` — OpenAI's prompt-caching
+TypeSafe and Ollama take a vector of `Message`s as data, its messages as JSON
+objects; this wire takes it as the conversation, which OpenAI's guide evaluates
+"in context" ([Evaluate a conversation](https://developers.openai.com/api/docs/guides/decisions#evaluate-a-conversation)).
+Every question needs `instructions`, and at most 400 go in one request; an
+`input_json` part holds at most 32 levels of objects and arrays, 10,000 values
+and 256 KiB of compact JSON, and a request at most 128 images, the state's and
+the instructions' together. `prompt_cache_options` takes a `ttl` of `"30m"` or `"12h"` — OpenAI's prompt-caching
 guide names `"12h"` for the Responses API, and the Decisions API answered a `"12h"`
 request with HTTP 200 — and a `mode`; with `mode="explicit"` the request marks no
 breakpoint, so OpenAI caches none of it. What has no form on this wire — a Box
 question, a description or level that is not a string, a Noul's `yes`/`no`
-criteria, an image outside the state, another `ttl`, `prewarm` or
+criteria, an image outside the state and the instructions, an instruction part
+beyond those forms and limits, a message's `name`, a user message's sound clip
+or document, a refusal or tool calls on a message that is not an assistant's, a
+tool output that answers no earlier call, a tool call that is not a function
+call, another `ttl`, `prewarm` or
 `comparison_response_id`, any other keyword — is an `ArgumentError` before
 anything is sent. The answers come back
 typed as on any backend, and a question the API declined comes back as a

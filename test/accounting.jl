@@ -387,6 +387,18 @@ end
     @test UniLM.estimated_cost(result) ≈ (800 * 0.30 + 200 * 0.03 + 500 * 2.50) / 1_000_000
 end
 
+@testset "gemini-embedding-001 is priced at its input rate" begin
+    # https://ai.google.dev/gemini-api/docs/pricing (2026-11-02), "Gemini Embedding": input $0.15 per 1M tokens on
+    # the standard tier ($0.075 on Batch, which UniLM does not send); an embedding has no output to bill.
+    emb = Embeddings("hello"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-001")
+    r = EmbeddingSuccess(embeddings=emb, usage=TokenUsage(prompt_tokens=1_000_000, completion_tokens=7,
+                                                          total_tokens=1_000_000), raw=Dict{String,Any}())
+    logs, cost = Test.collect_test_logs(() -> estimated_cost(r))
+    @test cost ≈ 0.15
+    @test isempty(logs)                                   # no "no price row" warning
+    @test DEFAULT_PRICING["gemini-embedding-001"] == UniLM._price(0.15, 0.15, 0.0)
+end
+
 @testset "Gemini billed cost — native and OpenAI-compatible endpoints" begin
     # Gemini caches prompts implicitly: a cache hit bills at the context-caching rate, every other
     # prompt token (a tool-use prompt included) at the input rate, and output, thinking included,

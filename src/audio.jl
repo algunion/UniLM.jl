@@ -152,7 +152,7 @@ and `voice` left `nothing` are the service's defaults:
 | `service` | speaks through | default `model` | default `voice` | `voice` | `speed` |
 |:--|:--|:--|:--|:--|:--|
 | `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
-| `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key | none |
+| `GEMINIServiceEndpoint` | Gemini TTS | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key | none |
 | [`OllamaEndpoint`](@ref) | Ollama's speech route (Ollama 0.40.9 or later) | none: name an installed speech model, such as `phonon` | the model's own (`voice` not sent) | one of the model's voices, which [`model_info`](@ref) lists (`voices`), sent as given | `1` only |
 
 Every service produces 16-bit mono PCM at 24 kHz: `response_format` `"wav"` returns it as a WAV file,

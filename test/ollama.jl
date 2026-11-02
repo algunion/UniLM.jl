@@ -897,20 +897,24 @@ end
     end
 end
 
+# Refuted if: a request without a model, or with what Ollama's transcription route does not take (`languages`,
+# `keywords`, a format other than json, text and verbose_json), is sent — the dead port would answer it with a call
+# error — or its refusal does not give Ollama's own words.
 @testset "transcription on Ollama: its OpenAI-compatible route and its rules" begin
     wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
     off = OllamaEndpoint(base_url="http://127.0.0.1:1")
     refusal(f) = try f(); nothing catch x; x end
     e = refusal(() -> transcribe(wav; service=off))
     @test e isa ArgumentError && occursin("no default transcription model", e.msg)
-    # Each refusal comes from its own rule: one distinctive fragment per message.
-    for (kw, fragment) in (((temperature=0.2,), "runs at temperature 0 and takes no `temperature`"),
-                           ((languages=["en"],), "takes one `language`"),
-                           ((keywords=["banana"],), "takes no `keywords`"),
-                           ((response_format="text",), "read the text with transcript_text"),
-                           ((response_format="srt",), "JSON only (got \"srt\")"))
+    # Each refusal comes from its own rule, quoting Ollama: its OpenAI-compatibility page (v0.40.13) for `language`
+    # and the fields it lists, its server's 400 for a format.
+    for (kw, fragment) in (((languages=["en"],), "ISO 639-1 code such as `fr`, or an English language name"),
+                           ((keywords=["banana"],), "lists no `keywords`"),
+                           ((response_format="srt",), "response_format \"srt\" is not supported, use json, text or verbose_json"),
+                           ((response_format="vtt",), "response_format \"vtt\" is not supported"),
+                           ((response_format="diarized_json",), "response_format \"diarized_json\" is not supported"))
         e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
-        @test e isa ArgumentError && occursin(fragment, e.msg)
+        @test e isa ArgumentError && startswith(e.msg, "Ollama") && occursin(fragment, e.msg)
     end
     @test_throws ArgumentError speak(SpeechRequest(service=off, input="hi"))          # speech stays refused
     @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation too
@@ -932,26 +936,53 @@ end
     end
 end
 
-@testset "transcription on Ollama: its JSON reply under its chat stream's content type" begin
-    # Ollama labels every transcription reply application/x-ndjson, the header of the chat stream it
-    # runs (as _ollama_mock does); the reply is `{"text": …}` unless response_format is "text".
+# The value of a multipart form field, as the client wrote it; `nothing` when the form has no such field.
+_ot_field(body::AbstractString, name::AbstractString) =
+    (m = match(Regex("name=\"$name\"\\r\\n\\r\\n([^\\r]*)\\r\\n"), body); isnothing(m) ? nothing : String(m[1]))
+
+# Refuted if: a temperature is refused or not sent, "text" or "verbose_json" is refused, or a reply is read other than
+# by its Content-Type — JSON (application/json) for "json" and "verbose_json", the bare text (text/plain) for "text",
+# as Ollama 0.40.12 and later answer them (server/transcription.go).
+@testset "transcription on Ollama: temperature, text and verbose_json, each reply read by its Content-Type" begin
     wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
-    reply = "{\"text\":\"The secret word is banana\"}\n"
-    server, url, bodies = _ollama_mock((n, body) -> (200, [n == 3 ? "" : reply]))
+    said = "The secret word is banana."
+    verbose = JSON.json(Dict("task" => "transcribe", "language" => "english", "duration" => 1.92, "text" => said,
+                             "segments" => [Dict("id" => 0, "start" => 0.0, "end" => 1.92, "text" => said)]))
+    reply(_, req) = let fmt = something(_ot_field(_body_text(req), "response_format"), "json")
+        fmt == "text" ? HTTP.Response(200, ["Content-Type" => "text/plain; charset=utf-8"], Vector{UInt8}(said)) :
+            HTTP.Response(200, ["Content-Type" => "application/json; charset=utf-8"],
+                          Vector{UInt8}(fmt == "verbose_json" ? verbose : JSON.json(Dict("text" => said))))
+    end
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    r, seen = _with_scripted(reply) do
+        transcribe(wav; service=ep(), model="gemma4:e4b", temperature=0.2)
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == said && r.raw == Dict("text" => said)
+    @test length(seen) == 1 && only(seen).target == "/v1/audio/transcriptions"
+    @test _ot_field(only(seen).body, "temperature") == "0.2" && isnothing(_ot_field(only(seen).body, "response_format"))
+    r, seen = _with_scripted(reply) do
+        transcribe(wav; service=ep(), model="gemma4:e4b", response_format="text", temperature=0.0)
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == said && isnothing(r.raw)
+    @test length(seen) == 1 && _ot_field(only(seen).body, "response_format") == "text" &&
+          _ot_field(only(seen).body, "temperature") == "0.0"
+    r, seen = _with_scripted(reply) do
+        transcribe(wav; service=ep(), model="gemma4:e4b", response_format="verbose_json", language="en")
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == said && only(r.raw["segments"])["end"] == 1.92
+    @test length(seen) == 1 && _ot_field(only(seen).body, "language") == "en"
+end
+
+# Refuted if: a reply labelled neither application/json nor text/plain — Ollama before 0.40.12 labelled its JSON
+# application/x-ndjson, the header of the chat stream it transcribed with (as _ollama_mock does) — comes back as a
+# transcript rather than as a call error that names the label and the release that answers otherwise.
+@testset "transcription on Ollama: a reply that is neither JSON nor text is a call error" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    server, url, bodies = _ollama_mock((n, body) -> (200, ["{\"text\":\"The secret word is banana\"}\n"]))
     try
-        ep = OllamaEndpoint(base_url=url)
-        for fmt in (nothing, "json")
-            r = transcribe(wav; service=ep, model="gemma4:e4b", response_format=fmt)
-            @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana"
-            @test r.raw == Dict("text" => "The secret word is banana")
-        end
-        # A failure after Ollama has begun its reply leaves the 200 body empty (its TranscriptionWriter writes
-        # only when the chat stream reports done): JSON reports it, so "text", which would read it as an empty
-        # transcript, is refused before any request.
-        e = try transcribe(wav; service=ep, model="gemma4:e4b", response_format="text"); nothing catch x; x end
-        @test e isa ArgumentError && occursin("transcript_text", e.msg) && length(bodies) == 2
-        r = transcribe(wav; service=ep, model="gemma4:e4b")
-        @test r isa AudioCallError && length(bodies) == 3
+        r = transcribe(wav; service=OllamaEndpoint(base_url=url), model="gemma4:e4b")
+        @test r isa AudioCallError && occursin("application/x-ndjson", r.error) && occursin("0.40.12", r.error)
+        @test length(bodies) == 1
     finally
         close(server)
     end

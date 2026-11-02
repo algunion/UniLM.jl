@@ -137,6 +137,8 @@
 - **Claude Mythos 5.1 is treated as a model that runs Anthropic's thinking-prefix check**, which answers a changed
   prefix with HTTP 400 on every account. A system message pushed after a reply is now placed append-only on it, as on
   Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, instead of being joined into the top-level `system` prompt.
+- **The documentation site forwards `/stable/guide/semantic_programs/`**, a page only v0.21.0 served, to the Route
+  and Decide guide instead of answering 404.
 
 ## 0.29.0
 

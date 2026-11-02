@@ -558,7 +558,8 @@
     "/stability/"
   ],
   "Transcription": [
-    "/api/audio/"
+    "/api/audio/",
+    "/providers/ollama/"
   ],
   "Translation": [
     "/api/audio/"
@@ -1190,6 +1191,9 @@
   "UniLM.ToolLoopResult": [
     "/api/chat/"
   ],
+  "UniLM.ToolUsage": [
+    "/api/responses/"
+  ],
   "UniLM.TranscriptionRequest": [
     "/api/audio/"
   ],
@@ -1800,6 +1804,9 @@
     "/api/chat/"
   ],
   "UniLM.tool_result": [
+    "/api/responses/"
+  ],
+  "UniLM.tool_usage": [
     "/api/responses/"
   ],
   "UniLM.transcribe": [
@@ -2419,6 +2426,9 @@
   "gemini_interactions_input": [
     "/providers/gemini/interactions/"
   ],
+  "gemini_interactions_long_decode": [
+    "/providers/gemini/interactions/"
+  ],
   "gemini_interactions_options": [
     "/providers/gemini/interactions/"
   ],
@@ -3016,6 +3026,9 @@
   "ollama_setup": [
     "/providers/ollama/"
   ],
+  "ollama_speech": [
+    "/providers/ollama/"
+  ],
   "ollama_streaming": [
     "/providers/ollama/"
   ],
@@ -3026,6 +3039,9 @@
     "/providers/ollama/"
   ],
   "ollama_transcription": [
+    "/providers/ollama/"
+  ],
+  "ollama_translation": [
     "/providers/ollama/"
   ],
   "openai_apis": [

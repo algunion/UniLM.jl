@@ -143,6 +143,7 @@ checked again on each upgrade. Each has a fallback, which a protocol that define
 | `_system_one_default_config(p, service)` | `nothing`: the [`RequestConfig`](@ref) field defaults, 600 s per attempt and 900 s in all | TypeSafe and OpenAI: 60 s per attempt, 150 s in all |
 | `_system_one_retry_header(p)` | `nothing`: retries carry no count | TypeSafe: `X-TypeSafe-Retry-Count` |
 | `_system_one_concurrency(p, service)` | 8: the requests [`ask_each`](@ref) keeps in flight when its `ntasks` names none | TypeSafe and OpenAI: 16; Ollama: 1 |
+| `_validate_system_one_options(p, options)` | `nothing`: a scope's options are not checked when it opens | TypeSafe: `long_context`, a `Bool`; OpenAI: `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`; Ollama: `keep_alive`. Each encoder calls it, and so does [`with_system_one`](@ref) when its scope opens |
 | `_system_one_cost(p, result, model, pricing)` | input, cached input and output tokens at the model's row of the price table | OpenAI: the input tokens alone, cache reads and writes at OpenAI's caching rates, and no output |
 | `_api_base_url(service)` | none for an endpoint of your own: define it, or write the URL into the wire | where the built-in encoders start a request's URL |
 | `_image_detail_refusal(p)` | why the wire has no field for an image's `detail` level, so an image that sets one is refused | OpenAI: `nothing`, the level is sent; TypeSafe and Ollama: their wire's reason |

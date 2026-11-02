@@ -88,7 +88,7 @@ anything is sent. Its provider options follow the same rule: the call's own — 
 [`ask_each`](@ref), `options = (…)` on the natural-language verbs — else, when the call names no `service`, the
 scope's, set as keywords of `with_system_one`:
 `with_system_one(OllamaEndpoint(); model = "tev1:0.8b", keep_alive = 600) do … end`. The provider's wrapper checks
-them when each request is sent.
+them when each request is sent, and a scope's when the scope opens, before its block runs.
 
 ```@example choosing
 with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do
@@ -108,7 +108,8 @@ and `tev1:0.8b` means nothing to TypeSafe.
   `with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0") do … end`
   ([Models](@ref jev_models)).
 - `with_system_one` checks its endpoint before running anything: one that does not declare `:system_one`, such as
-  a chat-only endpoint, is an `ArgumentError`, and so is a blank model.
+  a chat-only endpoint, is an `ArgumentError`, and so is a blank model or an option the provider's wrapper does not
+  take.
 
 ## [What each provider takes](@id backends_table)
 

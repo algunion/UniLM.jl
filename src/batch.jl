@@ -61,14 +61,15 @@ Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for t
 """
 function create_batch(input_file_id::String, endpoint::String; completion_window::String="24h",
     metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:input_file_id => input_file_id, :endpoint => endpoint, :completion_window => completion_window)
         !isnothing(metadata) && (d[:metadata] = metadata)
         resp = _http("POST", _api_base_url(service) * BATCHES_PATH, auth_header(service),
-            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0))
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(BatchFailure, resp)
     catch e
@@ -82,12 +83,13 @@ end
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _http("GET", _api_base_url(service) * BATCHES_PATH * "/" * _uripart(id), auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0))
+            cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(BatchFailure, resp)
     catch e
@@ -101,12 +103,13 @@ end
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _http("POST", _api_base_url(service) * BATCHES_PATH * "/" * _uripart(id) * "/cancel", auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0))
+            cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(BatchFailure, resp)
     catch e
@@ -120,7 +123,8 @@ end
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
@@ -129,7 +133,7 @@ function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,N
         !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             BatchListSuccess(response=BatchList(data=BatchObject[_parse_batch(b) for b in get(data, "data", [])], has_more=get(data, "has_more", false), raw=data))

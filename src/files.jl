@@ -242,7 +242,8 @@ upload is never retried: a POST that timed out, or drew a gateway 5xx after the 
 stored the file, may still have created it, and a second attempt would store it twice.
 A `FileFailure`/`FileCallError` therefore does not prove that no file was created.
 """
-function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing)
+function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing,
+                     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(u.service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
@@ -250,7 +251,7 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
         form = HTTP.Form(["purpose" => u.purpose,
             "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
         resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
-                     cfg, remaining=_remaining_s(cfg, t0))
+                     cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         return resp.status == 200 ?
                FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
                _failure(FileFailure, resp)
@@ -260,8 +261,8 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
     end
 end
 upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing) =
-    upload_file(FileUpload(service=service, file=path, purpose=purpose); config=config)
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    upload_file(FileUpload(service=service, file=path, purpose=purpose); config=config, cancel=cancel)
 
 """
     list_files(; purpose=nothing, limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
@@ -272,7 +273,7 @@ Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for t
 """
 function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,Nothing}=nothing,
     after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
@@ -283,7 +284,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
         !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             files = FileObject[_parse_file_object(f) for f in get(data, "data", [])]
@@ -305,13 +306,13 @@ Retrieve a file's metadata. Returns `FileSuccess`, `FileFailure`, or `FileCallEr
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id)
-        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ?
             FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(FileFailure, resp)
@@ -329,13 +330,13 @@ Delete a file. Returns `FileDeleteSuccess`, `FileFailure`, or `FileCallError`.
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id)
-        resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             return FileDeleteSuccess(id=get(d, "id", file_id), deleted=_confirm_deleted(d))
@@ -357,13 +358,13 @@ Download a file's raw bytes. Returns `FileContentSuccess` (`.content::Vector{UIn
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id) * "/content"
-        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ?
             FileContentSuccess(content=Vector{UInt8}(resp.body)) :
             _failure(FileFailure, resp)

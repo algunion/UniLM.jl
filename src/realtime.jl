@@ -31,7 +31,8 @@ Returns `RealtimeSecretSuccess` (`.value`), `RealtimeFailure`, or `RealtimeCallE
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :realtime, "Realtime API")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
@@ -39,7 +40,7 @@ function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, se
         d = Dict{Symbol,Any}()
         !isnothing(session) && (d[:session] = session)
         resp = _http("POST", _api_base_url(service) * REALTIME_CLIENT_SECRETS_PATH, auth_header(service),
-            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0))
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(RealtimeFailure, resp)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         cs = get(data, "client_secret", nothing)

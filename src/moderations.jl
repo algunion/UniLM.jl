@@ -92,13 +92,14 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `
 free, and a request sent again changes nothing. A 429 that no retry can serve is returned at once.
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for this call.
 """
-function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :moderation, "Moderations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * MODERATIONS_PATH,
-            auth_header(service), body)
+            auth_header(service), body; cancel=_resolve_cancel(cancel))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             results = ModerationResult[

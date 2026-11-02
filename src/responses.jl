@@ -2081,8 +2081,9 @@ end
 # is read only for a request that is sent, so a replay needs none, and a request without a
 # body is keyed on the empty one.
 function _lifecycle_request(service, method::String, url::String, cfg::RequestConfig, t0::UInt64;
-                            body::String="", key_extra::String="")::HTTP.Response
-    tok = _current_cancel()
+                            body::String="", key_extra::String="",
+                            cancel::Union{Nothing,CancelToken}=nothing)::HTTP.Response
+    tok = _resolve_cancel(cancel)
     _recorded_exchange(method, url, body, t0, tok; key_extra) do
         _http(method, url, auth_header(service), body; cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
     end
@@ -2117,13 +2118,13 @@ end
 ```
 """
 function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-        config::Union{Nothing,RequestConfig}=nothing)
+        config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     _check_stored_responses(service, "get_response", "keep the ResponseSuccess that respond returns")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id)
-        resp = _lifecycle_request(service, "GET", url, cfg, t0)
+        resp = _lifecycle_request(service, "GET", url, cfg, t0; cancel)
         if resp.status == 200
             return _response_result(service, decode_agentic(service, resp), resp)
         else
@@ -2152,13 +2153,13 @@ result["deleted"]  # => true
 ```
 """
 function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-        config::Union{Nothing,RequestConfig}=nothing)
+        config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     _check_stored_responses(service, "delete_response", "nothing stays on the server to delete")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id)
-        resp = _lifecycle_request(service, "DELETE", url, cfg, t0)
+        resp = _lifecycle_request(service, "DELETE", url, cfg, t0; cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
@@ -2195,7 +2196,8 @@ function list_input_items(response_id::String;
     order::String="desc",
     after::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_stored_responses(service, "list_input_items", "the input is the `input` you sent")
     _check_input_items(service)
@@ -2211,7 +2213,7 @@ function list_input_items(response_id::String;
         url *= "?" * join(params, "&")
 
         # A recording key names the path alone, so the page's parameters are keyed beside it.
-        resp = _lifecycle_request(service, "GET", url, cfg, t0; key_extra=_options_key((; limit, order, after)))
+        resp = _lifecycle_request(service, "GET", url, cfg, t0; key_extra=_options_key((; limit, order, after)), cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
@@ -2246,14 +2248,14 @@ end
 ```
 """
 function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-        config::Union{Nothing,RequestConfig}=nothing)
+        config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     _check_stored_responses(service, "cancel_response",
                             "stop a call in flight with a CancelToken passed to respond (`cancel=`)")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
-        resp = _lifecycle_request(service, "POST", url, cfg, t0)
+        resp = _lifecycle_request(service, "POST", url, cfg, t0; cancel)
         if resp.status == 200
             return _response_result(service, decode_agentic(service, resp), resp)
         else
@@ -2302,7 +2304,8 @@ compacted = compact_response(model="gpt-5.6-sol", input=[
 function compact_response(; model::Union{String,Nothing}=nothing,
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "compact_response", RESPONSES_PATH * "/compact")
     model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
@@ -2311,7 +2314,7 @@ function compact_response(; model::Union{String,Nothing}=nothing,
     local resp
     try
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
-        resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
+        resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
@@ -2368,7 +2371,8 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing)
+    config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "count_input_tokens", RESPONSES_PATH * "/input_tokens")
     url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
@@ -2379,7 +2383,7 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)
         body = JSON.json(d)
-        resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
+        resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else

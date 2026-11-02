@@ -1,0 +1,2 @@
+# Routes earlier versions served that predate the v0.26.0 list (routes-v0.26.0.txt), one per line, as there.
+/guide/semantic_programs/

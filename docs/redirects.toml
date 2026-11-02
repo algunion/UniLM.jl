@@ -10,6 +10,7 @@
 "guide/ollama" = "providers/ollama"
 "guide/jev_start" = "decisions/jev"
 "guide/system_one_backends" = "decisions/choosing"
+"guide/semantic_programs" = "guide/system_one"
 
 [anchors]
 backends_ollama = "ollama_decisions_start"

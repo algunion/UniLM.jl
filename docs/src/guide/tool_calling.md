@@ -228,8 +228,13 @@ the results back, and repeat until the model answers in text, a request fails, o
 - **What reaches the model.** A dispatcher's `String` result is sent as is; any other value
   is sent JSON-encoded (a `Dict` becomes a JSON object, `nothing` becomes `null`). A
   dispatcher that throws sends `"Error: <message>"` as that call's output and records a
-  failed [`ToolCallOutcome`](@ref), so the model can react; an `InterruptException`
-  propagates instead, after `tool_loop!` removes the interrupted turn from the chat.
+  failed [`ToolCallOutcome`](@ref), so the model can react. An `InterruptException`
+  propagates instead, and so does a [`ReplayMissError`](@ref) or a
+  [`RecordingWriteError`](@ref) from a request the dispatcher made inside
+  [`with_recorded_answers`](@ref): as a tool error, the model would read it and the loop
+  would go on without the answer, or without its recording. Each propagates as the
+  dispatcher threw it, bare or wrapped (in the `TaskFailedException` of a task it
+  `fetch`es, say), after `tool_loop!` removes the interrupted turn from the chat.
 - **Concurrency and cancellation.** `tool_concurrency = n` runs up to `n` of a turn's calls
   at once on spawned tasks (the dispatcher must then be thread-safe; results go back in
   call order). `cancel = tok` — or an ambient `with_cancel` scope — makes the loop

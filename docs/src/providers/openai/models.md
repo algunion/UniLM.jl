@@ -270,8 +270,9 @@ warning per model.
 failure, or a stream stopped before its usage arrived ([Streaming](@ref openai_streaming)), and no
 estimate includes the fees of the hosted tools a reply does not report — file search bills per call, and
 containers by the minute, with a 5-minute minimum per session — or the 10% uplift OpenAI charges on its
-regional-processing endpoints for the models released since 5 March 2026
-([pricing](https://developers.openai.com/api/docs/pricing)). A model with no
+regional-processing endpoints for the models released since 5 March 2026, and from 1 November 2026 on
+its FedRAMP endpoints too ("Starting Nov 1, 2026, FedRAMP endpoints are also charged a 10% uplift",
+[pricing](https://developers.openai.com/api/docs/pricing)). A model with no
 row below is estimated at `0.0`, with one warning per model id: pass `estimated_cost` a `pricing` table
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 

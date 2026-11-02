@@ -95,8 +95,11 @@ function Base.showerror(io::IO, e::ReplayMissError)
     field(name::String) = parsed isa AbstractDict ? get(parsed, name, nothing) : nothing
     asked = field("questions")
     model = field("model")
-    if asked isa AbstractDict           # a System One request, on any backend
+    if asked isa AbstractDict           # a System One request whose questions are an object's keys (Jev, Ollama)
         isempty(asked) || print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
+    elseif asked isa AbstractVector     # OpenAI's Decisions API: a list of questions, each with its "name"
+        names = [repr(string(q["name"])) for q in asked if q isa AbstractDict && haskey(q, "name")]
+        isempty(names) || print(io, " asking ", join(sort!(names), ", "))
     elseif model isa AbstractString
         print(io, " for model ", repr(model))
     end

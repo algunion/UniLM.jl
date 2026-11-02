@@ -791,6 +791,9 @@ end
     @test with_recorded_answers(() -> ask(_OD_PNG, q; service=_ODMock), dir).response.raw == live.response.raw
     miss = with_recorded_answers(() -> _od_caught(() -> ask(_OD_JPEG, q; service=_ODMock)), dir)
     @test miss isa ReplayMissError && contains(miss.body, "data:image/jpeg;sha256,") && !contains(miss.body, "base64,")
+    # The miss names what the request asked, as a System One request's on every backend.
+    msg = sprint(showerror, miss)
+    @test contains(msg, "asking \"red\"") && !contains(msg, "for model")
 end
 
 @testset "OpenAI Decisions — ask_each sends each image request as a single ask sends it, byte for byte" begin

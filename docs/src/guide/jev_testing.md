@@ -209,7 +209,8 @@ through a directory of recordings:
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names
   the directory, the start of the key, and what the request asked for: a
-  decision request's questions, any other request's model. It also says what
+  decision request's questions (Jev, Ollama, OpenAI Decisions); any other
+  request's model; nothing for a bodyless request. It also says what
   recording it takes: the provider's key, or a running local server.
 - **A lost write is loud too.** In a recording mode, an answer whose file cannot
   be written — the directory removed after the scope checked it, a full disk —

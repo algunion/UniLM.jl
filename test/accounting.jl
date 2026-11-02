@@ -369,9 +369,9 @@ end
 
 @testset "Gemini pricing rows" begin
     # https://ai.google.dev/gemini-api/docs/pricing (2026-10-22), standard tier, USD per 1M tokens:
-    # input, context-caching (cache read), output.
-    for (model, i, c, o) in (("gemini-4-argon", 2.0, 0.10, 10.0), ("gemini-3.8-flash", 0.75, 0.075, 3.75),
-                             ("gemini-3.6-flash", 0.75, 0.075, 3.75), ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50),
+    # input, context-caching (cache read), output. The models with a scheduled change are pinned on
+    # each side of its date in the testset of the schedule below.
+    for (model, i, c, o) in (("gemini-3.5-flash-lite", 0.30, 0.03, 2.50),
                              ("gemini-3.1-pro-preview", 2.0, 0.20, 12.0),   # prompts up to 200K tokens
                              ("gemini-2.5-flash", 0.3, 0.03, 2.5), ("gemini-2.5-flash-lite", 0.1, 0.01, 0.4),
                              ("gemini-embedding-2", 0.20, 0.20, 0.0))
@@ -402,10 +402,10 @@ end
 @testset "Gemini billed cost — native and OpenAI-compatible endpoints" begin
     # Gemini caches prompts implicitly: a cache hit bills at the context-caching rate, every other
     # prompt token (a tool-use prompt included) at the input rate, and output, thinking included,
-    # at the output rate.
-    row = DEFAULT_PRICING["gemini-4-argon"]
+    # at the output rate. The row is the one in effect today: the estimate bills it.
+    row = UniLM._price_row(DEFAULT_PRICING, "gemini-4-argon")
     u = TokenUsage(prompt_tokens=10_000, cached_tokens=6_000, completion_tokens=2_000, total_tokens=12_000)
-    want = (4_000 * 2.0 + 6_000 * 0.10 + 2_000 * 10.0) / 1_000_000
+    want = 4_000 * row.input + 6_000 * row.cached_input + 2_000 * row.output
     default = which(UniLM._billed_cost, Tuple{Nothing,String,TokenUsage,UniLM.PriceRow})
     for service in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint)
         @test which(UniLM._billed_cost, Tuple{Type{service},String,TokenUsage,UniLM.PriceRow}) !== default
@@ -483,7 +483,7 @@ end
           bill((0.30, 0.03, 2.50))
     # Unpinned, the day is the current one in UTC, read at each call rather than when the package loaded.
     earliest = Date(Dates.now(Dates.UTC))
-    @test earliest <= UniLM._pricing_today() <= Date(Dates.now(Dates.UTC))
+    @test earliest <= with(UniLM._pricing_today, UniLM._PRICING_DATE => nothing) <= Date(Dates.now(Dates.UTC))
     # Both docstrings say so.
     doc(name) = replace(join((join(string.(d.text)) for d in values(Base.Docs.meta(UniLM)[Base.Docs.Binding(UniLM, name)].docs)),
                              " "), r"\s+" => " ")

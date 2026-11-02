@@ -6,6 +6,11 @@ using UniLM: encode_request, decode_response, StreamState,
              TOOL_CALLS, STOP, CONTENT_FILTER
 using Test, HTTP, JSON
 
+# A model's rates in USD per 1M tokens — input, cache hit, output — from its row in effect today. A price change
+# Google has scheduled applies from its date, so a test that pins no date reads the rates the estimate bills
+# (test/accounting.jl pins each scheduled row on both sides of its date).
+_gemini_rates(model::String) = (r = UniLM._price_row(DEFAULT_PRICING, model); 1_000_000 .* (r.input, r.cached_input, r.output))
+
 @testset "routing — model in URL, stream branches on method" begin
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     @test UniLM.get_url(chat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.8-flash:generateContent"
@@ -888,7 +893,8 @@ end
     @test u == TokenUsage(prompt_tokens=140, completion_tokens=15, total_tokens=155, cached_tokens=20, reasoning_tokens=5)
     r = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
                    self=Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash"), usage=u)
-    @test estimated_cost(r) ≈ (120 * 0.75 + 20 * 0.075 + 15 * 3.75) / 1_000_000
+    i, c, o = _gemini_rates("gemini-3.8-flash")
+    @test estimated_cost(r) ≈ (120 * i + 20 * c + 15 * o) / 1_000_000
 end
 
 @testset "the served model prices the call; a routed id carries its target's rates" begin
@@ -912,7 +918,8 @@ end
     # billed at those rates whether or not the reply names the served model.
     for (asked, target) in (("gemini-3.7-flash", "gemini-3.8-flash"), ("gemini-3.5-flash", "gemini-3.6-flash"))
         d = reply(target)
-        @test estimated_cost(result(asked, d)) == estimated_cost(result(target, d)) ≈ (1_000 * 0.75 + 100 * 3.75) / 1e6
+        i, _, o = _gemini_rates(target)
+        @test estimated_cost(result(asked, d)) == estimated_cost(result(target, d)) ≈ (1_000 * i + 100 * o) / 1e6
         unreported = LLMSuccess(message=d.message, self=Chat(service=GEMINIServiceEndpoint, model=asked), usage=d.usage)
         @test estimated_cost(unreported) == estimated_cost(result(target, d))
     end
@@ -949,10 +956,12 @@ end
 end
 
 @testset "pricing — Gemini rows (Google pricing page, 2026-10-22)" begin
-    # Standard paid tier, USD per 1M tokens; output includes thinking.
+    # Standard paid tier, USD per 1M tokens; output includes thinking. A model with a scheduled change bills
+    # its row in effect.
     usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=200)
-    for (model, input, cached, output) in (("gemini-4-argon", 2.0, 0.10, 10.0), ("gemini-3.8-flash", 0.75, 0.075, 3.75),
-                                           ("gemini-3.6-flash", 0.75, 0.075, 3.75),
+    for (model, input, cached, output) in (("gemini-4-argon", _gemini_rates("gemini-4-argon")...),
+                                           ("gemini-3.8-flash", _gemini_rates("gemini-3.8-flash")...),
+                                           ("gemini-3.6-flash", _gemini_rates("gemini-3.6-flash")...),
                                            ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50))
         r = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
                        self=Chat(service=GEMINIServiceEndpoint, model=model), usage=usage)
@@ -1125,7 +1134,8 @@ end
     # The reported tier prices the call: Flex at half the standard rates.
     r = LLMSuccess(message=Message(role=RoleAssistant, content="OK"), self=Chat(service=GEMINIOpenAIServiceEndpoint,
                    model="gemini-3.8-flash"), usage=decoded(nothing; headers=flex).usage)
-    @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
+    i, _, o = _gemini_rates("gemini-3.8-flash")
+    @test estimated_cost(r) ≈ 0.5 * (8 * i + 1 * o) / 1_000_000
 end
 
 @testset "compat — a stream's billed tier: the response head's, else the latest a chunk names" begin
@@ -1240,16 +1250,17 @@ function _with_compat(f)
 end
 
 @testset "compat — a result records the tier its request asked for, which the reply does not name" begin
-    # gemini-3.8-flash, 1,000 input and 500 output tokens: Flex $0.375 / $1.875, Priority $1.35 / $6.75
-    # (an upper bound: Google bills a downgraded Priority request at Standard, which this endpoint does not
-    # report), Standard $0.75 / $3.75 per 1M tokens.
-    bill(input, output) = (1_000 * input + 500 * output) / 1_000_000
+    # gemini-3.8-flash, 1,000 input and 500 output tokens at its row in effect: Flex half of it, Priority 1.8
+    # times (an upper bound: Google bills a downgraded Priority request at Standard, which this endpoint does not
+    # report), Standard the row.
+    i, _, o = _gemini_rates("gemini-3.8-flash")
+    bill(multiple) = multiple * (1_000 * i + 500 * o) / 1_000_000
     chat(tier, stream) = Chat(service=_CompatHere, model="gemini-3.8-flash", service_tier=tier, messages=[Message(Val(:user), "hi")],
                               stream=(stream ? true : nothing), stream_options=(stream ? Dict("include_usage" => true) : nothing))
     cfg = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
     _with_compat() do
-        for stream in (false, true), (tier, want) in (("flex", bill(0.375, 1.875)), ("priority", bill(1.35, 6.75)),
-                                                      ("standard", bill(0.75, 3.75)), (nothing, bill(0.75, 3.75)))
+        for stream in (false, true), (tier, want) in (("flex", bill(0.5)), ("priority", bill(1.8)),
+                                                      ("standard", bill(1.0)), (nothing, bill(1.0)))
             c = chat(tier, stream)
             out = chatrequest!(c; config=cfg)
             r = stream ? fetch(out) : out
@@ -1259,7 +1270,7 @@ end
         # A streamed reply a callback throws on after its finish is billed at the requested tier too.
         c = chat("priority", true)
         r = fetch(chatrequest!(c; config=cfg, callback=(x, _) -> x isa Message && error("callback failed")))
-        @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.35, 6.75)
+        @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.8)
     end
     # A tier the reply names is kept; with no usage there is nothing to record.
     named = TokenUsage(prompt_tokens=1, service_tier="standard")
@@ -1278,15 +1289,14 @@ end
     cost(model, tier) = estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"),
         self=Chat(service=GEMINIServiceEndpoint, model=model), usage=usage(tier)))
     bill(input, cached, output) = (800 * input + 200 * cached + 500 * output) / 1_000_000
-    # Gemini 3.8 Flash: Flex $0.375 / $0.0375 / $1.875 and Priority $1.35 / $0.135 / $6.75 per 1M
-    # tokens, for Standard's $0.75 / $0.075 / $3.75.
-    @test cost("gemini-3.8-flash", "flex") ≈ bill(0.375, 0.0375, 1.875)
-    @test cost("gemini-3.8-flash", "priority") ≈ bill(1.35, 0.135, 6.75)
-    @test cost("gemini-3.8-flash", "standard") == cost("gemini-3.8-flash", "unspecified") ==
-          cost("gemini-3.8-flash", nothing) ≈ bill(0.75, 0.075, 3.75)
-    # Gemini 4 Argon: Flex $1.00 / $0.05 / $5.00, Priority $3.60 / $0.18 / $18.00.
-    @test cost("gemini-4-argon", "flex") ≈ bill(1.0, 0.05, 5.0)
-    @test cost("gemini-4-argon", "priority") ≈ bill(3.6, 0.18, 18.0)
+    # Gemini 3.8 Flash and Gemini 4 Argon, at their rows in effect: every rate half on Flex and 1.8 times on
+    # Priority (test/accounting.jl checks these tiers against Google's tables on both sides of each date).
+    for model in ("gemini-3.8-flash", "gemini-4-argon")
+        rates = _gemini_rates(model)
+        @test cost(model, "flex") ≈ bill((0.5 .* rates)...)
+        @test cost(model, "priority") ≈ bill((1.8 .* rates)...)
+        @test cost(model, "standard") == cost(model, "unspecified") == cost(model, nothing) ≈ bill(rates...)
+    end
     # Where a model's Flex table lists the context-caching price "Same as Standard", a cache hit on
     # Flex bills at the standard rate; on Priority it costs 1.8 times as the rest does.
     @test cost("gemini-3.1-pro-preview", "flex") ≈ bill(1.0, 0.20, 6.0)
@@ -1302,17 +1312,17 @@ end
     # tables list: Gemini 3.1 Flash-Lite $0.0125 (Flex) and $0.045 (Priority) for $0.025.
     @test cost("gemini-3.1-flash-lite", "flex") ≈ bill(0.125, 0.0125, 0.75)
     @test cost("gemini-3.1-flash-lite", "priority") ≈ bill(0.45, 0.045, 2.70)
-    @test cost("gemini-3.6-flash", "priority") ≈ bill(1.35, 0.135, 6.75)
+    @test cost("gemini-3.6-flash", "priority") ≈ bill((1.8 .* _gemini_rates("gemini-3.6-flash"))...)
     # gemini-3.1-pro-preview-customtools is priced on 3.1 Pro Preview's row of the page.
     @test cost("gemini-3.1-pro-preview-customtools", nothing) ≈ bill(2.0, 0.20, 12.0)
     @test cost("gemini-3.1-pro-preview-customtools", "flex") ≈ bill(1.0, 0.20, 6.0)
     # A tier the page has no price for is estimated at the standard rates, and says so once.
     @test (@test_logs (:warn, r"no price for this service tier") cost("gemini-3.6-flash", "deferred")) ≈
-          bill(0.75, 0.075, 3.75)
+          bill(_gemini_rates("gemini-3.6-flash")...)
     # The compatible endpoint bills the same.
     compat = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
         self=Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash"), usage=usage("flex"))
-    @test estimated_cost(compat) ≈ bill(0.375, 0.0375, 1.875)
+    @test estimated_cost(compat) ≈ bill((0.5 .* _gemini_rates("gemini-3.8-flash"))...)
 end
 
 @testset "decode — the audio of a prompt is its AUDIO token count, streamed or not" begin
@@ -1343,9 +1353,9 @@ end
     # https://ai.google.dev/gemini-api/docs/pricing (2026-10-22), per 1M tokens: 3.1 Flash-Lite "$0.25
     # (text / image / video) $0.50 (audio)", 2.5 Flash $0.30 / $1.00, 2.5 Flash-Lite $0.10 / $0.30, 3 Flash
     # Preview $0.50 / $1.00; one price "(text / image / video / audio)": 3.5 Flash-Lite $0.30, Robotics-ER 2
-    # Preview $1.00; one price that names no modality, every modality's: Gemini 4 Argon $2.00, 3.8 and 3.6
-    # Flash $0.75, 3.1 Pro Preview $2.00, 2.5 Pro $1.25. A prompt of 1,000 audio and 10 text tokens, and 1
-    # output token:
+    # Preview; one price that names no modality, every modality's: Gemini 4 Argon, 3.8 and 3.6 Flash, 3.1 Pro
+    # Preview $2.00, 2.5 Pro $1.25 (a model with a scheduled change at its row in effect). A prompt of 1,000
+    # audio and 10 text tokens, and 1 output token:
     heard(; tier=nothing, cached=0, spoken=0) = TokenUsage(prompt_tokens=1_010, completion_tokens=1, total_tokens=1_011,
         cached_tokens=cached, service_tier=tier, prompt_audio_tokens=1_000, completion_audio_tokens=spoken)
     cost(model, u; service=GEMINIServiceEndpoint, pricing=DEFAULT_PRICING) = estimated_cost(LLMSuccess(
@@ -1355,10 +1365,10 @@ end
     @test cost("gemini-2.5-flash", heard()) ≈ bill(1.00, 0.30, 2.50)
     @test cost("gemini-2.5-flash-lite", heard()) ≈ bill(0.30, 0.10, 0.40)
     @test cost("gemini-3.5-flash-lite", heard()) ≈ bill(0.30, 0.30, 2.50)
-    rows = Dict("gemini-3-flash-preview" => UniLM._price(0.50, 0.05, 3.00),
-                "gemini-robotics-er-2-preview" => UniLM._price(1.00, 0.10, 5.00))
+    rows = Dict("gemini-3-flash-preview" => UniLM._price(0.50, 0.05, 3.00))
     @test cost("gemini-3-flash-preview", heard(); pricing=rows) ≈ bill(1.00, 0.50, 3.00)
-    @test cost("gemini-robotics-er-2-preview", heard(); pricing=rows) ≈ bill(1.00, 1.00, 5.00)
+    er_input, _, er_output = _gemini_rates("gemini-robotics-er-2-preview")
+    @test cost("gemini-robotics-er-2-preview", heard()) ≈ bill(er_input, er_input, er_output)
     # A one-price model's audio is its row's input rate, so a row that moves the price — a caller's own,
     # or Robotics-ER 2 Preview's doubling on 2027-01-01 — moves both; a model with its own audio price
     # keeps that one.
@@ -1381,20 +1391,25 @@ end
     # An input price that names no modality is every modality's — the page spells modalities out wherever
     # their rates differ, and where audio is excluded — so audio bills at the row's input rate, at the
     # tier's and the long prompt's multiples as text does; the routed ids are priced as their targets.
-    for (model, input, output) in (("gemini-4-argon", 2.00, 10.00), ("gemini-3.8-flash", 0.75, 3.75),
-                                   ("gemini-3.7-flash", 0.75, 3.75), ("gemini-3.6-flash", 0.75, 3.75),
-                                   ("gemini-3.5-flash", 0.75, 3.75), ("gemini-3.1-pro-preview", 2.00, 12.00),
+    for (model, input, output) in (("gemini-3.1-pro-preview", 2.00, 12.00),
                                    ("gemini-3.1-pro-preview-customtools", 2.00, 12.00), ("gemini-2.5-pro", 1.25, 10.00))
         @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end
-    @test cost("gemini-4-argon", heard(tier="priority")) ≈ bill(3.60, 3.60, 18.00)
+    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash")
+        input, _, output = _gemini_rates(model)
+        @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
+    end
+    argon_input, _, argon_output = _gemini_rates("gemini-4-argon")
+    @test cost("gemini-4-argon", heard(tier="priority")) ≈ 1.8 * bill(argon_input, argon_input, argon_output)
     long = TokenUsage(prompt_tokens=250_000, completion_tokens=1_000, total_tokens=251_000, prompt_audio_tokens=200_000)
     @test cost("gemini-3.1-pro-preview", long) ≈ (250_000 * 4.00 + 1_000 * 18.00) / 1_000_000   # "$4.00, prompts > 200k"
-    @test cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.75, 0.75, 3.75)
-    # A one-price model's cache price names no modality either (3.6 Flash "$0.075", 2.5 Pro "$0.125, prompts
+    flash_input, _, flash_output = _gemini_rates("gemini-3.8-flash")
+    @test cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(flash_input, flash_input, flash_output)
+    # A one-price model's cache price names no modality either (3.6 Flash's one price, 2.5 Pro "$0.125, prompts
     # <= 200k tokens $0.25, prompts > 200k"), so a cache hit beside audio bills at the row's cached rate,
     # whatever the cached tokens hold, at a long prompt's multiples as text.
-    @test (@test_logs cost("gemini-3.6-flash", heard(cached=500))) ≈ (510 * 0.75 + 500 * 0.075 + 1 * 3.75) / 1_000_000
+    i, c, o = _gemini_rates("gemini-3.6-flash")
+    @test (@test_logs cost("gemini-3.6-flash", heard(cached=500))) ≈ (510 * i + 500 * c + 1 * o) / 1_000_000
     long_cached = TokenUsage(prompt_tokens=250_000, completion_tokens=1_000, total_tokens=251_000,
                              cached_tokens=50_000, prompt_audio_tokens=200_000)
     @test (@test_logs cost("gemini-2.5-pro", long_cached)) ≈ (200_000 * 2.50 + 50_000 * 0.25 + 1_000 * 15.00) / 1_000_000
@@ -1446,7 +1461,8 @@ end
     @test cost("gemini-3.1-flash-lite", u; tier="priority") ≈ bill(0.90, 0.045, 0.09, 2.70)
     @test cost("gemini-2.5-flash", u; tier="flex") ≈ bill(0.50, 0.03, 0.10, 1.25)
     # A one-price model's cache price names no modality, so its cached audio bills at the row's cached rate.
-    @test (@test_logs cost("gemini-3.6-flash", u)) ≈ (510 * 0.75 + 500 * 0.075 + 3.75) / 1e6
+    i, c, o = _gemini_rates("gemini-3.6-flash")
+    @test (@test_logs cost("gemini-3.6-flash", u)) ≈ (510 * i + 500 * c + o) / 1e6
     # More cached tokens than the prompt's text and the cached audio the usage names: the cache split cannot
     # be read, so the call is unpriced, with the audio warning.
     unsplit = TokenUsage(; UniLM._usage_fields(u)..., cached_audio_tokens=0)
@@ -1514,7 +1530,7 @@ end
                         usage=d.usage, model=d.model)
     @test estimated_cost(latest) ≈ bill(300_000, 0, 4.0, 0.40, 18.0)
     # A model whose table lists one price for every prompt length bills a long prompt at it.
-    @test cost("gemini-3.8-flash", use(300_000)) ≈ bill(300_000, 0, 0.75, 0.075, 3.75)
+    @test cost("gemini-3.8-flash", use(300_000)) ≈ bill(300_000, 0, _gemini_rates("gemini-3.8-flash")...)
 end
 
 # ─── Long generations sent in hops (Gemini long decode) ──────────────────────
@@ -1608,9 +1624,11 @@ _hops_two() = [
 
 const _HOPS_SUMMED = TokenUsage(prompt_tokens=33_052, completion_tokens=32_811, total_tokens=65_863,
                                 cached_tokens=31_000, reasoning_tokens=32_803, service_tier="priority")
-# Gemini 4 Argon at Priority: every rate 1.8 times $2.00 / $0.10 / $10.00 per 1M tokens.
-const _HOPS_COST = 1.8 * (2_052 * 2.0 + 31_000 * 0.10 + 32_811 * 10.0) / 1_000_000
-const _HOP1_COST = 1.8 * (142 * 2.0 + 32_768 * 10.0) / 1_000_000
+# Gemini 4 Argon at Priority: every rate 1.8 times its row in effect, for fresh input, cache hits and output.
+_argon_priority(input, cached, output) =
+    (r = _gemini_rates("gemini-4-argon"); 1.8 * (input * r[1] + cached * r[2] + output * r[3]) / 1_000_000)
+_hops_cost() = _argon_priority(2_052, 31_000, 32_811)
+_hop1_cost() = _argon_priority(142, 0, 32_768)
 
 _hops_chat(; kw...) = Chat(; service=_GeminiHops, model="gemini-4-argon", max_tokens=262_144,
                            reasoning_effort="high", messages=[Message(Val(:system), "s"), Message(Val(:user), "Prove it.")], kw...)
@@ -1631,8 +1649,8 @@ const _HOPS_CFG = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idl
         @test r.usage == _HOPS_SUMMED
         @test r.model == "gemini-4-argon"
         @test [m.role for m in chat.messages] == [RoleSystem, RoleUser, RoleAssistant]   # one turn
-        @test cumulative_cost(chat) ≈ _HOPS_COST
-        @test estimated_cost(r) ≈ _HOPS_COST
+        @test cumulative_cost(chat) ≈ _hops_cost()
+        @test estimated_cost(r) ≈ _hops_cost()
     end
 end
 
@@ -1648,7 +1666,7 @@ end
         @test count(x -> x isa Message, got) == 1 && last(got) === r.message
         @test r.usage == _HOPS_SUMMED && r.model == "gemini-4-argon"
         @test [m.role for m in chat.messages] == [RoleSystem, RoleUser, RoleAssistant]
-        @test cumulative_cost(chat) ≈ _HOPS_COST
+        @test cumulative_cost(chat) ≈ _hops_cost()
         # The same turn not streamed: the same message and usage, so the cost does not depend on `stream`.
         _with_hops(_hops_two()) do _
             plain = chatrequest!(_hops_chat(); config=_HOPS_CFG)
@@ -1782,11 +1800,11 @@ _with_paced_chunks(f, chunks; gap=0.3) = _with_paced_hops(f, [chunks]; gap)
         r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> c == "The proof begins. " && throw(boom)))
         @test ends_call(r) && length(seen) == 1
         @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
-        @test cumulative_cost(chat) ≈ _HOP1_COST
+        @test cumulative_cost(chat) ≈ _hop1_cost()
     end
     call(q) = Dict("functionCall" => Dict("name" => "lookup", "args" => Dict("q" => q)))
     u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
-    one_cost = 1.8 * (10 * 2.0 + 2 * 10.0) / 1_000_000                          # Gemini 4 Argon at Priority
+    one_cost = _argon_priority(10, 0, 2)
     tool = Tool(func=FunctionSignature(name="lookup", parameters=Dict("type" => "object")))
     _with_hops([(200, _hop([call("a")], "CONTINUATION"; token="token-a", usage=u)), (200, _hop([call("b")], "STOP"; usage=u))]) do seen
         chat = _hops_chat(tools=[tool], stream=true)
@@ -1822,7 +1840,7 @@ end
     # Gemini sends the usage so far on every chunk ("usage_metadata is cumulative within each stream",
     # https://ai.google.dev/gemini-api/docs/generate-content/long-decode), so a stream that ends on a
     # stop, a cancel or a throwing callback after a chunk was billed at least that usage: it is added,
-    # once. Gemini 4 Argon at Priority: every rate 1.8 times $2.00 / $10.00 per 1M tokens.
+    # once. Gemini 4 Argon at Priority: every rate 1.8 times its row in effect (`_argon_priority`).
     partial(text, prompt) = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => text)]))],
                                  "usageMetadata" => Dict("promptTokenCount" => prompt, "totalTokenCount" => prompt),
                                  "modelVersion" => "gemini-4-argon")
@@ -1838,7 +1856,7 @@ end
             chat = _hops_chat(stream=true)
             r = fetch(chatrequest!(chat; config=_HOPS_CFG, cancel=tok, callback=stop_on("Partial ")))
             @test r isa LLMCallError && [m.role for m in chat.messages] == [RoleSystem, RoleUser]
-            @test cumulative_cost(chat) ≈ 1.8 * 142 * 2.0 / 1_000_000
+            @test cumulative_cost(chat) ≈ _argon_priority(142, 0, 0)
         end
         # A continued turn, ended in its second request after that request's first chunk: hop 1 and
         # what hop 2 reported, each once.
@@ -1848,7 +1866,7 @@ end
             chat = _hops_chat(stream=true)
             r = fetch(chatrequest!(chat; config=_HOPS_CFG, cancel=tok, callback=stop_on("It ")))
             @test r isa LLMCallError && [m.role for m in chat.messages] == [RoleSystem, RoleUser]
-            @test cumulative_cost(chat) ≈ _HOP1_COST + 1.8 * 32_910 * 2.0 / 1_000_000
+            @test cumulative_cost(chat) ≈ _hop1_cost() + _argon_priority(32_910, 0, 0)
         end
     end
     # Run to its end, the turn is billed its reply's own usage once, not the partial usage beside it.
@@ -1856,7 +1874,7 @@ end
         chat = _hops_chat(stream=true)
         r = fetch(chatrequest!(chat; config=_HOPS_CFG))
         @test r isa LLMSuccess && r.message.content == "Partial answer."
-        @test cumulative_cost(chat) ≈ estimated_cost(r) ≈ 1.8 * (10 * 2.0 + 2 * 10.0) / 1_000_000
+        @test cumulative_cost(chat) ≈ estimated_cost(r) ≈ _argon_priority(10, 0, 2)
     end
 end
 
@@ -1888,7 +1906,7 @@ end
             @test length(seen) == 2
             @test r isa LLMFailure && r.status == 400 && occursin("already used output tokens", r.response)
             @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]      # nothing committed
-            @test cumulative_cost(chat) ≈ _HOP1_COST                             # hop 1 was billed
+            @test cumulative_cost(chat) ≈ _hop1_cost()                           # hop 1 was billed
             stream && @test filter(x -> x isa String, got) == ["The proof begins. "] && !any(x -> x isa Message, got)
         end
     end
@@ -1899,7 +1917,7 @@ end
         r = chatrequest!(chat; config=_HOPS_CFG)
         @test r isa LLMCallError && length(seen) == 2
         @test r.request_id == "req-2"
-        @test cumulative_cost(chat) ≈ _HOP1_COST
+        @test cumulative_cost(chat) ≈ _hop1_cost()
     end
 end
 
@@ -1922,7 +1940,7 @@ end
             @test length(seen) == 1                                              # hop 2 never sent
             @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]      # nothing committed
             @test !any(x -> x isa Message, got)                                  # no final message
-            @test cumulative_cost(chat) ≈ _HOP1_COST                             # hop 1 was answered: billed
+            @test cumulative_cost(chat) ≈ _hop1_cost()                           # hop 1 was answered: billed
         end
     end
 end
@@ -1943,7 +1961,7 @@ end
                 # that response whole, and no request of hop 2 was sent.
                 @test r.request_id == (stream ? "req-1" : nothing)
                 @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
-                @test cumulative_cost(chat) ≈ _HOP1_COST
+                @test cumulative_cost(chat) ≈ _hop1_cost()
             finally
                 _HOPS_BETWEEN[] = () -> nothing
             end

@@ -139,9 +139,10 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
         u = r.usage
         @info "Gemini compat stream usage" u cost = estimated_cost(r)
         @test u isa TokenUsage && u.prompt_tokens > 0 && u.completion_tokens > 0
-        # gemini-3.8-flash at the standard tier, per 1M tokens: $0.75 input, $0.075 cache hit, $3.75 output.
-        @test estimated_cost(r) ≈ ((u.prompt_tokens - u.cached_tokens) * 0.75 + u.cached_tokens * 0.075 +
-                                   u.completion_tokens * 3.75) / 1_000_000
+        # gemini-3.8-flash at the standard tier: its row in effect on the day the test runs.
+        row = UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash")
+        @test estimated_cost(r) ≈ (u.prompt_tokens - u.cached_tokens) * row.input + u.cached_tokens * row.cached_input +
+                                  u.completion_tokens * row.output
         @test cumulative_cost(chat) == estimated_cost(r) > 0
     end
 

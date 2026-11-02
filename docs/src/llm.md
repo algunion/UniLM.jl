@@ -1070,6 +1070,9 @@ end
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
     mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
+    markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
+                                                            #   image to guide the edit; not with mask (ArgumentError); OpenAI
+                                                            #   states "Supports GPT Image 2.5" and judges the model
     model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI

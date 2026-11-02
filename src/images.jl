@@ -402,6 +402,11 @@ when the edit is sent.
 
 # Fields — OpenAI only
 - `mask::Union{String,Nothing}`: path of a mask whose transparent area marks what to edit
+- `markup::Union{String,Vector{UInt8},Nothing}`: a PNG, by path or as its bytes, sent as the form
+  part `markup`: "A transparent PNG overlaid on the first image to guide the edit. Must match that
+  image's dimensions after orientation and contain transparent pixels" (the edit reference). It
+  "Cannot be combined with mask": set beside one, [`edit_image`](@ref) throws `ArgumentError`, as it
+  does for bytes that are no PNG. OpenAI states it "Supports GPT Image 2.5"; the model is OpenAI's to check
 - `size`, `quality`, `background`, `output_format`: as on [`ImageGeneration`](@ref)
 - `input_fidelity::Union{String,Nothing}`: how closely the edit keeps the input's
   features (`"high"`, `"low"`)
@@ -411,8 +416,8 @@ when the edit is sent.
 image follows the input's aspect ratio.
 
 `image` names at least one file: [`edit_image`](@ref) throws `ArgumentError` for an empty
-vector before any request, as it does, naming the provider and the field, for a field the
-request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
+vector before any request, as it does for a `markup` beside a `mask` and, naming the provider and the
+field, for a field the request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, and a `safety_identifier` outside its provider's rule. Other
 OpenAI values are sent as given, for OpenAI to judge.
 """
@@ -421,6 +426,7 @@ OpenAI values are sent as given, for OpenAI to judge.
     image::Union{String,Vector{String}}
     prompt::String
     mask::Union{String,Nothing} = nothing
+    markup::Union{String,Vector{UInt8},Nothing} = nothing
     model::String = ""
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing
@@ -444,8 +450,9 @@ Gemini reply decodes the same way.
 
 Throws `ArgumentError` before any network I/O when `e.service` does not declare
 `:image_edits` (an endpoint type that declares no capabilities at all included), when `e.image`
-is an empty vector, when an input image or the mask
-is no file (as [`upload_file`](@ref) and [`transcribe`](@ref) refuse one), and when the request sets a
+is an empty vector, when an input image, the mask or a markup path
+is no file (as [`upload_file`](@ref) and [`transcribe`](@ref) refuse one), when an OpenAI edit sets both
+`mask` and `markup` or gives markup bytes that are no PNG, and when the request sets a
 field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, or a `safety_identifier` outside its provider's rule (see
 [`ImageEdit`](@ref)). Other OpenAI values are sent as given.
@@ -516,6 +523,8 @@ end
 function _check_edit_files(e::ImageEdit)::Nothing
     _edit_images(e)
     isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
+    markup = e.markup
+    markup isa String && !isfile(markup) && throw(ArgumentError("markup not found: $markup"))
     nothing
 end
 
@@ -534,8 +543,25 @@ function _check_image_request(service, r::_ImageRequest)
     isnothing(id) || 1 <= length(id) <= 128 || throw(ArgumentError(
         "the OpenAI Images API takes a safety_identifier of 1 to 128 characters (got $(length(id))); it reads " *
         "an empty one as none, and a longer identifier can be hashed (a SHA-256 hex digest is 64 characters)"))
+    _check_markup(r)
+end
+
+# OpenAI's edit markup "Cannot be combined with mask", and is "A transparent PNG": bytes that are no PNG
+# would go out under a content type they do not have.
+_check_markup(::ImageGeneration)::Nothing = nothing
+function _check_markup(e::ImageEdit)::Nothing
+    markup = e.markup
+    isnothing(markup) && return nothing
+    isnothing(e.mask) || throw(ArgumentError("an OpenAI image edit takes a mask or a markup, not both: the " *
+        "markup \"Cannot be combined with mask\"; unset one of them"))
+    markup isa Vector{UInt8} && _sniff_image_mime(markup) != "image/png" && throw(ArgumentError(
+        "an image edit's markup is \"A transparent PNG\", and these bytes are no PNG: pass a PNG's bytes or its path"))
     nothing
 end
+
+# The markup's form part: a file under its own name and type, as the mask is sent, or PNG bytes.
+_markup_part(path::String) = HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))
+_markup_part(png::Vector{UInt8}) = HTTP.Multipart("markup.png", IOBuffer(png), "image/png")
 
 _image_request(service, ig::ImageGeneration) =
     (_api_base_url(service) * IMAGES_GENERATIONS_PATH, auth_header(service), JSON.json(_image_payload(service, ig)))
@@ -557,6 +583,8 @@ function _image_request(service, e::ImageEdit)
         mask = e.mask
         isnothing(mask) ||
             push!(parts, "mask" => HTTP.Multipart(basename(mask), IOBuffer(read(mask)), _mime_for(mask)))
+        markup = e.markup
+        isnothing(markup) || push!(parts, "markup" => _markup_part(markup))
         for (k, f) in (("n", :n), ("size", :size), ("quality", :quality), ("input_fidelity", :input_fidelity),
                        ("background", :background), ("output_format", :output_format),
                        ("safety_identifier", :safety_identifier))
@@ -591,7 +619,7 @@ end
 # the request.
 _openai_only_image_fields(::ImageGeneration) =
     (:size, :quality, :background, :output_format, :output_compression, :moderation)
-_openai_only_image_fields(::ImageEdit) = (:mask, :size, :quality, :input_fidelity, :background, :output_format)
+_openai_only_image_fields(::ImageEdit) = (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format)
 _image_verb(::ImageGeneration) = "image generation"
 _image_verb(::ImageEdit) = "image editing"
 

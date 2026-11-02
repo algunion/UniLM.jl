@@ -833,3 +833,42 @@ end
         @test isempty(seen)
     end
 end
+
+@testset "OpenAI image edits — a markup PNG is a form part of its own, never beside a mask; Gemini takes none" begin
+    # The edit reference: markup is "A transparent PNG overlaid on the first image to guide the edit" that
+    # "Cannot be combined with mask"; "Supports GPT Image 2.5", which OpenAI judges.
+    png = UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    marker = "edit-markup-marker-" * repeat("k", 32)
+    image, markup = tempname() * ".png", tempname() * ".png"
+    write(image, png); write(markup, [png; Vector{UInt8}(marker)])
+    ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
+    cfg = UniLM.RequestConfig(max_attempts=1)
+    try
+        for (given, filename) in ((markup, basename(markup)), (read(markup), "markup.png"))   # a path, or its bytes
+            r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                edit_image(image, "p"; model="m", service=URLProbe, markup=given, config=cfg)
+            end
+            @test r isa ImageSuccess
+            body = only(seen).body
+            @test occursin("name=\"markup\"; filename=\"$filename\"\r\nContent-Type: image/png\r\n", body)
+            @test occursin(marker, body) && !occursin("name=\"mask\"", body)
+        end
+        # Refused before anything is sent: a mask beside it, bytes that are no PNG, a path that is no file.
+        refused = (((() -> edit_image(image, "p"; model="m", service=URLProbe, mask=image, markup=markup)), ("mask", "markup")),
+                   ((() -> edit_image(image, "p"; model="m", service=URLProbe, markup=Vector{UInt8}("GIF89a"))), ("PNG",)),
+                   ((() -> edit_image(image, "p"; model="m", service=URLProbe, markup="/no/such/markup.png")),
+                    ("markup not found",)))
+        for (call, words) in refused
+            err, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                try call(); nothing catch e; e end
+            end
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words) && isempty(seen)
+        end
+    finally
+        rm(image; force=true); rm(markup; force=true)
+    end
+    # Gemini has no markup: an OpenAI-only field, refused naming Gemini and the field.
+    e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", markup="markup.png")
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take markup,")
+end

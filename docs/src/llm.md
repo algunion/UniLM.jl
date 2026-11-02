@@ -160,7 +160,7 @@ struct OllamaModel                       # list_models(service=OllamaEndpoint())
     runner::Union{Symbol,Nothing}        # the runner the listing names (:mlx, :llamacpp, :ggml), the one OllamaEndpoint(runner=…)
                                          #   must name to reach it; may differ from the serving one
     format::Union{Symbol,Nothing}        # :gguf | :safetensors (lower case; "" → nothing)
-    capabilities::Vector{Symbol}         # e.g. :completion, :tools, :insert, :vision, :embedding, :thinking, :audio, :decision
+    capabilities::Vector{Symbol}         # e.g. :completion, :tools, :insert, :vision, :embedding, :thinking, :audio, :decision, :speech
     raw::Dict{String,Any}
 end
 
@@ -176,6 +176,7 @@ struct OllamaModelInfo                   # model_info → OllamaSuccess{OllamaMo
     quantization::Union{String,Nothing}
     runner::Union{Symbol,Nothing}        # the runner /api/show's details name; nothing when none
     format::Union{Symbol,Nothing}        # :gguf | :safetensors
+    voices::Vector{String}               # a speech model's voices (/api/show, Ollama 0.40.11+), speak's `voice`; else empty
     raw::Dict{String,Any}
 end
 
@@ -2494,12 +2495,14 @@ nl_dispatch(route, ticket; decide = refund_first, fallback = t -> :escalate)
 
 ```julia
 struct SpeechRequest                                # built by keyword: SpeechRequest(; input, service, …)
-    service::ServiceEndpointSpec                    # OPENAIServiceEndpoint (Realtime session) or GEMINIServiceEndpoint (Gemini TTS)
-    model::String                                   # nothing → "gpt-realtime-2.1-mini" (OpenAI) / "gemini-3.8-flash-tts" (Gemini)
+    service::ServiceEndpointSpec                    # OPENAIServiceEndpoint (Realtime session), GEMINIServiceEndpoint (Gemini TTS)
+                                                    #   or OllamaEndpoint() (its speech route, Ollama 0.40.9+)
+    model::String                                   # nothing → "gpt-realtime-2.1-mini" (OpenAI) / "gemini-3.8-flash-tts" (Gemini);
+                                                    #   Ollama has none (ArgumentError): e.g. "phonon"
     input::String                                   # the text to read; empty → ArgumentError
-    voice::String                                   # nothing → "marin" (OpenAI) / "Kore" (Gemini)
+    voice::String                                   # nothing → "marin" (OpenAI) / "Kore" (Gemini) / "" (Ollama: the model's own, not sent)
     response_format::String                         # "wav" (default) or "pcm": 16-bit mono PCM at 24 kHz
-    speed::Union{Float64,Nothing}                   # OpenAI 0.25 … 1.5; Gemini has none (describe the pace in instructions)
+    speed::Union{Float64,Nothing}                   # OpenAI 0.25 … 1.5; Ollama 1 only; Gemini has none (describe the pace in instructions)
     instructions::Union{String,Nothing}             # the delivery (tone, pace, accent)
 end
 @kwdef struct SpeechSuccess <: LLMRequestResponse
@@ -2544,7 +2547,13 @@ as the speech style), which reads the text verbatim: one of its 30 studio voices
 lacks, a blank Gemini voice, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
 flac are refused), a `speed` out of range and any `speed` on Gemini throw `ArgumentError` before any
 request, as does `GEMINIOpenAIServiceEndpoint` (no speech route there: the error points to
-`GEMINIServiceEndpoint`). **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
+`GEMINIServiceEndpoint`). On `OllamaEndpoint` (Ollama 0.40.9 or later) `speak` is one POST to Ollama's
+`/v1/audio/speech` with `model`, `input`, `response_format`, and `voice` and `speed` when set; there is no
+default model, a voice is one of the model's own (`model_info(m).response.voices`), sent as given (Ollama answers
+another with HTTP 400 naming its voices; none named: the model's own), and a request without a model, an
+`input` over 4,096 characters, a `speed` other than 1 and any `instructions` throw `ArgumentError` before I/O; the
+reply's bytes come back as Ollama streamed them (a WAV header whose size fields hold the maximum), and a reply
+under another `Content-Type` is an `AudioCallError`; transient statuses are retried as on Gemini. **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
 and resampled to 24 kHz) through an OpenAI Realtime translation session
 (`wss://api.openai.com/v1/realtime/translations`; OpenAI shuts `/v1/audio/translations` down on
 2027-02-26) into `language` (English unless named) and returns the translated text as a
@@ -2631,7 +2640,7 @@ has_capability(service, cap::Symbol) -> Bool
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic (`GenericOpenAIEndpoint`, `MistralEndpoint()`) | sent unchecked: `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:audio`, `:transcription` — the permissive default, which UniLM sends to whatever server the endpoint names, whether it serves them or not |
-| Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:models`, `:system_one`, `:audio`, `:transcription` |
+| Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:models`, `:system_one`, `:audio`, `:transcription`, `:speech` |
 
 Validation comes in two strengths, and the difference matters if you write your
 own endpoint:

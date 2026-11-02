@@ -17,7 +17,7 @@ Standard capability symbols include:
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
 - Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
-  Gemini TTS)
+  Gemini TTS; Ollama, through its speech route)
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, OpenAI, Anthropic, Gemini, Ollama)
 """

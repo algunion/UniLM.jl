@@ -427,6 +427,19 @@ end
           "OllamaModel(\"gemma4:e4b\", 9.5 GB, mlx, [:completion, :vision, :audio, :tools, :thinking])"
 end
 
+# Refuted if: a speech model's voices (`show_phonon.json`, captured from Ollama 0.40.13) are not read from
+# /api/show in its order as Strings, a model without voices gets any, or voices that are not strings decode.
+@testset "show: a speech model's voices (Ollama 0.40.11 and later)" begin
+    fx(f) = JSON.parse(_om_fixture(f); dicttype=Dict{String,Any})
+    phonon = UniLM._decode_show("phonon", fx("show_phonon.json"))
+    @test phonon.capabilities == [:speech] && phonon.voices isa Vector{String}
+    @test phonon.voices == fx("show_phonon.json")["voices"] && length(phonon.voices) == 38
+    @test "default" in phonon.voices && "Zoey" in phonon.voices          # the speech page's voices, and the model's own
+    @test (phonon.runner, phonon.format, phonon.context_length) == (:mlx, :safetensors, 8192)
+    @test isempty(UniLM._decode_show("embeddinggemma-2:740m-q8_0", fx("show_embeddinggemma2.json")).voices)
+    @test_throws ArgumentError UniLM._decode_show("m", Dict{String,Any}("voices" => Any["Zoey", 1]))
+end
+
 @testset "delete_model: DELETE /api/delete with the name; 404 when absent; a blank name sends nothing" begin
     seen = Tuple{String,String,String}[]
     handler = req -> (push!(seen, (String(req.method), String(req.target),

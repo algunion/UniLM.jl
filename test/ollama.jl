@@ -131,7 +131,7 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value
     @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses,
-                                           :agentic, :models, :system_one, :audio, :transcription])
+                                           :agentic, :models, :system_one, :audio, :transcription, :speech])
     @test !occursin("redacted", sprint(show, e))                     # no key to hide
     @test_throws ArgumentError Chat(service=e)                       # no default model
     @test occursin("list_models(service=OllamaEndpoint())", try Chat(service=e); "" catch x; x.msg end)
@@ -916,8 +916,7 @@ end
         e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
         @test e isa ArgumentError && startswith(e.msg, "Ollama") && occursin(fragment, e.msg)
     end
-    @test_throws ArgumentError speak(SpeechRequest(service=off, input="hi"))          # speech stays refused
-    @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation too
+    @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation stays refused
     seen = Ref{Any}(nothing)
     handler = req -> (seen[] = (String(req.target), applicable(copy, req.body) ? String(copy(req.body)) : "");
         HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}("{\"text\":\"The secret word is banana.\"}")))

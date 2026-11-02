@@ -3,9 +3,9 @@
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
 # OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond`, compaction, FIM and transcription keep the OpenAI-compatible
-# routes (`/v1/responses`, `/v1/responses/compact`, `/v1/completions`,
-# `/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`, `options`
+# without a word. `respond`, compaction, FIM, transcription and speech keep the
+# OpenAI-compatible routes (`/v1/responses`, `/v1/responses/compact`, `/v1/completions`,
+# and Ollama's audio routes), which carry none of the endpoint's `keep_alive`, `options`
 # or `runner`.
 # ============================================================================
 
@@ -32,12 +32,12 @@ function _ollama_auth(s::OllamaEndpoint; required::Bool)::Vector{Pair{String,Str
     [json]
 end
 # Every request the shared verbs send to Ollama — chat, embeddings, respond, compaction, FIM,
-# transcription, System One — is inference; the model verbs choose for themselves (ollama_models.jl).
+# transcription, speech, System One — is inference; the model verbs choose for themselves (ollama_models.jl).
 auth_header(s::OllamaEndpoint)::Vector{Pair{String,String}} = _ollama_auth(s; required=true)
 
 provider_capabilities(::OllamaEndpoint) =
     Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :agentic, :models, :system_one, :audio,
-         :transcription])
+         :transcription, :speech])
 
 _model_hint(::OllamaEndpoint) =
     " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"

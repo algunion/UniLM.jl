@@ -729,7 +729,8 @@ function _interactions_next_request(r::Respond, hop::Int, body::String, reply)::
     token = _wire_string(reply, "continuation_token")
     usage = get(reply, "usage", nothing)
     (isnothing(token) || !(usage isa AbstractDict) || _interaction_usage(usage)["output_tokens"] == 0) && return nothing
-    request = JSON.parse(body; dicttype=Dict{String,Any})
+    # Read in order, so the next request is the first's bytes with only the continuation fields changed.
+    request = JSON.parse(body; dicttype=JSON.Object{String,Any})
     request["continuation_token"] = token
     id = _wire_string(reply, "id")
     if get(request, "store", true) !== false && !isnothing(id)

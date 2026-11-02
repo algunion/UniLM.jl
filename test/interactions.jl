@@ -1485,3 +1485,26 @@ end
     @test r isa ResponseCallError && r.error == sprint(showerror, r.cause)
 end
 
+@testset "long decode — a later request is the first's bytes, key order included, with only the continuation fields changed" begin
+    replies = [_ix_hop("v1_a", "requires_continuation"; text="A", token="T1"), _ix_hop("v1_b", "completed"; text="B")]
+    bodies(; kw...) = [s.body for s in last(_with_scripted((n, _) -> _json(200, replies[min(n, 2)])) do
+        respond(Respond(; service=_IxHops, model="gemini-3.8-flash", input="Prove it.", instructions="Be brief.",
+                        max_output_tokens=100, reasoning=Reasoning(effort="low"), kw...); config=_IX_HOPS_CFG)
+    end)]
+    # Unstored: the whole request again, the token after it.
+    b = bodies(store=false)
+    @test length(b) == 2
+    @test b[2] == chop(b[1]) * ",\"continuation_token\":\"T1\"}"
+    # Stored, alone or continuing a conversation: the input goes, the token follows the other fields, and the
+    # interaction that issued it is named — after them, or where the caller's previous interaction was named.
+    for kw in ((;), (previous_response_id="v1_prev",))
+        b = bodies(; kw...)
+        o = JSON.parse(b[1]; dicttype=JSON.Object{String,Any})
+        @test JSON.json(o) == b[1]                       # read in order, the first body writes back as it was sent
+        delete!(o, "input")
+        o["continuation_token"] = "T1"
+        o["previous_interaction_id"] = "v1_a"
+        @test length(b) == 2
+        @test b[2] == JSON.json(o)
+    end
+end

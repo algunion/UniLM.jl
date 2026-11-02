@@ -1455,3 +1455,15 @@ end
     @test r isa ResponseSuccess && r.response.status == "requires_continuation" &&
           r.response.raw["continuation_token"] == "T1"
 end
+
+@testset "long decode — a reply that is not JSON is left to the decoder, which reports it with the reply's request id" begin
+    notjson(id) = _json(200, "<html>not JSON</html>"; headers=["x-request-id" => id])
+    first = _json(200, _ix_hop("v1_a", "requires_continuation"; text="A", token="T1"))
+    for (replies, n, id) in (([notjson("req-1")], 1, "req-1"), ([first, notjson("req-2")], 2, "req-2"))
+        r, seen = _with_scripted((k, _) -> replies[min(k, length(replies))]) do
+            respond(Respond(service=_IxHops, model="gemini-3.8-flash", input="Prove it."); config=_IX_HOPS_CFG)
+        end
+        @test length(seen) == n
+        @test r isa ResponseCallError && r.request_id == id
+    end
+end

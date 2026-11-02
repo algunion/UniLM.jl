@@ -701,13 +701,25 @@ function _continued_reply(send, ::Type{GEMINIServiceEndpoint}, r::Respond, body:
                           resp::HTTP.Response)::HTTP.Response
     latest, hop = resp, 1   # the latest reply alone: its status, token and output decide the next request
     while latest.status == 200
-        next = _interactions_next_request(r, hop, body, JSON.parse(latest.body; dicttype=Dict{String,Any}))
+        next = _interactions_next_request(r, hop, body, _interaction_reply(latest))
         isnothing(next) && break
         latest = send(next, time_ns())   # each request of the turn starts with the whole budget
         latest.status == 200 || return latest
         resp, hop = _join_interactions(resp, latest), hop + 1
     end
     resp
+end
+
+# A reply's JSON object, else `nothing`: a body that is none is left to `decode_agentic`, whose
+# error the call reports with the reply's request id.
+function _interaction_reply(resp::HTTP.Response)::Union{Dict{String,Any},Nothing}
+    d = try
+        JSON.parse(resp.body; dicttype=Dict{String,Any})
+    catch e
+        e isa ArgumentError || rethrow()   # JSON.jl's error for a body that is not JSON
+        nothing
+    end
+    d isa Dict{String,Any} ? d : nothing
 end
 
 # The body of the request after a turn's `hop`-th, when its reply asks for one.
@@ -734,9 +746,10 @@ end
 # repeat the input, and would end the answer the steps after them extend (`_interaction_output`): they
 # are dropped.
 function _join_interactions(earlier::HTTP.Response, later::HTTP.Response)::HTTP.Response
-    a = JSON.parse(earlier.body; dicttype=Dict{String,Any})
-    b = JSON.parse(later.body; dicttype=Dict{String,Any})
-    (a isa Dict{String,Any} && b isa Dict{String,Any}) || return later
+    a = _interaction_reply(earlier)
+    a isa Dict{String,Any} || return later
+    b = _interaction_reply(later)
+    b isa Dict{String,Any} || return later
     joined = copy(b)
     steps = collect(Any, _as_iter(get(b, "steps", nothing)))
     from = something(findfirst(s -> !(s isa AbstractDict && get(s, "type", nothing) == "user_input"), steps),

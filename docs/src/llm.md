@@ -93,7 +93,7 @@ ANTHROPICServiceEndpoint(; betas=String[], user_profile_id=nothing, workspace_id
     # the bare type (service=ANTHROPICServiceEndpoint) is the endpoint with no options; a blank value, a
     # control character, a comma in a beta name or another inference_geo → ArgumentError; == and hash by
     # value; list_models sends only the workspace of these (the List Models reference names anthropic-version
-    # and anthropic-workspace-id, and marks anthropic-beta deprecated on GET /v1/models)
+    # and anthropic-workspace-id for GET /v1/models, and no anthropic-beta header)
 
 # Type alias for service fields — accepts both marker types and instances:
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
@@ -254,7 +254,7 @@ end
 
 The Anthropic listing sends the key, `anthropic-version` and the endpoint's `anthropic-workspace-id`, the
 headers Anthropic's Models API reference names for `GET /v1/models` — not the endpoint's user profile, nor its
-betas (the reference marks `anthropic-beta` deprecated there). OpenAI keeps listing
+betas (the reference names no `anthropic-beta` header there). OpenAI keeps listing
 a model after its `shutdown_date`, so a listed model is not always one that still answers: compare
 `retires` with today's date. Anthropic lists active and deprecated models, not retired ones, and may
 revise a `retires_at` it lists. A listing is the provider's view for the key that asks.

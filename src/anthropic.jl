@@ -16,10 +16,12 @@ _anthropic_endpoint(e::ANTHROPICServiceEndpoint)::ANTHROPICServiceEndpoint = e
 get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
 
 # What every request through the endpoint sends: the key and the API version, then its user
-# profile and its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
+# profile and its workspace (https://platform.claude.com/docs/en/api/messages, Headers). The key
+# goes as `Authorization: Bearer`, the header the API overview names; it keeps `x-api-key` as a
+# "Legacy fallback for `Authorization`" (https://platform.claude.com/docs/en/api/overview#authentication).
 # `profile=false` leaves the user profile out, for an API whose reference names no such header.
 function _anthropic_base_headers(e::ANTHROPICServiceEndpoint; profile::Bool=true)::Vector{Pair{String,String}}
-    headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION]
+    headers = ["Authorization" => "Bearer $(ENV[ANTHROPIC_API_KEY])", "anthropic-version" => ANTHROPIC_VERSION]
     profile && !isnothing(e.user_profile_id) && push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
     isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
     headers
@@ -106,7 +108,9 @@ const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill
 # Dates: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
 const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
     "claude-fable-5-1"      => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
-    "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    # "The prefix check runs on Claude 5.1 and later models", and Mythos 5.1 answers a block that
+    # fails it with HTTP 400 on every account (preserved-thinking.md, read on 2026-11-02).
+    "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
     "claude-fable-5"        => _ClaudeFamily(thinking=:always, system=true),
     "claude-mythos-5"       => _ClaudeFamily(thinking=:always, system=true),
     "claude-opus-5-5"       => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true, fast=:ga),
@@ -282,10 +286,13 @@ end
 # Where a system message after the conversation starts goes (see `_anthropic_messages`):
 # _HOIST joins every one into the top-level `system`; _IN_PLACE keeps one where the API
 # accepts it and hoists the rest; _APPEND_ONLY never edits the top-level `system` once an
-# assistant turn is sent. An id no row names is placed append-only: Anthropic asks every
-# integration to be append-only whatever the account
-# (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md), and a
-# newer model may check thinking blocks.
+# assistant turn is sent. An edit before a thinking block fails the prefix check of that block
+# and every later one (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md):
+# with no `thinking.block_binding`, Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 answer HTTP 400
+# on an account created on or after 00:00 UTC 31 August 2026, and on an older one pass the
+# failing blocks to the model, which reads and bills them as input; Mythos 5.1 answers HTTP 400
+# on every account. An id no row names is placed append-only: Anthropic asks every integration
+# to be append-only, and a newer model may check thinking blocks.
 @enum _SystemPlacement _HOIST _IN_PLACE _APPEND_ONLY
 _system_placement(::Nothing) = _APPEND_ONLY
 _system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? _APPEND_ONLY : fam.system ? _IN_PLACE : _HOIST
@@ -355,9 +362,11 @@ end
 #   `placement` says (`_system_placement`): in place as role "system" where the API
 #   accepts one (`_mid_system_fits`), unless the model has none (_HOIST); else into the
 #   top-level `system` — except under _APPEND_ONLY once an assistant turn is sent, where
-#   editing that prompt invalidates the thinking blocks of every later turn (an HTTP 400):
-#   there it moves forward to right after the next user turn, so each request extends the
-#   one before, and with no user turn after it the request is refused
+#   editing that prompt fails the prefix check of every later thinking block (an HTTP 400, or
+#   blocks the model reads and bills, by model and account: see `_system_placement`): there it
+#   is held back, then sent right after a later user turn, and the turns before each sent
+#   reply stay as they were in the request that got it; with no user turn after it the
+#   request is refused
 # - consecutive `tool` messages → collapsed into ONE user message of tool_result blocks
 # - assistant tool_calls → tool_use blocks; a tool_result referencing an id no
 #   preceding assistant emitted → loud ArgumentError

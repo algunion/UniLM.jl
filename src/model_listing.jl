@@ -84,8 +84,8 @@ _models_url(::_AnthropicEndpoint)::String = ANTHROPIC_BASE_URL * "/v1/models"
 _models_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * "/models"
 
 # The headers of every page: the endpoint's own, except on Anthropic, whose Models API
-# reference names `anthropic-version`, `anthropic-workspace-id` and `anthropic-beta`, deprecated
-# on GET /v1/models, and no user-profile header
+# reference names `anthropic-version` and `anthropic-workspace-id` for GET /v1/models, and no
+# `anthropic-beta` or user-profile header
 # (https://platform.claude.com/docs/en/api/models/list, Headers): an Anthropic listing sends the
 # key, the API version and the endpoint's workspace, never its user profile or its betas.
 _models_headers(service) = auth_header(service)

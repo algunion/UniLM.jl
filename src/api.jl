@@ -863,7 +863,7 @@ instance adds options that every request through it carries
   names and models no beta's request fields or response blocks; the one it reads is
   `"fast-mode-2026-02-01"`, which `service_tier="fast"` needs on Claude Opus 5 and Opus 4.8.
   [`list_models`](@ref) sends no `anthropic-beta` header: Anthropic's Models API reference
-  marks it deprecated on `GET /v1/models`.
+  names no such header for `GET /v1/models`.
 - `user_profile_id`: the `anthropic-user-profile-id` header, the `uprof_` id of the end
   customer the requests are made for
   ([user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles)).

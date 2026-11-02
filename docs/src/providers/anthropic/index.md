@@ -43,7 +43,7 @@ UniLM reads the variable each time a request is sent; a `chatrequest!` without i
 `LLMCallError` whose `cause` is the `KeyError` naming it. A `Chat` reaches Anthropic with
 `service=ANTHROPICServiceEndpoint`, the bare type, or with an instance that carries the options
 below; with no `model` it takes the default model named at the top of this page. Requests go to
-`https://api.anthropic.com/v1/messages` with the key in `x-api-key` and
+`https://api.anthropic.com/v1/messages` with the key in `Authorization: Bearer <key>` and
 `anthropic-version: 2026-10-21`.
 
 The Messages API requires `max_tokens`: a `Chat` sends its `max_completion_tokens` there, else its
@@ -171,9 +171,9 @@ blank line. Where a system message pushed later goes depends on two columns of t
   invalidates the thinking blocks after it, except the edits Anthropic lists as valid, such as removing
   the oldest thinking blocks
   ([what counts as an edit](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#what-counts-as-an-edit)).
-  UniLM sends no `thinking.block_binding`, so the API applies its default: on an account created on or
-  after 31 August 2026 (00:00 UTC) it answers HTTP 400, and on an older account it lets the invalid
-  blocks through to the model.
+  UniLM sends no `thinking.block_binding`, so the API applies its default: `claude-mythos-5-1` answers
+  HTTP 400 on every account; the other models with the check answer HTTP 400 on an account created on
+  or after 31 August 2026 (00:00 UTC), and on an older account let the invalid blocks through to the model.
 
 A system message pushed after a reply needs a user turn after it — a user message, or the results
 of the reply's tool calls — except in a response prefill on a model whose Prefill cell is "yes".

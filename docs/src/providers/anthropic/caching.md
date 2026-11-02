@@ -16,9 +16,12 @@ for an hour. The options a `Chat` cannot send to Anthropic are refused before th
 
 Anthropic's cache "references the entire prompt: `tools`, `system`, and `messages` (in that order)",
 and the breakpoint is where it is written: one entry, holding everything up to and including that
-block. Anthropic isolates caches by workspace: a later request in the same workspace
-([Options](@ref anthropic_options)) that starts with the same blocks up to that breakpoint reads the
-entry while it lives, unless a change has invalidated it, and writes what follows them; the API checks
+block. Anthropic isolates caches by workspace, and a cache is per model ("The cache is per-model",
+[cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics); "Prompt
+caches are per-model", [fallback credit](https://platform.claude.com/docs/en/build-with-claude/fallback-credit)):
+a later request to the same model in the same workspace ([Options](@ref anthropic_options)) that starts
+with the same blocks up to that breakpoint reads the entry while it lives, unless a change has invalidated
+it, and writes what follows them; the API checks
 at most 20 positions for such an entry, counting the request's breakpoint as the first and a run of
 consecutive `tool_use` blocks, or of consecutive `tool_result` blocks, as one position. Changed tools
 invalidate the entire cache, and a changed `system` prompt that prompt and the messages; a changed

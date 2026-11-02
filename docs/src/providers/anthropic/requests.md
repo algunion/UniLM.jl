@@ -300,10 +300,10 @@ only the other rules. Building an endpoint refuses an option value that breaks i
 | a level the model's Effort levels cell does not list | `supports reasoning_effort`, then the levels it takes | one of them |
 | `reasoning_effort="none"` where the Thinking cell is "adaptive; cannot be disabled" | `cannot disable thinking`: the model's thinking cannot be turned off | `"low"` |
 | `tool_choice="required"` or a named tool on a model whose Forced tool choice cell is "—" | `rejects forced tool_choice`: the API answers HTTP 400 for a forced choice there | `tool_choice="auto"` with strict tools, or a JSON Schema `response_format` |
-| a `tool_choice` string other than `"auto"`, `"none"` and `"required"` | `Unknown Anthropic tool_choice` | one of them, or `UniLM.GPTToolChoice(func=:name)` |
+| a `tool_choice` string other than `"auto"`, `"none"` and `"required"` | `Unknown Anthropic tool_choice`: Anthropic's `tool_choice` says how the model may use the tools: `auto`, `any`, `tool` with a `name`, or `none` | one of them, or `UniLM.GPTToolChoice(func=:name)` |
 | a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | `references unknown tool_use id`: a `tool_result` answers a `tool_use` the conversation holds | the `id` of the tool call it answers |
 | `ResponseFormat()`, a `json_object` format | `no schema-less JSON mode`: the Messages API has no JSON mode without a schema | a JSON Schema `response_format` |
-| a `response_format` whose type is not `json_schema`, other than a `text` one without a schema, or a JSON Schema format without a schema object | `supports response_format json_schema`, `needs a schema object` | a JSON Schema format holding its schema |
+| a `response_format` whose type is not `json_schema`, other than a `text` one without a schema, or a JSON Schema format without a schema object | `supports response_format json_schema`, `needs a schema object`: Anthropic's `output_config.format` takes `{"type": "json_schema", "schema": …}`, a JSON schema object | a JSON Schema format holding its schema |
 | an `AudioAttachment` | `not audio`: the Messages API takes images and PDF documents | the clip's transcript in the message |
 | an `ImageAttachment` with a `detail` level | `has no detail level`: the image block has no such field | the attachment without `detail` |
 | the endpoint's `inference_geo` on a model whose `inference_geo` cell is "—" | `takes no inference_geo`: the API answers HTTP 400 for it | an endpoint without `inference_geo` ([Options](@ref anthropic_options)) |

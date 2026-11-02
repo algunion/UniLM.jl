@@ -1003,7 +1003,7 @@ end
             @test length(srv.seen) == 2
             for (headers, body) in srv.seen
                 @test headers["anthropic-version"] == "2026-10-21"
-                @test headers["x-api-key"] == "sk-ant-local-0000"
+                @test headers["authorization"] == "Bearer sk-ant-local-0000" && !haskey(headers, "x-api-key")
             end
             @test [get(body, "stream", false) for (_, body) in srv.seen] == [false, true]
             # A request the encoder refuses never reaches the server.
@@ -1019,9 +1019,30 @@ end
             @test length(srv.seen) == 2
         end
         @test Dict(withenv(() -> UniLM.auth_header(ANTHROPICServiceEndpoint), "ANTHROPIC_API_KEY" => "k")) ==
-              Dict("x-api-key" => "k", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json")
+              Dict("Authorization" => "Bearer k", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json")
     finally
         close(srv.server)
+    end
+end
+
+# https://platform.claude.com/docs/en/api/overview.md (Authentication): the key goes in
+# `Authorization: Bearer <key>`; `x-api-key` is the "Legacy fallback for `Authorization`, still supported".
+@testset "Anthropic requests and listings send the key as Authorization: Bearer, never as x-api-key" begin
+    key = "sk-ant-api03-SECRETVALUE0123456789"
+    every = ANTHROPICServiceEndpoint(betas=["a"], user_profile_id="uprof_1", workspace_id="wrkspc_1")
+    withenv("ANTHROPIC_API_KEY" => key) do
+        for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), every),
+            h in (UniLM.auth_header(service), UniLM._models_headers(service))
+            @test ("Authorization" => "Bearer $key") in h
+            @test count(p -> lowercase(first(p)) in ("authorization", "x-api-key"), h) == 1
+        end
+        # A transport error can render the request with its headers: the key is masked there, in the
+        # wire form and in Julia's pair form.
+        h = UniLM.auth_header(every)
+        for dump in (join(("$k: $v" for (k, v) in h), "\r\n"), repr(h))
+            out = UniLM._error_text(ErrorException(dump))
+            @test !occursin(key, out) && occursin("Bear…[redacted]", out) && occursin("anthropic-version", out)
+        end
     end
 end
 
@@ -1513,7 +1534,8 @@ end
 @testset "ANTHROPICServiceEndpoint sends its betas, user profile and workspace as headers, its region in the body" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
         hdr(s) = Dict(UniLM.auth_header(s))
-        base = Dict("x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json")
+        base = Dict("Authorization" => "Bearer sk-ant-local-0000", "anthropic-version" => "2026-10-21",
+                    "Content-Type" => "application/json")
         @test hdr(ANTHROPICServiceEndpoint) == hdr(ANTHROPICServiceEndpoint()) == base
         @test hdr(ANTHROPICServiceEndpoint(betas=["a", "b"])) == merge(base, Dict("anthropic-beta" => "a,b"))
         @test hdr(ANTHROPICServiceEndpoint(betas=["compact-2026-09-04"])) == merge(base, Dict("anthropic-beta" => "compact-2026-09-04"))
@@ -1645,7 +1667,7 @@ end
         @test_throws ArgumentError UniLM.validate_capability(service, :embeddings, "Embeddings API")
         @test UniLM._service_name(service) === :ANTHROPICServiceEndpoint
         @test withenv(() -> UniLM.auth_header(service), "ANTHROPIC_API_KEY" => "k") ==
-              ["x-api-key" => "k", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json"]
+              ["Authorization" => "Bearer k", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json"]
         @test encode_request(service, chat) == encode_request(ANTHROPICServiceEndpoint, plain)
         dec = decode_response(service, reply)
         @test dec.usage == u && dec.model == "claude-opus-5-5" && dec.message.content == "hello"
@@ -1705,7 +1727,8 @@ end
                 @test headers["anthropic-beta"] == "thinking-binding-controls-2026-08-01,inline-tools-2026-09-15"
                 @test headers["anthropic-user-profile-id"] == "uprof_011CZkZCu8hGbp5mYRQgUmz9"
                 @test headers["anthropic-workspace-id"] == "wrkspc_011CZkZaBF1tNoB5wlCeusgy"
-                @test headers["x-api-key"] == "sk-ant-local-0000" && headers["anthropic-version"] == "2026-10-21"
+                @test headers["authorization"] == "Bearer sk-ant-local-0000" && headers["anthropic-version"] == "2026-10-21"
+                @test !haskey(headers, "x-api-key")
                 @test body["inference_geo"] == "us"
             end
             # Refused before the round trip: a region on Haiku 4.5, fast mode on Haiku 5.5, a cache ttl

@@ -282,7 +282,7 @@ UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint
 # leaves out its key, its API version or its workspace — from the type or from an instance.
 @testset "an Anthropic listing sends the key, the version and the workspace, never the user profile or the betas" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
-        base = ["x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
+        base = ["Authorization" => "Bearer sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
         every = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01", "compact-2026-09-04"],
                                          user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
                                          workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy", inference_geo="us")
@@ -292,14 +292,15 @@ UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint
                                 (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (profile, base),
                                 (every, [base; options]))
             @test (@inferred UniLM._models_headers(service)) == want
-            # On the wire, beside the headers HTTP.jl adds (Host, User-Agent, …): exactly these x- and
-            # anthropic- headers, and no Content-Type.
+            # On the wire, beside the headers HTTP.jl adds (Host, User-Agent, …): exactly these
+            # authorization, x- and anthropic- headers, and no Content-Type.
             sent = Ref(Dict{String,String}())
             r, seen = _ml_list(_AnthropicListingAt(service), (_, req) -> (
                 sent[] = Dict(lowercase(String(k)) => String(v) for (k, v) in req.headers);
                 _json(200, _ml_fixture("anthropic.json"))))
             @test r isa ModelListSuccess && length(r.models) == 13 && length(seen) == 1
-            @test filter(((k, _),) -> startswith(k, "x-") || startswith(k, "anthropic-"), sent[]) == Dict(want)
+            @test filter(((k, _),) -> k == "authorization" || startswith(k, "x-") || startswith(k, "anthropic-"),
+                         sent[]) == Dict(lowercase(k) => v for (k, v) in want)
             @test !haskey(sent[], "content-type")
         end
         # The endpoint's other requests keep its betas and its user profile.

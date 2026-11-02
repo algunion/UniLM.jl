@@ -43,7 +43,7 @@ UniLM reads the variable each time a request is sent; a `chatrequest!` without i
 `LLMCallError` whose `cause` is the `KeyError` naming it. A `Chat` reaches Anthropic with
 `service=ANTHROPICServiceEndpoint`, the bare type, or with an instance that carries the options
 below; with no `model` it takes the default model named at the top of this page. Requests go to
-`https://api.anthropic.com/v1/messages` with the key in `x-api-key` and
+`https://api.anthropic.com/v1/messages` with the key in `Authorization: Bearer <key>` and
 `anthropic-version: 2026-10-21`.
 
 The Messages API requires `max_tokens`: a `Chat` sends its `max_completion_tokens` there, else its

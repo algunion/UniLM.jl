@@ -16,6 +16,8 @@ Standard capability symbols include:
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
 - Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
+- Translation ([`translate`](@ref)): `:realtime` (OpenAI's Realtime translation sessions); on Ollama,
+  `:audio` (its translation route)
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
   Gemini TTS; Ollama, through its speech route)
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)

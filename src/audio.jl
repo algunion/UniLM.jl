@@ -623,7 +623,7 @@ function _ollama_audio_json(resp::HTTP.Response)::Bool
           "the audio replies of Ollama 0.40.12 or later")
 end
 
-"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript or translation (via [`transcript_text`](@ref)), `raw` the parsed JSON a transcription reply carried (`nothing` for a translation)."
+"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript or translation (via [`transcript_text`](@ref)), `raw` the parsed JSON a transcription or Ollama translation reply carried (`nothing` for a text reply and for an OpenAI Realtime translation)."
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
     text::String
     raw::Union{Dict{String,Any},Nothing} = nothing
@@ -701,16 +701,8 @@ function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig
         # Form reads it to its end, so every attempt builds its own from the file (`_BodyFactory`).
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
             auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t))))
-        if resp.status == 200
-            if _transcription_json(t.service, t, resp)
-                d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-                TranscriptionSuccess(text=get(d, "text", ""), raw=d)
-            else
-                TranscriptionSuccess(text=String(resp.body))
-            end
-        else
-            _failure(AudioFailure, resp)
-        end
+        resp.status == 200 ? _transcription_success(_transcription_json(t.service, t, resp), resp) :
+                             _failure(AudioFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)
@@ -719,16 +711,24 @@ end
 transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
 
-# ─── Translation (OpenAI Realtime translation sessions) ──────────────────────
+# A 200 transcription or translation reply: the JSON object `{"text": …}`, or the bare text.
+function _transcription_success(json::Bool, resp::HTTP.Response)::TranscriptionSuccess
+    json || return TranscriptionSuccess(text=String(resp.body))
+    d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    TranscriptionSuccess(text=get(d, "text", ""), raw=d)
+end
+
+# ─── Translation (OpenAI Realtime translation sessions, Ollama) ──────────────
 
 """
-    translate(path; language="en", model="gpt-realtime-translate", service=OPENAIServiceEndpoint,
+    translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint,
               config=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
 
-Translate the speech in the WAV file at `path` into `language` and return the translation as text:
-a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref).
+Translate the speech in the audio file at `path` into `language` and return the translation as
+text: a [`TranscriptionSuccess`](@ref), read with [`transcript_text`](@ref). `model` left `nothing`
+is the service's default: `gpt-realtime-translate` on OpenAI; Ollama has none.
 
-The audio goes to an OpenAI Realtime translation session
+On OpenAI the audio goes to an OpenAI Realtime translation session
 (`wss://api.openai.com/v1/realtime/translations`,
 [Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)): UniLM
 sets the target language (the session's `audio.output.language`, such as `"fr"` or `"es"`; English
@@ -739,31 +739,55 @@ did. A short clip's translation also varies from call to call: of ten translatio
 two-second French sentence made with [`speak`](@ref), one came back empty and six named words the
 sentence does not have (October 2026).
 
-`path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation session
-takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear interpolation
-(speech-grade: there is no anti-aliasing filter). Any other file throws `ArgumentError` before any
-I/O, naming the conversion; so do an empty file, a blank `language` and a service without OpenAI's
-Realtime API.
+There `path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation
+session takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear
+interpolation (speech-grade: there is no anti-aliasing filter). Any other file throws `ArgumentError`
+before any I/O, naming the conversion; so do an empty file, a blank `language` and a service that
+has neither OpenAI's Realtime API nor Ollama's translation route.
 
-A failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event, for example
-for a language it does not translate into (`status = nothing`, the event's JSON as `response`), read
-even when the server closes the session during the upload, or a WebSocket upgrade the server refuses
-(a bad key is a 401). A session that closes before `session.closed` (`error` names the close's status
-and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
+On [`OllamaEndpoint`](@ref) (Ollama 0.40.12 or later) the file goes as it is to Ollama's
+OpenAI-compatible translation route, one multipart request carrying the `model` and the target
+`language` as `to_language`, the "ISO 639-1 code of the output language"
+([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)); the translation is the
+reply's `text`, and `raw` holds the reply. Ollama decodes a WAV file itself and passes any other
+container to the model whole. There is no default model: name an installed model that hears audio,
+such as `lfm3-audio`; a call without one, a blank `language`, and a missing or empty file throw
+`ArgumentError` before any request:
+
+```julia
+r = translate("bonjour.wav"; language="en", service=OllamaEndpoint(), model="lfm3-audio")
+r isa TranscriptionSuccess && println(transcript_text(r))
+```
+
+A status Ollama answers is an [`AudioFailure`](@ref) (a language it does not translate into is a
+400); transient statuses and transport failures are retried as [`transcribe`](@ref) retries them,
+the whole file sent each time.
+
+On OpenAI, a failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event,
+for example for a language it does not translate into (`status = nothing`, the event's JSON as
+`response`), read even when the server closes the session during the upload, or a WebSocket upgrade
+the server refuses (a bad key is a 401). A session that closes before `session.closed` (`error`
+names the close's status and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
 `config::Union{Nothing,RequestConfig}` bounds the call as for [`speak`](@ref): `total_deadline` the
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
-every wait for the next event. It is a single attempt, which `max_attempts` does not change: a retry
-after the session's audio was sent may bill a second translation, and a session's audio cannot be
-resumed. The ambient [`CancelToken`](@ref)
+every wait for the next event. On OpenAI it is a single attempt, which `max_attempts` does not
+change: a retry after the session's audio was sent may bill a second translation, and a session's
+audio cannot be resumed. The ambient [`CancelToken`](@ref)
 ([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
 call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
 """
 function translate(path::AbstractString; language::AbstractString="en",
-                   model::AbstractString="gpt-realtime-translate",
+                   model::Union{AbstractString,Nothing}=nothing,
                    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
                    config::Union{Nothing,RequestConfig}=nothing)
+    _translate(service, path, language, model, config)
+end
+
+# OpenAI: a Realtime translation session, on `gpt-realtime-translate` unless the call names another model.
+function _translate(service, path::AbstractString, language::AbstractString, model::Union{AbstractString,Nothing},
+                    config::Union{Nothing,RequestConfig})
     validate_capability(service, :realtime, "translate (OpenAI Realtime API)")
-    m = String(model)
+    m = String(something(model, "gpt-realtime-translate"))
     url = _realtime_translation_url(service, m)
     lang = _translation_language(language)
     pcm = _translation_pcm(path)
@@ -771,6 +795,36 @@ function translate(path::AbstractString; language::AbstractString="en",
     try
         r = _realtime_call(session -> _realtime_translate(session, pcm, lang), url, m, service, cfg, t0)
         r isa LLMRequestResponse ? r : _realtime_closed("session.closed")
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(AudioCallError, e)
+    end
+end
+
+const _OLLAMA_TRANSLATIONS_PATH = "/v1/audio/translations"   # Ollama's OpenAI-compatible translation route
+
+# Ollama (0.40.12 or later): the file as it is, the model and the target language as `to_language`, in one multipart
+# request, answered as a transcription is (https://docs.ollama.com/api/openai-compatibility). Retried as `transcribe`
+# is, each attempt building its form from the file.
+function _translate(service::OllamaEndpoint, path::AbstractString, language::AbstractString,
+                    model::Union{AbstractString,Nothing}, config::Union{Nothing,RequestConfig})
+    validate_capability(service, :audio, "translate (Ollama translation route)")
+    (isnothing(model) || isempty(strip(model))) && throw(ArgumentError(
+        "Ollama has no default translation model: name an installed model that hears audio, e.g. " *
+        "model = \"lfm3-audio\""))
+    lang = _translation_language(language)
+    isfile(path) || throw(ArgumentError("file not found: $path"))
+    filesize(path) > 0 || throw(ArgumentError(
+        "$(basename(path)) is empty, and Ollama answers an empty upload with HTTP 400 \"audio file is empty\": " *
+        "translate a recording"))
+    file, m = String(path), String(model)
+    form() = HTTP.Form(Pair{String,Any}["file" => HTTP.Multipart(basename(file), IOBuffer(read(file)), _mime_for(file)),
+                                        "model" => m, "to_language" => lang])
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * _OLLAMA_TRANSLATIONS_PATH,
+                                  auth_header_multipart(service), _BodyFactory(form))
+        resp.status == 200 ? _transcription_success(_ollama_audio_json(resp), resp) : _failure(AudioFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)

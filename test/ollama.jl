@@ -916,7 +916,6 @@ end
         e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
         @test e isa ArgumentError && startswith(e.msg, "Ollama") && occursin(fragment, e.msg)
     end
-    @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation stays refused
     seen = Ref{Any}(nothing)
     handler = req -> (seen[] = (String(req.target), applicable(copy, req.body) ? String(copy(req.body)) : "");
         HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}("{\"text\":\"The secret word is banana.\"}")))

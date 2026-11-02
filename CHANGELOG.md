@@ -101,6 +101,13 @@
   cached-input and output tokens with GPT-6's cache-write and long-context terms, at Standard only; Astra for Law at
   \$10.00 / \$1.00 / \$50.00, a promotional price at least through 2026-12-31. Neither takes another model's request
   rules.
+- **An unstreamed `respond` on Gemini Interactions continues a generation that Google stops at its per-request output
+  cap.** Such a reply has the status `requires_continuation` and a `continuation_token`; UniLM sends the token on as
+  Google's SDK does. For a stored interaction, the request names the interaction that issued the token as
+  `previous_interaction_id` and omits `input`; with `store=false` it repeats the whole request. It sends at most
+  `max(8, cld(max_output_tokens, 32_768) + 1)` requests, each with the whole `RequestConfig` budget. It returns one
+  interaction: the last request's id, status and tier, every request's steps, and their usage summed. A reply that
+  produced no output token ends the sequence, and a streamed `respond` is not continued.
 
 ### Fixed
 - **`speak` and `translate` on OpenAI read the provider's error after a send fails at the transport.** When a write
@@ -121,6 +128,9 @@
   request**, on Chat Completions and on Responses. OpenAI's references allow only `"24h"` there, and the API answered
   `"in_memory"` on `gpt-5.5` with HTTP 400 ("This model is compatible only with 24h extended prompt caching"); UniLM
   sent it unchecked.
+- **The Gemini docs no longer say thought summaries add nothing to the bill.** A `Chat` sends them back with the
+  reply on its next turn, where they bill as input: on `gemini-3.8-flash`, an 895-character summary added 365 input
+  tokens.
 
 ## 0.29.0
 

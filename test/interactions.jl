@@ -971,6 +971,31 @@ end
     @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
 end
 
+@testset "Interactions stream — an answer's citations count bytes of its whole text, across every text delta" begin
+    # The answer arrives in three text deltas, the first holding a 3-byte "—", and its citations after them:
+    # their indices count bytes of the step's whole text, as an unstreamed interaction's do.
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    deltas = ["Julia 1.13 — ", "was released ", "in 2026."]
+    answer = join(deltas)
+    cite(id, text) = (i = first(findfirst(text, answer)) - 1;
+                      Dict("type" => "url_citation", "url" => "https://example.com/$id", "title" => id,
+                           "start_index" => i, "end_index" => i + ncodeunits(text)))
+    notes = [cite("a", "Julia 1.13"), cite("b", "in 2026")]
+    interaction = Dict("id" => "v1_d", "status" => "completed", "model" => "gemini-3.8-flash")
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "model_output"))) *
+          join(ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "text", "text" => d))) for d in deltas) *
+          ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "text_annotation_delta", "annotations" => notes))) *
+          ev("step.stop", Dict("index" => 0)) *
+          ev("interaction.completed", Dict("interaction" => interaction))
+    rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
+    streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
+    @test output_text(streamed) == answer
+    segment(a) = String(codeunits(answer)[a["start_index"]+1:a["end_index"]])
+    @test [segment(a) for a in url_citations(streamed)] == ["Julia 1.13", "in 2026"]
+    steps = [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => answer, "annotations" => notes)])]
+    @test streamed.output == UniLM._interaction_response_object(merge(interaction, Dict("steps" => steps))).output
+end
+
 @testset "Interactions encode — an input ending with an assistant message is refused where Gemini answers it with HTTP 400" begin
     # gemini-3.8-flash answered an input whose last step is a model_output with HTTP 400 "Request contains an
     # invalid argument.", and the same input with a user message after it with HTTP 200 (2026-10-26), as

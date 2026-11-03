@@ -550,7 +550,11 @@ const _RL_STREAM_BYTES = Dict(
              "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\n",
     :no_final_newline => "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"unterminated\"}}]}\n\n" *
                          "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
-                         "data: [DONE]")
+                         "data: [DONE]",
+    # Bytes after the terminal event, in the same read as it: a comment and an event no parser may see.
+    :after_done => "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ended\"}}]}\n\n" *
+                   "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+                   "data: [DONE]\n\n: after the end\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" more\"}}]}\n\n")
 _rl_mock_bytes(variant::Symbol) = _RL_STREAM_BYTES[variant]
 
 # A truncated stream has no finish and no `[DONE]`; an in-band error arrives on the 200 stream.
@@ -1138,22 +1142,27 @@ end
     end
 end
 @testset "recorded LLM answers — streams through nested scopes; the inner scope records what the outer replayed" begin
-    outer, inner = _ra_dir("llm-stream-outer"), _ra_dir("llm-stream-inner")
-    _rl_online(() -> with_recorded_answers(_rl_openai_stream, outer; mode=:record))
-    _rl_offline(() -> with_recorded_answers(outer) do
-        with_recorded_answers(_rl_openai_stream, inner; mode=:record_missing)
-    end)
-    # The same files, holding the same request, response head and stream: the time each was written aside, and
-    # what follows the terminal `data: [DONE]` line. A live recording keeps all its last read held (here the
-    # event's closing blank line, as the connection delivered it); a replay stops reading at that line.
-    function answer(file)
-        rec = JSON.parsefile(file)
-        res, stream = rec["response"], rec["response"]["stream"]
-        (rec["request"], Dict(k => v for (k, v) in res if k != "stream"),
-         stream[1:something(findfirst(==("data: [DONE]"), stream), length(stream))])
+    @testset "$name" for (name, call) in _RL_STREAM_CASES
+        outer, inner = _ra_dir("llm-stream-outer-$name"), _ra_dir("llm-stream-inner-$name")
+        _rl_online(() -> with_recorded_answers(call, outer; mode=:record))
+        _rl_offline(() -> with_recorded_answers(outer) do
+            with_recorded_answers(call, inner; mode=:record_missing)
+        end)
+        # The same files, holding the same request, response head and whole stream: only the time each was
+        # written differs. Both recordings end with the event that ended the stream.
+        answer(file) = (rec = JSON.parsefile(file); (rec["request"], rec["response"]))
+        @test readdir(inner) == readdir(outer)
+        @test [answer(f) for f in readdir(inner; join=true)] == [answer(f) for f in readdir(outer; join=true)]
     end
-    @test readdir(inner) == readdir(outer)
-    @test [answer(f) for f in readdir(inner; join=true)] == [answer(f) for f in readdir(outer; join=true)]
+end
+@testset "recorded LLM answers — a live stream's recording ends at the blank line that closes its terminal event" begin
+    dir = _ra_dir("llm-stream-after_done")
+    live, _ = _rl_online(() -> with_recorded_answers(() -> _rl_stream_case(:after_done), dir; mode=:record))
+    bytes = _rl_mock_bytes(:after_done)
+    @test join(only(JSON.parsefile.(joinpath.(dir, readdir(dir))))["response"]["stream"], "\n") ==
+          bytes[1:last(findfirst("data: [DONE]\n\n", bytes))]
+    replayed, _ = _rl_offline(() -> with_recorded_answers(() -> _rl_stream_case(:after_done), dir))
+    @test _rl_text(replayed) == _rl_text(live) == "ended"
 end
 @testset "recorded answers — an old recording without kept headers still replays as today" begin
     for f in readdir(_RA_COMMITTED)

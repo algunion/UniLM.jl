@@ -613,9 +613,10 @@ end
     _commit_stream!(src::_StreamSource, resp::HTTP.Response, raw::AbstractVector{UInt8}) -> Nothing
 
 Record a whole streamed reply in each file of `src.record_to`: `raw`, the bytes its
-attempt read, as the recording's `stream` lines (`_StreamRecording`), and `resp`'s head
-as an unstreamed reply's recording keeps it — the status, the request id with the name of
-the header that carried it, and the kept headers. Throws [`RecordingWriteError`](@ref)
+attempt read through the event that ended the stream (`_dispatch_units!`), as the
+recording's `stream` lines (`_StreamRecording`), and `resp`'s head as an unstreamed
+reply's recording keeps it — the status, the request id with the name of the header that
+carried it, and the kept headers. Throws [`RecordingWriteError`](@ref)
 for a file that cannot be written: the reply was paid for. Does nothing when no scope
 records the request.
 """

@@ -2366,7 +2366,9 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   "x-gemini-service-tier" (the tier Gemini billed) that the reply carried; a replay gives them
     #   back; absent in recordings made before it existed, which give back their request id alone
     #   stream: a streamed reply's body split at "\n" (in place of body), replayed through the
-    #   stream's parsers and callbacks; recorded only when the reply is whole and read with no stop
+    #   stream's parsers and callbacks; recorded only when the reply is whole and read with no stop,
+    #   through the event that ended it (on the OpenAI wire "data: [DONE]" and its blank line; the
+    #   whole body on a wire without one): bytes after it are neither recorded nor replayed
 
 struct ReplayMissError <: Exception       # thrown by the recorded verbs (or a stream's task), never a *CallError
     dir::String

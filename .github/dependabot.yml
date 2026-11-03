@@ -47,6 +47,10 @@ updates:
       # typescript below 6.1.0, and `npm run lint` fails under TypeScript 7.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # The site builds and lints on the Node 22 its workflow sets up, so its Node
+      # types follow Node 22's major.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       site:
         patterns: ["*"]

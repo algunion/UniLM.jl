@@ -1,14 +1,8 @@
 # Changelog
 
-## 0.31.1
+## 0.32.0
 
-### Added
-- **`translate(path; source_language=…)` names the spoken language.** On Ollama it goes out as the translation
-  route's `language` field, "the spoken language, if known". A blank one is refused before the request, and a
-  language Ollama does not know comes back as its 400, an `AudioFailure`. OpenAI's Realtime translation session has
-  no such field, so there `source_language` throws `ArgumentError` before any I/O.
-
-### Changed
+### Breaking
 - **`mcp_tools_respond` keeps a bridged tool's name up to 128 characters on OpenAI.** OpenAI's Responses API takes a
   function name of up to 128 characters, where its Chat Completions takes 64: on 2026-11-03 it answered a
   129-character name with HTTP 400, "Expected a string with maximum length 128". The Responses bridge cut every name
@@ -17,6 +11,18 @@
   on OpenAI, and every other endpoint keeps its limit. Upgrading: a `tool_choice` that names such a tool takes the
   name the bridge now advertises, and a recorded Responses request that bridged one no longer replays: record it
   again.
+
+### Added
+- **`translate(path; source_language=…)` names the spoken language.** On Ollama it goes out as the translation
+  route's `language` field, "the spoken language, if known". A blank one is refused before the request, and a
+  language Ollama does not know comes back as its 400, an `AudioFailure`. OpenAI's Realtime translation session has
+  no such field, so there `source_language` throws `ArgumentError` before any I/O.
+
+### Changed
+- **A custom `decode_agentic_stream` gets a stream a line at a time.** It was called once per raw read, several
+  payloads at once. It now gets each read a line at a time (a line with the blank lines right after it) and is not
+  called again after it returns `done`, so a stream's recording ends with the event that ended it. A method that
+  keeps a partial event in its state across calls, as it had to for a read that ends mid-event, needs no change.
 - **`MCPTool`'s documentation quotes OpenAI's answer to `connector_id` on a newer model.** On 2026-11-03
   `gpt-6-luna` answered a connector with HTTP 400, "Built-in MCP connector 'gdrive' (connector_id) is not supported
   with this model. …", while `gpt-5.4-mini` listed the connector's tools. `connector_id` is still sent to any model.
@@ -28,9 +34,9 @@
   unreadable one made the returned call error's cause a `SystemError`. It is now `UniLMCancelled`, with no file read.
 - **A stream's recording ends with the event that ended the stream.** A live recording kept whatever its last read
   held after the terminal event, so a recording made of a replay could end one blank line earlier. Both now end with
-  the terminal event and its closing blank line (`data: [DONE]` and the blank line after it, on the OpenAI wire).
-  Bytes after it are neither recorded nor replayed, and a wire without a terminal event keeps every byte. Committed
-  recordings replay as before.
+  the terminal event and the blank lines its read held (`data: [DONE]` and its closing blank line, on the OpenAI
+  wire, when one read held both). Bytes after it are neither recorded nor replayed, and a wire without a terminal
+  event keeps every byte. Committed recordings replay as before.
 - **The DeepSeek page no longer says DeepSeek's answer checks a strict tool's schema.** DeepSeek's page promises an
   error for a type strict mode does not support, but on 2026-11-03 a strict tool whose parameter had the type `null`
   was answered at both of its beta URLs.

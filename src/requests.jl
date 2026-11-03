@@ -668,8 +668,9 @@ end
 
 A recorded stream: the response headers a recording keeps (`_KEPT_HEADERS`), and the
 body the driver read through the piece of it that ended the stream ([`_stream_units`](@ref)):
-the terminal event with the blank line that closes it — `data: [DONE]` and the blank line
-after it, on the OpenAI wire — or the whole body on a wire that has no terminal event.
+the terminal event with the blank lines the same read held after it — `data: [DONE]` and
+its closing blank line, on the OpenAI wire, when one read held both — or the whole body on a
+wire that has no terminal event.
 It is split at every `'\\n'`, so that the body is `join(lines, "\\n")` exactly — a CR
 before a newline stays at the end of its line, and a body that the server did not end with
 a newline ends with a non-empty line. The rest of the read that held the terminal event,

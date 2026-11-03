@@ -88,7 +88,7 @@ read through the same parsers and callbacks as a live one.
 
 A stream is recorded only when its reply is whole — its final event arrived, and it was read with no
 stop — and its recording ends with that event (on the OpenAI wire, the `data: [DONE]` line and the blank
-line after it): bytes after it are neither recorded nor replayed. Both recording modes create `dir` if
+lines the same read held after it): bytes after it are neither recorded nor replayed. Both recording modes create `dir` if
 needed and check that it takes a file before `f` runs; an answer whose recording still cannot be written
 throws [`RecordingWriteError`](@ref), since the service has billed it.
 

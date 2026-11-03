@@ -305,14 +305,21 @@ end
     p = replace(passage(llm, "A prompt over", "the output rate."), r"`([0-9a-z.-]+)` \(and `(-[0-9a-z-]+)`\)" => s"`\1`, `\1\2`")
     m = match(r"([0-9.]+)× the input and cache-hit rates, ([0-9.]+)× the output rate", p)
     @test occursin("over $(limit ÷ 1000)K tokens", p) && Set(ids(p)) == long && (num(m[1]), num(m[2])) == multiples
-    # the audio input rates of the models whose table prices audio apart
-    audio = Dict(id => r * 1_000_000 for (id, r) in UniLM._GEMINI_AUDIO_INPUT_RATES if !isnothing(r))
-    p = passage(gc, "own audio price where its table lists one apart", "— and otherwise")
-    written = Dict(id => num(m[1]) for m in eachmatch(r"\\\$([0-9.]+) on ((?:`[^`]+`(?: and |, )?)+)", p) for id in ids(m[2]))
-    @test keys(written) == keys(audio) && all(id -> written[id] ≈ audio[id], keys(audio))
-    p = passage(llm, "own audio price where the page lists one apart", "per 1M")
-    written = Dict(id => num(m[2]) for m in eachmatch(r"((?:`[^`]+`(?: and |, )?)+) \\\$([0-9.]+)", p) for id in ids(m[1]))
-    @test keys(written) == keys(audio) && all(id -> written[id] ≈ audio[id], keys(audio))
+    # the audio rates of the models whose table prices audio apart, for input and for a cache hit: Cost and usage
+    # writes "\$r on `id`", llm.md "`id` \$r"
+    function audio_rates_written(rates, gc_from, gc_to, llm_from)
+        want = Dict(id => r * 1_000_000 for (id, r) in rates if !isnothing(r))
+        p = passage(gc, gc_from, gc_to)
+        written = Dict(id => num(m[1]) for m in eachmatch(r"\\\$([0-9.]+) on ((?:`[^`]+`(?: and |, )?)+)", p) for id in ids(m[2]))
+        @test keys(written) == keys(want) && all(id -> written[id] ≈ want[id], keys(want))
+        p = passage(llm, llm_from, "per 1M")
+        written = Dict(id => num(m[2]) for m in eachmatch(r"((?:`[^`]+`(?: and |, )?)+) \\\$([0-9.]+)", p) for id in ids(m[1]))
+        @test keys(written) == keys(want) && all(id -> written[id] ≈ want[id], keys(want))
+    end
+    audio_rates_written(UniLM._GEMINI_AUDIO_INPUT_RATES, "own audio price where its table lists one apart",
+                        "— and otherwise", "own audio price where the page lists one apart")
+    audio_rates_written(UniLM._GEMINI_CACHED_AUDIO_RATES, "the cached-audio price their tables list apart",
+                        ". Three cases", "the cached-audio price their tables list —")
     # the models that take no per-part media resolution: Limits and refusals lists them; Attachments names their families
     none = Set(UniLM._GEMINI_NO_PART_RESOLUTION)
     @test Set(ids(passage(idx, "| an image `detail` level on", "| `takes no per-image media resolution`"))) == none

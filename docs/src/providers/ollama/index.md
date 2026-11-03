@@ -469,11 +469,11 @@ transcript_text(r)
 The file goes as it is, with the model and the target `language` as Ollama's `to_language`, the "ISO 639-1
 code of the output language", and the translation is the reply's `text`, its JSON in `raw`. Ollama decodes a
 WAV file itself and passes any other container to the model whole, so any audio file goes, unlike on OpenAI.
-Ollama's own `language` field, the spoken language, and its `prompt` and `temperature` have no keyword in
-`translate`, which sends none of them. How well a model translates is its own: asked for the same French
-translation of the recording, `lfm3-audio`, the Liquid AI audio model whose Ollama release notes name
-translation, answered in English in each of four requests, `"The Z grid word is banana."`. A language Ollama
-does not translate into is its 400, an [`AudioFailure`](@ref), and a transient status is sent again, the
+`source_language`, when given, goes as Ollama's own `language` field, "the spoken language, if known"; its `prompt`
+and `temperature` have no keyword in `translate`, which sends neither. How well a model translates is its own: asked
+for the same French translation of the recording, `lfm3-audio`, the Liquid AI audio model whose Ollama release notes
+name translation, answered in English in each of four requests, `"The Z grid word is banana."`. A language Ollama
+does not translate into or from is its 400, an [`AudioFailure`](@ref), and a transient status is sent again, the
 whole file each time.
 
 ## [respond and FIM](@id ollama_respond)

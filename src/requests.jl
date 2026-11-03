@@ -667,10 +667,13 @@ end
     _StreamRecording(headers, lines)
 
 A recorded stream: the response headers a recording keeps (`_KEPT_HEADERS`), and the
-body the driver read up to the stream's terminal event, split at every `'\\n'`, so that
-it is `join(lines, "\\n")` exactly — a CR before a newline stays at the end of its line,
-and a body that the server did not end with a newline ends with a non-empty line. Bytes
-the driver drains after the terminal event (`_await_body_end`) are not kept.
+body the driver read through the piece of it that ended the stream ([`_stream_units`](@ref)):
+the terminal event with the blank line that closes it — `data: [DONE]` and the blank line
+after it, on the OpenAI wire — or the whole body on a wire that has no terminal event.
+It is split at every `'\\n'`, so that the body is `join(lines, "\\n")` exactly — a CR
+before a newline stays at the end of its line, and a body that the server did not end with
+a newline ends with a non-empty line. The rest of the read that held the terminal event,
+and the bytes the driver drains after it (`_await_body_end`), are not kept.
 """
 struct _StreamRecording
     headers::Vector{Pair{String,String}}
@@ -683,34 +686,28 @@ end
 A recorded stream, read by a stream driver with the calls it makes on a live
 `HTTP.Stream`. `HTTP.startread` returns `response`, an HTTP 200 carrying the recording's
 headers (where `_get_request_id` finds its request id, as on a live stream);
-`readavailable` returns one recorded line per call, with the newline that ended it; `eof`
-is true once no byte is left or the stream is closed; writing the request sends nothing,
-since the recording answers it; `close` and `HTTP.closeread` end the reading, and
-`HTTP.closewrite` does nothing. No read waits, so a replay arms neither the first-byte
-deadline nor the idle guard (`_first_byte_bound`, `_idle_bound`).
+`readavailable` returns one piece of the recorded body per call ([`_stream_units`](@ref)),
+the pieces a driver records a stream in, so a recording made of a replay ends where the
+replayed one does; `eof` is true once no byte is left or the stream is closed; writing the
+request sends nothing, since the recording answers it; `close` and `HTTP.closeread` end
+the reading, and `HTTP.closewrite` does nothing. No read waits, so a replay arms neither
+the first-byte deadline nor the idle guard (`_first_byte_bound`, `_idle_bound`).
 """
 mutable struct _ReplayedStream <: IO
     const response::HTTP.Response{Vector{UInt8}}
-    const lines::Vector{String}
-    next::Int                 # the line the next read returns
+    const units::Vector{SubString{String}}
+    next::Int                 # the piece the next read returns
     @atomic open::Bool        # a body-end wait closes it from its timer's task (`_await_body_end`)
 end
-_ReplayedStream(rec::_StreamRecording) = _ReplayedStream(HTTP.Response(200, rec.headers), rec.lines, 1, true)
+_ReplayedStream(rec::_StreamRecording) =
+    _ReplayedStream(HTTP.Response(200, rec.headers), _stream_units(join(rec.lines, "\n")), 1, true)
 
 HTTP.startread(io::_ReplayedStream)::HTTP.Response{Vector{UInt8}} = io.response
-# The bytes left are the lines from `next` on and the newlines between them: none once only
-# the empty line after a final newline is left.
-Base.eof(io::_ReplayedStream)::Bool = !(@atomic io.open) || io.next > length(io.lines) ||
-                                      (io.next == length(io.lines) && isempty(io.lines[io.next]))
+Base.eof(io::_ReplayedStream)::Bool = !(@atomic io.open) || io.next > length(io.units)
 function Base.readavailable(io::_ReplayedStream)::Vector{UInt8}
     eof(io) && return UInt8[]
-    line = io.lines[io.next]
     io.next += 1
-    ended = io.next <= length(io.lines)        # a newline followed the line
-    bytes = Vector{UInt8}(undef, ncodeunits(line) + ended)
-    copyto!(bytes, codeunits(line))
-    ended && (bytes[end] = UInt8('\n'))
-    bytes
+    Vector{UInt8}(codeunits(io.units[io.next - 1]))
 end
 Base.isopen(io::_ReplayedStream)::Bool = @atomic io.open
 Base.close(io::_ReplayedStream)::Nothing = (@atomic io.open = false; nothing)
@@ -720,6 +717,53 @@ Base.close(io::_ReplayedStream)::Nothing = (@atomic io.open = false; nothing)
 Base.unsafe_write(::_ReplayedStream, ::Ptr{UInt8}, ::UInt)::UInt = UInt(0)
 HTTP.closewrite(::_ReplayedStream)::Nothing = nothing
 HTTP.closeread(io::_ReplayedStream)::Nothing = close(io)
+
+"""
+    _stream_units(s::String) -> Vector{SubString{String}}
+
+`s` in the pieces a stream driver parses and records one at a time
+([`_dispatch_units!`](@ref)) and a replay serves one per read: a line with the newline that
+ends it and the blank lines right after it (`"\\n"` or `"\\r\\n"`: an SSE event's closing
+blank line goes with the event's last line), and a last line without a newline as it is.
+"""
+function _stream_units(s::String)::Vector{SubString{String}}
+    units = SubString{String}[]
+    n, i = ncodeunits(s), 1
+    while i <= n
+        j = something(findnext('\n', s, i), n)
+        while j < n                          # the blank lines right after the line
+            k = j + 1
+            codeunit(s, k) == UInt8('\r') && k < n && (k += 1)
+            codeunit(s, k) == UInt8('\n') || break
+            j = k
+        end
+        push!(units, SubString(s, i, thisind(s, j)))
+        i = j + 1
+    end
+    units
+end
+
+"""
+    _dispatch_units!(dispatch, ends, raw::IOBuffer, chunk::String) -> status
+
+Parse one read of a stream a piece at a time ([`_stream_units`](@ref)), each written to
+`raw`, the bytes a recording keeps, before `dispatch(piece)` parses it, and return the last
+status. The piece whose status `ends` is the last one: the rest of the read is neither
+parsed nor recorded. A replay serves a recording in the same pieces, so its driver stops at
+the same one, and the recording ends with the event that ended the stream: one definition
+of a stream's end, for the stream and for its recording.
+"""
+function _dispatch_units!(dispatch, ends, raw::IOBuffer, chunk::String)
+    units = _stream_units(chunk)
+    isempty(units) && return dispatch(chunk)     # an empty read: nothing to parse or keep
+    k = 1
+    while true
+        write(raw, units[k])
+        status = dispatch(String(units[k]))
+        (ends(status) || k == length(units)) && return status
+        k += 1
+    end
+end
 
 """
     _StreamSource(replay, record_to, method, path, body, key_extra)
@@ -1776,8 +1820,8 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         while status === :continue && !iscancelled(ctl.stop) && !eof(io)
             raw = String(readavailable(io))
             _touch!(idle[])
-            write(raw_buffer, raw)
-            status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+            status = _dispatch_units!(u -> _sse_dispatch!(chat.service, carry, current_event, u, state),
+                                      !=(:continue), raw_buffer, raw)
             _fire_tool_calls!(otc, state, false)
             _flush_delta!(cb, state, ctl.close)
         end

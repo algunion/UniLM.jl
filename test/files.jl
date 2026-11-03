@@ -184,6 +184,22 @@ end
     end
 end
 
+@testset "upload_file: a cancelled token reads no file" begin
+    # The file exists, but its mode forbids reading it: a call that read it would end in that
+    # SystemError. (Root reads it anyway; the result is the same.)
+    fpath = tempname() * ".jsonl"
+    write(fpath, "{}\n")
+    chmod(fpath, 0o000)
+    try
+        r, seen = _with_scripted(() -> upload_file(fpath, "batch"; service=URLProbe, cancel=cancel!(CancelToken())),
+                                 (_, _) -> _json(200, "{}"))
+        @test (typeof(r), typeof(r.cause), length(seen)) == (FileCallError, UniLMCancelled, 0)
+    finally
+        chmod(fpath, 0o600)
+        rm(fpath; force=true)
+    end
+end
+
 @testset "upload_file: a create is sent once, never retried" begin
     # A create is not idempotent. A POST the client stopped waiting for, or a gateway
     # 5xx sent after the backend stored the file, may already have created the file,

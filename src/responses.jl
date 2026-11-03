@@ -1544,20 +1544,20 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             guard[] = _idle_guard(() -> close(io), _idle_bound(io, cfg))
             at_eof = false
             while !done[] && !iscancelled(ctl.stop)
-                if eof(io)
+                status = if eof(io)
                     # EOF flush (mirrors the chat driver): a peer can end
                     # its last line WITHOUT the trailing newline — a
                     # terminal event as the very last bytes is still ONE
                     # COMPLETE line. Feed the newline that terminates it,
                     # then stop. With an empty carry this decodes nothing.
-                    chunk = "\n"
                     at_eof = true
+                    decode_agentic_stream(r.service, "\n", state)
                 else
                     chunk = String(readavailable(io))
                     _touch!(guard[])
-                    write(raw_buffer, chunk)
+                    # Parsed and recorded through the event that ends the stream, as its replay reads it.
+                    _dispatch_units!(u -> decode_agentic_stream(r.service, u, state), s -> s.done, raw_buffer, chunk)
                 end
-                status = decode_agentic_stream(r.service, chunk, state)
                 if status.terminal in (:completed, :incomplete) &&
                    status.data isa AbstractDict && haskey(status.data, "response")
                     # BOTH terminals carry a real response object, so both finalize

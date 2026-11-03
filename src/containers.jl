@@ -176,7 +176,8 @@ function add_container_file(container_id::String, path::String; service::Service
     isfile(path) || throw(ArgumentError("file not found: $path"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        form = HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
+        # `_http` builds the form after its cancel check: a cancelled token reads no file.
+        form = _BodyFactory(() -> HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))]))
         url = _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(container_id) * "/files"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)

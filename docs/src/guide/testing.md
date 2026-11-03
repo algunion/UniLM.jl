@@ -87,9 +87,10 @@ read through the same parsers and callbacks as a live one.
 | `:record_missing` | What `dir` holds is replayed; the rest goes to the service, and its 200s are recorded. |
 
 A stream is recorded only when its reply is whole — its final event arrived, and it was read with no
-stop. Both recording modes create `dir` if needed and check that it takes a file before `f` runs; an
-answer whose recording still cannot be written throws [`RecordingWriteError`](@ref), since the service has
-billed it.
+stop — and its recording ends with that event (on the OpenAI wire, the `data: [DONE]` line and the blank
+line after it): bytes after it are neither recorded nor replayed. Both recording modes create `dir` if
+needed and check that it takes a file before `f` runs; an answer whose recording still cannot be written
+throws [`RecordingWriteError`](@ref), since the service has billed it.
 
 ## [The key is the exact request](@id testing_key)
 

@@ -1,4 +1,4 @@
-using Test, Markdown, UniLM
+using Test, Markdown, UniLM, Dates
 using Logging: with_logger, NullLogger
 using Documenter: MarkdownAST
 isdefined(Main, :ProviderFacts) || include(joinpath(@__DIR__, "ProviderFacts.jl")); using .ProviderFacts
@@ -258,6 +258,87 @@ end
     takes(id, level) = try UniLM._gemini_thinking_level(id, level); true
                        catch err; err isa ArgumentError || rethrow(); false end
     @test all(r -> levels(r[2]) == filter(l -> takes(model(r), l), ["minimal", "low", "medium", "high"]), rows)
+end
+@testset "ProviderFacts — the Gemini model lists and rates written out in the manual are the code's" begin
+    # A page's text with its line breaks and indentation made single spaces, and the passage of it from the first
+    # `from` to the end of the first `to` after it; the model ids written as code in a passage.
+    flat(file) = replace(read(joinpath(SRC, file), String), r"[ \t]*\n[ \t]*" => " ")
+    function passage(text, from, to)
+        i = something(findfirst(from, text), 0:-1); isempty(i) && error("no $(repr(from))")
+        j = something(findnext(to, text, last(i) + 1), 0:-1); isempty(j) && error("no $(repr(to)) after $(repr(from))")
+        text[first(i):last(j)]
+    end
+    ids(s) = [String(m[1]) for m in eachmatch(r"`((?:gemini|gemma)-[0-9a-z.-]*[0-9a-z])`", s)]
+    num(s) = parse(Float64, s)
+    gc, idx, llm = flat("providers/gemini/generate_content.md"), flat("providers/gemini/index.md"), flat("llm.md")
+    shipped(id) = (r = UniLM._SHIPPED_PRICES[id]; (r.input, r.cached_input, r.output) .* 1_000_000)
+    # the models released before Gemini 3.6 Flash, which alone take sampling parameters and a final model turn
+    pre = Set(UniLM._GEMINI_PRE_3_6_MODELS)
+    @test Set(ids(passage(gc, "refuses them for any other", "The same ids are the ones"))) == pre
+    @test Set(ids(passage(llm, "exact ids, released before Gemini 3.6 Flash:", "ignores them on later models"))) == pre
+    # the billed tiers: the multiple of the rates, and a cache hit's price where a model's table lists its own
+    tiers = UniLM._GEMINI_TIER_PRICES
+    p = passage(gc, "- the billed tier, `usage.service_tier`:", "whose standard one is")
+    m = match(r"([0-9.]+) for `\"flex\"` and ([0-9.]+) for `\"priority\"`", p)
+    @test Set(keys(tiers)) == Set(["flex", "priority"]) && (num(m[1]), num(m[2])) == (tiers["flex"].multiple, tiers["priority"].multiple)
+    standard = passage(p, "the standard one on Flex for", " models,")                 # "… and the `gemini-2.5-` models"
+    family = occursin("the `gemini-2.5-` models", standard) ? filter(startswith("gemini-2.5-"), price_rows(:gemini)) : String[]
+    @test Set([ids(standard); family]) == Set(id for (id, x) in tiers["flex"].cache if x == 1.0)
+    @test !any(==(1.0), values(tiers["priority"].cache))                                 # no "standard one on Priority"
+    own = [(id=String(m[3]), flex=num(m[1]), priority=num(m[2]), standard=num(m[4])) for m in
+           eachmatch(r"\\\$([0-9.]+) \(Flex\) and \\\$([0-9.]+) \(Priority\) per 1M for `([^`]+)`, whose standard one is \\\$([0-9.]+)", gc)]
+    @test Set(o.id for o in own) == Set(id for t in values(tiers) for (id, x) in t.cache if x != 1.0)
+    for o in own
+        @test o.standard ≈ shipped(o.id)[2]
+        @test all((o.flex, o.priority) .≈ (tiers["flex"].cache[o.id], tiers["priority"].cache[o.id]) .* o.standard)
+    end
+    # the long-context models: over the short-context limit, the multiples of the input and output rates
+    long, limit = Set(UniLM._GEMINI_LONG_CONTEXT_MODELS), UniLM._GEMINI_SHORT_CONTEXT
+    multiples = UniLM._gemini_context_multiples(first(long), limit + 1)
+    p = passage(gc, "- a prompt over", "the whole request.")
+    m = match(r"([0-9.]+) on the input and cache-hit rates and ([0-9.]+) on the output rate", p)
+    @test occursin("over $(ProviderFacts._thousands(limit)) tokens", p) && Set(ids(p)) == long && (num(m[1]), num(m[2])) == multiples
+    p = replace(passage(llm, "A prompt over", "the output rate."), r"`([0-9a-z.-]+)` \(and `(-[0-9a-z-]+)`\)" => s"`\1`, `\1\2`")
+    m = match(r"([0-9.]+)× the input and cache-hit rates, ([0-9.]+)× the output rate", p)
+    @test occursin("over $(limit ÷ 1000)K tokens", p) && Set(ids(p)) == long && (num(m[1]), num(m[2])) == multiples
+    # the audio input rates of the models whose table prices audio apart
+    audio = Dict(id => r * 1_000_000 for (id, r) in UniLM._GEMINI_AUDIO_INPUT_RATES if !isnothing(r))
+    p = passage(gc, "own audio price where its table lists one apart", "— and otherwise")
+    written = Dict(id => num(m[1]) for m in eachmatch(r"\\\$([0-9.]+) on ((?:`[^`]+`(?: and |, )?)+)", p) for id in ids(m[2]))
+    @test keys(written) == keys(audio) && all(id -> written[id] ≈ audio[id], keys(audio))
+    p = passage(llm, "own audio price where the page lists one apart", "per 1M")
+    written = Dict(id => num(m[2]) for m in eachmatch(r"((?:`[^`]+`(?: and |, )?)+) \\\$([0-9.]+)", p) for id in ids(m[1]))
+    @test keys(written) == keys(audio) && all(id -> written[id] ≈ audio[id], keys(audio))
+    # the models that take no per-part media resolution: Limits and refusals lists them; Attachments names their families
+    none = Set(UniLM._GEMINI_NO_PART_RESOLUTION)
+    @test Set(ids(passage(idx, "| an image `detail` level on", "| `takes no per-image media resolution`"))) == none
+    @test occursin("UniLM refuses a level on the Gemini 2.5 and Gemma 4 models", gc) &&
+          none == Set(id for id in pre if startswith(id, "gemini-2.5-") || startswith(id, "gemma-4-"))
+    # the dated price changes: each segment of Cost and usage's list names its models, the shipped rates, the new
+    # ones and the date they bill from; a model the text names by its product name is found by that name
+    names = Dict("gemini-4-argon" => "Gemini 4 Argon", "gemini-3.8-flash" => "Gemini 3.8", "gemini-3.6-flash" => "3.6 Flash",
+                 "gemini-robotics-er-2-preview" => "Robotics-ER 2 Preview")
+    rates(m) = Tuple(num(m[k]) for k in 1:3)
+    p = passage(gc, "Per 1M input, cache-hit and output tokens", ". The table gives")
+    segments = split(chopsuffix(p[(last(findfirst("): ", p)) + 1):end], ". The table gives"), "; ")
+    found = Dict{String,Tuple}()                       # a model id => the segment's shipped rates, new rates and date
+    day = nothing
+    for s in segments
+        triples = [rates(m) for m in eachmatch(r"\\\$([0-9.]+) / \\\$([0-9.]+) / \\\$([0-9.]+)", s)]
+        starting = match(r"\"starting ([A-Z][a-z]+ \d{1,2}, \d{4})\"", s)
+        day = isnothing(starting) ? (occursin("from the same day", s) ? day : nothing) : Date(starting[1], dateformat"U d, yyyy")
+        through = match(r"\"through ([A-Z][a-z]+ \d{1,2}, \d{4})\"", s)
+        @test length(triples) == 2 && !isnothing(day) && (isnothing(through) || Date(through[1], dateformat"U d, yyyy") == day - Day(1))
+        named = [ids(s); [id for (id, name) in names if occursin(name, s)]]
+        @test !isempty(named)
+        foreach(id -> (@test !haskey(found, id); found[id] = (triples..., day)), named)
+    end
+    @test keys(found) == keys(UniLM._PRICE_CHANGES)
+    for (id, changes) in UniLM._PRICE_CHANGES
+        c = only(changes)                                # the list gives one change per model
+        new = (c.row.input, c.row.cached_input, c.row.output) .* 1_000_000
+        @test all(found[id][1] .≈ shipped(id)) && all(found[id][2] .≈ new) && found[id][3] == c.from
+    end
 end
 @testset "ProviderFacts — the Anthropic requests page has a Thinking legend row for each cell the family table writes" begin
     # the legend's first column, as written; its last row covers a model the family table has no row for

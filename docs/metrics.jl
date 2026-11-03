@@ -355,14 +355,24 @@ _evidence_lines(file::String)::Int = last(_prose(read(file, String), file))
 # Nothing of an identifier before a token.
 const _BEFORE = "(?<![A-Za-z0-9_])"
 
+# What may come before a model-id prefix — a token ending in `-`, such as `whisper-` —, which
+# starts an id: not a `-`, after which it is the inside of another model's id
+# (`distil-whisper-large-v3`, `gemini-3.1-flash-tts-preview`), and a `/` only where an Ollama tag
+# follows the id (`library/gpt-oss:20b`, Ollama's): before an untagged id, a `/` ends the name of
+# whoever publishes that model (`Xenova/whisper-tiny`, `openai/whisper-large-v3-turbo` on a local
+# server).
+_prefix_start(escaped::String)::String = "(?<!-)(?:(?<!/)|(?=$(escaped)[A-Za-z0-9._-]*:[A-Za-z0-9]))"
+
 # A token as one group of a pattern, and what may follow it: after a prefix — a token ending in
 # `-` or `_`, such as `gpt-` — the rest of the identifier; after a token ending in a letter, an
 # uppercase letter and the rest of a CamelCase identifier (`OllamaOptions`), or no part of an
-# identifier (so `Jevons` holds no `Jev`); after any other token, no part of an identifier.
+# identifier (so `Jevons` holds no `Jev`); after any other token, no part of an identifier. A
+# model-id prefix comes where `_prefix_start` lets one start.
 function _alternative(token::String)::String
     after = endswith(token, '-') || endswith(token, '_') ? "[A-Za-z0-9_]*" :
             isletter(last(token)) ? "(?:[A-Z][A-Za-z0-9_]*|(?![A-Za-z0-9_]))" : "(?![A-Za-z0-9_])"
-    string("(", replace(token, r"[\\^$.|?*+()\[\]{}]" => s"\\\0"), ")", after)
+    escaped = replace(token, r"[\\^$.|?*+()\[\]{}]" => s"\\\0")
+    string(endswith(token, '-') ? _prefix_start(escaped) : "", "(", escaped, ")", after)
 end
 
 # `tokens` longest first, and the alternation of their groups in that order, so the longest
@@ -404,7 +414,9 @@ of the entries that list it (more than one where entries of several providers li
 OpenAI's and Azure's). Link destinations — `](…)` — are dropped first, then the `NEUTRAL_TOKENS`,
 matched like any token. A token matches case-sensitively where no letter, digit or `_` precedes it
 (so `AZURE_OPENAI_API_KEY` holds no `OPENAI_API_KEY`). A token ending in `-` or `_` is a prefix and
-takes in the rest of the identifier it starts (`gpt-` in `gpt-5.4-mini`, `GPT-` in `GPT-6`); one
+takes in the rest of the identifier it starts (`gpt-` in `gpt-5.4-mini`, `GPT-` in `GPT-6`); one ending
+in `-`, a model-id prefix, starts no id after a `-`, nor after a `/` unless an Ollama tag follows
+(`distil-whisper-large-v3` and `Xenova/whisper-tiny` hold none, `library/gpt-oss:20b` holds `gpt-`); one
 ending in a letter takes in a CamelCase identifier it starts (`Ollama` in `OllamaOptions`,
 `TypeSafe` in `TypeSafeProtocol`) and matches nowhere a lowercase letter, digit or `_` follows it
 (`Jevons`); any other token matches only where none of those follows it. Where several tokens
@@ -538,8 +550,13 @@ const _ENDPOINT = r"\b(OPENAI|AZURE|GEMINI|GEMINIOpenAI|ANTHROPIC|TYPESAFE)Servi
 # The registry's model-id prefixes: its tokens that end in `-`, and those of the shared prefix
 # table, which holds `o1`, `o3` and `o4` too.
 const _MODEL_PREFIXES = [t for e in REGISTRY for t in e.tokens if endswith(t, '-') || any(ps -> t in ps, ProviderFacts._MODEL_PREFIXES)]
-# A quoted model id: a string that is an id with such a prefix, no whitespace in it.
-const _MODEL_ID = Regex("\"" * last(_alternation(_MODEL_PREFIXES)) * "[^\"\\s]*\"")
+# A model Ollama serves, named `model:tag`, a namespace before it or not (`qwen3:4b`,
+# `embeddinggemma-2:740m-q8_0`, `library/gpt-oss:20b`): Ollama's model names are this shape
+# (https://github.com/ollama/ollama/blob/main/docs/api.md#model-names), whatever the model.
+const _OLLAMA_ID = "[A-Za-z][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)?:[A-Za-z0-9][A-Za-z0-9._-]*"
+# A quoted model id: a string that is an id with such a prefix, no whitespace in it, or an
+# Ollama `model:tag`.
+const _MODEL_ID = Regex("\"(?:" * last(_alternation(_MODEL_PREFIXES)) * "[^\"\\s]*|" * _OLLAMA_ID * ")\"")
 const _PROVIDER_CODE = Regex(_ENDPOINT.pattern * "|" * _MODEL_ID.pattern)
 const _BINDING = r"^\s*service, model ="
 # A binding line: names assigned endpoints — called or not — and quoted ids, and nothing else. A
@@ -556,7 +573,8 @@ _chapter(page::String)::Chapter =
 
 # The breaches of a binding block's binding lines `bound` on `page`, each with its line: an
 # endpoint beyond the one a language-model concept page binds, or the two a Decisions one binds;
-# a registry-prefixed model id of a provider none of the bound endpoints serves.
+# a model id of a provider none of the bound endpoints serves — an id no registry token names
+# being an Ollama `model:tag`, Ollama's.
 function _breaches(page::String, lines::AbstractVector{<:AbstractString}, bound::Vector{Int})::Vector{Tuple{Int,String}}
     most, kind = _chapter(page) == ProviderFacts.decisions ? (2, "Decisions") : (1, "language-model")
     named = String[]                                         # the endpoints bound, in order
@@ -569,8 +587,9 @@ function _breaches(page::String, lines::AbstractVector{<:AbstractString}, bound:
     end
     providers(s::AbstractString) = Set{Symbol}(p for (ps, _) in provider_tokens(String(s)) for p in ps)
     served = reduce(union, providers.(named); init=Set{Symbol}())
+    owners(id::AbstractString) = (ps = providers(id); isempty(ps) ? Set([:ollama]) : ps)
     for n in bound, x in eachmatch(_MODEL_ID, lines[n])
-        isdisjoint(providers(strip(x.match, '"')), served) &&
+        isdisjoint(owners(strip(x.match, '"')), served) &&
             push!(found, (n, "$page:$n: $(x.match): a model of no provider the binding block binds"))
     end
     found
@@ -586,11 +605,12 @@ with nothing after them but a comment and no `\$` in a string, such as
 `llm, llm_model = OPENAIServiceEndpoint, "gpt-5.4-mini"` or `pinned = "jev-1.13.0"` — are exempt.
 Every other line of code, before the binding block or after it or in it, `@setup` blocks
 included, is checked for each endpoint it names (`OPENAIServiceEndpoint`, `MistralEndpoint`, …,
-with or without a call) and each quoted model id with a registry model-id prefix
-(`"claude-haiku-5-5"`; a string such as `"gpt-5.2 row: "` is no model id). The binding lines are
-held to their own bounds: at most one endpoint on a language-model concept page and two on a
-Decisions one (the chapter whose `CONCEPT_PAGES` end the path), and no registry-prefixed model id
-of a provider no bound endpoint serves; each breach names its line. Prose is not checked here:
+with or without a call) and each quoted model id: one with a registry model-id prefix
+(`"claude-haiku-5-5"`; a string such as `"gpt-5.2 row: "` is no model id), or an Ollama
+`model:tag` (`"qwen3:4b"`), Ollama's whatever its name. The binding lines are held to their own
+bounds: at most one endpoint on a language-model concept page and two on a Decisions one (the
+chapter whose `CONCEPT_PAGES` end the path), and no model id of a provider no bound endpoint
+serves; each breach names its line. Prose is not checked here:
 its provider tokens count in the page's share.
 """
 function concept_code_violations(page::String)::Vector{String}

@@ -319,6 +319,28 @@ end
     @test provider_tokens("gpt-oss:20b, library/gpt-oss:20b, gpt-oss-20b and gpt-5.4-mini: the default") ==
           [(Set([:ollama]), "gpt-"), (Set([:ollama]), "gpt-"), (Set([:openai, :azure]), "gpt-"), (Set([:openai, :azure]), "gpt-")]
 end
+@testset "metrics — a model-id prefix starts an id: never inside a longer one, after a / only with an Ollama tag" begin
+    gemini, ollama, openai = Set([:gemini]), Set([:ollama]), Set([:openai, :azure])
+    @test provider_tokens("distil-whisper-large-v3 and faster-whisper-small") == []          # another model's name
+    @test provider_tokens("gemini-3.1-flash-tts-preview") == [(gemini, "gemini-")]
+    @test provider_tokens("Xenova/whisper-tiny or openai/whisper-large-v3-turbo") == []      # a namespace's model
+    @test provider_tokens("library/gpt-oss:20b") == [(ollama, "gpt-")]                       # an Ollama model, tagged
+    @test provider_tokens("GPT-5.5/GPT-5.6, whisper-1 and tts-1") ==                          # the first one counts
+          [(openai, "GPT-"), (openai, "whisper-"), (openai, "tts-")]
+    @test share([fixture_page("A vLLM server runs distil-whisper-large-v3.\nNeutral line.\n")], :local_servers) == 0
+end
+@testset "metrics — concept-page code names a model by its Ollama tag too, which is Ollama's whatever its name" begin
+    code(text) = (dir = fixture_docsrc("guide/system_one.md" => text); p = joinpath(dir, "guide/system_one.md");
+                  (p, concept_code_violations(p)))
+    bind(lines...) = "```julia\n" * join(lines, '\n') * "\n```\n"
+    jev = "service, model = TYPESAFEServiceEndpoint, \"jev-latest\""
+    page, found = code(bind(jev) * "\n" * bind("ask(service, \"Is it late?\"; model=\"qwen3:4b\")",
+                                               "e = Embeddings(\"x\"; model=\"embeddinggemma-2:740m-q8_0\")",
+                                               "url, at = \"http://localhost:11434\", \"10:30\""))
+    @test found == ["$page:6: \"qwen3:4b\"", "$page:7: \"embeddinggemma-2:740m-q8_0\""]
+    @test last(code(bind(jev, "local_model = OllamaEndpoint(), \"qwen3:4b\""))) == String[]    # bound beside Ollama
+    @test length(last(code(bind(jev, "pinned = \"qwen3:4b\"")))) == 1                          # with no Ollama bound
+end
 @testset "metrics — OpenAI's audio and image model ids, Codestral and TypeSafe's variables name their provider" begin
     page(line) = fixture_page(line * "\nNeutral line.\n")
     @test provider_tokens("whisper-1, tts-1-hd and dall-e-3") ==

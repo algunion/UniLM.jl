@@ -1677,10 +1677,11 @@ mcp_tools_respond(session; service=OPENAIServiceEndpoint) -> Vector{CallableTool
 
 Bridged tool names are provider-safe for `service`, the endpoint the tools go to: any character
 outside `[A-Za-z0-9_-]` becomes `_`, and a name longer than the provider takes — 128 characters on
-`ANTHROPICServiceEndpoint`, `GEMINIServiceEndpoint` and `DeepSeekEndpoint`, 64 on `OPENAIServiceEndpoint`
-and every other endpoint — is cut to the limit less 9 characters and followed by `_` and the first 8 hex digits of
-the SHA-256 of its MCP name, so names that agree up to the cut stay apart (the callable still calls
-the MCP name); two tools mapping to one name raise `ArgumentError`.
+`ANTHROPICServiceEndpoint`, `GEMINIServiceEndpoint` and `DeepSeekEndpoint`, and for `mcp_tools_respond` on
+`OPENAIServiceEndpoint` (OpenAI's Responses API answers a longer name with HTTP 400), 64 for `mcp_tools` on
+`OPENAIServiceEndpoint` (its Chat Completions) and on every other endpoint — is cut to the limit less 9 characters
+and followed by `_` and the first 8 hex digits of the SHA-256 of its MCP name, so names that agree up to the cut
+stay apart (the callable still calls the MCP name); two tools mapping to one name raise `ArgumentError`.
 
 ### Client Example
 

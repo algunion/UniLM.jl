@@ -205,7 +205,9 @@ mcp_disconnect!(session)
 ### [Bridging to tool_loop (respond)](@id mcp_bridge_respond)
 
 [`mcp_tools_respond`](@ref) converts MCP tools into `Vector{CallableTool{FunctionTool}}`
-for use with [`tool_loop`](@ref), under the same names for the same `service`:
+for use with [`tool_loop`](@ref), under the same names for the same `service`, except that on
+`OPENAIServiceEndpoint` a name keeps up to 128 characters, since OpenAI's Responses API takes 128
+where its Chat Completions takes 64:
 
 ```julia
 session = mcp_connect("https://mcp.example.com/mcp")

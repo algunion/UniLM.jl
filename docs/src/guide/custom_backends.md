@@ -130,10 +130,12 @@ I/O and what it throws propagates from the verb, so throw `ArgumentError` for an
 wire cannot express. An exception thrown by a decoder becomes the verb's typed call-error
 result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`. Their stream
 handlers differ. `handle_sse_event!` is called once per payload, and an exception it throws
-drops that payload, counted in the result's `sse_dropped`. `decode_agentic_stream` is called once
-per raw read, which can hold several payloads, and an exception it throws ends the streamed
-`respond` as a `ResponseCallError` with the exception in `cause`: to drop an undecodable payload,
-skip it in the handler and count it in `state.sse_dropped`, as `src/interactions.jl` does.
+drops that payload, counted in the result's `sse_dropped`. `decode_agentic_stream` is called
+with each read a line at a time (a line with the blank lines right after it), so it keeps a
+partial event in its state; it is not called again after it returns `done`, and the rest of that
+read is neither decoded nor recorded. An exception it throws ends the streamed `respond` as a
+`ResponseCallError` with the exception in `cause`: to drop an undecodable payload, skip it in the
+handler and count it in `state.sse_dropped`, as `src/interactions.jl` does.
 
 ## [Fail-loud contract](@id custom_backends_fail_loud)
 

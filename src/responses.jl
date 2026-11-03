@@ -1866,17 +1866,22 @@ _continued_reply(send, _, ::Respond, ::String, resp::HTTP.Response)::HTTP.Respon
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
 
-Streaming half of the agentic wire seam: consume one raw read's bytes,
-mutate `state` (an [`AgenticStreamState`](@ref); text deltas go to both `textbuff` and
+Streaming half of the agentic wire seam: consume the next piece of the stream, mutate
+`state` (an [`AgenticStreamState`](@ref); text deltas go to both `textbuff` and
 `pending_delta`), and return `(; done, event, data, terminal)`: `done` is `true` at a
 terminal event, `terminal` is `:completed`, `:failed`, `:incomplete` or `:error`, and
 `data` holds that event's decoded payload. Default: OpenAI Responses SSE via
 `_parse_response_stream_chunk`.
 
-A raw read can hold several payloads, so the method drops an undecodable payload itself
-and counts it in `state.sse_dropped`, as the built-in methods do; an exception it throws
-ends the streamed [`respond`](@ref) as a `ResponseCallError` with the exception in
-`cause`.
+Each raw read is passed a piece at a time, in order: a line with its newline and the blank
+lines right after it (so an SSE event's closing blank line comes with its last line), and a
+last line without a newline as it is. A piece may end mid-event, and an event may span
+pieces and reads, so a method keeps what it has not finished in `state`, as the built-in
+methods do. Once a call returns `done`, the method is not called again: the rest of that
+read is neither decoded nor recorded, so a stream's recording ends with the event that
+ended it. A method drops an undecodable payload itself and counts it in
+`state.sse_dropped`; an exception it throws ends the streamed [`respond`](@ref) as a
+`ResponseCallError` with the exception in `cause`.
 
 Public extension API (not exported); see the Custom Backends guide. A streamed `respond` on
 an endpoint with no method throws the `MethodError` for this function before anything is

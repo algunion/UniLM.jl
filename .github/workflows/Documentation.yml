@@ -98,11 +98,15 @@ jobs:
           NEXT_PUBLIC_DOCS_VERSION: ${{ steps.site.outputs.version }}
         run: npm run build
       # Stubs at the routes earlier versions served, then the links into the export and its
-      # examples' outputs, checked for the export that is deployed: a live build never is.
+      # examples' outputs, checked for every build that replays the recorded answers: a push
+      # or a manual run, which is deployed, and a pull request, which is not. A live build is
+      # never deployed and skips them.
       - name: Redirect stubs and site checks
         if: github.event_name != 'workflow_dispatch' || !inputs.live_examples
+        env:
+          DOCS_BASE_PATH: ${{ steps.site.outputs.base_path }}
         run: |
-          julia --startup-file=no --project=docs/ docs/redirects.jl site/out "${{ steps.site.outputs.base_path }}"
+          julia --startup-file=no --project=docs/ docs/redirects.jl site/out "$DOCS_BASE_PATH"
           julia --startup-file=no --project=docs/ docs/site_checks.jl site/out site/src/app
       # The export, with the plan it was built for beside it, is all the deploy job receives.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

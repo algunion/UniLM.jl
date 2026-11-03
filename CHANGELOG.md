@@ -56,6 +56,9 @@
   404 page.
 - **The documentation site's previous/next links name an entry's start page with its group** ("OpenAI — Start
   here"), and the Ollama embeddings page's sidebar entry reads "Ollama embeddings".
+- **A scheduled price change's date in the Gemini price table stays on one line on a phone.** Its hyphens are
+  non-breaking (U+2011), so "from 2027‑01‑01" no longer splits across lines at 375 px; the table scrolls sideways
+  in its box instead.
 
 ## 0.30.0
 

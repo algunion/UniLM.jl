@@ -207,12 +207,14 @@ end
     @test refusal([remake(azure; endpoints=ServiceEndpointSpec[])]) == (:azure, :endpoints)
     @test refusal([remake(azure; pages=String[])]) == (:azure, :pages)
     @test refusal([remake(azure; pages=["providers/azure.html"])]) == (:azure, :pages)
+    @test refusal([remake(azure; pages=["/abs/providers/azure.md"])]) == (:azure, :pages)        # not under docs/src
     @test refusal([remake(jev; default_model="jev-1.13.0")]) == (:jev, :default_model)
     @test refusal([remake(openai; default_model=nothing)]) == (:openai, :default_model)
     @test refusal([openai, remake(gemini; start_id="openai_start")]) == (:gemini, :start_id)
     @test refusal([openai, remake(gemini; features=merge(gemini.features, Dict(:setup => "openai_setup")))]) ==
           (:gemini, :features)
     @test refusal([remake(jev; features=merge(jev.features, Dict(:images => "jev_images__next")))]) == (:jev, :features)
+    @test refusal([remake(gemini; start_id="gemini_start__next")]) == (:gemini, :start_id)        # a start id not yet final
     # `usage` is the code that gives the first endpoint: the type, or an instance of its type
     ollama, generic = entry(:ollama), entry(:local_servers)
     @test refusal([remake(openai; usage="ANTHROPICServiceEndpoint")]) == (:openai, :usage)      # another endpoint
@@ -228,6 +230,7 @@ end
     @test features(:x, (:setup, :streamng)) == (:x, :features)
     @test features(:x, (:setup,), :failure => "x_errors") == (:x, :features)
     @test features(:x, (:setup,), :failures => "x_errors") === nothing
+    @test features(:x, (:setup, :failures), :failures => "x_errors") == (:x, :features)           # a feature listed twice
     template_ids(file) = [Symbol(m[1]) for m in eachmatch(r"^## \[[^\]]+\]\(@id <entry>_([a-z_]+)\)"m,
                                                           read(joinpath(@__DIR__, "templates", file), String))]
     @test sort(collect(ProviderFacts._FEATURE_NAMES)) == sort!(unique!([template_ids("llm_provider.md"); template_ids("decision_provider.md")]))
@@ -249,11 +252,23 @@ end
     twofive = filter(r -> startswith(model(r), "gemini-2.5-"), rows)
     @test !isempty(twofive) && all(r -> isempty(levels(r[3])), twofive)        # thinkingBudget, not levels
     @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
-    taken = UniLM._GEMINI_THINKING_LEVELS            # model => its thinking levels on Interactions (`respond`)
-    others = setdiff(union(values(taken)...), taken["gemini-3.8-flash"])           # other models' levels, not this one's
-    @test !isempty(others) || error("premise: another model takes a thinking level gemini-3.8-flash does not")
-    isempty(others) ||
-        @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", [first(others)])  # other refusals propagate
+    # Any refusal but the Gemini 2.5 one propagates: "xhigh" is outside the efforts Gemini takes on every model.
+    @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", ["xhigh"])
+    # The respond column holds what respond's encoder takes: the levels its check accepts, in Gemini's order.
+    takes(id, level) = try UniLM._gemini_thinking_level(id, level); true
+                       catch err; err isa ArgumentError || rethrow(); false end
+    @test all(r -> levels(r[2]) == filter(l -> takes(model(r), l), ["minimal", "low", "medium", "high"]), rows)
+end
+@testset "ProviderFacts — the Anthropic requests page has a Thinking legend row for each cell the family table writes" begin
+    # the legend's first column, as written; its last row covers a model the family table has no row for
+    lines = readlines(joinpath(SRC, "providers", "anthropic", "requests.md"))
+    head = findfirst(startswith("| Thinking cell |"), lines)
+    stop = something(findnext(l -> !startswith(l, '|'), lines, head), length(lines) + 1)
+    keys_written = [strip(first(split(chopprefix(l, "|"), '|'))) for l in lines[(head + 2):(stop - 1)]]
+    modes = (:always, :on, :between, :off, :manual)                       # every mode the generator writes a cell for
+    @test all(f -> f.thinking in modes, values(UniLM._CLAUDE_FAMILIES))  # …and every mode the family table holds
+    cell(mode) = String(strip(Markdown.plain(Markdown.Paragraph(ProviderFacts._thinking(mode)))))
+    @test keys_written == [cell.(modes)...; "an id no row names"]
 end
 @testset "ProviderFacts — regions regenerate and staleness is detected, in both marker forms" begin
     html = "a\n\n<!-- generated:providers -->\n\nold\n\n<!-- /generated:providers -->\n\nb\n"

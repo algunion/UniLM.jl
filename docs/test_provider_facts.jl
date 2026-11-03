@@ -46,11 +46,15 @@ end
     cells = Dict(only(r[1]).code => plain.(r[2:4])
                  for t in (:openai, :anthropic, :gemini, :deepseek, :jev) for r in only(price_table(t).content).rows[2:end])
     rate(row, f) = ProviderFacts._per_million(getfield(row, f))
+    # a date's hyphens are non-breaking (U+2011), so a narrow column keeps it on one line
+    date(d) = replace(string(d), '-' => '\u2011')
     @test !isempty(UniLM._PRICE_CHANGES)                                         # premise: a change is scheduled
     for (id, changes) in UniLM._PRICE_CHANGES, (cell, f) in zip(cells[id], (:input, :cached_input, :output))
-        @test cell == join([rate(UniLM._SHIPPED_PRICES[id], f); ["from $(c.from): $(rate(c.row, f))" for c in changes]], "; ")
+        @test cell == join([rate(UniLM._SHIPPED_PRICES[id], f); ["from $(date(c.from)): $(rate(c.row, f))" for c in changes]], "; ")
     end
-    @test cells["gemini-4-argon"] == ["2.00; from 2026-12-01: 4.00", "0.10; from 2026-12-01: 0.20", "10.00; from 2026-12-01: 20.00"]
+    @test cells["gemini-4-argon"] == ["2.00; from 2026\u201112\u201101: 4.00", "0.10; from 2026\u201112\u201101: 0.20",
+                                      "10.00; from 2026\u201112\u201101: 20.00"]
+    @test !any(c -> occursin(r"\d-\d", c), Iterators.flatten(values(cells)))     # no cell a line break may split at a hyphen
     @test cells["gemini-2.5-flash"] == ["0.30", "0.03", "2.50"]                   # no change scheduled: one price
 end
 @testset "ProviderFacts — the Claude price rules list every long-prompt tier and every family model without a price row" begin

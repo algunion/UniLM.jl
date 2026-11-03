@@ -16,7 +16,7 @@ capabilities the table below lists without knowing whether the service serves th
 verb that needs a capability the table lists as not available refuses the endpoint, and so does `ask`;
 `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes `transcription` or
 `audio`, are sent. Of Mistral's API, UniLM does not use the Agents and Conversations APIs, OCR or the
-classifiers either. Servers of your own have their entry: [vLLM, LM Studio & llama.cpp](@ref local_servers_start).
+classifiers either. Servers you run yourself have [their own entry](@ref local_servers_start).
 No Mistral key was at hand for this page: its examples are not run, and their code stands without
 output.
 
@@ -95,7 +95,7 @@ A content that is a list of chunks, the shape Mistral's reasoning models answer 
 joined, and its `thinking` chunks are kept apart as the turn's reasoning, which
 [`reasoning_text`](@ref) reads, streamed or not ([Streaming](@ref openai_compatible_streaming)). A
 reply's `reasoning_content` or `reasoning` field, in which other servers return the reasoning, is kept
-the same way ([vLLM, LM Studio & llama.cpp](@ref local_servers_start)). No reasoning goes back with
+the same way, as from [a server you run yourself](@ref local_servers_start). No reasoning goes back with
 the next request.
 
 Fields go out under the names of the `Chat`, but on Mistral's host a `max_completion_tokens` goes out

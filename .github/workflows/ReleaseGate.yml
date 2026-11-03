@@ -116,8 +116,9 @@ jobs:
       # translates with, its fill-in-the-middle and GGUF model, and its speech model (Ollama 0.40.9 or later). It
       # embeds with a model of its own (its step sets UNILM_OLLAMA_EMBED_MODEL to it): its over-long input, 5,000
       # words, must exceed the model's context, which embeddinggemma's 2,048 tokens do and embeddinggemma-2's
-      # 262,144 do not.
-      UNILM_OLLAMA_MODEL: gemma4:e4b
+      # 262,144 do not. The chat model is Gemma 4 E4B's GGUF build: on this runner `gemma4:e4b` fails to pull,
+      # "this model requires MLX support, but the MLX runtime is not available" (Ollama 0.40.13, 3 November 2026).
+      UNILM_OLLAMA_MODEL: gemma4:e4b-it-q4_K_M
       UNILM_OLLAMA_FIM_MODEL: qwen2.5-coder:1.5b-base
       UNILM_OLLAMA_GGUF_MODEL: qwen2.5-coder:1.5b-base
       UNILM_OLLAMA_SPEECH_MODEL: phonon
@@ -161,7 +162,7 @@ jobs:
             ollama pull "$m"
           done
           ollama list
-          df -h /    # the chat model alone is 9.5 GB
+          df -h /    # the chat model alone is 6.6 GB
       - name: Local-model live suites
         shell: julia --color=yes --startup-file=no {0}
         run: |

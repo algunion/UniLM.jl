@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import { Providers } from '@/app/theme-providers'
 import { Layout } from '@/components/Layout'
 import { RenameRetiredAnchor } from '@/components/RenameRetiredAnchor'
-import { anchorDestination } from '@/lib/anchors'
+import { anchorDestination, type AnchorLookup } from '@/lib/anchors'
 
 import '@/styles/tailwind.css'
 
@@ -49,20 +49,26 @@ function moveUnderBasePath(base: string) {
 }
 
 // A reader who opens a page with the id of an anchor on another page (an old
-// link, a bookmark) moves there before the page hydrates. A retired id whose
-// successor is on this page is renamed after hydration instead
-// (RenameRetiredAnchor), since Next.js writes back the URL it loaded with as it
-// hydrates.
+// link, a bookmark) moves there. The URL is read once, as the page starts
+// loading, before Next.js hydrates the page and writes back the URL it loaded
+// with; once the HTML is parsed, both anchor maps are fetched, and the reader
+// moves when they have arrived, before or after hydration. A retired id whose
+// successor is on this page is renamed by RenameRetiredAnchor once the page
+// has hydrated, from the same lookup.
 function forwardMovedAnchor(
   base: string,
   destination: typeof anchorDestination,
 ) {
-  addEventListener('DOMContentLoaded', () => {
-    destination(base).then((to) => {
-      if (to !== undefined && !to.here) {
-        location.replace(`${base}${to.route}#${encodeURIComponent(to.id)}`)
-      }
-    })
+  let { hash, pathname } = location
+  let found = new Promise<void>((parsed) =>
+    addEventListener('DOMContentLoaded', () => parsed()),
+  ).then(() => destination(base, hash, pathname))
+  let shared: Window & AnchorLookup = window
+  shared.anchorLookup = found
+  found.then((to) => {
+    if (to !== undefined && !to.here) {
+      location.replace(`${base}${to.route}#${encodeURIComponent(to.id)}`)
+    }
   })
 }
 

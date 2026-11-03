@@ -48,6 +48,40 @@ function follow(html::String, hashes::Vector{String})::Vector{String}
     readlines(IOBuffer(read(pipeline(`node -e $RUN_SCRIPT -- $hashes`; stdin = IOBuffer(script)))))
 end
 
+# Runs the site's anchor forwarder (site/src/lib/anchors.ts, whose types Node.js 22.6 or later strips) as a page's
+# head runs it: its text alone, in a context holding only what a page gives it, where `fetch` answers each anchor map
+# with the JSON given ("null": a 404). Prints {"to": <the destination, or null to stay>, "errors": [<what it logged>]}.
+const RUN_FORWARDER = """
+const vm = require("node:vm"), { pathToFileURL } = require("node:url");
+const [file, base, hash, path, aliases, anchors] = process.argv.slice(1);
+import(pathToFileURL(file)).then(({ anchorDestination }) => {
+  const errors = [], maps = { "anchor-aliases.json": aliases, "anchors.json": anchors };
+  const respond = (body) => body === "null" ? { ok: false, status: 404 } :
+    { ok: true, status: 200, json: () => Promise.resolve().then(() => JSON.parse(body)) };
+  const page = {
+    document: { getElementById: () => null },
+    location: { hash, pathname: path },
+    fetch: (url) => Promise.resolve(respond(maps[url.slice(base.length + 1)])),
+    console: { error: (message) => errors.push(String(message)) },
+  };
+  const call = `(\${anchorDestination})(\${JSON.stringify(base)}, \${JSON.stringify(hash)}, \${JSON.stringify(path)})`;
+  return vm.runInNewContext(call, page).then((to) => console.log(JSON.stringify({ to: to ?? null, errors })));
+});
+"""
+const ANCHORS_TS = joinpath(@__DIR__, "..", "site", "src", "lib", "anchors.ts")
+
+"""
+Where the site's anchor forwarder sends a reader who opens `path`, under the base path `/base`, with `hash`, given
+the JSON of anchor-aliases.json (`nothing`: no such file) and of anchors.json: the destination (`nothing` to stay)
+and the errors it logged.
+"""
+function forward(hash::String, path::String; aliases::Union{String,Nothing}, anchors::String)
+    args = [ANCHORS_TS, "/base", hash, path, something(aliases, "null"), anchors]
+    cmd = addenv(`node --experimental-strip-types -e $RUN_FORWARDER -- $args`, "NODE_NO_WARNINGS" => "1")
+    r = JSON.parse(read(cmd, String))
+    (r["to"], r["errors"])
+end
+
 @testset "redirects" begin
 
 @testset "redirects — a stub forwards to its target and keeps a known hash" begin
@@ -194,6 +228,22 @@ end
         code, err = cli(fixture_toml(routes = Dict("guide/responses_api" => to, older...), anchors = alias))
         @test code == 0 && occursin("url=../../$to/", read(stub, String))
     end
+end
+@testset "redirects — no [anchors] writes the aliases file {}, which the site's forwarder reads as no aliases" begin
+    out = fixture_out(pages = ["a/"], anchors = Dict("kept" => ["/a/"]))
+    write_stubs(out, "", fixture_toml(), fixture_routes("/a/"))
+    aliases = read(joinpath(out, "anchor-aliases.json"), String)
+    @test aliases == "{}"
+    @test forward("#kept", "/base/b/"; aliases, anchors = """{"kept": ["/a/"]}""") ==
+          (Dict("route" => "/a/", "id" => "kept", "here" => false), [])
+end
+@testset "redirects — the site's forwarder reads only a map's own keys: #constructor names no id until a map holds it" begin
+    kept = """{"kept": ["/a/"]}"""
+    @test forward("#constructor", "/base/b/"; aliases = "{}", anchors = kept) == (nothing, [])
+    @test forward("#constructor", "/base/b/"; aliases = "{}", anchors = """{"constructor": ["/a/"]}""") ==
+          (Dict("route" => "/a/", "id" => "constructor", "here" => false), [])
+    @test forward("#constructor", "/base/b/"; aliases = """{"constructor": "kept"}""", anchors = kept) ==
+          (Dict("route" => "/a/", "id" => "kept", "here" => false), [])
 end
 
 end

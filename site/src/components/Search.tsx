@@ -76,6 +76,29 @@ function useAutocomplete({
     }
   }
 
+  // autocomplete calls onSelect for a click on a result and for Enter on the
+  // active one. After Enter it calls the navigator itself, by the modifier keys
+  // (navigateNewTab for ⌘ or Ctrl, navigateNewWindow for Shift), so a key press
+  // is left to it; a click with one of those keys opens the result apart, as a
+  // link would, and the current tab stays.
+  function select({
+    event,
+    itemUrl,
+  }: {
+    event: React.SyntheticEvent
+    itemUrl?: string
+  }) {
+    if (event.nativeEvent instanceof KeyboardEvent) {
+      return
+    }
+    let { metaKey, ctrlKey, shiftKey } = event as React.MouseEvent
+    if (metaKey || ctrlKey || shiftKey) {
+      openWithBasePath({ itemUrl })
+    } else {
+      navigate({ itemUrl })
+    }
+  }
+
   let [autocomplete] = useState<Autocomplete>(() =>
     createAutocomplete<
       Result,
@@ -114,7 +137,7 @@ function useAutocomplete({
               getItemUrl({ item }) {
                 return item.url
               },
-              onSelect: navigate,
+              onSelect: select,
             },
           ]
         })

@@ -32,7 +32,7 @@ pre[class*='language-'] {
 
 .token.punctuation,
 .token.attr-equals {
-  color: var(--color-slate-500);
+  color: var(--color-slate-400);
 }
 
 .token.unit,

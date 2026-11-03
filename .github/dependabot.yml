@@ -38,10 +38,14 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
-    # The pages @markdoc/next.js compiles import js-yaml's default export from the
-    # site's own js-yaml, and js-yaml 5 has named exports only.
     ignore:
+      # The pages @markdoc/next.js compiles import js-yaml's default export from the
+      # site's own js-yaml, and js-yaml 5 has named exports only.
       - dependency-name: "js-yaml"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint 8.72.0, which eslint-config-next brings in, declares a peer
+      # typescript below 6.1.0, and `npm run lint` fails under TypeScript 7.
+      - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
     groups:
       site:

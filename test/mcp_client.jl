@@ -3642,8 +3642,10 @@ end
     # on OpenAI's Chat Completions (and Azure's), `^[a-zA-Z0-9_-]{1,128}$` on Anthropic's Messages
     # API and of "a maximum length of 128" on Gemini's generateContent and DeepSeek's Chat Completions,
     # while an MCP tool name "SHOULD be between 1 and 128 characters"; every other endpoint gets
-    # OpenAI's 64. A longer name is cut to the limit less 9 characters, then `_` and the first 8 hex
-    # digits of its MCP name's SHA-256: two names that agree up to the cut stay apart.
+    # OpenAI's 64. OpenAI's Responses API takes 128 where its Chat Completions takes 64: it answers
+    # 129 characters with HTTP 400, "Expected a string with maximum length 128". A longer name is cut
+    # to the limit less 9 characters, then `_` and the first 8 hex digits of its MCP name's SHA-256:
+    # two names that agree up to the cut stay apart.
     t = _ScriptedTransport((m, id, p) -> [_ok_frame(id, Dict{String,Any}("content" =>
         [Dict{String,Any}("type" => "text", "text" => p["name"])]))])
     session = _scripted_session(t)
@@ -3653,15 +3655,18 @@ end
     session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
     cut(n, limit) = first(replace(n, '.' => '_'), limit - 9) * "_" * bytes2hex(UniLM.sha256(n))[1:8]
     within(limit) = [length(n) <= limit ? replace(n, '.' => '_') : cut(n, limit) for n in names]
-    for (service, limit) in ((nothing, 64), (OPENAIServiceEndpoint, 64), (AZUREServiceEndpoint, 64), (OllamaEndpoint(), 64),
-                             (GEMINIOpenAIServiceEndpoint, 64), (ANTHROPICServiceEndpoint, 128),
-                             (ANTHROPICServiceEndpoint(inference_geo="us"), 128), (GEMINIServiceEndpoint, 128),
-                             (DeepSeekEndpoint(), 128))
+    # Each service with its Chat Completions limit (`mcp_tools`) and its Responses one (`mcp_tools_respond`).
+    for (service, limit, rlimit) in ((nothing, 64, 128), (OPENAIServiceEndpoint, 64, 128), (AZUREServiceEndpoint, 64, 64),
+                                     (OllamaEndpoint(), 64, 64), (GEMINIOpenAIServiceEndpoint, 64, 64),
+                                     (ANTHROPICServiceEndpoint, 128, 128),
+                                     (ANTHROPICServiceEndpoint(inference_geo="us"), 128, 128),
+                                     (GEMINIServiceEndpoint, 128, 128), (DeepSeekEndpoint(), 128, 128))
         tools, rtools = isnothing(service) ? (mcp_tools(session), mcp_tools_respond(session)) :
                                              (mcp_tools(session; service), mcp_tools_respond(session; service))
         aliases = [ct.tool.func.name for ct in tools]
         @test all(a -> occursin(Regex("^[a-zA-Z0-9_-]{1,$limit}\$"), a), aliases)
-        @test allunique(aliases) && aliases == within(limit) && [ct.tool.name for ct in rtools] == aliases
+        @test allunique(aliases) && aliases == within(limit)
+        @test [ct.tool.name for ct in rtools] == within(rlimit)
         @test [ct.callable(a, Dict{String,Any}()) for (ct, a) in zip(tools, aliases)] == names
     end
 end
@@ -3683,7 +3688,9 @@ end
     @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,64}$", a), aliases)
     @test tools[1].callable("admin_tools_list", Dict{String,Any}()) == "ok"
     rtools = mcp_tools_respond(session)
-    @test [ct.tool.name for ct in rtools] == aliases
+    # OpenAI's Responses API takes names of up to 128 characters, not 64: only the 130-character one is cut, at 128.
+    @test [ct.tool.name for ct in rtools] ==
+          ["admin_tools_list", "plain_name", "has_space", "x"^119 * "_" * bytes2hex(UniLM.sha256("x"^130))[1:8], "abc_"]
     @test rtools[3].callable("has_space", Dict{String,Any}()) == "ok"
     @test seen == ["admin.tools.list", "has space"]
     # Two MCP names that sanitize to one alias cannot both be bridged.

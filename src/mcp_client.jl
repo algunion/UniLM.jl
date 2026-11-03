@@ -1733,6 +1733,15 @@ _tool_name_limit(::_AnthropicEndpoint)::Int = 128
 _tool_name_limit(::Type{GEMINIServiceEndpoint})::Int = 128
 _tool_name_limit(::DeepSeekEndpoint)::Int = 128
 
+# The longest function name the Responses-style API of the endpoint accepts. OpenAI's Responses API takes
+# 128 where its Chat Completions takes 64: on 2026-11-03 it took a 128-character name and answered 129 with
+# HTTP 400 `string_above_max_length`, "Invalid 'tools[0].name': string too long. Expected a string with
+# maximum length 128, but got a string with length 129 instead." Gemini's Interactions API takes 128, as its
+# generateContent does. Every other endpoint keeps its Chat limit, unwitnessed on Azure's Responses API.
+# `OPENAIServiceEndpoint` is only ever passed as a type: calling it, `OPENAIServiceEndpoint()`, returns the type.
+_respond_tool_name_limit(service::ServiceEndpointSpec)::Int = _tool_name_limit(service)
+_respond_tool_name_limit(::Type{OPENAIServiceEndpoint})::Int = 128
+
 """Provider-safe aliases for MCP tool names, position for position, of at most `limit`
 characters: a conforming name is kept; any other has each non-conforming character replaced
 with `_`, and one still longer than `limit` is cut to `limit - 9` characters followed by `_` and
@@ -1797,10 +1806,11 @@ end
 
 Convert all tools from an MCP session into `CallableTool{FunctionTool}` instances
 that work directly with [`tool_loop`](@ref) (Responses API) on `service`, the endpoint the
-tools go to. Tool names are advertised provider-safe for `service`, as in [`mcp_tools`](@ref).
-OpenAI's Responses API and Gemini's Interactions API state no function-name limit of their
-own: the limit applied is the provider's Chat one (64 on OpenAI, 128 on Gemini), unwitnessed on
-those two APIs.
+tools go to. Tool names are advertised provider-safe for `service`, as in [`mcp_tools`](@ref),
+except that a name keeps up to 128 characters on `OPENAIServiceEndpoint`: OpenAI's Responses API
+takes 128 (it answers a longer name with HTTP 400, "Expected a string with maximum length 128")
+where its Chat Completions takes 64. Gemini's Interactions API takes 128 too, the limit `mcp_tools`
+gives `GEMINIServiceEndpoint`; any other endpoint keeps its [`mcp_tools`](@ref) limit.
 
 # Example
 ```julia
@@ -1815,7 +1825,7 @@ function mcp_tools_respond(session::MCPSession;
     [CallableTool(FunctionTool(name=alias, description=info.description,
                                parameters=info.input_schema),
                   _mcp_bridge_callable(session, info.name))
-     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos], _tool_name_limit(service)))]
+     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos], _respond_tool_name_limit(service)))]
 end
 
 # Extend to_tool protocol

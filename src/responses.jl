@@ -267,6 +267,9 @@ MCP server (`server_url`), an OpenAI connector (`connector_id`, e.g. `"connector
 are OpenAI's legacy connectors: `connector_id` "is deprecated for models released after
 September 1, 2026", which take `server_url` or `tunnel_id`, and "Existing models retain
 connector support" ([connectors and MCP](https://developers.openai.com/api/docs/guides/tools-connectors-mcp#connectors)).
+`connector_id` is sent to any model, and on 2026-11-03 `gpt-6-luna` answered a connector labelled `"gdrive"`
+with HTTP 400, "Built-in MCP connector 'gdrive' (connector_id) is not supported with this model. Remove the
+connector tool or use a supported remote MCP integration.", while `gpt-5.4-mini` listed the connector's tools.
 Use `authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
 string or object forms.
 """

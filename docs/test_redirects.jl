@@ -196,6 +196,15 @@ end
     @test_throws ErrorException ["\"old/\"", "is a page"] write_stubs(out, "", fixture_toml(routes = Dict("old" => "a")), served)
     @test read(stub, String) == "<!DOCTYPE html>"
 end
+@testset "redirects — a stub an earlier run wrote is no page: a route never moves to one" begin
+    # A rerun over an export that holds stubs must refuse what a fresh export refuses, where no stub is yet.
+    out = fixture_out(pages = ["a/"], anchors = Dict("kept" => ["/a/"]))
+    served = fixture_routes("/old/", "/older/")
+    write_stubs(out, "", fixture_toml(routes = Dict("old" => "a")), served)          # a stub at old/
+    @test_throws ErrorException ["\"older/\"", "moves to \"old/\"", "not a page"] write_stubs(
+        out, "", fixture_toml(routes = Dict("older" => "old")), served)
+    @test !ispath(joinpath(out, "older"))                                             # refused before writing
+end
 @testset "redirects — the CLI exits 1 while a route an earlier version served has neither a page nor a stub, or an id resolves nowhere; a rerun overwrites its stubs" begin
     ids = readlines(joinpath(@__DIR__, "anchors-v0.26.0.txt"))
     routes = readlines(joinpath(@__DIR__, "routes-v0.26.0.txt"))

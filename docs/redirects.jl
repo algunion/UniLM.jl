@@ -171,7 +171,8 @@ URLs, so a reader stays in the folder they came from (dev/, stable/ or a version
 Refuses, before writing anything, an old route that is the home page, that is a route of none of the files `lists` —
 each lists routes an earlier version served (`listed_routes`), so a stub anywhere else forwards nobody — or where a
 page exists, a new route that is not a page, and a successor id that `<out>/anchors.json` lacks. A stub an earlier
-run wrote at an old route, which holds `STUB_MARK`, is no page: this run's stub replaces it.
+run wrote, which holds `STUB_MARK`, is no page: at an old route, this run's stub replaces it; at a new route, the
+move is refused, as it is in a fresh export, where no stub is yet.
 """
 function write_stubs(out::String, base::String, toml::String, lists::String...)::Vector{String}
     c, anchors = Config(toml), read_anchors(out)
@@ -187,8 +188,10 @@ function write_stubs(out::String, base::String, toml::String, lists::String...):
         page = joinpath(out, old, "index.html")
         isfile(page) && !is_stub(page) &&
             error("$toml: [routes] $(repr(old)) is a page of $out, which a stub would replace")
-        isfile(joinpath(out, new, "index.html")) ||
-            error("$toml: [routes] $(repr(old)) moves to $(repr(new)), which is not a page of $out")
+        target = joinpath(out, new, "index.html")
+        isfile(target) && !is_stub(target) ||
+            error("$toml: [routes] $(repr(old)) moves to $(repr(new)), which is not a page of $out" *
+                  (isfile(target) ? ": an earlier run wrote a stub there" : ""))
     end
     write(joinpath(out, "anchor-aliases.json"), JSON.json(c.aliases))
     map(sort!(collect(c.routes))) do (old, new)

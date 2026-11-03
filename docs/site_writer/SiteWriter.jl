@@ -69,6 +69,8 @@ struct Strong <: Inline; content::Vector{Inline} end
 struct Link <: Inline; href::String; content::Vector{Inline} end
 "`src`: `/assets/…` for the manual's own images, else the external URL."
 struct Image <: Inline; src::String; alt::String end
+"A hard line break, a `<br>` in Documenter's HTML."
+struct LineBreak <: Inline end
 
 abstract type Block end
 struct Paragraph <: Block; content::Vector{Inline} end
@@ -140,7 +142,7 @@ end
 "The page's title heading: the first node that renders anything, if it is a level-1 heading."
 function title_node(page::Documenter.Page)
     nodes = collect(page.mdast.children)
-    i = findfirst(n -> !(n.element isa Documenter.SetupNode), nodes)
+    i = findfirst(n -> !(n.element isa Union{Documenter.SetupNode,Documenter.MetaNode}), nodes)
     i !== nothing && nodes[i].element isa Documenter.AnchoredHeader && only(nodes[i].children).element.level == 1 ?
         nodes[i] : nothing
 end
@@ -161,6 +163,15 @@ block(w::Walk, e::MarkdownAST.Heading, n) =
 block(w::Walk, e::MarkdownAST.CodeBlock, n) = [CodeBlock(language(w, e.info), e.code)]
 block(w::Walk, ::Documenter.MultiOutput, n) = Block[example_part(w, c.element) for c in n.children]
 block(w::Walk, ::Documenter.SetupNode, n) = Block[]
+# An @meta block sets how Documenter builds the page, and its HTML shows nothing for it, nor does the site. Its
+# `Description` is the page's description (`read_page`). `EditURL` and `CollapsedDocStrings` change only how
+# Documenter's HTML shows the page, with an edit link and closed docstrings, which the site's pages do not have:
+# refused, so that neither is dropped unseen.
+function block(w::Walk, e::Documenter.MetaNode, n)
+    shown = sort!([string(k) for k in keys(e.dict) if k in (:EditURL, :CollapsedDocStrings)])
+    isempty(shown) || fail(w, "an @meta block setting $(join(shown, " and ")), which the site's pages do not show")
+    Block[]
+end
 # An @eval block's result is a field of its node, not a child, so Documenter's
 # cross-reference pass never reaches its @ref links: they are resolved here.
 function block(w::Walk, e::Documenter.EvalNode, n)
@@ -233,6 +244,7 @@ function inline(w::Walk, e::MarkdownAST.InlineMath, n)
             "$(w.indocstring ? "the docstring's package source" : "the page's source") does not write it as $written")
 end
 inline(w::Walk, ::MarkdownAST.Emph, n) = Emph(inlines(w, n))
+inline(w::Walk, ::MarkdownAST.LineBreak, n) = LineBreak()
 inline(w::Walk, ::MarkdownAST.Strong, n) = Strong(inlines(w, n))
 inline(w::Walk, e::MarkdownAST.Link, n) =
     isexternal(e.destination) ? Link(e.destination, inlines(w, n)) : fail(w, "an unresolved link to $(repr(e.destination))")
@@ -267,6 +279,7 @@ plain(x::Text; images::Bool = true) = x.text
 plain(x::Code; images::Bool = true) = x.code
 plain(x::Union{Emph,Strong,Link}; images::Bool = true) = plain(x.content; images)
 plain(x::Image; images::Bool = true) = images ? x.alt : ""
+plain(x::LineBreak; images::Bool = true) = " "
 
 "The first top-level paragraph's plain text, cut at a word to at most 160 characters."
 function description(body::Vector{Block})
@@ -289,7 +302,11 @@ function read_page(doc::Documenter.Document, key::String, titles::Dict{String,St
     title = title_node(page)
     title === nothing && fail(w, "the page does not open with its title, a level-1 heading")
     body = blocks(w, (n for n in page.mdast.children if n !== title))
-    Page(key, route(key), plain(inlines(w, only(title.children))), description(body), body, w.ids, w.links)
+    # Documenter's HTML describes a page by its `@meta` `Description`, else by default
+    meta = get(page.globals.meta, :Description, nothing)
+    meta === nothing || meta isa AbstractString || fail(w, "an @meta Description that is no string: $(repr(meta))")
+    Page(key, route(key), plain(inlines(w, only(title.children))), meta === nothing ? description(body) : String(meta),
+         body, w.ids, w.links)
 end
 
 "Every page of the manual as the site's page model, its routes distinct and its internal links checked."
@@ -408,20 +425,72 @@ end
 
 const ASCII_PUNCTUATION = r"[!-/:-@\[-`{-~]"
 
-md(xs::Vector{Inline}, cell::Bool = false) = join(md(x, cell) for x in xs)
+# Inlines as the text of a paragraph, a heading or a table cell, their emphases checked (`emphasized`); the start and
+# the end of the text read as whitespace.
+md(xs::Vector{Inline}, cell::Bool = false) = (emphasized(xs, cell, ' ', ' '); written(xs, cell))
+written(xs::Vector{Inline}, cell::Bool) = join(md(x, cell) for x in xs)
 function md(x::Text, cell::Bool)
     occursin('\n', x.text) && throw(ArgumentError("a line break inside text $(repr(x.text))"))
     replace(x.text, ASCII_PUNCTUATION => s"\\\0")
 end
 md(x::Code, cell::Bool) = codespan(x.code, cell)
-md(x::Emph, cell::Bool) = "*" * md(x.content, cell) * "*"
-md(x::Strong, cell::Bool) = "**" * md(x.content, cell) * "**"
-md(x::Link, cell::Bool) = "[" * md(x.content, cell) * "](" * destination(x.href, cell) * ")"
+md(x::Emph, cell::Bool) = "*" * written(x.content, cell) * "*"
+md(x::Strong, cell::Bool) = "**" * written(x.content, cell) * "**"
+md(x::Link, cell::Bool) = "[" * written(x.content, cell) * "](" * destination(x.href, cell) * ")"
+# CommonMark's hard line break: a backslash that ends the line. A table row is one line.
+md(::LineBreak, cell::Bool) = cell ? throw(ArgumentError("a hard line break inside a table cell")) : "\\\n"
 function md(x::Image, cell::Bool)
     # Markdoc takes an image's alt text from the raw label, escapes included.
     occursin(r"[\[\]\\\n]|\{%", x.alt) &&
         throw(ArgumentError("image alt text $(repr(x.alt)) holding a bracket, backslash, line break or `{%`"))
     "![" * (cell ? replace(x.alt, '|' => "\\|") : x.alt) * "](" * destination(x.src, cell) * ")"
+end
+
+# Whitespace and punctuation as markdown-it 12, the CommonMark parser Markdoc 0.5 bundles, tells them apart beside a
+# run of `*` (`scanDelims`): ASCII punctuation and Unicode's P categories; Unicode's Zs, tab, line feed, line
+# tabulation, form feed and carriage return. It reads a line by UTF-16 code unit, so a character beyond U+FFFF is
+# neither.
+iswhitespace(c::Char) = c in "\t\n\v\f\r \u00a0\u1680\u202f\u205f\u3000" || '\u2000' <= c <= '\u200a'
+ispunctuation(c::Char) =
+    isascii(c) ? occursin(ASCII_PUNCTUATION, string(c)) : c <= '\uffff' && startswith(Base.Unicode.category_abbrev(c), 'P')
+
+# Whether a run of `*` between the characters `prev` and `next` is left-flanking, so that it opens emphasis, or
+# right-flanking, so that it closes one (https://spec.commonmark.org/0.31.2/#left-flanking-delimiter-run).
+opens(prev::Char, next::Char) = !iswhitespace(next) && (!ispunctuation(next) || iswhitespace(prev) || ispunctuation(prev))
+closes(prev::Char, next::Char) = !iswhitespace(prev) && (!ispunctuation(prev) || iswhitespace(next) || ispunctuation(next))
+
+# The first and the last character `xs` are written with, past the `*` of an emphasis that starts or ends them, which
+# are part of their parent's run; `nothing` for no inline.
+leading(xs::Vector{Inline}, cell::Bool) = isempty(xs) ? nothing :
+    first(xs) isa Union{Emph,Strong} ? leading(first(xs).content, cell) : first(md(first(xs), cell))
+trailing(xs::Vector{Inline}, cell::Bool) = isempty(xs) ? nothing :
+    last(xs) isa Union{Emph,Strong} ? trailing(last(xs).content, cell) : last(md(last(xs), cell))
+
+"""
+Throws an `ArgumentError` unless each emphasis among `xs`, nested ones included, reads as emphasis to Markdoc's
+CommonMark parser: the run of `*` that opens it left-flanking, the one that closes it right-flanking, and no run shared
+with an emphasis beside it, which makes one run of both. `before` and `after` are the characters next to `xs` where
+they are written; an emphasis that starts or ends its parent's content shares the parent's run, and so its neighbours.
+Julia's Markdown reads `a*(b)*` as emphasis; CommonMark reads it as text with two asterisks.
+"""
+function emphasized(xs::Vector{Inline}, cell::Bool, before::Char, after::Char)
+    out = [md(x, cell) for x in xs]
+    for (i, x) in pairs(xs)
+        x isa Link && emphasized(x.content, cell, '[', ']')
+        x isa Union{Emph,Strong} || continue
+        i > 1 && xs[i - 1] isa Union{Emph,Strong} && throw(ArgumentError(
+            "two emphases side by side, $(repr(out[i - 1] * out[i])), whose `*` CommonMark reads as one run"))
+        prev, next = i == 1 ? before : last(out[i - 1]), i == length(xs) ? after : first(out[i + 1])
+        inside, ending = leading(x.content, cell), trailing(x.content, cell)
+        (isnothing(inside) || isnothing(ending)) && throw(ArgumentError("an emphasis holding nothing"))
+        opens(prev, inside) || throw(ArgumentError("emphasis $(repr(out[i])) that CommonMark does not open: " *
+            (iswhitespace(inside) ? "whitespace follows its `*`" :
+                                    "punctuation follows its `*`, and $(repr(prev)) before it is neither whitespace nor punctuation")))
+        closes(ending, next) || throw(ArgumentError("emphasis $(repr(out[i])) that CommonMark does not close: " *
+            (iswhitespace(ending) ? "whitespace comes before its last `*`" :
+                                    "punctuation comes before its last `*`, and $(repr(next)) after it is neither whitespace nor punctuation")))
+        emphasized(x.content, cell, prev, next)
+    end
 end
 
 longest_backtick_run(s::AbstractString) = maximum((length(m.match) for m in eachmatch(r"`+", s)); init = 0)
@@ -470,8 +539,16 @@ function lines(bs::Vector{Block}; tight::Bool = false)
     end
     out
 end
-lines(b::Paragraph) = [md(b.content)]
-lines(b::Heading) = ["#"^b.level * " " * md(b.content) * (b.id === nothing ? "" : " {% id=$(attribute(b.id)) %}")]
+function lines(b::Paragraph)
+    !isempty(b.content) && last(b.content) isa LineBreak &&
+        throw(ArgumentError("a hard line break that ends a paragraph, which CommonMark writes as a backslash"))
+    String.(split(md(b.content), '\n'))       # a hard line break ends a line
+end
+function lines(b::Heading)
+    text = md(b.content)
+    occursin('\n', text) && throw(ArgumentError("a hard line break inside a heading, which is one line"))
+    ["#"^b.level * " " * text * (b.id === nothing ? "" : " {% id=$(attribute(b.id)) %}")]
+end
 lines(b::CodeBlock) = fence(b.language, b.code)
 lines(b::Output) = fence("output", b.text)
 lines(b::Callout) =

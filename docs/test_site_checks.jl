@@ -42,7 +42,8 @@ end
     @test length(scan_outputs(app)) == 2
 end
 
-# Expected ids rendered by GitHub, as recorded by the github-slugger project's fixtures.
+# Expected ids as GitHub renders them: each from the github-slugger project's fixtures (test/fixtures.json) but
+# `Tool / Function Calling` and `Ⓘ x² ½`, which follow from the rule `github_slug` states.
 @testset "site checks — a heading's id is GitHub's slug; a repeated one gets -1, -2, …" begin
     @test github_slug("Tool / Function Calling") == "tool--function-calling"
     @test github_slug("heading with an _ underscore") == "heading-with-an-_-underscore"

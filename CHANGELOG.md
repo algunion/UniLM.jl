@@ -31,9 +31,9 @@
   `prompt_cache_options` within their limits; on Ollama anything but a `keep_alive` of 0 to 1e9 seconds or `Inf`.
   Endpoints whose protocol UniLM does not wrap are unaffected.
 - **A continued Gemini Interactions call's later requests keep the first request's bytes.** When Google continues an
-  unstreamed `respond`, each later request is the first request's JSON in its key order, with only
-  `continuation_token` and `previous_interaction_id` added and, for a stored interaction, `input` dropped. It was
-  re-serialized with its keys sorted. Upgrading: a later request recorded with `with_recorded_answers` under 0.30.0
+  unstreamed `respond`, each later request is the first request's JSON in its key order, with `continuation_token`
+  added and, for a stored interaction, `previous_interaction_id` set to the interaction that issued the token and
+  `input` dropped. It was re-serialized with its keys sorted. Upgrading: a later request recorded with `with_recorded_answers` under 0.30.0
   no longer replays; record it again.
 
 ### Fixed

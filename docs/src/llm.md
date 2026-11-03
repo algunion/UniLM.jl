@@ -710,7 +710,9 @@ end
 
 ```julia
 # Reach a remote MCP server (server_url), an OpenAI legacy connector (connector_id, e.g.
-# "connector_googledrive"; deprecated for models released after September 1, 2026), or a
+# "connector_googledrive"; deprecated for models released after September 1, 2026, and sent to any
+# model: on 2026-11-03 gpt-6-luna answered one labelled "gdrive" with HTTP 400 "Built-in MCP connector
+# 'gdrive' (connector_id) is not supported with this model. …", while gpt-5.4-mini listed its tools), or a
 # Secure MCP Tunnel (tunnel_id) — hence no single required target field beyond server_label.
 @kwdef struct MCPTool <: ResponseTool
     server_label::String

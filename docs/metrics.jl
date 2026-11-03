@@ -878,16 +878,16 @@ function _options(args::AbstractVector{String}, given::Dict{String,String}=Dict{
 end
 
 """
-    main(args::Vector{String}) -> Int
+    main(args::Vector{String}; docsrc::String = relpath(DOCSRC)) -> Int
 
-The command line: prints the report of `docs/src` and returns the exit code — 0 when every
-threshold holds or with `--baseline`, 1 when one does not, 2 on a usage error.
+The command line: prints the report of the pages under `docsrc` (`docs/src`) and returns the exit
+code — 0 when every threshold holds or with `--baseline`, 1 when one does not, 2 on a usage error.
 """
-function main(args::Vector{String})::Int
+function main(args::Vector{String}; docsrc::String=relpath(DOCSRC))::Int
     options = _options(args)
     options isa String && (println(stderr, options, '\n', USAGE); return 2)
     key = get(options, "--entry", nothing)
-    report(stdout; docsrc=relpath(DOCSRC), ledgers=get(options, "--ledgers", nothing),
+    report(stdout; docsrc, ledgers=get(options, "--ledgers", nothing),
            atoms=get(options, "--atoms", nothing), baseline=haskey(options, "--baseline"),
            entry_key=isnothing(key) ? nothing : Symbol(key), unit=get(options, "--unit", nothing)) ? 0 : 1
 end

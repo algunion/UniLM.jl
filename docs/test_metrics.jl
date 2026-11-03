@@ -182,6 +182,9 @@ end
     @test passes(clean...) && !passes(clean[2:end]...)                              # every page, or one missing
     deepseek(n) = "providers/deepseek.md" => "# Title\n" * "Neutral prose.\n"^(99 - n) * "Claude answers.\n"^n
     @test passes(clean..., deepseek(1)) && !passes(clean..., deepseek(2))          # 1 of 100 lines passes, 2 do not
+    out = IOBuffer()                                                                # an entry's own words never count
+    @test report(out; docsrc=fixture_docsrc(clean..., "providers/deepseek.md" => "# Title\n\nDeepSeek answers.\nNeutral prose.\n"))
+    @test occursin(r"\nentry +deepseek +0\.00% \(0/3\) ", String(take!(out)))
     @test !passes(clean..., "guide/streaming.md" => "# Title\n\n```julia\nChat(service=MistralEndpoint())\n```\n")
     x = "x.md" => "# [X](@id x_s)\n\nthe witness text of this placement\n"
     atoms = fixture_dir("anthropic.json" => """{"atoms": [{"location": "index.md:16"}, {"location": "index.md:20"}]}""",
@@ -197,19 +200,22 @@ end
     W, V = "the witness of this section, long enough", "another passage, long enough to prove"
     docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [S](@id x_s)\n\n```julia\n# a comment, not a heading\n```\n\n" *
                                       "$W\n\n## [T](@id x_t)\n\n$V\n")
-    problems(rows::String...) = check_ledger(fixture_tsv(collect(rows)), docsrc, ["openai:1" => "s"])
+    # each problem, its ledger's path and the pages' directory written as "<tsv>" and "<docsrc>"
+    named(tsv) = [replace(p, tsv => "<tsv>", docsrc => "<docsrc>") for p in check_ledger(tsv, docsrc, ["openai:1" => "s"])]
+    problems(rows::String...) = named(fixture_tsv(collect(rows)))
     @test problems("openai:1\ts\tx.md#x_s\t$W") == String[]                         # past a comment in code
-    @test length(problems("openai:1\ts\tx.md#x_s\t$V")) == 1                        # the next section's text
+    @test problems("openai:1\ts\tx.md#x_s\t$V") ==                                  # the next section's text
+          ["<tsv>:2: openai:1: the witness is not in the body of x.md#x_s"]
     @test problems("openai:1\ts\tx.md#x_start\t$V") == String[]                     # a title's section is the page
-    @test length(problems("openai:1\ts\tx.md#x_s\t ")) == 1                         # no witness
-    @test length(problems("openai:1\ts\tdeleted\t")) == 1                           # deleted without a reason
-    @test length(problems("openai:1\ts\ty.md#x_s\t$W")) == 1                        # no such page
-    @test length(problems("openai:1\ts\tx.md#x_u\t$W")) == 1                        # no such section
-    @test length(problems("openai:1\ts\tx.md\t$W")) == 1                            # not page.md#id
-    @test length(problems("openai:1\ts\tx.md#x_s")) == 2                            # three columns, so openai:1 has no row
-    @test length(problems("openai:1\ts\tdeleted\tgone", "openai:7\ts\tdeleted\tgone")) == 1   # no atom of this ledger
-    @test length(check_ledger(fixture_page("openai:1\ts\tdeleted\tgone\nopenai:1\ts\tdeleted\tgone\n"), docsrc,
-                              ["openai:1" => "s"])) == 1                  # no header: no row is read
+    @test problems("openai:1\ts\tx.md#x_s\t ") == ["<tsv>:2: openai:1: a witness of 0 characters; a witness has at least 24"]
+    @test problems("openai:1\ts\tdeleted\t") == ["<tsv>:2: openai:1: deleted without a reason in the witness column"]
+    @test problems("openai:1\ts\ty.md#x_s\t$W") == ["<tsv>:2: openai:1: y.md is no page under <docsrc>"]
+    @test problems("openai:1\ts\tx.md#x_u\t$W") == ["<tsv>:2: openai:1: no heading of x.md defines (@id x_u)"]
+    @test problems("openai:1\ts\tx.md\t$W") == ["<tsv>:2: openai:1: the destination \"x.md\" is neither page.md#id nor deleted"]
+    @test problems("openai:1\ts\tx.md#x_s") == ["<tsv>:2: 3 columns, not the header's 4", "<tsv>: openai:1 has no row"]
+    @test problems("openai:1\ts\tdeleted\tgone", "openai:7\ts\tdeleted\tgone") == ["<tsv>:3: openai:7 is no atom of this ledger"]
+    @test named(fixture_page("openai:1\ts\tdeleted\tgone\nopenai:1\ts\tdeleted\tgone\n")) ==   # no header: no row is read
+          ["<tsv>:1: the first line is not the header \"atom_id\\tsource\\tdestination\\twitness\""]
 end
 @testset "metrics — a ledger row keeps its atom's source; a witness has 24 characters and stands below the heading" begin
     docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [Prompt caching on every provider](@id x_cache)\n\n" *
@@ -381,4 +387,11 @@ end
     @test usage("--entry", "nope") == usage("--entry") == usage("--unit", "anthropic") ==
           usage("--ledgers", ledgers, "--atoms", atoms, "--unit", "ia") == 2
     @test redirect_stdout(() -> usage("--entry", "anthropic", "--baseline"), devnull) == 0
+end
+@testset "metrics — the command line exits 1 when a threshold is not met, 0 when every one is or with --baseline" begin
+    pages = unique!([[p for e in REGISTRY for p in e.pages]; [p for c in instances(ProviderFacts.Chapter) for p in CONCEPT_PAGES[c]]])
+    clean = [p => "# Title\n\nNeutral prose.\n" for p in pages]
+    run(docsrc, args::String...) = redirect_stdout(() -> DocMetrics.main(String[args...]; docsrc), devnull)
+    failing = fixture_docsrc(clean..., "guide/streaming.md" => "# Title\n\nClaude streams.\n")
+    @test run(failing) == 1 && run(failing, "--baseline") == 0 && run(fixture_docsrc(clean...)) == 0
 end

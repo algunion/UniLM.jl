@@ -1877,9 +1877,12 @@ Each raw read is passed a piece at a time, in order: a line with its newline and
 lines right after it (so an SSE event's closing blank line comes with its last line), and a
 last line without a newline as it is. A piece may end mid-event, and an event may span
 pieces and reads, so a method keeps what it has not finished in `state`, as the built-in
-methods do. Once a call returns `done`, the method is not called again: the rest of that
-read is neither decoded nor recorded, so a stream's recording ends with the event that
-ended it. A method drops an undecodable payload itself and counts it in
+methods do. Once a call returns `done`, the rest of that read is neither decoded nor
+recorded, so a stream's recording ends with the event that ended it. That event ends the
+stream when it carries the response (`:completed` or `:incomplete`, with the response object
+in `data`) or a failure (`:failed`, `:incomplete` or `:error`, with `data`); after any other
+`done`, the method is called again with the next read, and with a final `"\\n"` at the end of
+the body. A method drops an undecodable payload itself and counts it in
 `state.sse_dropped`; an exception it throws ends the streamed [`respond`](@ref) as a
 `ResponseCallError` with the exception in `cause`.
 

@@ -20,8 +20,9 @@
 
 ### Changed
 - **A custom `decode_agentic_stream` gets a stream a line at a time.** It was called once per raw read, several
-  payloads at once. It now gets each read a line at a time (a line with the blank lines right after it) and is not
-  called again after it returns `done`, so a stream's recording ends with the event that ended it. A method that
+  payloads at once. It now gets each read a line at a time (a line with the blank lines right after it), and once
+  it returns `done` the rest of that read is neither decoded nor recorded, so a stream's recording ends with the
+  event that ended it. A method that
   keeps a partial event in its state across calls, as it had to for a read that ends mid-event, needs no change.
 - **`MCPTool`'s documentation quotes OpenAI's answer to `connector_id` on a newer model.** On 2026-11-03
   `gpt-6-luna` answered a connector with HTTP 400, "Built-in MCP connector 'gdrive' (connector_id) is not supported

@@ -132,10 +132,11 @@ result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`. The
 handlers differ. `handle_sse_event!` is called once per payload, and an exception it throws
 drops that payload, counted in the result's `sse_dropped`. `decode_agentic_stream` is called
 with each read a line at a time (a line with the blank lines right after it), so it keeps a
-partial event in its state; it is not called again after it returns `done`, and the rest of that
-read is neither decoded nor recorded. An exception it throws ends the streamed `respond` as a
-`ResponseCallError` with the exception in `cause`: to drop an undecodable payload, skip it in the
-handler and count it in `state.sse_dropped`, as `src/interactions.jl` does.
+partial event in its state; once it returns `done`, the rest of that read is neither decoded nor
+recorded, and the stream ends if that event carried the response or a failure. An exception it
+throws ends the streamed `respond` as a `ResponseCallError` with the exception in `cause`: to drop
+an undecodable payload, skip it in the handler and count it in `state.sse_dropped`, as
+`src/interactions.jl` does.
 
 ## [Fail-loud contract](@id custom_backends_fail_loud)
 

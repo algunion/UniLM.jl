@@ -222,15 +222,17 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         page = read(joinpath(SITE, "src", "app", "guide", "page.md"), String)
         @test occursin("| Fixture | [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) |", page)
     end
-    @testset "anchors.json — every anchor, page titles included, maps to the routes that define it" begin
+    @testset "anchors.json — every id a page declares, its title's included, maps to the routes that define it" begin
         anchors = JSON.parsefile(joinpath(SITE, "public", "anchors.json"))
-        @test anchors["fixture_home"] == ["/"] && anchors["Everything"] == ["/guide/"]
+        @test anchors["fixture_home"] == ["/"] && anchors["sections"] == ["/guide/"]
+        @test !haskey(anchors, "Everything") && !haskey(anchors, "Repeated")   # slugs of a title's and a heading's text
         @test anchors["Main.WriterFixture.greet"] == ["/api/"]
         @test all(rs -> !isempty(rs) && issorted(rs) && all(r -> startswith(r, "/") && endswith(r, "/"), rs), values(anchors))
     end
-    @testset "anchors.json — a heading slug on two pages lists both routes" begin
-        site = build_site(Dict("index.md" => "# Home\n\n## Usage\n\nx\n", "a.md" => "# A\n\n## Usage\n\ny\n"); pages = ["index.md", "a.md"])
-        @test JSON.parsefile(joinpath(site, "public", "anchors.json"))["Usage"] == ["/", "/a/"]
+    @testset "anchors.json — a heading's slug is left out, an @id kept, on every page" begin
+        site = build_site(Dict("index.md" => "# Home\n\n## Usage\n\nx\n", "a.md" => "# [A](@id a_page)\n\n## [Usage](@id a_usage)\n\ny\n");
+                          pages = ["index.md", "a.md"])
+        @test JSON.parsefile(joinpath(site, "public", "anchors.json")) == Dict("a_page" => ["/a/"], "a_usage" => ["/a/"])
     end
 
     @testset "what the site cannot show stops the build, naming the page and the node" begin

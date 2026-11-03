@@ -98,6 +98,8 @@ jobs:
   local-models:
     name: Local models (real Ollama, CPU)
     runs-on: ubuntu-latest
+    # The whole job, the pulls and the chat-model suite included, took 17.5 minutes here (run 41619430911,
+    # 3 November 2026).
     timeout-minutes: 60
     env:
       JULIA_NUM_THREADS: '4,2'
@@ -110,6 +112,20 @@ jobs:
       UNILM_OLLAMA_EMBED_MODELS: embeddinggemma-2:740m-q8_0
       UNILM_OLLAMA_EMBED_MODEL: embeddinggemma-2:740m-q8_0
       UNILM_OLLAMA_SCRATCH_MODEL: all-minilm:22m
+      # The chat-model suite (test/integration_ollama.jl): the model it chats, sees, hears, transcribes and
+      # translates with, and its fill-in-the-middle and GGUF model. It embeds with a model of its own (its step
+      # sets UNILM_OLLAMA_EMBED_MODEL to it): its over-long input, 5,000 words, must exceed the model's context,
+      # which embeddinggemma's 2,048 tokens do and embeddinggemma-2's 262,144 do not. The chat model is Gemma 4
+      # E4B's GGUF build: on this runner `gemma4:e4b` fails to pull, "this model requires MLX support, but the
+      # MLX runtime is not available" (Ollama 0.40.13, 3 November 2026).
+      UNILM_OLLAMA_MODEL: gemma4:e4b-it-q4_K_M
+      UNILM_OLLAMA_FIM_MODEL: qwen2.5-coder:1.5b-base
+      UNILM_OLLAMA_GGUF_MODEL: qwen2.5-coder:1.5b-base
+      # No speech model: phonon fails to pull here too, "this model requires MLX support, but the MLX runtime is
+      # not available" (Ollama 0.40.13, 3 November 2026). Empty, the suite runs without its speech testset and
+      # logs that it does.
+      UNILM_OLLAMA_SPEECH_MODEL: ''
+      UNILM_OLLAMA_CHAT_EMBED_MODEL: embeddinggemma
     # Zero-spend: local models only, no keys, no Ollama Cloud.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,7 +155,10 @@ jobs:
         run: |
           # The model-management suite pulls and deletes the scratch model itself, and skips that witness
           # when the model is installed already: a run that pulls it here would never witness the delete.
-          for m in ${UNILM_OLLAMA_DECISION_MODELS//,/ } ${UNILM_OLLAMA_EMBED_MODELS//,/ } "$UNILM_OLLAMA_EMBED_MODEL"; do
+          for m in ${UNILM_OLLAMA_DECISION_MODELS//,/ } ${UNILM_OLLAMA_EMBED_MODELS//,/ } "$UNILM_OLLAMA_EMBED_MODEL" \
+                   "$UNILM_OLLAMA_MODEL" "$UNILM_OLLAMA_FIM_MODEL" "$UNILM_OLLAMA_GGUF_MODEL" "$UNILM_OLLAMA_SPEECH_MODEL" \
+                   "$UNILM_OLLAMA_CHAT_EMBED_MODEL"; do
+            [ -n "$m" ] || continue    # an empty name declares no model: UNILM_OLLAMA_SPEECH_MODEL here
             if [ "$m" = "$UNILM_OLLAMA_SCRATCH_MODEL" ]; then
               echo "::error::$m is UNILM_OLLAMA_SCRATCH_MODEL, which the model-management suite pulls and deletes itself"
               exit 1
@@ -147,6 +166,7 @@ jobs:
             ollama pull "$m"
           done
           ollama list
+          df -h /    # the chat model alone is 6.6 GB
       - name: Local-model live suites
         shell: julia --color=yes --startup-file=no {0}
         run: |
@@ -162,6 +182,25 @@ jobs:
           # A suite that took its offline branch skipped every witness and still passed.
           all(!isnothing, (_OS1L_EP, _OE_EP, _OMM_EP)) ||
               error("local models: every suite must run live in this job; one took its offline branch (UNILM_LIVE_OLLAMA)")
+      # Chat, streaming, thinking, tools, structured output, attachments, context windows, embeddings, respond on
+      # /v1/responses, fill-in-the-middle, transcription and translation on the pinned server, without the speech
+      # testset (no speech model here): 92 tests passed in 9 min 18 s on this runner's CPU (run 41619430911,
+      # Ollama 0.40.13, 3 November 2026).
+      - name: Chat-model live suite
+        # About twice the 9 min 18 s that run 41619430911 measured.
+        timeout-minutes: 20
+        env:
+          UNILM_OLLAMA_EMBED_MODEL: ${{ env.UNILM_OLLAMA_CHAT_EMBED_MODEL }}
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          using Pkg; Pkg.activate("test")                       # instantiated by the step above
+          using Test, HTTP, JSON, UniLM, Sockets
+          @testset failfast=false "chat model" begin
+              include(joinpath(pwd(), "test", "integration_ollama.jl"))
+          end
+          # A suite that took its offline branch skipped every witness and still passed.
+          isnothing(_OLLAMA_EP) &&
+              error("chat model: the suite must run live in this job; it took its offline branch (UNILM_LIVE_OLLAMA)")
       - name: Ollama server log
         if: always()
         run: |

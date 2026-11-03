@@ -6,7 +6,10 @@
 # UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and the speech model
 # UNILM_OLLAMA_SPEECH_MODEL (default phonon; speech needs Ollama 0.40.9 or later) installed. Live, nothing is
 # skipped for want of a model: a server that does not list its models is an error, and so is
-# a named model that is not installed, naming the variable to change. Local models: no
+# a named model that is not installed, naming the variable to change. A server that cannot run a
+# speech model (phonon is an MLX model: Ollama's Linux build without the MLX runtime refuses to pull it)
+# declares no-speech mode with an empty UNILM_OLLAMA_SPEECH_MODEL: no speech model is required, the
+# speech testset does not run, and one log line names the mode and the variable. Local models: no
 # spend, and a cloud model named in the environment is refused before any request. Each
 # witness names the outcome that would refute it. Sampling witnesses run at temperature 0
 # (greedy, so repeatable on one machine) unless they measure the model's own default behaviour.
@@ -17,10 +20,10 @@ const _OLLAMA_MODEL = get(ENV, "UNILM_OLLAMA_MODEL", "gemma4:e4b")
 const _OLLAMA_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OLLAMA_FIM = get(ENV, "UNILM_OLLAMA_FIM_MODEL", "qwen2.5-coder:1.5b-base")
 const _OLLAMA_GGUF = get(ENV, "UNILM_OLLAMA_GGUF_MODEL", "qwen2.5-coder:1.5b-base")
-const _OLLAMA_SPEECH = get(ENV, "UNILM_OLLAMA_SPEECH_MODEL", "phonon")
+const _OLLAMA_SPEECH = get(ENV, "UNILM_OLLAMA_SPEECH_MODEL", "phonon")   # "": no-speech mode
 const _OLLAMA_NAMED = ("UNILM_OLLAMA_MODEL" => _OLLAMA_MODEL, "UNILM_OLLAMA_EMBED_MODEL" => _OLLAMA_EMBED,
                        "UNILM_OLLAMA_GGUF_MODEL" => _OLLAMA_GGUF, "UNILM_OLLAMA_FIM_MODEL" => _OLLAMA_FIM,
-                       "UNILM_OLLAMA_SPEECH_MODEL" => _OLLAMA_SPEECH)
+                       (isempty(_OLLAMA_SPEECH) ? () : ("UNILM_OLLAMA_SPEECH_MODEL" => _OLLAMA_SPEECH,))...)
 const _OLLAMA_MEDIA = joinpath(@__DIR__, "fixtures", "ollama")
 
 # Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
@@ -53,7 +56,7 @@ end
 
 if isnothing(_OLLAMA_EP)
     @info "Skipping Ollama live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
-          "$_OLLAMA_MODEL, $_OLLAMA_EMBED, $_OLLAMA_GGUF and $_OLLAMA_SPEECH)"
+          join(unique(last.(_OLLAMA_NAMED)), ", ", " and ") * ")"
 else
 
 _lchat(; ep=_OLLAMA_EP, system="You are concise.", kw...) =
@@ -351,6 +354,10 @@ end
     @test r.raw isa AbstractDict && !occursin('{', transcript_text(r))
 end
 
+if isempty(_OLLAMA_SPEECH)
+    @info "Ollama live witnesses in no-speech mode (UNILM_OLLAMA_SPEECH_MODEL is empty): " *
+          "no speech model is required, and the speech testset does not run"
+else
 @testset "speech: a WAV of 24 kHz mono 16-bit PCM, in the model's own voice or one it lists, that says the text" begin
     # Refuted by: a model without its voices, a non-success, another format, or a transcript of the speech
     # without the spoken word.
@@ -377,6 +384,7 @@ end
         @test heard isa TranscriptionSuccess && occursin("banana", lowercase(transcript_text(heard)))
     end
 end
+end # speech model
 
 @testset "translation of a recording into French" begin
     # Refuted by: a non-success, or a translation without the French word for the secret word, whether or not the

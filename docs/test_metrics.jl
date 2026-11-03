@@ -242,6 +242,33 @@ end
     @test share([fixture_page("1. Step\n\n   ```julia\n   Claude\n   ```\n")], :openai) == 0
     @test fenced_blocks(split("```julia\nx\n```julia\ny\n\n```\nz\n```\n", '\n')) == [1:3, 6:8]
 end
+@testset "metrics — a page read while another read has swapped the parsers waits, and finds them restored" begin
+    Md, flavor = DocMetrics.Markdown, DocMetrics.Markdown.julia
+    f = only(findall(==(Md.fencedcode), flavor.breaking))
+    lock(DocMetrics._PARSING)                                    # another read: its fenced-code reader is swapped in
+    reading = try
+        flavor.breaking[f] = (stream, md) -> Md.fencedcode(stream, md)
+        task = @async prose_lines("A.\n\n```julia\nx\n```\n")
+        yield()                                                  # the read runs until it waits for the lock
+        @test !istaskdone(task)
+        task
+    finally
+        flavor.breaking[f] = Md.fencedcode
+        unlock(DocMetrics._PARSING)
+    end
+    @test [l for (_, l) in fetch(reading)] == ["A."]
+    @test_throws ErrorException "Julia $VERSION" DocMetrics._position(Function[], Md.fencedcode)  # a Julia it cannot follow
+end
+@testset "metrics — while a page is read, another task's Markdown parse reads with the stdlib's parsers" begin
+    Md = DocMetrics.Markdown
+    ours = Int[]
+    fenced(stream, md) = Md.fencedcode(stream, md) && (push!(ours, 1); true)
+    theirs = DocMetrics._with_readers(fenced, Md.github_table) do
+        fetch(@async Md.parse("```julia\nx\n```\n"))                  # another task, while the readers are swapped in
+    end
+    @test isempty(ours) && only(theirs.content) isa Md.Code
+    @test only(findall(==(Md.fencedcode), Md.julia.breaking)) isa Int                # and they are put back
+end
 @testset "metrics — a fence or a table row Julia's Markdown reads otherwise is refused, naming the line" begin
     refused(text) = (err = caught(() -> prose_lines(text; file="p.md")); err isa PageError ? err.line : nothing)
     @test refused("Neutral.\n\n  ```julia\n  Claude\n  ```\n") == 3        # at the top level Julia closes at column 0

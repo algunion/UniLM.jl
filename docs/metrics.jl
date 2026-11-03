@@ -143,12 +143,42 @@ end
 
 const _PARSING = ReentrantLock()
 
+# Where `parser` sits in `parsers`, a parser vector of the julia flavor. The metric reads a page
+# through it: a Julia whose Markdown holds it other than once is one the metric cannot follow.
+function _position(parsers::Vector{Function}, parser::Function)::Int
+    at = findall(==(parser), parsers)
+    length(at) == 1 || error("docs/metrics.jl reads a page by wrapping the parser Markdown.$(nameof(parser)), which " *
+                             "the julia flavor of Julia $VERSION holds $(length(at)) times, not once")
+    only(at)
+end
+
+# Runs `f()` while the julia flavor reads fenced code with `fenced` and tables with `table`, for
+# the task that calls it alone: another task that parses Markdown meanwhile reads with the stdlib's
+# parsers. `_PARSING` is held from finding the parsers to putting them back. The swap is in the
+# julia flavor itself, not in a private `Markdown.Config` passed as `flavor`: a list item's and a
+# footnote's contents are parsed with the default flavor whatever the caller's (stdlib Markdown/src/
+# Common/block.jl:151, :329), and the metric reads the fences and tables there too.
+function _with_readers(f, fenced::Function, table::Function)
+    flavor = Markdown.julia
+    @lock _PARSING begin
+        i, j = _position(flavor.breaking, Markdown.fencedcode), _position(flavor.regular, Markdown.github_table)
+        owner = current_task()
+        flavor.breaking[i] = (stream, md) -> (current_task() === owner ? fenced : Markdown.fencedcode)(stream, md)
+        flavor.regular[j] = (stream, md) -> (current_task() === owner ? table : Markdown.github_table)(stream, md)
+        try
+            f()
+        finally
+            flavor.breaking[i], flavor.regular[j] = Markdown.fencedcode, Markdown.github_table
+        end
+    end
+end
+
 # What Julia's Markdown reads in `text` — `Markdown.parse`, as Documenter reads a page
 # (Documenter/src/documents.jl:54) —, in document order: the info string and code of each fenced
 # block (a `math` block's formula), and the text of each table. The parser reports them itself:
 # for the parse, the julia flavor's `fencedcode` and `github_table` (stdlib Markdown/src/Julia/
-# Julia.jl:10-11) are wrapped to keep what they read, and every nested parse — an admonition's, a
-# list item's, a block quote's, a footnote's — reads with that flavor.
+# Julia.jl:10-11) are wrapped to keep what they read (`_with_readers`), and every nested parse — an
+# admonition's, a list item's, a block quote's, a footnote's — reads with that flavor.
 function _julia_reads(text::String)::@NamedTuple{fences::Vector{Tuple{String,String}}, tables::Vector{String}}
     fences, tables = Tuple{String,String}[], String[]
     function fenced(stream::IO, md::Markdown.MD)::Bool
@@ -164,15 +194,7 @@ function _julia_reads(text::String)::@NamedTuple{fences::Vector{Tuple{String,Str
         push!(tables, String(read(seek(stream, start), stop - start)))     # which leaves it at `stop`
         true
     end
-    flavor = Markdown.julia
-    f = only(findall(==(Markdown.fencedcode), flavor.breaking))
-    t = only(findall(==(Markdown.github_table), flavor.regular))
-    @lock _PARSING try
-        flavor.breaking[f], flavor.regular[t] = fenced, table
-        Markdown.parse(text)
-    finally
-        flavor.breaking[f], flavor.regular[t] = Markdown.fencedcode, Markdown.github_table
-    end
+    _with_readers(() -> Markdown.parse(text), fenced, table)
     (fences=fences, tables=tables)
 end
 

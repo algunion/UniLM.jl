@@ -140,21 +140,26 @@ mono 16-bit PCM only, so `path` must be a 16-bit PCM WAV file, at any sample rat
 channel count: UniLM mixes the channels down and resamples by linear interpolation,
 which suits speech (there is no anti-aliasing filter). Any other file throws
 `ArgumentError` before any I/O, naming the conversion; convert it first, for example
-with `ffmpeg -i in.m4a -c:a pcm_s16le out.wav`. A language the session does not
-translate into is an [`AudioFailure`](@ref) carrying the provider's `error` event; the
-bounds and the cancellation are those of speech on OpenAI. Translation replaces
-OpenAI's file-upload translation endpoint, which shuts down on February 26, 2027
+with `ffmpeg -i in.m4a -c:a pcm_s16le out.wav`. A `source_language` throws `ArgumentError`
+before any I/O too: the session sets only the target language and has no field for the
+spoken one
+([translation client events](https://developers.openai.com/api/reference/resources/realtime/translation-client-events)).
+A language the session does not translate into is an [`AudioFailure`](@ref) carrying the
+provider's `error` event; the bounds and the cancellation are those of speech on OpenAI.
+Translation replaces OpenAI's file-upload translation endpoint, which shuts down on February 26, 2027
 ([Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)).
 
 On [`OllamaEndpoint`](@ref) (Ollama 0.40.12 or later), `translate` uploads the file as it is
-to Ollama's `/v1/audio/translations`, with the model and the target `language` as
-`to_language`, the "ISO 639-1 code of the output language"
+to Ollama's `/v1/audio/translations`, with the model, the target `language` as
+`to_language`, the "ISO 639-1 code of the output language", and `source_language`, when given,
+as Ollama's own `language`, "the spoken language, if known"
 ([OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)), and returns the
 reply's `text`, its JSON in `raw`. Ollama decodes a WAV file itself and passes any other
 container to the model whole. There is no default model: name an installed model that hears
-audio, such as `gemma4:e4b`; a call without one, a blank `language` and a missing or empty file
-throw `ArgumentError` before the request. A language Ollama does not translate into is its 400,
-an [`AudioFailure`](@ref), and transient statuses are retried as a transcription's are.
+audio, such as `gemma4:e4b`; a call without one, a blank `language` or `source_language` and a
+missing or empty file throw `ArgumentError` before the request. A language Ollama does not
+translate into or from is its 400, an [`AudioFailure`](@ref), and transient statuses are retried
+as a transcription's are.
 
 ## Transcription
 

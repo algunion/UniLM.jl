@@ -2553,8 +2553,10 @@ speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | Audio
 speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
       speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
 save_audio(r::SpeechSuccess, path)
-translate(path; language="en", model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing)
+translate(path; language="en", source_language=nothing, model=nothing, service=OPENAIServiceEndpoint, config=nothing,
+          cancel=nothing)
     # model nothing → "gpt-realtime-translate" (OpenAI); Ollama has none (ArgumentError), e.g. "gemma4:e4b"
+    # source_language: Ollama's `language`, the spoken one; OpenAI's translation session has none (ArgumentError)
     -> TranscriptionSuccess | AudioFailure | AudioCallError
 
 @kwdef struct TranscriptionRequest

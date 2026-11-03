@@ -995,6 +995,23 @@ end
     @test _seam_timeout(r, AudioCallError) && isempty(seen)
 end
 
+# Refuted if: `source_language` does not go out as Ollama's own `language` field, the spoken language, or a call
+# without it names one.
+@testset "translate on Ollama: source_language goes out as `language`, the spoken language" begin
+    reply(_, _) = _json(200, JSON.json(Dict("text" => "The secret word is banana.")))
+    ep() = OllamaEndpoint(base_url=_url_probe_base[])
+    r, seen = _with_scripted(reply) do
+        translate(_SP_WAV; language="en", source_language="fr", service=ep(), model="lfm3-audio")
+    end
+    @test r isa TranscriptionSuccess
+    @test occursin("name=\"language\"\r\n\r\nfr\r\n", only(seen).body)
+    @test occursin("name=\"to_language\"\r\n\r\nen\r\n", only(seen).body)
+    _, seen = _with_scripted(reply) do
+        translate(_SP_WAV; language="en", service=ep(), model="lfm3-audio")
+    end
+    @test !occursin("name=\"language\"", only(seen).body)
+end
+
 # Refuted if: a translation Ollama cannot take reaches the network — the dead port would answer it with a call error —
 # or Ollama's own 400 does not come back as an AudioFailure carrying its message.
 @testset "translate on Ollama: what it cannot take is refused before any request; its 400 is an AudioFailure" begin
@@ -1006,6 +1023,8 @@ end
         for (call, fragment) in ((() -> translate(_SP_WAV; service=off), "Ollama has no default translation model"),
                                  (() -> translate(_SP_WAV; service=off, model=" "), "Ollama has no default translation model"),
                                  (() -> translate(_SP_WAV; service=off, model="lfm3-audio", language=" "), "needs a target language"),
+                                 (() -> translate(_SP_WAV; service=off, model="lfm3-audio", source_language=" "),
+                                  "source_language is blank"),
                                  (() -> translate(joinpath(dir, "absent.wav"); service=off, model="lfm3-audio"), "file not found"),
                                  (() -> translate(empty; service=off, model="lfm3-audio"), "\"audio file is empty\""))
             e = refusal(call)
@@ -1042,6 +1061,19 @@ end
     @test transcript_text(r2) == "The secret word is banana."
     @test only(seen2.targets) == "/translations?model=gpt-realtime-translate-preview"
     @test first(seen2.events)["session"]["audio"]["output"]["language"] == "en"
+end
+
+# Refuted if: a call naming the spoken language opens a Realtime translation session, which has no field for it.
+@testset "translate on OpenAI: source_language is refused before any connection" begin
+    refusal(f) = try f(); nothing catch x; x end
+    e, seen = _sp_with_realtime(_sp_translation_reply(["Le mot secret est banane."])) do
+        refusal(() -> translate(_SP_WAV; service=SpeechWSProbe, language="fr", source_language="en"))
+    end
+    @test e isa ArgumentError && isempty(seen.targets)
+    @test e.msg == "translate on an OpenAI Realtime translation session takes no source_language: the session sets " *
+                   "only the target language (audio.output.language) and has no field for the spoken one " *
+                   "(https://developers.openai.com/api/reference/resources/realtime/translation-client-events); " *
+                   "omit source_language"
 end
 
 @testset "translate: an error event, an early close and silence are typed failures" begin

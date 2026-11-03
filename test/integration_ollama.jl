@@ -379,11 +379,19 @@ end
 end
 
 @testset "translation of a recording into French" begin
-    # Refuted by: a non-success, or a translation without the French word for the secret word.
-    r = translate(joinpath(_OLLAMA_MEDIA, "secret_word.wav"); language="fr", service=_OLLAMA_EP, model=_OLLAMA_MODEL)
-    @test r isa TranscriptionSuccess
-    @info "Ollama translate into French" text = (r isa TranscriptionSuccess ? transcript_text(r) : r)
-    @test r isa TranscriptionSuccess && occursin("banane", lowercase(transcript_text(r)))
+    # Refuted by: a non-success, or a translation without the French word for the secret word, whether or not the
+    # clip's spoken language (English) is named; or a spoken language Ollama does not know answered with anything but
+    # its 400 naming `language`.
+    clip = joinpath(_OLLAMA_MEDIA, "secret_word.wav")
+    for source_language in (nothing, "en")
+        r = translate(clip; language="fr", source_language, service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+        @test r isa TranscriptionSuccess
+        @info "Ollama translate into French" source_language text = (r isa TranscriptionSuccess ? transcript_text(r) : r)
+        @test r isa TranscriptionSuccess && occursin("banane", lowercase(transcript_text(r)))
+    end
+    r = translate(clip; language="fr", source_language="xx", service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+    @info "Ollama translate from an unknown spoken language" r
+    @test r isa AudioFailure && r.status == 400 && occursin("unsupported language", r.response)
 end
 
 end # Ollama live

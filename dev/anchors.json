@@ -1,586 +1,15 @@
 {
-  "API-Constants": [
-    "/llm/"
-  ],
-  "Abstract-Type": [
-    "/api/results/"
-  ],
-  "Abstract-Types": [
-    "/api/endpoints/"
-  ],
-  "Accessor-Functions": [
-    "/api/images/",
-    "/api/responses/"
-  ],
-  "Accessors": [
-    "/api/audio/",
-    "/api/conversations/",
-    "/api/system_one/",
-    "/api/vector_stores/",
-    "/llm/"
-  ],
-  "Agentic-wire-seam": [
-    "/api/endpoints/"
-  ],
-  "Answers": [
-    "/api/system_one/"
-  ],
-  "Anthropic-(Claude)": [
-    "/api/endpoints/"
-  ],
-  "Attachments": [
-    "/api/chat/"
-  ],
-  "Audio-replies": [
-    "/api/chat/"
-  ],
-  "Audio:-speech,-transcription,-translation": [
-    "/llm/"
-  ],
-  "Azure-Deployment-Mapping": [
-    "/api/endpoints/"
-  ],
-  "Azure-OpenAI": [
-    "/api/endpoints/"
-  ],
   "Base.pop!-Tuple{Chat}": [
     "/api/chat/"
   ],
   "Base.push!-Tuple{Chat, Message}": [
     "/api/chat/"
   ],
-  "Bounds": [
-    "/api/realtime/"
-  ],
-  "Breaking-changes-are-batched": [
-    "/stability/"
-  ],
-  "Building-a-Conversation": [
-    "/api/chat/"
-  ],
-  "Built-in-Endpoints": [
-    "/api/endpoints/"
-  ],
-  "CallableTool": [
-    "/llm/"
-  ],
-  "Cancellation": [
-    "/api/config/",
-    "/llm/"
-  ],
-  "Capabilities-by-Provider": [
-    "/api/capabilities/",
-    "/llm/"
-  ],
-  "Capability-Symbols": [
-    "/api/capabilities/"
-  ],
-  "Chat": [
-    "/llm/"
-  ],
-  "Chat-Completions-API": [
-    "/llm/"
-  ],
-  "Chat-Completions-Example": [
-    "/llm/"
-  ],
-  "Chat-Completions-Results": [
-    "/api/results/"
-  ],
-  "Chat-Object": [
-    "/api/chat/"
-  ],
-  "Chat-Prefix-Completion": [
-    "/llm/"
-  ],
-  "Chat-wire-seam": [
-    "/api/endpoints/"
-  ],
-  "Client-Example": [
-    "/llm/"
-  ],
-  "Client-Functions": [
-    "/api/mcp/"
-  ],
-  "Client-Secret": [
-    "/api/realtime/"
-  ],
-  "Client-Types": [
-    "/api/mcp/"
-  ],
-  "Complete-Exports-List": [
-    "/llm/"
-  ],
-  "Concurrency": [
-    "/llm/"
-  ],
-  "Configuration": [
-    "/api/config/",
-    "/api/endpoints/"
-  ],
-  "Construction": [
-    "/api/embeddings/",
-    "/api/images/",
-    "/api/responses/"
-  ],
-  "Constructors,-verbs-and-accessors": [
-    "/llm/"
-  ],
-  "Convenience-Constructors": [
-    "/api/chat/"
-  ],
-  "Conversation-Forking": [
-    "/llm/"
-  ],
-  "Conversation-Management": [
-    "/api/chat/",
-    "/llm/"
-  ],
-  "Cost-Estimation": [
-    "/api/accounting/"
-  ],
-  "Cost-Tracking": [
-    "/llm/"
-  ],
-  "Cost-Tracking-Example": [
-    "/llm/"
-  ],
-  "Decision-provider-contracts": [
-    "/llm/"
-  ],
   "Designing-meanings": [
     "/guide/natural_language_dispatch/"
   ],
-  "Discovery": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Embeddings": [
-    "/llm/"
-  ],
-  "Embeddings-API": [
-    "/llm/"
-  ],
-  "Embeddings-Example": [
-    "/llm/"
-  ],
-  "Embeddings-Object": [
-    "/api/embeddings/"
-  ],
-  "Endpoint": [
-    "/api/ollama/"
-  ],
-  "Environment-Variables": [
-    "/llm/"
-  ],
-  "Error-and-Limit-Contracts": [
-    "/llm/"
-  ],
-  "Event-Builders": [
-    "/api/realtime/"
-  ],
-  "Example": [
-    "/api/completions/",
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Exceptions": [
-    "/llm/"
-  ],
-  "FIM-Completion": [
-    "/llm/"
-  ],
-  "FIM-Example": [
-    "/llm/"
-  ],
-  "Fork-Example": [
-    "/llm/"
-  ],
-  "Functions": [
-    "/api/audio/",
-    "/api/capabilities/",
-    "/api/moderations/",
-    "/api/webhooks/",
-    "/llm/"
-  ],
-  "Generic-Endpoint": [
-    "/api/endpoints/"
-  ],
-  "Google-Gemini": [
-    "/api/endpoints/"
-  ],
-  "Image-Generation-API": [
-    "/llm/"
-  ],
-  "Image-Generation-Example": [
-    "/llm/"
-  ],
-  "Image-Generation-Results": [
-    "/api/results/"
-  ],
-  "ImageGeneration": [
-    "/llm/"
-  ],
-  "Input-Helpers": [
-    "/api/responses/",
-    "/llm/"
-  ],
-  "Installation": [
-    "/llm/"
-  ],
-  "JSON-Serialization": [
-    "/api/images/"
-  ],
-  "Legacy-aliases": [
-    "/api/chat/"
-  ],
-  "Lifecycle": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "MCP-Client": [
-    "/llm/"
-  ],
-  "MCP-Server": [
-    "/llm/"
-  ],
-  "Macros": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Message": [
-    "/llm/"
-  ],
-  "Messages": [
-    "/api/chat/"
-  ],
-  "Model-Constants": [
-    "/api/chat/",
-    "/api/embeddings/"
-  ],
-  "Models": [
-    "/api/ollama/",
-    "/api/system_one/"
-  ],
-  "Moderation": [
-    "/llm/"
-  ],
-  "Multimodal-Input": [
-    "/api/responses/"
-  ],
-  "Natural-language-control-flow": [
-    "/llm/"
-  ],
-  "Objects": [
-    "/api/containers/",
-    "/api/fine_tuning/",
-    "/api/uploads/",
-    "/api/vector_stores/"
-  ],
-  "Ollama-(local)": [
-    "/llm/"
-  ],
-  "Ollama-model-management": [
-    "/llm/"
-  ],
-  "OpenAI-(default)": [
-    "/api/endpoints/"
-  ],
-  "Operations": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Output-Format": [
-    "/api/chat/"
-  ],
-  "Parameters-Reference": [
-    "/api/images/"
-  ],
-  "Parsed-Objects": [
-    "/api/batch/",
-    "/api/conversations/",
-    "/api/files/",
-    "/api/moderations/"
-  ],
-  "Pattern-Matching": [
-    "/api/results/"
-  ],
-  "Pattern-Matching-2": [
-    "/api/results/"
-  ],
-  "Pattern-Matching-3": [
-    "/api/results/"
-  ],
-  "Prefix-Example": [
-    "/llm/"
-  ],
-  "Provider-Capabilities": [
-    "/llm/"
-  ],
-  "Provider-Compatibility": [
-    "/llm/"
-  ],
-  "Provider-Contracts": [
-    "/llm/"
-  ],
-  "Provider-model-listings": [
-    "/llm/"
-  ],
-  "Provider-protocol-(public,-not-exported)": [
-    "/llm/"
-  ],
-  "Public-Extension-API-(not-exported)": [
-    "/llm/"
-  ],
-  "Questions": [
-    "/api/system_one/"
-  ],
   "Reading-answers": [
     "/guide/system_one/"
-  ],
-  "Reasoning,-Prompt-Caching-and-Moderation": [
-    "/api/responses/"
-  ],
-  "Reasoning-controls": [
-    "/llm/"
-  ],
-  "Recorded-answers": [
-    "/api/system_one/",
-    "/llm/"
-  ],
-  "Registration": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Renames-keep-their-old-names": [
-    "/stability/"
-  ],
-  "Request-Configuration-and-Timeouts": [
-    "/llm/"
-  ],
-  "Request-Function": [
-    "/api/chat/",
-    "/api/embeddings/",
-    "/api/images/"
-  ],
-  "Request-Functions": [
-    "/api/batch/",
-    "/api/completions/",
-    "/api/containers/",
-    "/api/conversations/",
-    "/api/files/",
-    "/api/fine_tuning/",
-    "/api/responses/",
-    "/api/uploads/",
-    "/api/vector_stores/"
-  ],
-  "Request-Type": [
-    "/api/completions/",
-    "/api/files/",
-    "/api/images/",
-    "/api/responses/"
-  ],
-  "Request-Types": [
-    "/api/audio/"
-  ],
-  "Request-and-Verbs": [
-    "/api/system_one/"
-  ],
-  "Resolution-Precedence": [
-    "/api/config/"
-  ],
-  "Respond": [
-    "/llm/"
-  ],
-  "Response-Accessors": [
-    "/llm/"
-  ],
-  "Response-Management-Functions": [
-    "/llm/"
-  ],
-  "Response-Object": [
-    "/api/responses/"
-  ],
-  "Response-Types": [
-    "/api/completions/",
-    "/api/images/",
-    "/llm/"
-  ],
-  "ResponseFormat-(Structured-Output)": [
-    "/llm/"
-  ],
-  "ResponseObject": [
-    "/llm/"
-  ],
-  "Responses-API": [
-    "/llm/"
-  ],
-  "Responses-API-Examples": [
-    "/llm/"
-  ],
-  "Responses-API-Results": [
-    "/api/results/"
-  ],
-  "Result-Helpers": [
-    "/api/results/"
-  ],
-  "Result-Type-Hierarchy": [
-    "/llm/"
-  ],
-  "Result-Types": [
-    "/api/audio/",
-    "/api/batch/",
-    "/api/completions/",
-    "/api/containers/",
-    "/api/conversations/",
-    "/api/embeddings/",
-    "/api/files/",
-    "/api/fine_tuning/",
-    "/api/images/",
-    "/api/moderations/",
-    "/api/responses/",
-    "/api/results/",
-    "/api/system_one/",
-    "/api/uploads/",
-    "/api/vector_stores/"
-  ],
-  "Results": [
-    "/api/models/",
-    "/api/ollama/"
-  ],
-  "Role-Constants": [
-    "/api/chat/"
-  ],
-  "Routing,-authentication-and-defaults": [
-    "/api/endpoints/"
-  ],
-  "Saving-Images": [
-    "/api/images/"
-  ],
-  "Selecting-a-Backend": [
-    "/api/endpoints/"
-  ],
-  "Server-Example": [
-    "/llm/"
-  ],
-  "Server-Functions": [
-    "/api/mcp/"
-  ],
-  "Server-Types": [
-    "/api/mcp/"
-  ],
-  "Service-Endpoints": [
-    "/llm/"
-  ],
-  "Serving": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Session-Concurrency": [
-    "/llm/"
-  ],
-  "Session-and-Result-Types": [
-    "/api/realtime/"
-  ],
-  "Sharp-edges": [
-    "/llm/"
-  ],
-  "Speech": [
-    "/api/audio/"
-  ],
-  "Streaming-Example-(Chat)": [
-    "/llm/"
-  ],
-  "System-One-API-(Jev,-OpenAI-Decisions,-Ollama)": [
-    "/llm/"
-  ],
-  "System-One-protocols": [
-    "/api/endpoints/"
-  ],
-  "Text-Format": [
-    "/api/responses/"
-  ],
-  "Text-Format-/-Structured-Output": [
-    "/llm/"
-  ],
-  "The-APIs": [
-    "/llm/"
-  ],
-  "The-CHANGELOG-is-authoritative": [
-    "/stability/"
-  ],
-  "Timeout-Errors": [
-    "/api/config/"
-  ],
-  "Token-Usage": [
-    "/api/accounting/"
-  ],
-  "TokenUsage": [
-    "/llm/"
-  ],
-  "Tool-Bridge": [
-    "/api/mcp/",
-    "/llm/"
-  ],
-  "Tool-Calling-Example-(Chat)": [
-    "/llm/"
-  ],
-  "Tool-Calling-Types": [
-    "/llm/"
-  ],
-  "Tool-Choice": [
-    "/api/responses/"
-  ],
-  "Tool-Constructors": [
-    "/api/responses/"
-  ],
-  "Tool-Loop": [
-    "/api/chat/",
-    "/llm/"
-  ],
-  "Tool-Result": [
-    "/llm/"
-  ],
-  "Tool-Results-and-Hosted-(Gemini)-Tools": [
-    "/api/responses/"
-  ],
-  "Tool-Types": [
-    "/api/responses/",
-    "/llm/"
-  ],
-  "ToolCallOutcome-/-ToolLoopResult": [
-    "/llm/"
-  ],
-  "Tools": [
-    "/api/chat/"
-  ],
-  "Toward-1.0": [
-    "/stability/"
-  ],
-  "Transcription": [
-    "/api/audio/",
-    "/providers/ollama/"
-  ],
-  "Translation": [
-    "/api/audio/"
-  ],
-  "Transport-Functions": [
-    "/api/realtime/"
-  ],
-  "Type-Hierarchy": [
-    "/api/results/"
-  ],
-  "TypeSafe-(System-One-/-Jev)": [
-    "/api/endpoints/"
-  ],
-  "Types": [
-    "/llm/"
-  ],
-  "Types-2": [
-    "/llm/"
-  ],
-  "Types-and-Constants": [
-    "/api/webhooks/"
   ],
   "UniLM.@branch": [
     "/api/nl_dispatch/"
@@ -1311,7 +740,7 @@
   "UniLM.auth_header": [
     "/api/endpoints/"
   ],
-  "UniLM.box": [
+  "UniLM.bounding_box": [
     "/api/system_one/"
   ],
   "UniLM.call_tool": [
@@ -1539,12 +968,6 @@
   "UniLM.issuccess": [
     "/api/results/"
   ],
-  "UniLM.jl": [
-    "/"
-  ],
-  "UniLM.jl-—-LLM-Reference": [
-    "/llm/"
-  ],
   "UniLM.json_object_format": [
     "/api/responses/"
   ],
@@ -1704,6 +1127,9 @@
   "UniLM.register_tool!": [
     "/api/mcp/"
   ],
+  "UniLM.reset_default_config!": [
+    "/api/config/"
+  ],
   "UniLM.respond": [
     "/api/responses/"
   ],
@@ -1859,41 +1285,6 @@
   ],
   "UniLM.with_system_one": [
     "/api/system_one/"
-  ],
-  "Usage": [
-    "/api/audio/",
-    "/api/batch/",
-    "/api/containers/",
-    "/api/conversations/",
-    "/api/files/",
-    "/api/fine_tuning/",
-    "/api/moderations/",
-    "/api/nl_dispatch/",
-    "/api/realtime/",
-    "/api/uploads/",
-    "/api/vector_stores/",
-    "/api/webhooks/"
-  ],
-  "Usage-Example": [
-    "/api/embeddings/"
-  ],
-  "Usage-Examples": [
-    "/api/images/"
-  ],
-  "Versioning-and-Stability": [
-    "/stability/"
-  ],
-  "What-\"validate-before-dispatch\"-means": [
-    "/api/capabilities/"
-  ],
-  "What-0.x-means-here": [
-    "/stability/"
-  ],
-  "What-each-provider-reports": [
-    "/api/models/"
-  ],
-  "Which-verbs-retry": [
-    "/llm/"
   ],
   "accounting_api": [
     "/api/accounting/"
@@ -2123,9 +1514,6 @@
   "chat_guide": [
     "/guide/chat_completions/"
   ],
-  "chatrequest!": [
-    "/llm/"
-  ],
   "completions_capabilities": [
     "/guide/completions/"
   ],
@@ -2321,9 +1709,6 @@
   "deepseek_tools": [
     "/providers/deepseek/"
   ],
-  "embeddingrequest!": [
-    "/llm/"
-  ],
   "embeddings_api": [
     "/api/embeddings/"
   ],
@@ -2482,9 +1867,6 @@
   ],
   "gemini_tools": [
     "/providers/gemini/generate_content/"
-  ],
-  "generate_image": [
-    "/llm/"
   ],
   "getting_started": [
     "/getting_started/"
@@ -3257,9 +2639,6 @@
   "realtime_api": [
     "/api/realtime/"
   ],
-  "respond": [
-    "/llm/"
-  ],
   "responses_api": [
     "/api/responses/"
   ],
@@ -3503,9 +2882,6 @@
   "timeouts_see_also": [
     "/guide/timeouts/"
   ],
-  "to_tool": [
-    "/llm/"
-  ],
   "tool_calling_calls": [
     "/guide/tool_calling/"
   ],
@@ -3550,12 +2926,6 @@
   ],
   "tool_calling_strict": [
     "/guide/tool_calling/"
-  ],
-  "tool_loop!-(Chat-Completions)": [
-    "/llm/"
-  ],
-  "tool_loop-(Responses-API)": [
-    "/llm/"
   ],
   "tools_guide": [
     "/guide/tool_calling/"

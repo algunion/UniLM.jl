@@ -31,7 +31,7 @@
         ],
         "Local models" => [
             "Ollama" => "providers/ollama/index.md",
-            "Embeddings" => "providers/ollama/embeddings.md",
+            "Ollama embeddings" => "providers/ollama/embeddings.md",
             "Runtime & model management" => "providers/ollama/runtime.md",
             "vLLM, LM Studio & llama.cpp" => "providers/local_servers.md",
         ],

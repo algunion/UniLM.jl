@@ -4,7 +4,21 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 
-import { allLinks, isCurrentRoute } from '@/lib/navigation'
+import {
+  allLinks,
+  isCurrentRoute,
+  trailOf,
+  type NavigationLink,
+} from '@/lib/navigation'
+
+// The sidebar titles an entry's first page "Start here", under the entry's
+// group (docs/pages.jl); away from the sidebar, the title names the group.
+function linkTitle({ title, href }: NavigationLink) {
+  let group = trailOf(href)?.group
+  return title === 'Start here' && group !== undefined
+    ? `${group} — ${title}`
+    : title
+}
 
 function ArrowIcon(props: React.ComponentPropsWithoutRef<'svg'>) {
   return (
@@ -64,8 +78,20 @@ export function PrevNextLinks() {
 
   return (
     <dl className="mt-12 flex border-t border-slate-200 pt-6 dark:border-slate-800">
-      {previousPage && <PageLink dir="previous" {...previousPage} />}
-      {nextPage && <PageLink className="ml-auto text-right" {...nextPage} />}
+      {previousPage && (
+        <PageLink
+          dir="previous"
+          href={previousPage.href}
+          title={linkTitle(previousPage)}
+        />
+      )}
+      {nextPage && (
+        <PageLink
+          className="ml-auto text-right"
+          href={nextPage.href}
+          title={linkTitle(nextPage)}
+        />
+      )}
     </dl>
   )
 }

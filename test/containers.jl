@@ -20,6 +20,22 @@ end
     @test_throws ArgumentError upload_file("/no/such/file.csv", "user_data"; service=URLProbe)
 end
 
+@testset "add_container_file: a cancelled token reads no file" begin
+    # As for upload_file: a call that read this unreadable file would end in that SystemError.
+    cpath = tempname() * ".txt"
+    write(cpath, "x")
+    chmod(cpath, 0o000)
+    try
+        r, seen = _with_scripted(() -> add_container_file("cntr_1", cpath; service=URLProbe,
+                                                          cancel=cancel!(CancelToken())),
+                                 (_, _) -> _json(200, "{}"))
+        @test (typeof(r), typeof(r.cause), length(seen)) == (ContainerCallError, UniLMCancelled, 0)
+    finally
+        chmod(cpath, 0o600)
+        rm(cpath; force=true)
+    end
+end
+
 @testset "add_container_file decodes the container-file object it gets back" begin
     path, io = mktemp()
     write(io, "x")

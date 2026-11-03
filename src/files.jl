@@ -250,8 +250,9 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        form = HTTP.Form(["purpose" => u.purpose,
-            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
+        # `_http` builds the form after its cancel check: a cancelled token reads no file.
+        form = _BodyFactory(() -> HTTP.Form(["purpose" => u.purpose,
+            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))]))
         resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
                      cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         return resp.status == 200 ?

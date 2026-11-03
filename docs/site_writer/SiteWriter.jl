@@ -42,8 +42,9 @@ manual into the site directory `site`:
   "Introduction", then per section of `pages` a group of its pages or a family
   whose groups are its sections;
 - `public/assets/`: a copy of the manual's `assets/` directory;
-- `public/anchors.json`: every anchor id — page titles, headings and docstrings —
-  mapped to the sorted routes of the pages that define it.
+- `public/anchors.json`: every anchor id a page declares — its `@id` headings, the
+  title's included, and its docstrings — mapped to the sorted routes of the pages that
+  define it (`declared_ids`).
 
 Nothing is written unless every page converts.
 """
@@ -348,12 +349,34 @@ function navigation(doc::Documenter.Document, pages::Vector{Page})::Vector{Any}
     isempty(singles) ? sections : [(title = "Introduction", links = singles); sections]
 end
 
+"""
+The anchor ids of the page model `p` that its page declares: those of its docstrings and of
+its headings written `# [Title](@id name)`, the title's included. A heading without `@id` takes
+Documenter's slug of its text, which an edit of the text changes and other pages repeat
+("Usage"): no lasting address, so the site forwards no link to it.
+"""
+function declared_ids(page::Documenter.Page, p::Page)::Vector{String}
+    headers = filter(e -> e isa Documenter.Markdown.Header, page.elements)
+    anchors = [n.element.anchor for n in page.mdast.children if n.element isa Documenter.AnchoredHeader]
+    length(headers) == length(anchors) || throw(WriterError(p.key,
+        "$(length(headers)) headings in its source but $(length(anchors)) anchored ones, so no heading's `@id` is known"))
+    named(h) = length(h.text) == 1 && h.text[1] isa Documenter.Markdown.Link &&
+               occursin(Documenter.NAMED_ANCHOR_REGEX, h.text[1].url)
+    slugs = Set(Documenter.anchor_label(a) for (h, a) in zip(headers, anchors) if !named(h))
+    filter(∉(slugs), [Documenter.anchor_label(title_node(page).element.anchor); p.ids])
+end
+
 function Documenter.render(doc::Documenter.Document, w::SiteMarkdoc)
     @info "SiteWriter: writing the site's pages into $(w.site)."
     pages = read_site(doc)
     app = joinpath(w.site, "src", "app")
     files = [joinpath(app, split(p.route, '/'; keepempty = false)..., "page.md") => markdoc(p) for p in pages]
     nav = JSON.json(navigation(doc, pages); pretty = true) * "\n"
+    anchors = Dict{String,Vector{String}}()
+    for p in pages, id in declared_ids(doc.blueprint.pages[p.key], p)
+        push!(get!(anchors, id, String[]), p.route)
+    end
+    foreach(r -> unique!(sort!(r)), values(anchors))
     if isdir(app)
         for (dir, _, names) in walkdir(app; topdown = false)
             "page.md" in names && rm(joinpath(dir, "page.md"))
@@ -371,11 +394,6 @@ function Documenter.render(doc::Documenter.Document, w::SiteMarkdoc)
         mkpath(dirname(public))
         cp(assets, public)
     end
-    anchors = Dict{String,Vector{String}}()
-    for p in pages, id in [Documenter.anchor_label(title_node(doc.blueprint.pages[p.key]).element.anchor); p.ids]
-        push!(get!(anchors, id, String[]), p.route)
-    end
-    foreach(r -> unique!(sort!(r)), values(anchors))
     write(joinpath(mkpath(joinpath(w.site, "public")), "anchors.json"), JSON.json(anchors; pretty = true) * "\n")
     @info "SiteWriter: wrote $(length(files)) pages, the navigation and the assets."
     nothing

@@ -35,6 +35,13 @@
   error for a type strict mode does not support, but on 2026-11-03 a strict tool whose parameter had the type `null`
   was answered at both of its beta URLs.
 
+### CI
+- **The release gate runs the chat-model suite on its local Ollama.** `test/integration_ollama.jl` (chat, streaming,
+  tools, structured output, attachments, embeddings, `respond`, fill-in-the-middle, transcription and translation)
+  runs in the local-models job on Gemma 4 E4B's GGUF build, because the MLX builds do not pull on the Linux runner.
+  An empty `UNILM_OLLAMA_SPEECH_MODEL` declares that no speech model is installed, and the suite logs that its speech
+  testset does not run. The job installs Ollama 0.40.14, pinned by the SHA-256 Ollama publishes for its Linux build.
+
 ## 0.31.0
 
 ### Breaking

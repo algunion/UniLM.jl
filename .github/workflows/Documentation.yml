@@ -91,6 +91,9 @@ jobs:
         working-directory: site
         # No install scripts: the site needs none.
         run: npm ci --ignore-scripts
+      - name: Lint the site
+        working-directory: site
+        run: npm run lint
       - name: Build the site
         working-directory: site
         env:

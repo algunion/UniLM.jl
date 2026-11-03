@@ -6,7 +6,7 @@
 - **`bounding_box` replaces `box`, with no alias.** An exported `box` collides with packages that export their own,
   such as Luxor, which then has to be written `UniLM.box`. `bounding_box(instructions)` builds the same `BoxQuestion`,
   and the wire is unchanged (`"type": "box"`), so recorded requests keep their bytes and their keys. Upgrading: rename
-  each `box(…)` call to `bounding_box(…)`.
+  each `box(…)` call to `bounding_box(…)`. A link to `box`'s documentation opens `bounding_box`'s.
 
 ### Added
 - **`reset_default_config!()` and `set_default_config!(nothing)` clear the process default config.** After a clear,

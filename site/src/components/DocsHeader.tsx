@@ -15,7 +15,7 @@ export function DocsHeader({ title }: { title?: string }) {
   return (
     <header className="mb-9 space-y-1">
       {trail && (
-        <p className="font-display text-sm font-medium text-sky-500">
+        <p className="font-display text-sm font-medium text-sky-700 dark:text-sky-500">
           {trail.family === undefined
             ? trail.group
             : `${trail.family} · ${trail.group}`}

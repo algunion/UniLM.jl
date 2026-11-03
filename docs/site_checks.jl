@@ -5,13 +5,14 @@
 #
 # <out> is the site's static export (site/out, holding anchors.json), <app> the directory of its generated pages
 # (site/src/app). Prints every link that does not resolve and every line of an example's output that reads as a
-# failure; exits 1 when there is one.
+# failure, and exits 1 when there is one; it also lists the links in a form these checks do not read
+# (`unchecked_links`), which fail nothing.
 module SiteChecks
 
 include(joinpath(@__DIR__, "redirects.jl"))
 using .Redirects: read_anchors, route
 
-export check_links, scan_outputs
+export check_links, scan_outputs, unchecked_links
 
 """
 A URL of the site's dev or stable build: `route` from the `/` after the version on (empty when the URL stops at the
@@ -40,6 +41,47 @@ const OPENING = r"^((?:[ >]|[-*+] |\d+[.)] )*)(`{3,})[ \t]*([^`\s]*)[^`]*$"
 
 "A line of an example's output that reads as a failure."
 const FAILURE = r"^Request failed|ReplayMissError|KeyError: key|CallError\("m
+
+"A link destination that starts with a URL scheme, `//` or `#`: it leaves the file's site, or stays on its page."
+const ELSEWHERE = r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)"
+
+"""
+The forms of a link that `check_links` does not check, by the extensions of the files read for them: what a report
+calls the form, and the pattern of one, whose `dest` group, when it has one, is its destination: a destination that
+leaves the site or stays on the page (`ELSEWHERE`) is no link into the site, and is not reported.
+"""
+const UNCHECKED = [
+    ((".tsx",), "href={…}, a JSX expression", r"\bhref=\{"),
+    ((".tsx",), "href='…', single-quoted", r"\bhref='(?<dest>[^']*)'"),
+    ((".tsx",), "href=\"…\" not starting with /", r"\bhref=\"(?<dest>[^/\"][^\"]*)\""),
+    ((".tsx",), "src=…", r"\bsrc=(?:\{|[\"'](?<dest>[^\"']*)[\"'])"),
+    ((".md", ".txt"), "an HTML src or href", r"<[A-Za-z][^>]*?\b(?:src|href)=[\"'](?<dest>[^\"']*)[\"']"),
+    ((".md", ".txt"), "a reference definition, [label]: …", r"^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*<?(?<dest>[^\s>]+)"),
+    ((".txt",), "a Markdown link to a file", r"\]\((?<dest>[^\s)]*)"),
+]
+
+"""
+    unchecked_links(files) -> Vector{String}
+
+The links of `files` in a form `check_links` does not check (`UNCHECKED`), one message per file and form, in the
+order of `UNCHECKED`: `"file: form: not checked, at lines …"`. In a `.md` file, fenced code holds no link. A link that
+leaves the site or stays on its page (`ELSEWHERE`) is no link into the site and is not reported.
+"""
+function unchecked_links(files::Vector{String})::Vector{String}
+    found = String[]
+    for file in files
+        ext = last(splitext(file))
+        lines = readlines(file)
+        prose = ext == ".md" ? [f === nothing for f in fences(lines)] : trues(length(lines))
+        into(m) = !haskey(m, :dest) || m[:dest] === nothing || !occursin(ELSEWHERE, m[:dest])
+        for (exts, form, pattern) in UNCHECKED
+            ext in exts || continue
+            at = [n for (n, l) in enumerate(lines) if prose[n] && any(into, eachmatch(pattern, l))]
+            isempty(at) || push!(found, "$file: $form: not checked, at line$(length(at) == 1 ? "" : "s") $(join(at, ", "))")
+        end
+    end
+    found
+end
 
 "A link at `line` of a file, `link` as written there, and why it does not resolve: `problem`, `nothing` when it does."
 const Link = @NamedTuple{line::Int, link::SubString{String}, problem::Union{Nothing,String}}
@@ -214,6 +256,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
     out, app = ARGS
     files = joinpath.(dirname(@__DIR__), ["README.md", "llms.txt", joinpath("site", "src", "components", "Hero.tsx")])
     problems = [SiteChecks.check_links(out, files, SiteChecks.read_anchors(out)); SiteChecks.scan_outputs(app)]
+    unchecked = SiteChecks.unchecked_links(files)
+    isempty(unchecked) ||
+        println("links in a form these checks do not read, not resolved against $out:", join("\n  " .* unchecked))
     if !isempty(problems)
         println(stderr, "links that do not resolve against $out, and failures in the example outputs of $app:",
                 join("\n  " .* problems))

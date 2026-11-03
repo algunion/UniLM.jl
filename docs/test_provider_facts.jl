@@ -213,6 +213,24 @@ end
     @test refusal([openai, remake(gemini; features=merge(gemini.features, Dict(:setup => "openai_setup")))]) ==
           (:gemini, :features)
     @test refusal([remake(jev; features=merge(jev.features, Dict(:images => "jev_images__next")))]) == (:jev, :features)
+    # `usage` is the code that gives the first endpoint: the type, or an instance of its type
+    ollama, generic = entry(:ollama), entry(:local_servers)
+    @test refusal([remake(openai; usage="ANTHROPICServiceEndpoint")]) == (:openai, :usage)      # another endpoint
+    @test refusal([remake(openai; usage="OPENAIServiceEndpoint()")]) === nothing                # called, it returns the type
+    @test refusal([remake(ollama; usage="OllamaEndpoint")]) == (:ollama, :usage)                # a type, for an instance
+    @test refusal([remake(generic; usage="OllamaEndpoint()")]) == (:local_servers, :usage)
+    @test refusal([remake(openai; usage="OPENAIServiceEndpoint(")]) == (:openai, :usage)        # no code at all
+    @test refusal([remake(generic; usage="GenericOpenAIEndpoint(\"http://localhost:1234\", \"\")")]) === nothing
+    # a feature is one the templates give a section for: a misspelt one is refused, never silently unlisted
+    features(key, own, inherited...) =
+        try ProviderFacts._features(key, own, inherited...); nothing
+        catch err; err isa ProviderFacts.RegistryError || rethrow(); (err.key, err.field) end
+    @test features(:x, (:setup, :streamng)) == (:x, :features)
+    @test features(:x, (:setup,), :failure => "x_errors") == (:x, :features)
+    @test features(:x, (:setup,), :failures => "x_errors") === nothing
+    template_ids(file) = [Symbol(m[1]) for m in eachmatch(r"^## \[[^\]]+\]\(@id <entry>_([a-z_]+)\)"m,
+                                                          read(joinpath(@__DIR__, "templates", file), String))]
+    @test sort(collect(ProviderFacts._FEATURE_NAMES)) == sort!(unique!([template_ids("llm_provider.md"); template_ids("decision_provider.md")]))
     row = UniLM.DEFAULT_PRICING["gpt-6-sol"]
     function price_refusal(ids, unprefixed...)       # the id and tables the partition names; `nothing` when it accepts
         try ProviderFacts._price_partition(Dict(id => row for id in ids), unprefixed...); nothing

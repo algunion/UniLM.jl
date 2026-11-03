@@ -157,11 +157,11 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   provider request takes the keyword: [`chatrequest!`](@ref), [`respond`](@ref),
   [`embeddingrequest!`](@ref), [`tool_loop!`](@ref) / [`tool_loop`](@ref),
   [`generate_image`](@ref), [`edit_image`](@ref), [`fim_complete`](@ref),
-  [`prefix_complete`](@ref), [`ask`](@ref), [`list_models`](@ref),
-  [`nl_dispatch`](@ref), [`@branch`](@ref), Ollama's model calls, [`poll_batch`](@ref),
-  [`poll_file_batch`](@ref), and every platform and lifecycle verb: files, uploads,
-  vector stores, conversations, containers, batches, fine-tuning, [`moderate`](@ref),
-  [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),
+  [`prefix_complete`](@ref), [`ask`](@ref), [`ask_each`](@ref), [`list_models`](@ref),
+  [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref), Ollama's model calls,
+  [`poll_batch`](@ref), [`poll_file_batch`](@ref), and every platform and lifecycle verb:
+  files, uploads, vector stores, conversations, containers, batches, fine-tuning,
+  [`moderate`](@ref), [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),
   [`mint_realtime_secret`](@ref) and the Responses lifecycle operations
   ([`get_response`](@ref) and the others). The exception is [`realtime_connect`](@ref):
   the session it opens observes no token ([a WebSocket session](@ref timeout_realtime)).

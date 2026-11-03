@@ -115,7 +115,7 @@ The `save_image` helper decodes base64 and writes to disk:
 
 ```@example image_generation
 # Demonstrate save_image with a tiny test payload
-tmpfile = tempname() * ".txt"
+tmpfile = joinpath(mktempdir(), "hello.txt")
 UniLM.save_image("aGVsbG8=", tmpfile)  # "hello" in base64
 println("File saved to: ", basename(tmpfile))
 println("Contents: ", read(tmpfile, String))

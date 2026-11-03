@@ -3,7 +3,7 @@
 # The manual's executed blocks run in a build without keys, so each exported function or macro they call has its
 # answer replayed by `with_recorded_answers` (RECORDABLE) or sends nothing (LOCAL); UNRECORDABLE holds the rest.
 # Every export is in exactly one class, so a new export fails here until it is classified.
-import UniLM
+import Markdown, UniLM
 using Test
 
 # The verbs a recording scope replays; `list_models` only TypeSafe's listing, which `unrecordable_calls` checks.
@@ -60,10 +60,24 @@ const UNRECORDABLE = Set{String}([
 ])
 
 # A fenced block: the block quote, list item and indentation markers before its fence (Documenter runs an executed
-# block inside an admonition, a block quote or a list item too), the fence, its info string, and the code up to the
-# line that closes it.
-const BLOCK = r"^(?<prefix>(?:[ >]|[-*+] |\d+[.)] )*)(?<fence>`{3,}|~{3,})(?<info>[^`\n]*)\n(?<code>(?s:.*?))^[ >]*\k<fence>[ \t]*$"m
+# block inside an admonition, a block quote or a list item too; a tab indents as spaces do), the fence, its info
+# string, and the code up to the line that closes it.
+const BLOCK = r"^(?<prefix>(?:[ \t>]|[-*+] |\d+[.)] )*)(?<fence>`{3,}|~{3,})(?<info>[^`\n]*)\n(?<code>(?s:.*?))^[ \t>]*\k<fence>[ \t]*$"m
 const EXECUTED = r"^\s*@(?:example|setup|eval|repl)\b"
+
+# Pushes onto `found` the info string and code of each executed block Julia's Markdown reads in `x`, in order:
+# Documenter's reading of a page, which runs such a block in an admonition, a block quote, a list item or a footnote.
+executed!(found::Vector{Tuple{String,String}}, x) = found
+executed!(found::Vector{Tuple{String,String}}, x::Markdown.Code) =
+    occursin(EXECUTED, x.language) ? push!(found, (x.language, x.code)) : found
+executed!(found::Vector{Tuple{String,String}}, x::Union{Markdown.MD,Markdown.Admonition,Markdown.BlockQuote}) =
+    foldl(executed!, x.content; init = found)
+executed!(found::Vector{Tuple{String,String}}, x::Markdown.List) = foldl(executed!, Iterators.flatten(x.items); init = found)
+executed!(found::Vector{Tuple{String,String}}, x::Markdown.Footnote) =
+    x.text isa AbstractVector ? foldl(executed!, x.text; init = found) : found
+
+# A block's code lines without their indentation, to compare a block as the scan and Julia's Markdown read it.
+stripped(code::AbstractString)::Vector{String} = String.(strip.(split(chomp(code), '\n')))
 const TYPESAFE = (:TYPESAFEServiceEndpoint, :(TYPESAFEServiceEndpoint()))
 
 # The export a callee names: `f` and `UniLM.f` (macros included) name "f"; any other callee names none.
@@ -97,16 +111,26 @@ end
     unrecordable_calls(text; file = "page") -> Vector{Tuple{Int,String}}
 
 The calls in the `@example`, `@setup`, `@eval` and `@repl` blocks of the Markdown `text` that reach a service
-unrecorded, as (line, name): an `UNRECORDABLE` function or macro, or a `list_models` that may not ask TypeSafe. A
-block that does not parse throws its `Meta.ParseError`, located at `file` and the line.
+unrecorded, as (line, name): an `UNRECORDABLE` function or macro, or a `list_models` that may not ask TypeSafe. The
+page is read as Documenter reads one, its carriage returns removed. A block that does not parse throws its
+`Meta.ParseError`, located at `file` and the line; executed blocks the scan reads otherwise than Julia's Markdown —
+more or fewer, or another info string or code — are an error naming `file`.
 """
 function unrecordable_calls(text::String; file::String = "page")::Vector{Tuple{Int,String}}
+    text = replace(text, '\r' => "")              # as Documenter reads a page (Documenter/src/documents.jl)
+    blocks = [(line = count(==('\n'), SubString(text, 1, m.offset - 1)) + 2, info = String(strip(m[:info])),
+               code = replace(m[:code], Regex("^[ \t>]{0,$(length(m[:prefix]))}", "m") => ""))
+              for m in eachmatch(BLOCK, text) if occursin(EXECUTED, m[:info])]
+    julia = executed!(Tuple{String,String}[], Markdown.parse(text))
+    k = findfirst(i -> i > length(blocks) || i > length(julia) || blocks[i].info != first(julia[i]) ||
+                       stripped(blocks[i].code) != stripped(last(julia[i])), 1:max(length(blocks), length(julia)))
+    isnothing(k) || error("$file: the executed blocks read here are not those Julia's Markdown reads, from the " *
+        (k <= length(blocks) ? "one at line $(blocks[k].line - 1)" : "end of the page") * " on ($(length(blocks)) " *
+        "read here, $(length(julia)) by Julia): a fence closes at its block's indentation, with nothing after it, " *
+        "and every line of a block quote starts with >")
     found = Tuple{Int,String}[]
-    for m in eachmatch(BLOCK, text)
-        occursin(EXECUTED, m[:info]) || continue
-        line = count(==('\n'), SubString(text, 1, m.offset - 1)) + 2
-        code = replace(m[:code], Regex("^[ >]{0,$(length(m[:prefix]))}", "m") => "")
-        calls!(found, Meta.parseall(code; filename = file, lineno = line), line)
+    for b in blocks
+        calls!(found, Meta.parseall(b.code; filename = file, lineno = b.line), b.line)
     end
     found
 end
@@ -133,6 +157,16 @@ end
     @test unrecordable_calls("```@example a\nx = 1\nwith_cancel(tok) do\n    edit_image(x)\nend\n```\n") ==
           [(4, "edit_image")]
     @test_throws Meta.ParseError unrecordable_calls("```@example a\nf(\n```\n")
+end
+
+@testset "executed verbs — a page is read as Documenter reads it: no carriage return, tabs indent, every block Julia's" begin
+    @test unrecordable_calls("```@example a\r\nspeak(\"x\")\r\n```\r\n") == [(2, "speak")]          # CRLF line ends
+    @test unrecordable_calls("\t```@example a\nspeak(\"x\")\n```\n") == [(2, "speak")]                # a tab pads the fence
+    @test unrecordable_calls("!!! note\n\t```@example a\n\tspeak(\"x\")\n\t```\n") == [(3, "speak")]  # a tab indents the body
+    # A block the scan reads otherwise than Julia's Markdown is an error naming the page, never a guess: Julia
+    # executes nothing of a block quote's lazy line, and closes a block at a fence that text follows.
+    @test_throws ErrorException "p.md" unrecordable_calls("> ```@example a\nspeak(\"x\")\n> ```\n"; file = "p.md")
+    @test_throws ErrorException "p.md" unrecordable_calls("```@example a\nx = 1\n``` done\nspeak(\"x\")\n```\n"; file = "p.md")
 end
 
 @testset "executed verbs — every export is classified, and docs/src is clean" begin

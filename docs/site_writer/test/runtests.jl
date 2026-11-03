@@ -123,6 +123,46 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         @test W.lines(table) == [raw"| a\|b | `c\|d` |  |", "| :--- | :---: | ---: |", "| 1 | 2 | 3 |"]
     end
 
+    @testset "emphasis is written only where CommonMark reads it as emphasis" begin
+        E(xs::W.Inline...) = W.Emph(W.Inline[xs...])
+        T = W.Text
+        @test W.md(W.Inline[T("a "), E(T("(b)"))]) == raw"a *\(b\)*"                # whitespace before, punctuation after
+        @test W.md(W.Inline[T("a"), E(T("b")), T("c")]) == "a*b*c"                   # inside a word
+        @test W.md(W.Inline[W.Strong(W.Inline[E(T("x")), T("y")])]) == "***x*y**"    # a run its parent's run takes in
+        @test W.md(W.Inline[W.Link("/x/", W.Inline[E(W.Code("c"))])]) == "[*`c`*](/x/)"
+        for (xs, why) in [W.Inline[T("a"), E(T("(b)"))] => "does not open",          # Julia's Markdown reads a*(b)* so
+                          W.Inline[E(W.Code("x")), T("s")] => "does not close",
+                          W.Inline[E(T(" b"))] => "whitespace follows",
+                          W.Inline[E(T("a")), E(T("b"))] => "side by side",
+                          [W.Table([:left], [[W.Inline[T("x")]], [W.Inline[T("a"), E(T("(b)"))]]])] => "does not open"]
+            err = try xs isa Vector{W.Inline} ? W.md(xs) : W.lines(only(xs)); nothing catch e; e end
+            @test err isa ArgumentError && occursin(why, err.msg)
+        end
+        err = build_error("# Page\n\nThe a*(b)* case.\n")
+        @test err isa WriterError && err.page == "index.md" && occursin("does not open", err.what)
+    end
+
+    @testset "a hard line break ends a line, as CommonMark writes one" begin
+        T = W.Text
+        @test W.lines(W.Paragraph(W.Inline[T("one"), W.LineBreak(), T("two.")])) == ["one\\", raw"two\."]
+        @test W.lines(W.List(false, true, [W.Block[W.Paragraph(W.Inline[T("one"), W.LineBreak(), T("two")])]])) ==
+              ["- one\\", "  two"]
+        @test_throws ArgumentError W.lines(W.Paragraph(W.Inline[T("one"), W.LineBreak()]))   # CommonMark: a backslash
+        @test_throws ArgumentError W.md(W.Inline[W.LineBreak()], true)                       # a table row is one line
+        site = build_site(Dict("index.md" => "# Page\n\nLine one\\\nline two.\n\n- an item\\\n  that goes on\n"))
+        @test occursin("\nLine one\\\nline two\\.\n\n- an item\\\n  that goes on\n", read(joinpath(site, "src", "app", "page.md"), String))
+    end
+
+    @testset "@meta: nothing shown, Description the page's description, an HTML-only setting refused" begin
+        site = build_site(Dict("index.md" => "```@meta\nCurrentModule = Main\nDescription = \"A page set apart.\"\n```\n\n# Page\n\nText.\n"))
+        page = read(joinpath(site, "src", "app", "page.md"), String)
+        @test startswith(page, "---\ntitle: \"Page\"\n") && occursin("\n    description: \"A page set apart.\"\n---\n\nText\\.\n", page)
+        for key in ("EditURL = \"https://example.com/x.md\"", "CollapsedDocStrings = true")
+            err = build_error("```@meta\n$key\n```\n\n# Page\n")
+            @test err isa WriterError && err.page == "index.md" && occursin("@meta block setting $(first(split(key)))", err.what)
+        end
+    end
+
     @testset "frontmatter and description" begin
         page(description, body) = W.Page("p.md", "/p/", "A \"title\"", description, body, String[], String[])
         @test W.markdoc(page(nothing, W.Block[paragraph("x")])) ==
@@ -216,6 +256,16 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
             err = fixture_error(pages)
             @test err isa WriterError && err.page == "make.jl `pages`" && occursin(what, err.what)
         end
+    end
+
+    @testset "navigation — a hidden page is refused; with no top-level page there is no Introduction group" begin
+        err = fixture_error(["Home" => "index.md", Documenter.hide("API" => "api.md")])   # hidden, without sub-pages
+        @test err isa WriterError && err.page == "make.jl `pages`" && occursin("a hidden page, api.md", err.what)
+        site = mktempdir()
+        build(joinpath(@__DIR__, "fixture"), site; pages = ["G" => ["index.md", "guide.md"]])
+        @test JSON.parsefile(joinpath(site, "src", "navigation.json")) ==
+              [Dict("title" => "G", "links" => [Dict("title" => "Fixture Home", "href" => "/"),
+                                                Dict("title" => "Everything", "href" => "/guide/")])]
     end
 
     @testset "@eval — the Markdown it returns is written, its @ref links resolved" begin

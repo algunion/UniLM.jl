@@ -18,6 +18,7 @@ The same entries fill the generated regions of `docs/src/llm.md` and `llms.txt`,
 module ProviderFacts
 
 using Markdown
+using Dates: Date
 using Printf: @sprintf
 using UniLM
 
@@ -132,10 +133,21 @@ end
 Base.showerror(io::IO, e::RegistryError) =
     print(io, "RegistryError: entry :", e.key, ", field ", e.field, ": ", e.message)
 
+# The features an entry may have a section for: the H2s `<entry>_<feature>` of the templates of
+# an entry's pages, docs/templates/llm_provider.md and decision_provider.md. A concept page lists
+# the entries with its feature (`on_your_provider`), so a misspelt one would drop its entry there.
+const _FEATURE_NAMES = (:setup, :first_call, :conversations, :streaming, :tools, :structured_output, :reasoning,
+                        :media, :embeddings, :images, :audio, :completions, :limits, :caching, :cost, :failures,
+                        :models, :first_decision, :questions, :confidence, :testing, :throughput)
+
 # An entry's feature sections: `<key>_<feature>` for each of `own`, and for each inherited
-# feature the id its section keeps from the page it moves from.
+# feature the id its section keeps from the page it moves from. A name outside `_FEATURE_NAMES`,
+# or one listed twice, is a `RegistryError`.
 function _features(key::Symbol, own::Tuple{Vararg{Symbol}}, inherited::Pair{Symbol,String}...)::Dict{Symbol,String}
     sections = [Pair{Symbol,String}[f => string(key, '_', f) for f in own]; Pair{Symbol,String}[inherited...]]
+    unknown = [f for (f, _) in sections if f ∉ _FEATURE_NAMES]
+    isempty(unknown) || throw(RegistryError(key, :features, "$(join(repr.(unknown), ", ")) is no feature of the " *
+                                                            "templates: $(join(repr.(_FEATURE_NAMES), ", "))"))
     twice = unique!([f for (f, _) in sections if count(s -> first(s) === f, sections) > 1])
     isempty(twice) || throw(RegistryError(key, :features, "$(join(repr.(twice), ", ")) listed twice"))
     Dict{Symbol,String}(sections)
@@ -154,10 +166,25 @@ _code_default(e::ProviderEntry)::Union{String,Nothing} =
     e.chapter == llm ? UniLM.default_model(first(e.endpoints)) :
                        _decision_default(UniLM.system_one_protocol(first(e.endpoints)))
 
+# Where an entry's usage runs: a module that sees UniLM's exported names, as a reader's code does.
+const _USAGE_SCOPE = Module(:ProviderUsage)
+Core.eval(_USAGE_SCOPE, :(using UniLM))
+
+# Whether the code `usage` gives the endpoint `ep`: the type itself, or an instance of its type.
+# An instance's fields are not compared: `OllamaEndpoint()` reads OLLAMA_HOST where it runs.
+function _gives(usage::String, ep::ServiceEndpointSpec, key::Symbol)::Bool
+    value = try
+        Core.eval(_USAGE_SCOPE, Meta.parse(usage))
+    catch err
+        throw(RegistryError(key, :usage, "$(repr(usage)) does not run: $(sprint(showerror, err))"))
+    end
+    ep isa Type ? value === ep : typeof(value) === typeof(ep)
+end
+
 # `entries` once every rule holds, else a `RegistryError` naming the entry and the field: keys
-# are unique; an entry has an endpoint and its pages are `.md` paths under docs/src; its
-# default model is the code's; and every start and feature id is final (no `__next`) and
-# named once across the registry.
+# are unique; an entry has an endpoint, and its usage, run, gives the first one (`_gives`); its
+# pages are `.md` paths under docs/src; its default model is the code's; and every start and
+# feature id is final (no `__next`) and named once across the registry.
 function _validated(entries::Vector{ProviderEntry})::Vector{ProviderEntry}
     seen = Set{Symbol}()
     owner = Dict{String,Symbol}()              # a section id => the entry that names it
@@ -165,6 +192,9 @@ function _validated(entries::Vector{ProviderEntry})::Vector{ProviderEntry}
         e.key in seen && throw(RegistryError(e.key, :key, "another entry has the same key"))
         push!(seen, e.key)
         isempty(e.endpoints) && throw(RegistryError(e.key, :endpoints, "an entry covers at least one endpoint"))
+        ep = first(e.endpoints)
+        _gives(e.usage, ep, e.key) || throw(RegistryError(e.key, :usage, "$(repr(e.usage)) does not give the first " *
+            "endpoint, " * (ep isa Type ? "the type $(nameof(ep))" : "a $(nameof(typeof(ep))) instance")))
         isempty(e.pages) && throw(RegistryError(e.key, :pages, "an entry has at least its start page"))
         for p in e.pages
             endswith(p, ".md") && !isabspath(p) ||
@@ -598,12 +628,16 @@ function _per_million(rate::Float64)::String
     string(whole, '.', rpad(rstrip(frac, '0'), 2, '0'))
 end
 
+# A date as a price cell writes it, its hyphens non-breaking (U+2011): a line break never splits it, so a
+# narrow column (a phone's) keeps it on one line.
+_date(d::Date)::String = replace(string(d), '-' => '\u2011')
+
 # A price table row: the model id, then its input, cached-input and output rates, each followed by the
-# changes `UniLM._PRICE_CHANGES` schedules for it: "2.00; from 2026-12-01: 4.00".
+# changes `UniLM._PRICE_CHANGES` schedules for it: "2.00; from 2026‑12‑01: 4.00".
 function _price_row(id::String, r::UniLM.PriceRow)::Vector{Any}
     changes = get(UniLM._PRICE_CHANGES, id, ())
     rate(f::Symbol)::String =
-        join([_per_million(getfield(r, f)); ["from $(c.from): $(_per_million(getfield(c.row, f)))" for c in changes]], "; ")
+        join([_per_million(getfield(r, f)); ["from $(_date(c.from)): $(_per_million(getfield(c.row, f)))" for c in changes]], "; ")
     Any[_cell(_code(id)), (_cell(rate(f)) for f in (:input, :cached_input, :output))...]
 end
 
@@ -625,7 +659,7 @@ end
 One row per model of `price_rows(table)`, sorted by id: its input, cached-input and output
 rates in USD per million tokens, as `DEFAULT_PRICING` held them when this file was loaded,
 each followed by every change `UniLM._PRICE_CHANGES` schedules for it, which an estimate bills
-from its date: "2.00; from 2026-12-01: 4.00".
+from its date: "2.00; from 2026‑12‑01: 4.00", the date's hyphens non-breaking.
 """
 function price_table(table::Symbol)::Markdown.MD
     _table(["Model", "Input (USD per 1M tokens)", "Cached input (USD per 1M tokens)", "Output (USD per 1M tokens)"],

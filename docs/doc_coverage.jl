@@ -1,6 +1,7 @@
 # Doc-coverage gate. Every PUBLIC UniLM name (`names(UniLM)`: exported, or declared
-# `public`) must appear in an `@docs` block under docs/src, OR be listed in
-# KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
+# `public`) must appear in an `@docs` block under docs/src that Documenter expands and that
+# is canonical — at the top level of its page, its info string without `canonical = false`
+# (`_documented_in`) —, OR be listed in KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
 # Assumes explicit `@docs` listing; there are currently no `@autodocs` blocks
 # (if one is added that splices a whole module, extend this parser).
 

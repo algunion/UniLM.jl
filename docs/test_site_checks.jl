@@ -42,7 +42,8 @@ end
     @test length(scan_outputs(app)) == 2
 end
 
-# Expected ids rendered by GitHub, as recorded by the github-slugger project's fixtures.
+# Expected ids as GitHub renders them: each from the github-slugger project's fixtures (test/fixtures.json) but
+# `Tool / Function Calling` and `Ⓘ x² ½`, which follow from the rule `github_slug` states.
 @testset "site checks — a heading's id is GitHub's slug; a repeated one gets -1, -2, …" begin
     @test github_slug("Tool / Function Calling") == "tool--function-calling"
     @test github_slug("heading with an _ underscore") == "heading-with-an-_-underscore"
@@ -137,12 +138,47 @@ end
     write(joinpath(out, "anchors.json"), "{}")
     app = fixture_app("```output\nRequest failed\n```\n")
     script = joinpath(@__DIR__, "site_checks.jl")
-    err = IOBuffer()
+    err, std = IOBuffer(), IOBuffer()
     cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(@__DIR__) $script $out $app`
-    code = run(pipeline(ignorestatus(cmd); stdout = devnull, stderr = err)).exitcode
+    code = run(pipeline(ignorestatus(cmd); stdout = std, stderr = err)).exitcode
     msg = String(take!(err))
     @test code == 1
     @test all(s -> occursin(s, msg), ["README.md:", "llms.txt:", "Hero.tsx:", "page.md:2: Request failed"])
+    # the hero's images are imported modules, `src={…}`, which no route check reads: listed, failing nothing
+    @test occursin(r"Hero\.tsx: src=…: not checked, at lines \d", String(take!(std)))
+end
+@testset "site checks — a link in a form the checks do not read is listed, one message per file and form" begin
+    hero = fixture_file("""
+        <Button href="/guide/x/">checked</Button> <a href="https://example.com/">leaves the site</a>
+        <a href={route}>expression</a> <a href={other}>again</a>
+        <a href='/guide/x/'>single quotes</a>
+        <a href="guide/x/">relative</a> <a href="#top">this page</a>
+        <Image src={blurImage} alt="" />
+        <img src="/x.svg" alt="" />
+        """; name = "Hero.tsx")
+    @test unchecked_links([hero]) == [
+        "$hero: href={…}, a JSX expression: not checked, at line 2",
+        "$hero: href='…', single-quoted: not checked, at line 3",
+        "$hero: href=\"…\" not starting with /: not checked, at line 4",
+        "$hero: src=…: not checked, at lines 5, 6"]
+    readme = fixture_file("""
+        # Title
+        See [the guide][guide] and [the site][site].
+        <img src="docs/src/assets/logo.png" alt="logo"> <a href="https://example.com/">out</a>
+
+        [guide]: docs/src/guide.md
+        [site]: https://algunion.github.io/UniLM.jl/dev/
+        ```markdown
+        [inside]: code.md
+        <img src="code.png">
+        ```
+        """)
+    @test unchecked_links([readme]) == ["$readme: an HTML src or href: not checked, at line 3",
+                                        "$readme: a reference definition, [label]: …: not checked, at line 5"]
+    llms = fixture_file("- [Guide](https://algunion.github.io/UniLM.jl/dev/guide/x/): [a file](gone.md), [out](https://example.com/)\n";
+                        name = "llms.txt")
+    @test unchecked_links([llms]) == ["$llms: a Markdown link to a file: not checked, at line 1"]
+    @test unchecked_links([fixture_file("[a](b.md) and https://algunion.github.io/UniLM.jl/dev/\n")]) == String[]
 end
 
 end

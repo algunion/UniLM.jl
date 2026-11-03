@@ -25,7 +25,7 @@ prefix instead, and `grep -rn '^> Template:' docs/src` must print nothing. Every
 | `<Provider>` | the entry's `REGISTRY` name |
 | `<feature>` | a feature key (`streaming`, `first_decision`, …) |
 | `<chapter>`, `<Chapter>` | `llm` or `decisions`, as `ProviderFacts.Chapter` names them; the chapter's title |
-| `<stem>`, `<Title>` | the page file's name without `.md`; the page's title |
+| `<stem>`, `<Title>` | the page file's name without `.md` — on a concept page also its example sandbox, one per page, where every example runs —; the page's title |
 | `<Endpoint>`, `<model>` | an endpoint as code names it (`OPENAIServiceEndpoint`, `DeepSeekEndpoint()`); a model id |
 | `<names>`, `<values>` | further names a binding block binds (`llm, llm_model`); their values |
 | `<section>`, `<Section>` | a section's id part (`options` in `ollama_options`); its title |
@@ -38,8 +38,8 @@ overload and failures"); its id does not change.
 
 ## Ids
 
-Every heading carries its id, `[Title](@id id)`: generated tables and other pages link by id, so a section
-keeps its links when its title changes or it moves.
+The title and every H2 of a templated page carry an id, `[Title](@id id)`: generated tables and other pages link
+by id, so a section keeps its links when its title changes or it moves.
 
 - Page titles (H1): an entry's start page, the entry's start id; any other page of an entry,
   `<entry>_<stem>_page` (`anthropic_caching_page`); the chapter start pages, `llm_start` and `decisions_start`;
@@ -53,6 +53,9 @@ keeps its links when its title changes or it moves.
   inherited page titles, final since the pages they replace became redirects: `providers/ollama/index.md`
   `ollama_guide`, `decisions/jev/index.md` `jev_start`, `providers/openai/responses.md` `responses_guide`,
   `providers/openai/retrieval.md` `retrieval_guide`, `decisions/choosing.md` `system_one_backends`.
+- Deleted ids: an id deleted with no section to inherit it gets an alias in the `[anchors]` table of
+  `docs/redirects.toml`, to the id that now holds its content, so a link into an earlier version still lands;
+  for an id of v0.26.0 (`docs/anchors-v0.26.0.txt`), `docs/redirects.jl` fails the docs workflow without one.
 
 ## Placement
 
@@ -84,7 +87,7 @@ as `Main.ProviderFacts.llm` or `Main.ProviderFacts.decisions`, and returns a `Ma
 
 | Call | Shows | Placed |
 | :--- | :--- | :--- |
-| `provider_table(chapter)` | the chapter's entries, each linked to its start page | on the chapter's start page |
+| `provider_table(chapter)` | the chapter's entries, each linked to its start page | on the chapter's start page; both chapters' on the home page |
 | `at_a_glance(:<entry>)` | endpoint, key variables, default model, what the entry supports and, for an LLM entry, lacks | under the entry's identity line |
 | `capability_matrix()` | every capability of every LLM entry | on `guide/capabilities.md` |
 | `on_your_provider(chapter, :<feature>)` | the chapter's entries with the feature, each linked to its section | at the end of a concept page |
@@ -133,8 +136,9 @@ and fails on an executed call to any other verb that reaches a service.
 ## The `service, model` binding
 
 A concept page's binding block, its first visible code block, binds `service, model = <Endpoint>, "<model>"` and
-every further name its examples need; every other example uses only those names. `service` and `model` are the
-provider and model the examples run on (on a Decisions page, the decision provider); a reader binds their own there.
+the further names the list below allows; every other example names an endpoint or a model only through them.
+`service` and `model` are the provider and model the examples run on (on a Decisions page, the decision provider); a
+reader binds their own there.
 
 - The pair is the chapter's: `OPENAIServiceEndpoint, "gpt-5.4-mini"` on a Language models page,
   `TYPESAFEServiceEndpoint, "jev-latest"` on a Decisions page.
@@ -153,5 +157,8 @@ provider and model the examples run on (on a Decisions page, the decision provid
   the model a measurement ran on appears only as a bound name or in an Evidence note (a `!!! details "Evidence…"`
   box), whose body the page's 2% share of provider lines leaves out: `docs/metrics.jl` reads it as provenance, not
   prose.
-- An example whose request bytes change is recorded again in the same commit, and a change in a stored-id chain
-  deletes the chain's first recording.
+- An example whose request bytes change is recorded again in the same commit, and its old recording, which no
+  build reads any more (a recording is filed under its request's key), is deleted in that commit. A documented
+  call that `test/semantic.jl` makes too ("the documented calls make their recorded requests, byte for byte")
+  changes there in the same commit, or that test misses its recording. A change in a stored-id chain deletes the
+  chain's first recording.

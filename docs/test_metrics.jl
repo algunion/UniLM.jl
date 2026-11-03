@@ -182,6 +182,9 @@ end
     @test passes(clean...) && !passes(clean[2:end]...)                              # every page, or one missing
     deepseek(n) = "providers/deepseek.md" => "# Title\n" * "Neutral prose.\n"^(99 - n) * "Claude answers.\n"^n
     @test passes(clean..., deepseek(1)) && !passes(clean..., deepseek(2))          # 1 of 100 lines passes, 2 do not
+    out = IOBuffer()                                                                # an entry's own words never count
+    @test report(out; docsrc=fixture_docsrc(clean..., "providers/deepseek.md" => "# Title\n\nDeepSeek answers.\nNeutral prose.\n"))
+    @test occursin(r"\nentry +deepseek +0\.00% \(0/3\) ", String(take!(out)))
     @test !passes(clean..., "guide/streaming.md" => "# Title\n\n```julia\nChat(service=MistralEndpoint())\n```\n")
     x = "x.md" => "# [X](@id x_s)\n\nthe witness text of this placement\n"
     atoms = fixture_dir("anthropic.json" => """{"atoms": [{"location": "index.md:16"}, {"location": "index.md:20"}]}""",
@@ -197,19 +200,22 @@ end
     W, V = "the witness of this section, long enough", "another passage, long enough to prove"
     docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [S](@id x_s)\n\n```julia\n# a comment, not a heading\n```\n\n" *
                                       "$W\n\n## [T](@id x_t)\n\n$V\n")
-    problems(rows::String...) = check_ledger(fixture_tsv(collect(rows)), docsrc, ["openai:1" => "s"])
+    # each problem, its ledger's path and the pages' directory written as "<tsv>" and "<docsrc>"
+    named(tsv) = [replace(p, tsv => "<tsv>", docsrc => "<docsrc>") for p in check_ledger(tsv, docsrc, ["openai:1" => "s"])]
+    problems(rows::String...) = named(fixture_tsv(collect(rows)))
     @test problems("openai:1\ts\tx.md#x_s\t$W") == String[]                         # past a comment in code
-    @test length(problems("openai:1\ts\tx.md#x_s\t$V")) == 1                        # the next section's text
+    @test problems("openai:1\ts\tx.md#x_s\t$V") ==                                  # the next section's text
+          ["<tsv>:2: openai:1: the witness is not in the body of x.md#x_s"]
     @test problems("openai:1\ts\tx.md#x_start\t$V") == String[]                     # a title's section is the page
-    @test length(problems("openai:1\ts\tx.md#x_s\t ")) == 1                         # no witness
-    @test length(problems("openai:1\ts\tdeleted\t")) == 1                           # deleted without a reason
-    @test length(problems("openai:1\ts\ty.md#x_s\t$W")) == 1                        # no such page
-    @test length(problems("openai:1\ts\tx.md#x_u\t$W")) == 1                        # no such section
-    @test length(problems("openai:1\ts\tx.md\t$W")) == 1                            # not page.md#id
-    @test length(problems("openai:1\ts\tx.md#x_s")) == 2                            # three columns, so openai:1 has no row
-    @test length(problems("openai:1\ts\tdeleted\tgone", "openai:7\ts\tdeleted\tgone")) == 1   # no atom of this ledger
-    @test length(check_ledger(fixture_page("openai:1\ts\tdeleted\tgone\nopenai:1\ts\tdeleted\tgone\n"), docsrc,
-                              ["openai:1" => "s"])) == 1                  # no header: no row is read
+    @test problems("openai:1\ts\tx.md#x_s\t ") == ["<tsv>:2: openai:1: a witness of 0 characters; a witness has at least 24"]
+    @test problems("openai:1\ts\tdeleted\t") == ["<tsv>:2: openai:1: deleted without a reason in the witness column"]
+    @test problems("openai:1\ts\ty.md#x_s\t$W") == ["<tsv>:2: openai:1: y.md is no page under <docsrc>"]
+    @test problems("openai:1\ts\tx.md#x_u\t$W") == ["<tsv>:2: openai:1: no heading of x.md defines (@id x_u)"]
+    @test problems("openai:1\ts\tx.md\t$W") == ["<tsv>:2: openai:1: the destination \"x.md\" is neither page.md#id nor deleted"]
+    @test problems("openai:1\ts\tx.md#x_s") == ["<tsv>:2: 3 columns, not the header's 4", "<tsv>: openai:1 has no row"]
+    @test problems("openai:1\ts\tdeleted\tgone", "openai:7\ts\tdeleted\tgone") == ["<tsv>:3: openai:7 is no atom of this ledger"]
+    @test named(fixture_page("openai:1\ts\tdeleted\tgone\nopenai:1\ts\tdeleted\tgone\n")) ==   # no header: no row is read
+          ["<tsv>:1: the first line is not the header \"atom_id\\tsource\\tdestination\\twitness\""]
 end
 @testset "metrics — a ledger row keeps its atom's source; a witness has 24 characters and stands below the heading" begin
     docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [Prompt caching on every provider](@id x_cache)\n\n" *
@@ -241,6 +247,33 @@ end
     # A fence in a list item, as in an admonition, closes at its own indentation.
     @test share([fixture_page("1. Step\n\n   ```julia\n   Claude\n   ```\n")], :openai) == 0
     @test fenced_blocks(split("```julia\nx\n```julia\ny\n\n```\nz\n```\n", '\n')) == [1:3, 6:8]
+end
+@testset "metrics — a page read while another read has swapped the parsers waits, and finds them restored" begin
+    Md, flavor = DocMetrics.Markdown, DocMetrics.Markdown.julia
+    f = only(findall(==(Md.fencedcode), flavor.breaking))
+    lock(DocMetrics._PARSING)                                    # another read: its fenced-code reader is swapped in
+    reading = try
+        flavor.breaking[f] = (stream, md) -> Md.fencedcode(stream, md)
+        task = @async prose_lines("A.\n\n```julia\nx\n```\n")
+        yield()                                                  # the read runs until it waits for the lock
+        @test !istaskdone(task)
+        task
+    finally
+        flavor.breaking[f] = Md.fencedcode
+        unlock(DocMetrics._PARSING)
+    end
+    @test [l for (_, l) in fetch(reading)] == ["A."]
+    @test_throws ErrorException "Julia $VERSION" DocMetrics._position(Function[], Md.fencedcode)  # a Julia it cannot follow
+end
+@testset "metrics — while a page is read, another task's Markdown parse reads with the stdlib's parsers" begin
+    Md = DocMetrics.Markdown
+    ours = Int[]
+    fenced(stream, md) = Md.fencedcode(stream, md) && (push!(ours, 1); true)
+    theirs = DocMetrics._with_readers(fenced, Md.github_table) do
+        fetch(@async Md.parse("```julia\nx\n```\n"))                  # another task, while the readers are swapped in
+    end
+    @test isempty(ours) && only(theirs.content) isa Md.Code
+    @test only(findall(==(Md.fencedcode), Md.julia.breaking)) isa Int                # and they are put back
 end
 @testset "metrics — a fence or a table row Julia's Markdown reads otherwise is refused, naming the line" begin
     refused(text) = (err = caught(() -> prose_lines(text; file="p.md")); err isa PageError ? err.line : nothing)
@@ -292,6 +325,28 @@ end
     @test provider_tokens("gpt-oss:20b, library/gpt-oss:20b, gpt-oss-20b and gpt-5.4-mini: the default") ==
           [(Set([:ollama]), "gpt-"), (Set([:ollama]), "gpt-"), (Set([:openai, :azure]), "gpt-"), (Set([:openai, :azure]), "gpt-")]
 end
+@testset "metrics — a model-id prefix starts an id: never inside a longer one, after a / only with an Ollama tag" begin
+    gemini, ollama, openai = Set([:gemini]), Set([:ollama]), Set([:openai, :azure])
+    @test provider_tokens("distil-whisper-large-v3 and faster-whisper-small") == []          # another model's name
+    @test provider_tokens("gemini-3.1-flash-tts-preview") == [(gemini, "gemini-")]
+    @test provider_tokens("Xenova/whisper-tiny or openai/whisper-large-v3-turbo") == []      # a namespace's model
+    @test provider_tokens("library/gpt-oss:20b") == [(ollama, "gpt-")]                       # an Ollama model, tagged
+    @test provider_tokens("GPT-5.5/GPT-5.6, whisper-1 and tts-1") ==                          # the first one counts
+          [(openai, "GPT-"), (openai, "whisper-"), (openai, "tts-")]
+    @test share([fixture_page("A vLLM server runs distil-whisper-large-v3.\nNeutral line.\n")], :local_servers) == 0
+end
+@testset "metrics — concept-page code names a model by its Ollama tag too, which is Ollama's whatever its name" begin
+    code(text) = (dir = fixture_docsrc("guide/system_one.md" => text); p = joinpath(dir, "guide/system_one.md");
+                  (p, concept_code_violations(p)))
+    bind(lines...) = "```julia\n" * join(lines, '\n') * "\n```\n"
+    jev = "service, model = TYPESAFEServiceEndpoint, \"jev-latest\""
+    page, found = code(bind(jev) * "\n" * bind("ask(service, \"Is it late?\"; model=\"qwen3:4b\")",
+                                               "e = Embeddings(\"x\"; model=\"embeddinggemma-2:740m-q8_0\")",
+                                               "url, at = \"http://localhost:11434\", \"10:30\""))
+    @test found == ["$page:6: \"qwen3:4b\"", "$page:7: \"embeddinggemma-2:740m-q8_0\""]
+    @test last(code(bind(jev, "local_model = OllamaEndpoint(), \"qwen3:4b\""))) == String[]    # bound beside Ollama
+    @test length(last(code(bind(jev, "pinned = \"qwen3:4b\"")))) == 1                          # with no Ollama bound
+end
 @testset "metrics — OpenAI's audio and image model ids, Codestral and TypeSafe's variables name their provider" begin
     page(line) = fixture_page(line * "\nNeutral line.\n")
     @test provider_tokens("whisper-1, tts-1-hd and dall-e-3") ==
@@ -332,4 +387,11 @@ end
     @test usage("--entry", "nope") == usage("--entry") == usage("--unit", "anthropic") ==
           usage("--ledgers", ledgers, "--atoms", atoms, "--unit", "ia") == 2
     @test redirect_stdout(() -> usage("--entry", "anthropic", "--baseline"), devnull) == 0
+end
+@testset "metrics — the command line exits 1 when a threshold is not met, 0 when every one is or with --baseline" begin
+    pages = unique!([[p for e in REGISTRY for p in e.pages]; [p for c in instances(ProviderFacts.Chapter) for p in CONCEPT_PAGES[c]]])
+    clean = [p => "# Title\n\nNeutral prose.\n" for p in pages]
+    run(docsrc, args::String...) = redirect_stdout(() -> DocMetrics.main(String[args...]; docsrc), devnull)
+    failing = fixture_docsrc(clean..., "guide/streaming.md" => "# Title\n\nClaude streams.\n")
+    @test run(failing) == 1 && run(failing, "--baseline") == 0 && run(fixture_docsrc(clean...)) == 0
 end

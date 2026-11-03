@@ -196,12 +196,13 @@ feature that needs `base_url="https://api.deepseek.com/beta"`
 ([Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)), so a `Chat` with a strict tool goes to
 `https://api.deepseek.com/beta/v1/chat/completions`, and one without to the usual URL. In strict mode
 "all `function` need to set the `strict` property to `true`", and "The server will validate the JSON
-Schema of the Function provided by the user"; UniLM checks neither, and DeepSeek's answer is the check.
-On 26 October 2026 it answered a request there with one strict tool, and one with a strict and a
-non-strict tool, each with a call of the strict one; on 2 November 2026 it answered one whose strict
-tool's schema set `minLength`, which the page lists as unsupported in strict mode, so an answer is no
-sign that a schema is one strict mode supports. The loop every provider shares is on
-[Tool Calling](@ref tools_guide).
+Schema of the Function provided by the user"; UniLM checks neither. On 26 October 2026 it answered a
+request there with one strict tool, and one with a strict and a non-strict tool, each with a call of the
+strict one; on 2 November 2026 it answered one whose strict tool's schema set `minLength`, which the page
+lists as unsupported in strict mode, so an answer is no sign that a schema is one strict mode supports.
+On 3 November 2026 it also answered a strict tool whose parameter had the type `null`, which the page's
+list of strict-mode types leaves out, at that URL and at `https://api.deepseek.com/beta/chat/completions`
+alike. The loop every provider shares is on [Tool Calling](@ref tools_guide).
 
 ## [Structured output](@id deepseek_structured_output)
 

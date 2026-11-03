@@ -47,7 +47,7 @@ Ollama 0.35.0 or later serves the route, and the Clef models, which read picture
 MLX on Apple silicon ([v0.40.0](https://github.com/ollama/ollama/releases/tag/v0.40.0)), and a cloud model through
 the local server needs 0.40.5 ([System One](https://docs.ollama.com/api/systemone)). This page's measurements ran on
 Ollama 0.40.6, and its new examples on 0.40.11. The live suite `test/integration_ollama_system_one.jl` passed
-unchanged on Ollama 0.40.13 (2 November 2026): 784 tests on the nine models of [Models](@ref ollama_decisions_models).
+unchanged on Ollama 0.40.14 (3 November 2026): 784 tests on the nine models of [Models](@ref ollama_decisions_models).
 
 A call goes to Ollama when it names `service = OllamaEndpoint()`, or when it names no `service` and a
 [`with_system_one`](@ref)`(OllamaEndpoint(); model = …)` scope encloses it. Ollama has no default model: a call names

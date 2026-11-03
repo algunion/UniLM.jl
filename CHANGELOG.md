@@ -33,14 +33,29 @@
 - **A continued Gemini Interactions call's later requests keep the first request's bytes.** When Google continues an
   unstreamed `respond`, each later request is the first request's JSON in its key order, with `continuation_token`
   added and, for a stored interaction, `previous_interaction_id` set to the interaction that issued the token and
-  `input` dropped. It was re-serialized with its keys sorted. Upgrading: a later request recorded with `with_recorded_answers` under 0.30.0
-  no longer replays; record it again.
+  `input` dropped. It was re-serialized with its keys sorted. Upgrading: a later request recorded with
+  `with_recorded_answers` under 0.30.0 no longer replays; record it again.
+- **The documentation site forwards an old link only to an anchor id a page declares.** A link whose `#id` its page
+  lacks moves to the page that declares the id (`@id`), or to a retired id's successor. A heading's generated id no
+  longer sends the reader to another page with a heading of the same name: `/guide/embeddings/#Embeddings` stays on
+  the Embeddings guide. A malformed anchor map is reported in the browser console and forwards nothing.
 
 ### Fixed
 - **A cancel during a later request of a continued Gemini Interactions call is timed from the call's start.** The
   `UniLMCancelled` cause of the returned `ResponseCallError` reported the time since that request began (such as
   "cancelled by token after 0.002 s" in a call that had run for seconds); it now reports the time since `respond` was
   called, as `chatrequest!` does.
+- **A search result on the documentation site opened with a modifier key leaves the current tab.** ⌘/Ctrl+Enter,
+  Shift+Enter, and a click with ⌘, Ctrl or Shift open the result in a new tab or window. These keys also moved the
+  current tab, and a click with one of them moved it without opening anything.
+- **The documentation site's current sidebar entry and group, page eyebrow, current "On this page" entries and code
+  punctuation reach a contrast of at least 4.5:1.** In the light theme the first four went from 2.6–2.7:1 to
+  5.6–5.9:1; code punctuation went from 3.4–3.7:1 to 6.1–6.8:1 in both themes.
+- **Links to the manual's files open the file.** On the documentation site, the sample PDF, the recording and the
+  returns policy are plain links: no failed prefetches or console errors, and the policy file no longer lands on a
+  404 page.
+- **The documentation site's previous/next links name an entry's start page with its group** ("OpenAI — Start
+  here"), and the Ollama embeddings page's sidebar entry reads "Ollama embeddings".
 
 ## 0.30.0
 

@@ -834,6 +834,28 @@ end
     end
 end
 
+@testset "edit_image: a cancelled token reads no input image, on both wires" begin
+    # The image exists, but its mode forbids reading it: a call that read it would end in that SystemError.
+    # A Gemini edit inlines each input image in its JSON body; OpenAI's multipart form is built per attempt.
+    # (Root reads it anyway; the result is the same.)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    chmod(path, 0o000)
+    try
+        for service in (URLProbe, GeminiImagesHere)
+            r, seen = withenv("GEMINI_API_KEY" => "test-key") do
+                _with_scripted(() -> edit_image(path, "make it blue"; service=service, model="m",
+                                                cancel=cancel!(CancelToken())),
+                               (_, _) -> _json(200, "{}"))
+            end
+            @test (typeof(r), typeof(r.cause), length(seen)) == (ImageCallError, UniLMCancelled, 0)
+        end
+    finally
+        chmod(path, 0o600)
+        rm(path; force=true)
+    end
+end
+
 @testset "OpenAI image edits — a markup PNG is a form part of its own, never beside a mask; Gemini takes none" begin
     # The edit reference: markup is "A transparent PNG overlaid on the first image to guide the edit" that
     # "Cannot be combined with mask"; "Supports GPT Image 2.5", which OpenAI judges.

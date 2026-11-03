@@ -498,6 +498,9 @@ function _image_call(service, r::_ImageRequest, config::Union{Nothing,RequestCon
     t0 = time_ns()
     local resp
     try
+        # A cancelled token reads no input image: a Gemini edit reads each one into its JSON body as the
+        # request is built, before the retry loop checks the token.
+        iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
         url, headers, body = _image_request(service, r)
         resp = _http_with_retries(cfg, t0, "POST", url, headers, body; cancel=tok)
         return resp.status == 200 ?

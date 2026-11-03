@@ -258,6 +258,16 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         end
     end
 
+    @testset "navigation — a hidden page is refused; with no top-level page there is no Introduction group" begin
+        err = fixture_error(["Home" => "index.md", Documenter.hide("API" => "api.md")])   # hidden, without sub-pages
+        @test err isa WriterError && err.page == "make.jl `pages`" && occursin("a hidden page, api.md", err.what)
+        site = mktempdir()
+        build(joinpath(@__DIR__, "fixture"), site; pages = ["G" => ["index.md", "guide.md"]])
+        @test JSON.parsefile(joinpath(site, "src", "navigation.json")) ==
+              [Dict("title" => "G", "links" => [Dict("title" => "Fixture Home", "href" => "/"),
+                                                Dict("title" => "Everything", "href" => "/guide/")])]
+    end
+
     @testset "@eval — the Markdown it returns is written, its @ref links resolved" begin
         page = read(joinpath(SITE, "src", "app", "guide", "page.md"), String)
         @test occursin("| Fixture | [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) |", page)

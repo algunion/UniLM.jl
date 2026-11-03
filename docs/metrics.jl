@@ -27,14 +27,21 @@ What the numbers cannot see:
 - Evidence boxes: what one holds is not measured (the factual reviews check that it holds
   measurements only). A box in a list item or an admonition, or indented below a block quote, is
   prose.
+- A line ending in a backslash: a box opened on the next line is prose here, while Julia's
+  Markdown reads that line as text only where the backslash ends a paragraph's line (a hard line
+  break), and opens the box after a heading's or a list item's line.
 - Words that are no token: a model id without a registry prefix (`qwen3:4b`,
   `embeddinggemma-2:740m-q8_0`), a provider's API names ("Interactions API", "generateContent",
   "Responses API", "Messages API"), Claude's model families without "Claude" ("Opus", "Sonnet",
-  "Haiku"), a name inside an identifier or after `_` (`_Claude_`), and a name in lower case
-  ("openai").
+  "Haiku"), a name inside an identifier or after `_` (`_Claude_`), a model-id prefix inside another
+  id or after a namespace without an Ollama tag (`distil-whisper-large-v3`,
+  `openai/whisper-large-v3-turbo`), and a name in lower case ("openai").
 - Indented code: four spaces of indentation outside a list item or an admonition make code to
   Julia and prose here.
-- Placement: a witness proves that its text is in the section, not that it is the atom's passage.
+- Placement: a witness — at least 24 characters, compared once each run of whitespace is one
+  space — need only appear somewhere in its section's body, below the heading and up to the next
+  heading of its level or a higher one, subsections and code included: it proves that its text is
+  there, not that it is the atom's passage.
 
 The rules are fixed before the pages they measure are written: a page changes to meet them, never
 the rules to meet a page.

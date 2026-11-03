@@ -249,12 +249,15 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
     validate_capability(u.service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
+    tok = _resolve_cancel(cancel)
     try
-        # `_http` builds the form after its cancel check: a cancelled token reads no file.
-        form = _BodyFactory(() -> HTTP.Form(["purpose" => u.purpose,
-            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))]))
+        # A cancelled token reads no file: the form holds the whole file, read before `_http` checks the token
+        # (and outside the request's time bound).
+        iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
+        form = HTTP.Form(["purpose" => u.purpose,
+            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
         resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
-                     cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
+                     cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
         return resp.status == 200 ?
                FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
                _failure(FileFailure, resp)

@@ -41,7 +41,7 @@ UniLM.jl wraps these surfaces:
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter; the task prompts of EmbeddingGemma and `gemini-embedding-2` via `task`; images and audio (`EmbeddingInput`) through Ollama.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
 6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
-7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and realtime, through `OPENAIServiceEndpoint`. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
+7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and realtime, through `OPENAIServiceEndpoint`. Batches run on `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` too: `create_batch` takes `custom_id => Chat` pairs on all three, and `batch_results` returns each request's Chat result, priced at the provider's Batch rates. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
@@ -1359,7 +1359,11 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
 - **Both functions throw `ArgumentError` for result types outside the token-billed
   APIs** — audio, batch, container, conversation, file, fine-tuning, moderation,
   upload, vector-store, realtime. Those calls carry no token usage at all,
-  and a `0.0` would be indistinguishable from a genuinely free call.
+  and a `0.0` would be indistinguishable from a genuinely free call. The requests of
+  a batch are Chat results: `batch_results` returns each as an `LLMSuccess` whose usage
+  names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates
+  (half the standard ones on every model a pricing page lists; a model it lists none for
+  is estimated at the standard rates, with a warning).
 - The model priced is `model=` when given; else the one the provider reports having
   served (`LLMSuccess.model`; `response.model` for Responses, FIM and System One); else the
   one requested (`self.model` for Chat, `embeddings.model` for Embeddings) — so a routed id
@@ -2793,9 +2797,9 @@ has_capability(service, cap::Symbol) -> Bool
 |---|---|
 | OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
-| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API) |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:batch` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
-| Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models` (the bare type and an instance alike) |
+| Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models`, `:batch` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic (`GenericOpenAIEndpoint`, `MistralEndpoint()`) | sent unchecked: `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:agentic`, `:audio`, `:transcription` — the permissive default, which UniLM sends to whatever server the endpoint names, whether it serves them or not |
@@ -2982,7 +2986,7 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
-├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
+├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
@@ -3225,7 +3229,7 @@ Every exported symbol (405), grouped by area:
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 
-**Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`
+**Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchResultsSuccess`, `BatchDeleteSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`, `batch_results`, `delete_batch`, `update_batch`
 
 **Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningFailure`, `FineTuningCallError`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`
 

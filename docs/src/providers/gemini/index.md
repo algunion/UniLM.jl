@@ -9,7 +9,7 @@ Google makes the Gemini models and serves them through two native APIs, both of 
 `tool_loop!`, and the Interactions API, which `respond` and the `tool_loop` that takes an input or a
 `Respond` reach. Image generation and speech go through generateContent too.
 `GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint, which UniLM uses for
-embeddings. Of Google's other APIs — the Files, Batch, Live and token-counting APIs, explicit context
+embeddings. Of Google's other APIs — the Files, Live and token-counting APIs, explicit context
 caching, managed agents such as Deep Research, music and video generation — none is available. The
 verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
@@ -38,6 +38,7 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIOpenAIServiceEndpoint` | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
 | [know what a call cost](@ref gemini_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
+| [run many requests at half price](@ref gemini_batches) | `create_batch(["id" => chat, …])`, then `batch_results` | a batch of generateContent requests, and each one's result by its custom id |
 | [list the models my key can use](@ref gemini_models) | `list_models(service=GEMINIServiceEndpoint)` | each model's token limits and generation methods |
 | [handle a failure](@ref gemini_failures) | the result's type | the status or the exception, never an empty success |
 

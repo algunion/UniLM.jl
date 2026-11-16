@@ -89,7 +89,9 @@ each factor that applies, the factors stacking:
   `inference_geo` cell in the [family table](@ref anthropic_reasoning) is "—", which bill the standard
   rates;
 - a model's long-prompt multiplier, for a prompt over its threshold, all of its input counted, cache
-  reads and writes included.
+  reads and writes included;
+- 0.5 for a request run in a Message Batch, whose usage reports `service_tier == "batch"`: "a 50 percent
+  discount on both input and output tokens" ([Message Batches](@ref anthropic_batches)).
 
 Two kinds of model are priced otherwise: a model with a long-prompt multiplier bills more over its
 threshold, and a model of the family table without a price row is estimated at `0.0`:
@@ -121,6 +123,58 @@ estimate.
 ```@eval
 Main.ProviderFacts.price_table(:anthropic)
 ```
+
+## [Message Batches](@id anthropic_batches)
+
+The Message Batches API runs Messages requests asynchronously, "most batches finishing in less than 1
+hour while reducing costs by 50 percent"; a batch whose processing does not end within 24 hours
+expires, and its results stay available for 29 days
+([batch processing](https://platform.claude.com/docs/en/build-with-claude/batch-processing)).
+[`create_batch`](@ref) takes the requests as `custom_id => Chat` pairs, each `Chat` on the batch's
+endpoint — `ANTHROPICServiceEndpoint`, or one instance of it, whose options every call on the batch
+carries — and each request's `params` are its Messages body, encoded as [`chatrequest!`](@ref) encodes
+it, so the request rules of these pages hold for it. A custom id is 1 to 64 letters, digits, hyphens and
+underscores, unique in its batch; a streamed `Chat` and fast mode (`service_tier="fast"`, which goes as
+`speed`, a parameter a batched request does not take) are refused with an `ArgumentError` before
+anything is sent, as is a `Chat` for another endpoint.
+
+```julia
+ask() = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", max_tokens=16,
+             messages=[Message(Val(:user), "Reply with exactly: ok")])
+batch = create_batch(["one" => ask(), "two" => ask()])
+batch isa BatchSuccess || error("the batch was not created: $batch")
+batch.response.status, batch.response.request_counts["processing"]
+# ("in_progress", 2)
+
+done = poll_batch(batch.response.id; service=ANTHROPICServiceEndpoint, interval=30)
+results = batch_results(batch.response.id; service=ANTHROPICServiceEndpoint)
+results isa BatchResultsSuccess || error("the results were not read: $results")
+[(id, r.message.content, r.usage.service_tier, estimated_cost(r)) for (id, r) in results.results]
+# Run on 16 November 2026 with UniLM's development branch after 0.33.0; the batch ended in under
+# 3 minutes:
+# [("one", "ok", "batch", 1.9e-6), ("two", "ok", "batch", 1.9e-6)]
+```
+
+A batch's `status` is its `processing_status`: `in_progress`, `canceling` after
+[`cancel_batch`](@ref), and `ended` once every request has a result; [`poll_batch`](@ref) reads it until
+`ended`, and `request_counts` holds the tallies Anthropic reports. [`batch_results`](@ref) then reads the
+results, which come "not guaranteed to be in the same order as requests", each paired with its custom
+id: a succeeded request is the [`LLMSuccess`](@ref) `chatrequest!` returns for its message, its usage
+naming the tier `"batch"`, so [`estimated_cost`](@ref) bills it at half the rates
+([Cost and usage](@ref anthropic_cost)); an errored one is an [`LLMCallError`](@ref) whose `error` is
+Anthropic's error object as JSON — `invalid_request_error` for a request to fix, another type for one
+that "can be retried directly" — and whose `request_id` is the one it names; a request `canceled` or `expired` before it
+ran, which Anthropic does not bill, is an `LLMCallError` saying so. Before the batch ends, the results
+are Anthropic's HTTP 404, a `BatchFailure`. A result's `self` is a `Chat` naming the model that served
+it, without messages: a batch keeps no request of its own.
+
+[`list_batches`](@ref) lists the workspace's batches, most recent first (`limit`, and `after`, a batch
+id, sent as `after_id`), [`retrieve_batch`](@ref) reads one, and [`delete_batch`](@ref) deletes an
+ended one ("If you'd like to delete an in-progress batch, you must first cancel it"); a batch cannot be
+changed once submitted, so [`update_batch`](@ref) throws `ArgumentError` here. Every call sends the
+endpoint's workspace, and its `betas` in the `anthropic-beta` header — the beta form of each call:
+`"output-300k-2026-03-24"` raises `max_tokens` to 300,000 in a batch on the models Anthropic lists for it
+—, and the create alone sends its user profile, which "Applies to every request in the batch".
 
 ## [Rate limits, overload and failures](@id anthropic_failures)
 

@@ -43,8 +43,9 @@ These calls are not recorded, so their output on this page is quoted from dated 
   cancel during the call aborts it, either way with the call error, whose `cause` is a
   [`UniLMCancelled`](@ref) ([Cancellation](@ref concurrency_cancellation)).
 - **Cost.** The results carry no usage: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for
-  them. What OpenAI charges for storage, containers and batches is on its
-  [pricing page](https://developers.openai.com/api/docs/pricing).
+  them. What OpenAI charges for storage and containers is on its
+  [pricing page](https://developers.openai.com/api/docs/pricing). A batch's requests are the exception:
+  [`batch_results`](@ref) returns each as a Chat result, priced at the Batch rates ([Batches](@ref openai_batch)).
 - **Deletes.** A delete that OpenAI answers with a deletion record — of a file, a vector store, a
   container or a conversation — counts only when the record says `"deleted": true`: a reply without
   it, or with `false`, is the call error, the object being in place as far as UniLM can tell.
@@ -354,8 +355,11 @@ settled.response.status, settled.response.request_counts, settled.response.outpu
 # ("cancelled", Dict{String, Any}("completed" => 0, "failed" => 0, "total" => 0), nothing)
 ```
 
-[`create_batch`](@ref)`(input_file_id, endpoint; completion_window="24h", metadata)` sends the
-`endpoint` as given — "the completion window can only be set to `24h`" —, and
+[`create_batch`](@ref)`(input_file_id, endpoint; completion_window="24h", metadata, output_expires_after)`
+sends the `endpoint` as given — "the completion window can only be set to `24h`" —, and
+`output_expires_after`, when set, as the seconds after which the batch's output and error files
+expire, counted from each file's creation, from 3600 (1 hour) to 2592000 (30 days); a value outside
+that range is refused with an `ArgumentError` before anything is sent.
 [`retrieve_batch`](@ref), [`list_batches`](@ref) and [`cancel_batch`](@ref) read, list and cancel
 batches. A batch moves through OpenAI's statuses: `validating`, `in_progress`, `finalizing` and
 `completed`; `failed` when "the input file has failed the validation process"; `expired` when it
@@ -384,6 +388,38 @@ An expired batch's "unfinished requests within that batch are cancelled, and any
 completed requests are made available via the batch's output file. You will be charged for tokens
 consumed from any completed requests." The `batch.completed`, `batch.cancelled`, `batch.expired`
 and `batch.failed` webhooks report the end without a poll ([Webhooks](@ref openai_webhooks)).
+OpenAI's Batch API deletes no batch and updates none: [`delete_batch`](@ref) and [`update_batch`](@ref)
+throw `ArgumentError` here; [`delete_file`](@ref) removes a batch's files.
+
+A batch of chat requests needs no file of yours: [`create_batch`](@ref)`(requests)` takes them as
+`custom_id => Chat` pairs, writes the input file — one `/v1/chat/completions` line per request, its
+`body` the one [`chatrequest!`](@ref) sends —, uploads it with the purpose `"batch"` and creates the
+batch, `metadata` and `output_expires_after` as above. A streamed `Chat`, an empty or repeated custom id
+and a `Chat` for another endpoint are refused with an `ArgumentError` before anything is sent; should the
+create fail after the upload, the file stays, under the purpose `"batch"`. [`batch_results`](@ref) reads
+the output file's lines, then the error file's, and returns each request's result by its custom id: a
+200 is the [`LLMSuccess`](@ref) `chatrequest!` returns for its body, its usage naming the tier
+`"batch"`, so [`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref openai_cost));
+another status is an [`LLMFailure`](@ref) with it; a request that got no response, such as one a batch
+expired before it ran, is an [`LLMCallError`](@ref) holding OpenAI's error object as JSON. A batch
+without either file yet is a `BatchCallError` naming its status.
+
+```julia
+luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,
+              messages=[Message(Val(:user), "Reply with exactly: ok")])
+batch = create_batch(["one" => luna(), "two" => luna()])
+batch isa BatchSuccess || error("the batch was not created: $batch")
+batch.response.status, batch.response.endpoint
+# ("validating", "/v1/chat/completions")
+
+done = poll_batch(batch.response.id; interval=30)
+results = batch_results(batch.response.id)
+results isa BatchResultsSuccess || error("the results were not read: $results")
+[(id, r.message.content, r.usage.service_tier, estimated_cost(r)) for (id, r) in results.results]
+# Run on 16 November 2026 with UniLM's development branch after 0.33.0; the batch completed in under
+# 7 minutes:
+# [("one", "ok", "batch", 1.55e-6), ("two", "ok", "batch", 1.55e-6)]
+```
 
 ## [Fine-tuning](@id openai_fine_tuning)
 
@@ -605,6 +641,8 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
 | a `poll_batch` or `poll_file_batch` `interval` that is not a finite number above 0 | `interval must be a finite number of seconds > 0` | a pause in seconds |
+| a `create_batch` `output_expires_after` outside 3600–2592000 seconds | `output_expires_after is the seconds after`: the Batch API's bounds | a number of seconds in them |
+| `delete_batch` or `update_batch` | `OpenAI's Batch API has no delete`, `has no update` | `cancel_batch`, and `delete_file` for its files |
 | a poll `timeout` that is `NaN`, not above 0, or finite and above 10⁹ seconds | `timeout must not be NaN`, `timeout must be > 0 seconds`, `timeout must be at most`: `Inf` is the way to wait without bound | a number of seconds, or `Inf` |
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |

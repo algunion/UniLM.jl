@@ -446,6 +446,54 @@ either endpoint, takes
 ([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer is continued in hops,
 or runs as a background request ([Background requests](@ref gemini_background)).
 
+## [Batches](@id gemini_batches)
+
+The Batch API runs generateContent requests asynchronously "at 50% of the standard cost", with a
+"target turnaround time" of 24 hours, "in majority of cases ... much quicker"
+([Batch API](https://ai.google.dev/gemini-api/docs/batch-api)). [`create_batch`](@ref) takes the
+requests as `custom_id => Chat` pairs, each `Chat` on `GEMINIServiceEndpoint`, and sends them inline to
+`models/{model}:batchGenerateContent`: each request is the generateContent body
+[`chatrequest!`](@ref) would send, with its custom id as the `key` of its `metadata`. A batch runs one
+model, the one its URL names, so requests that name different models are refused with an
+`ArgumentError` before anything is sent, as are a streamed `Chat` and a `service_tier`: the API answered
+a batched request that set `serviceTier` (`"flex"`, `"standard"` or `"priority"`) with HTTP 400 "Request
+contains an invalid argument" on 16 November 2026. Inline requests suit batches "under 20MB".
+
+```julia
+flash() = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+               messages=[Message(Val(:user), "Reply with exactly: ok")])
+batch = create_batch(["one" => flash(), "two" => flash()])
+batch isa BatchSuccess || error("the batch was not created: $batch")
+batch.response.status, batch.response.request_counts
+# ("BATCH_STATE_PENDING", Dict{String, Any}("pendingRequestCount" => "2", "requestCount" => "2"))
+
+done = poll_batch(batch.response.id; service=GEMINIServiceEndpoint, interval=30)
+results = batch_results(batch.response.id; service=GEMINIServiceEndpoint)
+results isa BatchResultsSuccess || error("the results were not read: $results")
+[(id, r.message.content, r.usage.service_tier, estimated_cost(r)) for (id, r) in results.results]
+# Run on 16 November 2026 with UniLM's development branch after 0.33.0; the batch succeeded in under
+# 5 minutes:
+# [("one", "ok", "batch", 4.125e-6), ("two", "ok", "batch", 4.125e-6)]
+```
+
+A batch's `id` is its name without `batches/` (either form names it), its `status` its `state` —
+`BATCH_STATE_PENDING`, `BATCH_STATE_RUNNING`, then `BATCH_STATE_SUCCEEDED`, `BATCH_STATE_FAILED`,
+`BATCH_STATE_CANCELLED` or `BATCH_STATE_EXPIRED`, at which [`poll_batch`](@ref) stops —, and its
+`request_counts` its `batchStats`, whose counts the API sends as strings. [`batch_results`](@ref) reads a
+done batch's responses — inline, in the requests' order, or from the responses file of a batch made from
+an input file —, each paired with its key: a reply is the [`LLMSuccess`](@ref) `chatrequest!` returns
+for it, its usage naming the tier `"batch"` (the reply itself says `"standard"`), so
+[`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref gemini_cost)); a request's
+error status is an [`LLMCallError`](@ref) holding it as JSON. A batch not yet done, one that ended
+without results (a cancelled one ends with an error and none), and a response without a key are a
+`BatchCallError` naming why.
+
+[`list_batches`](@ref) takes `limit` (`pageSize`) and `after`, the previous page's
+`raw["nextPageToken"]`; [`cancel_batch`](@ref) answers with the batch as read right after the cancel, which
+Google answers with an empty body; [`delete_batch`](@ref) removes a batch from the list; and
+[`update_batch`](@ref) sets its `priority` — the one field the API updates ("The accepted fields are: *,
+priority") — so a batch with a higher one runs first.
+
 ## [Prompt caching](@id gemini_caching)
 
 Gemini caches repeated prompt prefixes on its own: "Implicit caching is enabled by default for all
@@ -483,6 +531,15 @@ factor that applies:
   for `gemini-3.5-flash-lite`, whose standard one is \$0.03;
 - a prompt over 200,000 tokens on `gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools` or
   `gemini-2.5-pro`: 2 on the input and cache-hit rates and 1.5 on the output rate, the whole request.
+
+A batched request, whose usage names the tier `"batch"` ([Batches](@ref gemini_batches)), bills at each
+model's Batch prices: 0.5 of the input rate, audio included, and of the output rate, and 0.5 of the
+cache-hit rate too, except the standard price where the Batch table keeps it — on
+`gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview` and the
+`gemini-2.5-` models —, with the long-context multiples above. The batch guide says a batched cache hit
+pays "the standard context caching rates"; the estimate follows the per-model tables.
+`gemini-decision-1`, which the Batch API does not serve, is estimated at the standard rates, with a
+warning.
 
 Audio input bills at the input price the page lists for audio, at the same factors: the model's own
 audio price where its table lists one apart — per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00

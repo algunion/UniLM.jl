@@ -84,10 +84,14 @@ end
 _transient(r::VectorStoreFailure) = _is_retryable(r.status, r.response)
 _transient(r::VectorStoreCallError) = _per_attempt_timeout(r.cause)
 
+# OpenAI's reference requires a store's, a batch's and a store file's `status`: a reply without
+# it is malformed (a KeyError, the verb's *CallError), not one whose status is unknown — which
+# would also keep `poll_file_batch` polling to its deadline.
 _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d, "name", nothing),
-    status=get(d, "status", nothing), file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
-_parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=get(d, "status", nothing),
+    status=d["status"], file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
+_parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=d["status"],
     file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
+_parse_vs_file(d::AbstractDict) = VectorStoreFileObject(id=d["id"], status=d["status"], raw=Dict{String,Any}(d))
 
 # A list reply's page (containers.jl shares it): OpenAI's reference requires `data` and
 # `has_more`, so a 200 without them is malformed (the verb's *CallError) rather than an empty
@@ -235,8 +239,7 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
         resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         if resp.status == 200
-            f = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            VectorStoreFileSuccess(response=VectorStoreFileObject(id=f["id"], status=get(f, "status", nothing), raw=Dict{String,Any}(f)))
+            VectorStoreFileSuccess(response=_parse_vs_file(JSON.parse(resp.body; dicttype=Dict{String,Any})))
         else
             _failure(VectorStoreFailure, resp)
         end

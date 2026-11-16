@@ -95,3 +95,17 @@ end
     ok = list("""{"object": "list", "data": [{"id": "vs_1", "name": "a", "status": "completed"}], "has_more": true}""")
     @test ok isa VectorStoreListSuccess && [v.id for v in ok.response.data] == ["vs_1"] && ok.response.has_more
 end
+
+@testset "vector-store decoders: a reply without the status OpenAI requires is a call error" begin
+    @test _answered(() -> retrieve_vector_store("vs_1"; service=URLProbe), 200;
+                    body="""{"id": "vs_1", "name": "a"}""") isa VectorStoreCallError
+    @test _answered(() -> retrieve_file_batch("vs_1", "vsfb_1"; service=URLProbe), 200;
+                    body="""{"id": "vsfb_1"}""") isa VectorStoreCallError
+    @test _answered(() -> add_vector_store_file("vs_1", "file-1"; service=URLProbe), 200;
+                    body="""{"id": "file-1"}""") isa VectorStoreCallError
+    # A batch without a status is malformed, not still running: the poll ends at its first reply.
+    r, seen = _with_scripted((_, _) -> _json(200, """{"id": "vsfb_1"}""")) do
+        poll_file_batch("vs_1", "vsfb_1"; interval=0.05, timeout=5.0, service=URLProbe)
+    end
+    @test r isa VectorStoreCallError && !(r.cause isa UniLMTimeout) && length(seen) == 1
+end

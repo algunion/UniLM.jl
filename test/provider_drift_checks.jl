@@ -29,9 +29,20 @@ const _DRIFT_QUOTED_ID = r"\"([a-z0-9]+(?:[.\-][a-z0-9]+)*)\""
 # a model.
 const _DRIFT_PREFIX_TEST = r"startswith\([^,()]*,\s*\"[^\"]*\"\)"
 
-# The ids of a provider's models that `text` quotes, prefix tests aside.
+# A Julia lexeme that holds a `#` or a quote, read left to right: a string ("""…""" or "…"), a
+# character literal, a block comment (#= … =#, nested) or a line comment. A `#` inside a string or
+# a character opens no comment, and a quote inside a comment opens no string (the strings nested
+# in a string's `$( … )` are not told apart).
+const _DRIFT_LEXEME = r"\"\"\"(?:\\.|[^\\])*?\"\"\"|\"(?:\\.|[^\"\\])*\"|'(?:\\.[^'\n]{0,8}|[^'\\])'|(?<block>#=(?:[^#=]|#(?!=)|=(?!#)|(?&block))*=#)|#[^\n]*"s
+
+# `text` without its Julia comments: a comment is not code a reader runs, and a page prints a
+# listing's output as comments.
+_drift_uncommented(text::AbstractString)::String = replace(text, _DRIFT_LEXEME => m -> startswith(m, '#') ? "" : m)
+
+# The ids of a provider's models that the code in `text` quotes, comments and prefix tests aside.
 _drift_quoted_ids(text::AbstractString)::Vector{String} =
-    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID, replace(text, _DRIFT_PREFIX_TEST => "")))
+    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID,
+                                                              replace(_drift_uncommented(text), _DRIFT_PREFIX_TEST => "")))
            if !isnothing(_drift_provider(id))]
 
 # The models UniLM uses when a call names none: the default-model functions, the speech and
@@ -52,7 +63,7 @@ function _drift_defaults()::Vector{String}
     unique!(named)
 end
 
-# The model ids the live suites (test/integration_*.jl) quote.
+# The model ids the code of the live suites (test/integration_*.jl) quotes.
 function _drift_suite_ids()::Vector{String}
     ids = String[]
     for f in readdir(@__DIR__; join=true)
@@ -67,7 +78,7 @@ end
 # ```@docs, ```bash, …).
 const _DRIFT_DOCS_CODE = r"^[ \t]*```(?:julia|@example|@repl)(?:[ \t][^\n]*)?\n(.*?)^[ \t]*```"ms
 
-# The model ids the Julia code blocks of the docs pages under `dir` quote.
+# The model ids the Julia code blocks of the docs pages under `dir` quote outside comments.
 function _drift_docs_ids(dir::AbstractString=joinpath(pkgdir(UniLM), "docs", "src"))::Vector{String}
     ids = String[]
     for (root, _, files) in walkdir(dir), f in files

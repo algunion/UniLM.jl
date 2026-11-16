@@ -306,6 +306,10 @@ end
         include("integration_openai_decisions.jl")
     end
 
+    @testset "integration — gemini decisions" begin
+        include("integration_gemini_decisions.jl")
+    end
+
     @testset "integration — openai audio" begin
         include("integration_openai_audio.jl")
     end

@@ -129,3 +129,17 @@ end
     end
     @test p isa BatchCallError && p.cause isa ArgumentError && length(seen) == 1
 end
+
+# A listing names its batches in `data` and whether more follow in `has_more` (both required by ListBatchesResponse):
+# a 200 without either is a malformed listing, never an empty final page.
+@testset "list_batches: a 200 without the documented data and has_more is a call error, not an empty page" begin
+    for body in ("{}", "{\"data\":[]}", "{\"has_more\":false}", "{\"data\":{},\"has_more\":false}",
+                 "{\"data\":[],\"has_more\":\"no\"}", "{\"data\":[3],\"has_more\":false}")
+        r = _answered(() -> list_batches(; service=URLProbe), 200; body)
+        @test r isa BatchCallError && r.cause isa ArgumentError
+    end
+    page = "{\"object\":\"list\",\"data\":[{\"id\":\"batch_1\",\"status\":\"completed\"}],\"has_more\":true,\"last_id\":\"batch_1\"}"
+    ok = _answered(() -> list_batches(; service=URLProbe), 200; body=page)
+    @test ok isa BatchListSuccess && [b.id for b in ok.response.data] == ["batch_1"] && ok.response.has_more
+    @test ok.response.raw == JSON.parse(page)
+end

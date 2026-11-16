@@ -62,6 +62,13 @@ function _batch_optional(d::AbstractDict, key::String, ::Type{T}) where {T}
     v
 end
 
+_batch_entry(e)::Dict{String,Any} = e isa Dict{String,Any} ? e : throw(ArgumentError("a batch reply entry is not a JSON object"))
+
+# A page: the batches in `data`, and `has_more`, both required.
+_batch_list(d::Dict{String,Any}) = BatchList(
+    data=BatchObject[_parse_batch(_batch_entry(b)) for b in _batch_required(d, "data", AbstractVector)],
+    has_more=_batch_required(d, "has_more", Bool), raw=d)
+
 # OpenAI's Batch object: `id` and `status` are required.
 _parse_batch(d::AbstractDict) = BatchObject(id=_batch_required(d, "id", String),
     status=_batch_required(d, "status", String), endpoint=_batch_optional(d, "endpoint", String),
@@ -163,7 +170,7 @@ function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,N
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            BatchListSuccess(response=BatchList(data=BatchObject[_parse_batch(b) for b in get(data, "data", [])], has_more=get(data, "has_more", false), raw=data))
+            BatchListSuccess(response=_batch_list(data))
         else
             _failure(BatchFailure, resp)
         end

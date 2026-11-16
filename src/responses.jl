@@ -2593,7 +2593,8 @@ Useful for estimating costs or checking whether input fits within the context wi
 `model` defaults to OpenAI's default model, `"gpt-6-sol"`. The count is the Responses API's
 `/v1/responses/input_tokens`: on an endpoint that declares its capabilities without `:responses`,
 which has no such route, the call throws `ArgumentError` before any request; so does an endpoint of
-your own that has no base URL, one that is not an OpenAI-wire endpoint.
+your own that has no base URL, one that is not an OpenAI-wire endpoint. A Chat [`Tool`](@ref) in
+`tools` is sent as the equivalent `FunctionTool`, as [`Respond`](@ref) sends it.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
@@ -2621,6 +2622,7 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
     cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "count_input_tokens", RESPONSES_PATH * "/input_tokens")
+    tools = _respond_tools(tools)
     url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp

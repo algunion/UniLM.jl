@@ -1771,6 +1771,29 @@ struct _UndeclaredResponses <: UniLM.ServiceEndpoint end
     end
 end
 
+# `count_input_tokens` against a local server answering every request with `reply`: (result, requests).
+_count_at(reply::AbstractString; kw...) = _with_scripted((_, _) -> _json(200, reply)) do
+    count_input_tokens(; input="hi", service=GenericOpenAIEndpoint(_url_probe_base[], ""), kw...)
+end
+_count_sent(seen) = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+const _COUNTED = """{"object":"response.input_tokens","input_tokens":7}"""
+
+# The Responses API rejects a function tool in the Chat shape (name nested under `function`): it answered
+# that count with HTTP 400 "Missing required parameter: 'tools[0].name'" on 2026-11-16.
+# Refuted if: a Chat `Tool` is sent in the Chat shape, or one with no Responses equivalent is sent at all.
+@testset "count_input_tokens sends a Chat Tool as the Responses function tool respond sends" begin
+    sig = FunctionSignature(name="lookup", description="Look something up",
+                            parameters=Dict("type" => "object", "properties" => Dict()), strict=true)
+    r, seen = _count_at(_COUNTED; tools=[Tool(func=sig)])
+    @test r isa Dict && r["input_tokens"] == 7
+    @test _count_sent(seen)["tools"] == [Dict{String,Any}("type" => "function", "name" => "lookup",
+        "description" => "Look something up", "parameters" => Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}()),
+        "strict" => true)]
+    @test _count_sent(seen)["tools"] == JSON.parse(JSON.json(Respond(input="hi", tools=[Tool(func=sig)]).tools))
+    e = try _count_at(_COUNTED; tools=[Tool(type="custom", func=sig)]); nothing catch x; x end
+    @test e isa ArgumentError && occursin("has no Responses equivalent", e.msg)
+end
+
 # ─── Expanded coverage: _parse_response_stream_chunk edge cases ──────────────
 
 @testset "_parse_response_stream_chunk edge cases" begin

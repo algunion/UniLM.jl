@@ -38,15 +38,16 @@
   $10 for 5 minutes, $16 for 1 hour; fast mode $16 / $80).
 - **GPT-Image-2.6 controls on generations and edits.** `complexity` (`"low"`, `"medium"`, `"high"`); GIF output's
   `frame_count` (2–16) and `frame_duration_ms` (at least 20), which need `output_format="gif"` and take no
-  `output_compression` (a generation) or `mask` (an edit); `SvgOptions(; model, effort)` and `svg_usage` for SVG
-  output (`n=1`, no stream, partial images or `output_compression`; an edit sends `svg[model]` and
-  `svg[reasoning][effort]`). An estimate of an image result with `svg_usage` warns that it leaves the SVG author's
-  tokens out. `ImageGenerationTool` takes `complexity`, `frame_count`, `frame_duration_ms` and `svg`. Each of these is
-  refused on Gemini before the request.
+  `output_compression` (a generation) or `mask` (an edit); `SvgOptions(; model, effort)`, whose `model` is required,
+  and `svg_usage` for SVG output (`n=1`, no stream, partial images or `output_compression`; an edit sends
+  `svg[model]` and `svg[reasoning][effort]`). An estimate of an image result with `svg_usage` warns that it leaves
+  the SVG author's tokens out. `ImageGenerationTool` takes `complexity`, `frame_count`, `frame_duration_ms` and
+  `svg`, and no `output_compression` with GIF or SVG output. Each of these is refused on Gemini before the request.
 - **`input_transformations` and `InputTransformation`.** A Responses result lists the input items OpenAI withheld,
   for example a reasoning item from another model (`reason` `model_mismatch`), streamed or not.
-- **`image_context_compression` on `Respond`, `compact_response` and `ResponseObject`** (`"enabled"` or
-  `"disabled"`). Gemini Interactions and Ollama refuse it before the request.
+- **`image_context_compression` on `Respond`, `compact_response` and `ResponseObject`** (`"auto"`, `"enabled"` or
+  `"disabled"`; the reply's resolved policy is `"enabled"` or `"disabled"`). Gemini Interactions and Ollama refuse it
+  before the request.
 - **Prices:** image-tool rates for `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare`; the `gpt-6-cyber` row and terms
   ($20 / $2 / $100, 30-minute and 12-hour cache writes $25 and $50, over 272K input tokens $40 / $4 / $150, and a long
   prompt's cache writes at the long-context input rate, since OpenAI's page gives no price for them);
@@ -97,6 +98,10 @@
 - **`GEMINIOpenAIServiceEndpoint` results bill the thinking the endpoint counts only in `total_tokens`.** The
   difference is added to `completion_tokens` and `reasoning_tokens` and priced at the output rate, streamed or not; a
   total below prompt + completion is kept as reported, with a one-time warning.
+
+- **`input_transformations` throws for a reply whose list is not an array** (JSON `null` still reads as none), and an
+  estimate of a Responses result whose `image_generation_call` carries `svg_usage` warns that it leaves the SVG
+  author's tokens out.
 
 ### Docs
 - **UniLM stays on Gemini `v1beta`**: `v1` has no request `labels` field and no speech configuration, both of which

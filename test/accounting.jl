@@ -510,6 +510,23 @@ end
     @test (@test_logs (:warn, r"no price row") cost("claude-haiku-4-5-2025100")) == 0.0   # seven digits are not a date suffix
 end
 
+@testset "Claude Fable 5.2 and Mythos 5.2: \$8 / \$0.20 / \$40, writes \$10 and \$16, fast \$16 / \$80, US 1.1×" begin
+    # https://platform.claude.com/docs/en/about-claude/pricing.md (2026-11-16): base input $8, 5m writes $10, 1h writes
+    # $16, cache hits $0.20 (0.025x), output $40; fast mode $16 / $80; no long-context tier.
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    cost(model, u) = estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=u))
+    usage(; tier=nothing, geo=nothing) = TokenUsage(1_000_000, 1_000_000, 2_000_000, 200_000, 0, 300_000, 100_000, tier, geo)
+    # 500K fresh, 200K reads, 200K 5-minute and 100K 1-hour writes, 1M out.
+    standard = 0.5 * 8 + 0.2 * 0.20 + 0.2 * 10 + 0.1 * 16 + 1.0 * 40
+    for model in ("claude-fable-5-2", "claude-mythos-5-2", "claude-fable-5-2-20261109")
+        @test get(DEFAULT_PRICING, replace(model, "-20261109" => ""), nothing) == UniLM._price(8.0, 0.20, 40.0)
+        @test isapprox(cost(model, usage()), standard; rtol=1e-12)
+        @test isapprox(cost(model, usage(tier="fast")), 2 * standard; rtol=1e-12)
+        @test isapprox(cost(model, usage(geo="us")), 1.1 * standard; rtol=1e-12)
+        @test isapprox(cost(model, TokenUsage(prompt_tokens=900_000, completion_tokens=0)), 0.9 * 8; rtol=1e-12)
+    end
+end
+
 @testset "Anthropic billed cost: cache writes by retention, fast mode, US inference, Haiku 5.5 long prompts" begin
     # https://platform.claude.com/docs/en/about-claude/pricing.md: cache writes bill the input rate
     # × 1.25 (5-minute) or × 2 (1-hour); fast mode bills every rate × 2 (Opus 5.5: $8/$40 for

@@ -29,7 +29,8 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
-`gpt-6-astra-law` on 2026-11-02), TypeSafe rows on 2026-10-25,
+`gpt-6-astra-law` on 2026-11-02; Anthropic's `claude-fable-5-2` and `claude-mythos-5-2` on 2026-11-16),
+TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
 The table holds the rows shipped with this release. Where a provider has scheduled a new price for
@@ -101,11 +102,13 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-4.1-mini"  => _price(0.4,  0.10, 1.6),    # shuts down 2027-01-14
     "o3"            => _price(2.0,  0.50, 8.0),    # its snapshot o3-2025-04-16 shuts down 2026-12-11
     # Anthropic Claude (https://platform.claude.com/docs/en/about-claude/pricing.md,
-    # 2026-10-22). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
-    # and 0.05x on Opus 5.5 and Sonnet 5.5; Haiku 5.5's row is its rate for prompts up to
-    # 100,000 tokens. Cache writes, fast mode, US-only inference and Haiku 5.5's longer
+    # 2026-10-22; the Fable 5.2 and Mythos 5.2 rows 2026-11-16). Cache reads are 0.1x input,
+    # except 0.025x on Fable 5.2, Mythos 5.2, Fable 5.1 and Mythos 5.1 and 0.05x on Opus 5.5 and
+    # Sonnet 5.5; Haiku 5.5's row is its rate for prompts up to 100,000 tokens. Cache writes, fast mode, US-only inference and Haiku 5.5's longer
     # prompts are billed by the Anthropic `_billed_cost`. Dated snapshot ids (-YYYYMMDD)
     # resolve to these rows.
+    "claude-fable-5-2"  => _price(8.0,  0.20, 40.0),
+    "claude-mythos-5-2" => _price(8.0,  0.20, 40.0),
     "claude-fable-5-1"  => _price(10.0, 0.25, 50.0),
     "claude-mythos-5-1" => _price(10.0, 0.25, 50.0),
     "claude-fable-5"    => _price(10.0, 1.0,  50.0),

@@ -868,6 +868,20 @@ end
     @test r isa ContainerFailure && occursin("skill_unilm_live_missing", r.response)
 end
 
+@testset "Containers API — an allowlist with a domain secret reaches OpenAI, whose organization policy refuses it" begin
+    # OpenAI checks the policy's shape before the organization's rule: a secret without its value, or a string as
+    # `allowed_domains`, draws a 400 naming that field, and a well-formed allowlist one naming `network_policy.type`
+    # and the organization policy (witnessed 2026-11-16). Nothing is made.
+    p = ContainerNetworkAllowlist(["example.com"];
+                                  domain_secrets=[ContainerDomainSecret("example.com", "UNILM_LIVE_TOKEN", "not-a-secret")])
+    r = create_container(; name="unilm-live-allowlist", network_policy=p)
+    r isa ContainerSuccess && delete_container(r.response.id)
+    @info "create_container with an allowlist live" r
+    @test r isa ContainerFailure && r.status == 400
+    err = r isa ContainerFailure ? JSON.parse(r.response)["error"] : Dict{String,Any}()
+    @test get(err, "param", nothing) == "network_policy.type" && occursin("organization policy", get(err, "message", ""))
+end
+
 @testset "Responses API — code_interpreter(memory_limit) sets the memory of the container it makes" begin
     r = respond(Respond(model="gpt-6-luna", input="Use the python tool to print 6*7.", reasoning=Reasoning(effort="none"),
                         tools=[code_interpreter(memory_limit="4g")], tool_choice="required", max_output_tokens=300))

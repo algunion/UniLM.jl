@@ -370,6 +370,48 @@ end
     @test JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}) == Dict{String,Any}()
 end
 
+# Refuted if: a function_call step whose arguments is a JSON value other than an object decodes to a
+# function call (its tool would run without the arguments the model gave), or one with no
+# arguments, or null ones, does not decode to a call without arguments.
+@testset "Interactions decode — function_call arguments that are no JSON object fail loud; none or null is a call without arguments" begin
+    dec(step) = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "id" => "v1_a", "status" => "requires_action", "model" => "m",
+        "steps" => [merge(Dict("type" => "function_call", "id" => "fc_1", "name" => "f"), step)])))))
+    for (args, type) in (([1], "array"), ("x", "string"), (3, "number"), (true, "boolean"))
+        err = try dec(Dict("arguments" => args)); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "Gemini Interactions tool-call arguments must be a JSON object, got a JSON $type"
+    end
+    for step in (Dict{String,Any}(), Dict{String,Any}("arguments" => nothing))
+        @test only(function_calls(dec(step)))["arguments"] == "{}"
+    end
+end
+
+# Refuted if: a streamed function_call whose arguments_delta pieces join into a whole JSON value other
+# than an object, or whose step.start carries one and no delta follows, ends in a completed
+# interaction, or ends as a dropped line instead of the call error the unstreamed decode reports; or
+# one with no arguments, or null ones, does not end in a call without arguments.
+@testset "Interactions stream — function_call arguments that are no JSON object are a call error; none or null is a call without arguments" begin
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    function terminal(start, partials...)
+        state = UniLM.AgenticStreamState()
+        sse = ev("step.start", Dict("index" => 0, "step" => merge(Dict("type" => "function_call", "id" => "fc_1", "name" => "f"), start))) *
+              join(ev("step.delta", Dict("index" => 0, "delta" => Dict("type" => "arguments_delta", "arguments" => p))) for p in partials) *
+              ev("interaction.completed", Dict("interaction" => Dict("id" => "v1_a", "status" => "requires_action", "model" => "m")))
+        (UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, state), state)
+    end
+    for (start, partials) in ((Dict("arguments" => Dict()), ("[", "1]")), (Dict("arguments" => Dict()), ("\"x\"",)),
+                              (Dict("arguments" => [1]), ()))
+        st, state = terminal(start, partials...)
+        @test st.done && st.terminal === :error && state.sse_dropped == 0
+        @test startswith(st.data["message"], "Gemini Interactions tool-call arguments must be a JSON object")
+    end
+    for start in (Dict{String,Any}(), Dict{String,Any}("arguments" => nothing), Dict{String,Any}("arguments" => Dict()))
+        st, _ = terminal(start)
+        @test st.terminal === :completed
+        @test only(o for o in st.data["response"]["output"] if o["type"] == "function_call")["arguments"] == "{}"
+    end
+end
+
 @testset "Interactions stream — text + thought signature assembly" begin
     st = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
@@ -790,6 +832,38 @@ UniLM.decode_agentic(::Type{_IxNonStreamMock}, resp::HTTP.Response) =
     UniLM.decode_agentic(GEMINIServiceEndpoint, resp)
 UniLM.auth_header(::Type{_IxNonStreamMock}) = ["Content-Type" => "application/json"]
 UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
+
+# Refuted if: an interaction whose function_call arguments is an array reads as a success at the
+# verb, streamed or not.
+@testset "Interactions — function_call arguments that are no JSON object are a call error at the verb, streamed or not" begin
+    interaction = Dict("id" => "v1_a", "status" => "requires_action", "model" => "m")
+    call = Dict("type" => "function_call", "id" => "fc_1", "name" => "f", "arguments" => [1])
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1)
+    tcp = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do _
+        HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(merge(interaction, Dict("steps" => [call]))))
+    end
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$port/v1beta/interactions"
+    try
+        r = respond(Respond(service=_IxNonStreamMock, input="hi"); config=cfg)
+        @test r isa ResponseCallError && r.cause isa ArgumentError
+    finally
+        close(srv)
+    end
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    server, url = _ix_sse_server(ev("step.start", Dict("index" => 0, "step" => call)) *
+                                 ev("interaction.completed", Dict("interaction" => interaction)) * "event: done\ndata: [DONE]\n\n")
+    _IX_MOCK_URL[] = url
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseCallError && startswith(res.error, "Gemini Interactions tool-call arguments must be a JSON object")
+    finally
+        close(server)
+    end
+end
 
 @testset "a non-streamed failed interaction is a failure, not a success" begin
     # Same contract as the OpenAI wire: `respond` decodes both wires through the one

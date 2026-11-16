@@ -330,6 +330,17 @@ end
 # A text content part of a model_output step.
 _interaction_text_part(c) = c isa AbstractDict && get(c, "type", "") == "text"
 
+# A function call's arguments as a stream's arguments_delta pieces joined them: JSON text, kept as
+# it streamed. A step's own `arguments` is a JSON value.
+struct _StreamedArguments
+    text::String
+end
+
+# A function_call step's arguments as the JSON text the function_calls accessor parses: `{}` when
+# absent or null, and a failure when they are no JSON object (`_tool_call_arguments`).
+_interaction_arguments(a::_StreamedArguments)::String = a.text
+_interaction_arguments(a)::String = JSON.json(_tool_call_arguments("Gemini Interactions", a))
+
 # A model answering across several steps in a row (the hops of a long decode, thoughts between
 # them) adds one model_output step each, and Google's SDK reads them as one text: it continues
 # "across `thought` steps and empty `model_output` steps … while still stopping at `user_input`
@@ -353,15 +364,13 @@ function _interaction_output(steps)::Vector{Any}
             _extend_answer!(out[answer], s)
         elseif t == "function_call"
             answer = 0
-            # Absent or null arguments: a call without arguments.
-            args = something(get(s, "arguments", nothing), Dict{String,Any}())
             push!(out, Dict{String,Any}(
                 "type" => "function_call",
                 "call_id" => get(s, "id", ""),
                 "name" => get(s, "name", ""),
                 # Interactions returns arguments as a JSON OBJECT; the reused function_calls
                 # accessor JSON.parses a STRING → stringify here so the accessor round-trips.
-                "arguments" => (args isa AbstractString ? args : JSON.json(args))))
+                "arguments" => _interaction_arguments(get(s, "arguments", nothing))))
         elseif !isempty(t)
             # thought + hosted-tool + other steps (google_search_call/_result,
             # code_execution_*, url_context_*, …): surface them verbatim (native
@@ -542,9 +551,15 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                 defect = _interaction_defect(interaction)
                 isnothing(defect) || return (; done=true, event=ev,
                     data=Dict{String,Any}("message" => defect), terminal=:error)
-                rdict = _interaction_response_dict(interaction)
-                if isempty(rdict["output"])
-                    rdict["output"] = _assembled_interaction_output(state)
+                # A call whose arguments are no JSON object is the non-streamed decode's error
+                # too: the terminal's outcome, not a dropped line.
+                rdict = try
+                    d = _interaction_response_dict(interaction)
+                    isempty(d["output"]) && (d["output"] = _assembled_interaction_output(state))
+                    d
+                catch e
+                    e isa ArgumentError || rethrow()
+                    return (; done=true, event=ev, data=Dict{String,Any}("message" => e.msg), terminal=:error)
                 end
                 # A failed interaction takes the driver's typed-failure limb (as
                 # OpenAI's response.failed does); every other terminal status —
@@ -662,7 +677,10 @@ function _interaction_finalize_step!(state::AgenticStreamState, idx::Int)::Dict{
     isempty(streamed) && return step
     kind = get(step, "type", "")
     if kind == "function_call"
-        step["arguments"] = streamed
+        # Object text, and text that ends before its value does (a reply cut inside the call),
+        # is kept as it streamed; any other whole JSON value is read as a step's own value is.
+        step["arguments"] = _is_json_object(streamed) || !JSON.isvalidjson(streamed) ?
+            _StreamedArguments(streamed) : JSON.parse(streamed; dicttype=Dict{String,Any})
     elseif kind == "model_output"
         content = step["content"]::Vector{Any}
         part = isempty(content) ? nothing : last(content)

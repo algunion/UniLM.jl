@@ -1489,12 +1489,16 @@ The reasoning inputs a Responses reply withheld from the model, in input order, 
 `input_transformations`, unstreamed or in a stream's `response.completed`: one
 [`InputTransformation`](@ref) for each replayed reasoning item the model did not see, such as one
 another model produced (`reason` `:model_mismatch`). Empty when the reply withheld none or carries
-no such list (another provider's reply), and for a [`ResponseFailure`](@ref) or
-[`ResponseCallError`](@ref). An item without its four strings (`type`, `id`, `action`, `reason`)
-throws: it is no transformation the reference describes.
+no such list (another provider's reply; JSON `null` counts as none), and for a [`ResponseFailure`](@ref) or
+[`ResponseCallError`](@ref). A list that is no array, or an item without its four strings (`type`,
+`id`, `action`, `reason`), throws: it is no transformation the reference describes.
 """
-input_transformations(r::ResponseObject)::Vector{InputTransformation} =
-    InputTransformation[_input_transformation(x) for x in _as_iter(get(r.raw, "input_transformations", nothing))]
+function input_transformations(r::ResponseObject)::Vector{InputTransformation}
+    items = get(r.raw, "input_transformations", nothing)
+    isnothing(items) && return InputTransformation[]
+    items isa AbstractVector || error("the reply's input_transformations is not an array: ", JSON.json(items))
+    InputTransformation[_input_transformation(x) for x in items]
+end
 input_transformations(r::ResponseSuccess) = input_transformations(r.response)
 input_transformations(::Union{ResponseFailure,ResponseCallError}) = InputTransformation[]
 

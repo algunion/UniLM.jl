@@ -3235,6 +3235,16 @@ end
     end
 end
 
+@testset "input_transformations: a list that is no array is no list of transformations — reading it fails loud" begin
+    reply(v) = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna", "output" => Any[],
+        "input_transformations" => v)))))
+    for bad in ("model_mismatch", Dict("type" => "reasoning"), 3, true)
+        @test_throws r"input_transformations" input_transformations(reply(bad))
+    end
+    @test input_transformations(reply(nothing)) == InputTransformation[]    # JSON null: no list, as absent
+end
+
 @testset "input_transformations: the reasoning inputs a Responses reply says it withheld, typed" begin
     # The Responses reference, Response.input_transformations: "Reasoning inputs withheld from the model, in input
     # order", each {type: "reasoning", id: "The original reasoning item ID", action: "removed", reason}, the reason

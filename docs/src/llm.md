@@ -2849,7 +2849,7 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:webhooks`, `:safety`, `:content_provenance` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:token_count`, `:webhooks`, `:safety`, `:content_provenance` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
 | Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
@@ -2952,7 +2952,8 @@ with_cancel(f, tok)                 # tok is the ambient token inside f (and tas
 
 Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToken}=nothing`:
 `chatrequest!`, `respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
-`prefix_complete`, `ask`, `ask_each`, `list_models`, the Ollama model calls, `poll_batch`,
+`prefix_complete`, `ask`, `ask_each`, `list_models`, `retrieve_model`, `delete_model` (on OpenAI too),
+`count_tokens`, the Ollama model calls, `poll_batch`,
 `poll_file_batch`, `poll_file`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
 lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, containers, batch, fine-tuning, graders,
 webhook endpoints, safety cases and alerts, content provenance checks,
@@ -3027,7 +3028,7 @@ not observe the token (`speak` and `translate`, which run Realtime sessions of t
 
 ## Result Type Hierarchy
 
-All 86 API call result types inherit from `LLMRequestResponse`, in 20 per-API
+All 97 API call result types inherit from `LLMRequestResponse`, in 21 per-API
 families:
 
 ```

@@ -35,8 +35,8 @@ verbs hold it to that declaration like any built-in.
 
 A rejection of a declared endpoint throws `ArgumentError` before any request,
 naming the feature and the endpoint and listing what it does support (for example
-`Vector Stores API is not supported by ANTHROPICServiceEndpoint. Supported: chat,
-files, json_output, models, streaming, tools`).
+`Vector Stores API is not supported by ANTHROPICServiceEndpoint. Supported: batch,
+chat, files, json_output, models, streaming, token_count, tools`).
 
 ## Functions
 

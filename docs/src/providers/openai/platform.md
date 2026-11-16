@@ -638,7 +638,8 @@ A project's endpoints are managed with its API key (the `:webhooks` capability).
 `event_types` to the HTTPS `url`, and returns it with its `signing_secret`, which OpenAI returns only
 then and from [`rotate_webhook_endpoint_secret`](@ref) — whose `keep_old_secret_active_for_24_hours=true`
 keeps the previous secret valid for a day —, so keep it for `verify_webhook`; a reply without one
-is the `WebhookEndpointCallError`. [`list_webhook_endpoints`](@ref) (`limit`, `after`, newest first),
+is the `WebhookEndpointCallError`. A printed or logged endpoint, or a result or page holding one,
+shows the secret as `<not shown>` and leaves `raw` out; the field still holds it. [`list_webhook_endpoints`](@ref) (`limit`, `after`, newest first),
 [`retrieve_webhook_endpoint`](@ref), [`update_webhook_endpoint`](@ref) (`name`, `url` and the whole
 new set of `event_types`) and [`delete_webhook_endpoint`](@ref) read, change and remove endpoints;
 [`test_webhook_endpoint`](@ref)`(id, event_type)` has OpenAI send a sample delivery and returns the

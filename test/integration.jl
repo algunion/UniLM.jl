@@ -488,6 +488,9 @@ end
     @test !isnothing(r.model.created)
     r = retrieve_model("gpt-made-up-0")
     @test r isa ModelListFailure && r.status == 404
+    # A fine-tuned id's colons go percent-encoded; OpenAI decodes them, so its 404 names the id as given.
+    r = retrieve_model("ft:gpt-4o-mini:unilm:made-up:abc123")
+    @test r isa ModelListFailure && r.status == 404 && occursin("'ft:gpt-4o-mini:unilm:made-up:abc123'", r.response)
 end
 
 # Never a real model: the delete of a made-up fine-tuned model is OpenAI's free witness, a 404.

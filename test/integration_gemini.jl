@@ -85,6 +85,45 @@ _gemini_cost(u, row::UniLM.PriceRow) =
     @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-argon"))
 end
 
+@testset "Gemini — the default model is gemini-4-hydrogen; it takes xhigh, and the reply is priced at its row" begin
+    # A Chat with no model, at the level only Hydrogen's row lists (observed HTTP 200 on 2026-11-16); a tiny
+    # prompt, and a budget with room for the thinking (73 thought tokens on the witness). Refuted by another
+    # served model, an error, or an estimate other than the usage billed at gemini-4-hydrogen's row.
+    r = chatrequest!(Chat(service=GEMINIServiceEndpoint, reasoning_effort="xhigh", max_tokens=1024,
+        messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: OK")]))
+    @test r isa LLMSuccess
+    @info "gemini-4-hydrogen xhigh" served = r.model usage = r.usage cost = estimated_cost(r)
+    @test r.self.model == r.model == "gemini-4-hydrogen"
+    @test estimated_cost(r) > 0
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-hydrogen"))
+end
+
+@testset "Gemini 4 Carbon — low effort; the reply names its model and is priced at its row" begin
+    # Carbon's row bills $2 / $0.10 / $10 per 1M tokens through 2026-11-30 and twice that from 2026-12-01.
+    r = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-4-carbon", reasoning_effort="low",
+        max_tokens=256, messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: OK")]))
+    @test r isa LLMSuccess
+    @info "gemini-4-carbon" usage = r.usage cost = estimated_cost(r)
+    @test r.model == "gemini-4-carbon"
+    @test estimated_cost(r) > 0
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-carbon"))
+end
+
+@testset "Gemini OpenAI-compatible endpoint — the default model gemini-4-hydrogen answers, streamed and not" begin
+    # Refuted by another served model, an error, or a reply priced other than at gemini-4-hydrogen's row.
+    for stream in (false, true)
+        chat = Chat(service=GEMINIOpenAIServiceEndpoint, reasoning_effort="low", stream=(stream ? true : nothing),
+                    messages=[Message(Val(:user), "Reply with the single word OK.")])
+        out = chatrequest!(chat)
+        r = stream ? fetch(out) : out
+        @test r isa LLMSuccess
+        @info "Gemini compat default" stream served = r.model usage = r.usage cost = estimated_cost(r)
+        @test chat.model == r.model == "gemini-4-hydrogen"
+        @test estimated_cost(r) > 0
+        @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-hydrogen"))
+    end
+end
+
 @testset "Gemini routes gemini-3.7-flash to gemini-3.8-flash, and the call is priced as served" begin
     r = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-3.7-flash", reasoning_effort="low",
         max_tokens=256, messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: OK")]))

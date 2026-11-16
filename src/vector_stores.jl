@@ -66,7 +66,7 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
-"Successful create/retrieve result wrapping a [`VectorStoreObject`](@ref)."
+"Successful create/retrieve/update result wrapping a [`VectorStoreObject`](@ref)."
 @kwdef struct VectorStoreSuccess <: LLMRequestResponse; response::VectorStoreObject; end
 "Successful [`list_vector_stores`](@ref) result wrapping a [`VectorStoreList`](@ref)."
 @kwdef struct VectorStoreListSuccess <: LLMRequestResponse; response::VectorStoreList; end
@@ -134,6 +134,30 @@ function _vs_http(method::String, url::String, service, cfg::RequestConfig, rema
         _http(method, url, headers, body; cfg, remaining, cancel=tok)
 end
 
+# One JSON exchange of the Vector Stores or Containers API (`F` the family's failure, `E` its call
+# error): a 200's parsed body goes to `decode`, another status is the failure, and anything
+# thrown — a body that does not encode, a transport error, a timeout, a cancel, a reply that
+# does not decode — the call error.
+function _vs_json_call(decode::Function, ::Type{F}, ::Type{E}, method::String, url::String, service,
+                       config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken};
+                       body=nothing) where {F<:LLMRequestResponse,E<:LLMRequestResponse}
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        resp = _vs_http(method, url, service, cfg, _remaining_s(cfg, t0);
+                        body=isnothing(body) ? nothing : JSON.json(body), cancel)
+        resp.status == 200 ? decode(JSON.parse(resp.body; dicttype=Dict{String,Any})) : _failure(F, resp)
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(E, e)
+    end
+end
+_vs_call(decode::Function, method::String, path::String, service, config, cancel; body=nothing) =
+    _vs_json_call(decode, VectorStoreFailure, VectorStoreCallError, method,
+                  _api_base_url(service) * VECTOR_STORES_PATH * path, service, config, cancel; body)
+
+# A request body of the fields given, those left `nothing` out.
+_vs_body(fields::Pair{Symbol}...) = Dict{Symbol,Any}(k => v for (k, v) in fields if !isnothing(v))
+
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
 """
@@ -190,6 +214,26 @@ function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAISe
         e isa InterruptException && rethrow()
         _callerr(VectorStoreCallError, e)
     end
+end
+
+"""
+    update_vector_store(id; name=nothing, expires_after=nothing, metadata=nothing, service=OPENAIServiceEndpoint)
+
+Change a vector store's `name`, `expires_after` policy or `metadata`; only the fields given are
+sent. Returns `VectorStoreSuccess` with the updated store, `VectorStoreFailure`, or
+`VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function update_vector_store(id::String; name::Union{String,Nothing}=nothing,
+    expires_after::Union{AbstractDict,Nothing}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call(d -> VectorStoreSuccess(response=_parse_vector_store(d)), "POST", "/" * _uripart(id), service, config, cancel;
+             body=_vs_body(:name => name, :expires_after => expires_after, :metadata => metadata))
 end
 
 """

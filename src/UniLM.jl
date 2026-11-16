@@ -340,6 +340,7 @@ export
     vector_store_id,
     create_vector_store,
     retrieve_vector_store,
+    update_vector_store,
     list_vector_stores,
     delete_vector_store,
     add_vector_store_file,

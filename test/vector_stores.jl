@@ -138,3 +138,27 @@ end
     end
     @test err isa ArgumentError && occursin("list_vector_stores", err.msg) && occursin("\"asc\"", err.msg) && isempty(seen)
 end
+
+@testset "update_vector_store: a POST to the store with the fields given" begin
+    body = """{"id": "vs_1", "name": "renamed", "status": "completed", "metadata": {"team": "docs"}}"""
+    r, seen = _with_scripted((_, _) -> _json(200, body)) do
+        update_vector_store("vs_1"; name="renamed", expires_after=Dict("anchor" => "last_active_at", "days" => 7),
+                            metadata=Dict("team" => "docs"), service=URLProbe)
+    end
+    @test r isa VectorStoreSuccess && r.response.name == "renamed"
+    req = only(seen)
+    @test (req.method, req.target) == ("POST", "/v1/vector_stores/vs_1")
+    @test JSON.parse(req.body) == Dict("name" => "renamed", "metadata" => Dict("team" => "docs"),
+                                       "expires_after" => Dict("anchor" => "last_active_at", "days" => 7))
+    # Only the fields given are sent.
+    _, seen = _with_scripted((_, _) -> _json(200, body)) do
+        update_vector_store("vs_1"; metadata=Dict("team" => "docs"), service=URLProbe)
+    end
+    @test JSON.parse(only(seen).body) == Dict("metadata" => Dict("team" => "docs"))
+    @test _answered(() -> update_vector_store("vs_1"; name="n", service=URLProbe), 200;
+                    body="""{"id": "vs_1"}""") isa VectorStoreCallError
+    @test _seam_timeout(update_vector_store("vs_x"; name="n", service=SeamProbe, config=_TINY_DEADLINE), VectorStoreCallError)
+    @test _recorded_targets(() -> update_vector_store(_HOSTILE_ID; name="n", service=URLProbe)) ==
+          ["/v1/vector_stores/$_HOSTILE_ENC"]
+    @test_throws ArgumentError update_vector_store("vs_1"; name="n", service=DeepSeekEndpoint("k"))
+end

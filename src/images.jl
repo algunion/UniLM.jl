@@ -58,6 +58,11 @@ provider takes it.
 - `frame_duration_ms::Union{Int,Nothing}`: each GIF frame's delay in milliseconds, at least 20 (200
   when omitted), with `output_format="gif"` only; OpenAI "caps the encoded delay at 655,350 ms per
   frame", and UniLM sets no largest
+- `svg::Union{SvgOptions,Nothing}`: the model that authors an SVG ([`SvgOptions`](@ref)), with
+  `output_format="svg"` only. "SVG generation requires n=1 and does not support streaming,
+  partial images, prompt_rewriter, or output_compression"; the SVG comes back as the image's base64
+  data, its author's tokens as the reply's `svg_usage`. An edit takes none: "The image edit endpoint
+  does not support SVG output" (OpenAI's image generation guide)
 
 # Fields — Gemini only
 [Gemini's image controls](https://ai.google.dev/gemini-api/docs/image-generation#aspect-ratios-and-image-size):
@@ -71,8 +76,10 @@ A field the request's provider does not take (an OpenAI-only field on Gemini;
 `aspect_ratio` or `resolution` on OpenAI), `n` other than 1 on Gemini, a Gemini
 `aspect_ratio` or `resolution` outside the lists above, and a `safety_identifier` outside
 its provider's rule throw `ArgumentError` naming the provider and the field — when the
-request is serialized, and in [`generate_image`](@ref) before any request — as does a frame
-field without `output_format="gif"`. Other OpenAI values are sent as given, for OpenAI to judge. `input_fidelity` is an image-edit
+request is serialized, and in [`generate_image`](@ref) before any request — as do a frame
+field without `output_format="gif"`, `svg` without `output_format="svg"`, and SVG output with `n`
+other than 1 or with an `output_compression`. Other OpenAI values are sent as given, for OpenAI to
+judge. `input_fidelity` is an image-edit
 parameter: set it on [`ImageEdit`](@ref), not here.
 
 # Examples
@@ -111,12 +118,13 @@ ImageGeneration(service=GEMINIServiceEndpoint, prompt="A lighthouse at dusk",
     complexity::Union{String,Nothing} = nothing
     frame_count::Union{Int,Nothing} = nothing
     frame_duration_ms::Union{Int,Nothing} = nothing
+    svg::Union{SvgOptions,Nothing} = nothing
     function ImageGeneration(service, model, prompt, n, size, quality, background, output_format, output_compression,
                              safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count,
-                             frame_duration_ms)
+                             frame_duration_ms, svg)
         _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
         new(service, model, prompt, n, size, quality, background, output_format, output_compression,
-            safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms)
+            safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms, svg)
     end
 end
 
@@ -135,13 +143,16 @@ function _check_image_controls(who::String, complexity::Union{AbstractString,Not
     nothing
 end
 
-# A GIF's frame fields are "Only supported with output_format=gif".
+# A GIF's frame fields are "Only supported with output_format=gif", and `svg` "Requires output_format=svg".
 function _check_image_format(who::String, output_format::Union{AbstractString,Nothing}, frame_count::Union{Integer,Nothing},
-                             frame_duration_ms::Union{Integer,Nothing})::Nothing
+                             frame_duration_ms::Union{Integer,Nothing}, svg::Union{SvgOptions,Nothing}=nothing)::Nothing
     frames = String[f for (f, v) in (("frame_count", frame_count), ("frame_duration_ms", frame_duration_ms)) if !isnothing(v)]
     isempty(frames) || output_format == "gif" || throw(ArgumentError(
         "$who $(join(frames, " and ")): only with output_format=\"gif\", the frames of a GIF (got output_format=" *
         "$(repr(output_format))); set output_format=\"gif\", or unset $(join(frames, " and "))"))
+    isnothing(svg) || output_format == "svg" || throw(ArgumentError(
+        "$who svg: only with output_format=\"svg\", the settings of an SVG's author (got output_format=" *
+        "$(repr(output_format))); set output_format=\"svg\", or unset svg"))
     nothing
 end
 
@@ -162,7 +173,7 @@ function _image_payload(service, ig::ImageGeneration)::Dict{Symbol,Any}
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
     for f in (:n, :size, :quality, :background, :output_format, :output_compression, :safety_identifier, :moderation,
-              :complexity, :frame_count, :frame_duration_ms)
+              :complexity, :frame_count, :frame_duration_ms, :svg)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -209,12 +220,18 @@ Parsed response from the Image Generation API.
   keys (`input_tokens`, `output_tokens`, `total_tokens`, and their details); Gemini's
   `usageMetadata` is mapped to them as on Gemini Chat, its thinking counted as output and
   as `reasoning_tokens`
+- `svg_usage::Union{Dict{String,Any},Nothing}`: an OpenAI SVG's "Token usage for SVG authoring,
+  separate from image rendering usage" (`input_tokens`, `output_tokens`, `reasoning_tokens`,
+  `total_tokens` and the author `model`), as the reply sends it; `nothing` for any other image.
+  OpenAI bills these tokens at "the authoring model's rate", which [`estimated_cost`](@ref) leaves
+  out of an image's estimate, with a warning
 - `raw::Dict{String,Any}`: Complete raw JSON response
 """
 @kwdef struct ImageResponse
     created::Int64
     data::Vector{ImageObject}
     usage::Union{Dict{String,Any},Nothing} = nothing
+    svg_usage::Union{Dict{String,Any},Nothing} = nothing
     raw::Dict{String,Any}
 end
 
@@ -342,6 +359,7 @@ function parse_image_response(resp::HTTP.Response)::ImageResponse
         created=data["created"],
         data=images,
         usage=get(data, "usage", nothing),
+        svg_usage=get(data, "svg_usage", nothing),
         raw=data
     )
 end
@@ -604,8 +622,24 @@ function _check_image_request(service, r::_ImageRequest)
     isnothing(id) || 1 <= length(id) <= 128 || throw(ArgumentError(
         "the OpenAI Images API takes a safety_identifier of 1 to 128 characters (got $(length(id))); it reads " *
         "an empty one as none, and a longer identifier can be hashed (a SHA-256 hex digest is 64 characters)"))
-    _check_image_format("OpenAI image", r.output_format, r.frame_count, r.frame_duration_ms)
+    _check_image_format("OpenAI image", r.output_format, r.frame_count, r.frame_duration_ms, _svg(r))
+    _check_svg_output(r)
     _check_markup(r)
+end
+_svg(ig::ImageGeneration)::Union{SvgOptions,Nothing} = ig.svg
+_svg(::ImageEdit)::Nothing = nothing
+
+# "SVG generation requires n=1 and does not support streaming, partial images, prompt_rewriter, or
+# output_compression" (the Images reference); an ImageGeneration streams nothing. An edit takes no SVG.
+_check_svg_output(::ImageEdit)::Nothing = nothing
+function _check_svg_output(ig::ImageGeneration)::Nothing
+    ig.output_format == "svg" || return nothing
+    isnothing(ig.n) || ig.n == 1 || throw(ArgumentError(
+        "OpenAI SVG output takes n=1 (got n=$(ig.n)): \"SVG generation requires n=1\"; send one request per SVG"))
+    isnothing(ig.output_compression) || throw(ArgumentError(
+        "OpenAI SVG output takes no output_compression: SVG generation \"does not support ... output_compression\"; " *
+        "unset output_compression"))
+    nothing
 end
 
 # OpenAI's edit markup "Cannot be combined with mask", and is "A transparent PNG": bytes that are no PNG
@@ -682,7 +716,7 @@ end
 # the request.
 _openai_only_image_fields(::ImageGeneration) =
     (:size, :quality, :background, :output_format, :output_compression, :moderation, :complexity, :frame_count,
-     :frame_duration_ms)
+     :frame_duration_ms, :svg)
 _openai_only_image_fields(::ImageEdit) =
     (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format, :complexity, :frame_count,
      :frame_duration_ms)

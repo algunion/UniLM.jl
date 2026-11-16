@@ -973,3 +973,55 @@ end
         @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
     end
 end
+
+@testset "OpenAI images — SvgOptions names the SVG author; SVG output takes n=1 and no output_compression" begin
+    # The Images reference: `svg: optional object { model, reasoning }`, model `minLength: 1`, reasoning.effort one of
+    # none, minimal, low, medium, high, xhigh, max; "Requires output_format=svg"; "SVG generation requires n=1 and
+    # does not support streaming, partial images, prompt_rewriter, or output_compression".
+    @test _image_json(SvgOptions()) == Dict{String,Any}()
+    @test _image_json(SvgOptions(model="gpt-6-luna", effort="low")) ==
+          Dict{String,Any}("model" => "gpt-6-luna", "reasoning" => Dict{String,Any}("effort" => "low"))
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        @test _image_json(SvgOptions(; effort)) == Dict{String,Any}("reasoning" => Dict{String,Any}("effort" => effort))
+    end
+    for (kw, word) in ((; effort="auto") => "effort", (; effort="") => "effort", (; model="") => "model")
+        err = _refusal(() -> SvgOptions(; kw...))
+        @test err isa ArgumentError && occursin("SvgOptions", err.msg) && occursin(word, err.msg)
+    end
+    body = _image_json(ImageGeneration(prompt="p", output_format="svg", n=1, svg=SvgOptions(model="gpt-6-luna")))
+    @test body["output_format"] == "svg" && body["svg"] == Dict{String,Any}("model" => "gpt-6-luna") && body["n"] == 1
+    @test !haskey(_image_json(ImageGeneration(prompt="p", output_format="svg")), "svg")    # no SVG model selection
+    for (kw, words) in ((; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                        (; output_format="png", svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                        (; output_format="svg", n=2) => ("n=1", "SVG"),
+                        (; output_format="svg", output_compression=50) => ("output_compression", "SVG"))
+        err = _refusal(() -> JSON.json(ImageGeneration(; prompt="p", kw...)))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> generate_image(ImageGeneration(; prompt="p", model="m", service=URLProbe, kw...)))
+        end
+        @test thrown isa ArgumentError && isempty(seen)
+    end
+    # The guide: "The image edit endpoint does not support SVG output" — an edit has no svg field.
+    @test !hasfield(ImageEdit, :svg)
+    err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", svg=SvgOptions(model="m"))))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take svg,")
+end
+
+@testset "OpenAI images — svg_usage is decoded beside usage, and an estimate says it leaves those tokens out" begin
+    # ImagesResponse: "svg_usage: optional object { input_tokens, model, output_tokens, 2 more }", "Token usage for SVG
+    # authoring, separate from image rendering usage"; OpenAI's pricing page states no SVG rate.
+    svg = Dict{String,Any}("input_tokens" => 1200, "model" => "gpt-6-luna", "output_tokens" => 900,
+                           "reasoning_tokens" => 300, "total_tokens" => 2100)
+    usage = Dict{String,Any}("input_tokens" => 10, "output_tokens" => 400, "total_tokens" => 410)
+    reply(extra...) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "PHN2Zz4=")],
+                                                                           "usage" => usage, extra...))))
+    ir = UniLM.parse_image_response(reply("svg_usage" => svg, "output_format" => "svg"))
+    @test ir.svg_usage == svg && ir.usage == usage
+    @test isnothing(UniLM.parse_image_response(reply()).svg_usage)
+    rows = Dict("img" => UniLM._price(5.0, 1.25, 30.0))
+    with_svg, plain = ImageSuccess(response=ir), ImageSuccess(response=UniLM.parse_image_response(reply()))
+    priced = (10 * 5.0 + 400 * 30.0) / 1e6
+    @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(with_svg; model="img", pricing=rows)) ≈ priced
+    @test (@test_logs estimated_cost(plain; model="img", pricing=rows)) ≈ priced
+end

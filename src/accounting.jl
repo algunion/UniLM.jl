@@ -263,7 +263,9 @@ rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
-not model, and a price this function cannot compute is not a zero it can report.
+not model, and a price this function cannot compute is not a zero it can report. An
+`ImageSuccess` whose reply reports `svg_usage`, the tokens of an SVG's author, is estimated from
+its `usage` alone, with one warning per model that the author's tokens are left out.
 `pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix
@@ -315,8 +317,17 @@ end
 
 # A reply that reported no usage leaves nothing to price, and a silent 0.0 would read as a free
 # call, so an embeddings reply without usage says so once per model (Gemini's OpenAI-compatible
-# endpoint returns embeddings without `usage`).
+# endpoint returns embeddings without `usage`). An SVG's author bills its own tokens, the reply's
+# `svg_usage`, at "the authoring model's rate" (OpenAI's image generation guide), which the pricing
+# page lists for no SVG: the estimate holds the image's usage alone, and says so once per model.
 _unreported_usage(::LLMRequestResponse, ::String)::Nothing = nothing
+function _unreported_usage(r::ImageSuccess, model::String)::Nothing
+    svg = r.response.svg_usage
+    isnothing(svg) || @warn "SVG authoring tokens (the reply's svg_usage) are not in the estimate: " *
+        "OpenAI bills them at the authoring model's rates" model author = get(svg, "model", nothing) _id = Symbol(
+        "unilm_svg_usage_", model) maxlog = 1
+    nothing
+end
 function _unreported_usage(r::EmbeddingSuccess, model::String)::Nothing
     isnothing(r.usage) && @warn "the embeddings reply reported no token usage; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unreported_usage_", model) maxlog = 1

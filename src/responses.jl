@@ -299,6 +299,44 @@ function JSON.lower(t::MCPTool)
 end
 
 """
+    SvgOptions(; model=nothing, effort=nothing)
+
+The author of an SVG that an OpenAI image model draws: the `svg` object of an
+[`ImageGeneration`](@ref) (and of the [`ImageGenerationTool`](@ref)), sent with
+`output_format="svg"` only. OpenAI "creates a reference image and uses it to produce the SVG"
+([image generation](https://developers.openai.com/api/docs/guides/image-generation#generate-svg-output)).
+
+- `model`: the model that authors the SVG, sent as `svg.model`; "When model selection is enabled,
+  supply svg.model. When model selection is disabled, omit this object". An empty name throws
+  `ArgumentError`.
+- `effort`: the author's reasoning effort, sent as `svg.reasoning.effort`: `"none"`, `"minimal"`,
+  `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, of which "Supported efforts depend on the
+  selected author model"; another value throws `ArgumentError`. Unset, "uses the author model's default".
+
+The reply reports the author's tokens apart from the image's, as `svg_usage`
+([`ImageResponse`](@ref)).
+"""
+@kwdef struct SvgOptions
+    model::Union{String,Nothing} = nothing
+    effort::Union{String,Nothing} = nothing
+    function SvgOptions(model, effort)
+        isnothing(model) || !isempty(model) || throw(ArgumentError(
+            "SvgOptions model names the SVG author and cannot be empty; unset it to use the default author"))
+        isnothing(effort) || effort in _SVG_EFFORTS || throw(ArgumentError(
+            "SvgOptions effort must be one of $(join(repr.(_SVG_EFFORTS), ", ")) (got $(repr(effort)))"))
+        new(model, effort)
+    end
+end
+const _SVG_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+function JSON.lower(s::SvgOptions)
+    d = Dict{Symbol,Any}()
+    isnothing(s.model) || (d[:model] = s.model)
+    isnothing(s.effort) || (d[:reasoning] = Dict{Symbol,Any}(:effort => s.effort))
+    d
+end
+
+"""
     ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing,
                         quality=nothing, size=nothing, model=nothing, action=nothing,
                         moderation=nothing, partial_images=nothing, input_fidelity=nothing,

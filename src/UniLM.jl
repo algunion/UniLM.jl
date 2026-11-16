@@ -277,6 +277,7 @@ export
 export
     # Core types
     ImageGeneration,
+    SvgOptions,
     ImageObject,
     ImageResponse,
     # Result types

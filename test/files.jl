@@ -327,3 +327,16 @@ end
         rm(path; force=true)
     end
 end
+
+# OpenAI's listFiles `order`: "asc" or "desc", by creation time.
+# Refuted if: order is not sent, or is sent when unset, or another value reaches the network.
+@testset "list_files sends order, \"asc\" or \"desc\"" begin
+    t = _recorded_targets() do
+        list_files(; order="asc", service=URLProbe)
+        list_files(; purpose="batch", limit=2, after="file-1", order="desc", service=URLProbe)
+        list_files(; service=URLProbe)
+    end
+    @test t == ["/v1/files?order=asc", "/v1/files?purpose=batch&limit=2&after=file-1&order=desc", "/v1/files"]
+    e = try list_files(; order="sideways", service=SeamProbe); nothing catch x; x end
+    @test e isa ArgumentError && e.msg == "list_files: order is \"asc\" or \"desc\" (got \"sideways\")"
+end

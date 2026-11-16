@@ -314,18 +314,25 @@ upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAISe
     upload_file(FileUpload(; service, file=path, purpose, expires_after); config, cancel)
 
 """
-    list_files(; purpose=nothing, limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+    list_files(; purpose=nothing, limit=nothing, after=nothing, order=nothing, service=OPENAIServiceEndpoint)
 
-List uploaded files. Returns `FileListSuccess`, `FileFailure`, or `FileCallError`.
+List uploaded files. Returns `FileListSuccess`, `FileFailure`, or `FileCallError`. `order` sorts
+by creation time, `"asc"` or `"desc"` (any other value throws `ArgumentError` before any request);
+`nothing` keeps the API's order.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `FileCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,Nothing}=nothing,
-    after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    after::Union{String,Nothing}=nothing, order::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
+    # OpenAI's listFiles `order` is an enum; the API answered "'sideways' is not one of ['asc', 'desc']"
+    # (HTTP 400) on 2026-11-16.
+    isnothing(order) || order in ("asc", "desc") ||
+        throw(ArgumentError("list_files: order is \"asc\" or \"desc\" (got $(repr(order)))"))
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
@@ -334,6 +341,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
         !isnothing(purpose) && push!(params, "purpose=$(_uripart(purpose))")
         !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
+        !isnothing(order) && push!(params, "order=$(_uripart(order))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200

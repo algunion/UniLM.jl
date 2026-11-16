@@ -1,0 +1,81 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "What is the smallest positive integer that leaves a remainder of 1 when divided by 2, 3, 4, 5 or 6, and is divisible by 7? Answer with the number only."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "generationConfig": {
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingLevel": "LOW"
+        }
+      },
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "**My Approach to the Modular Arithmetic Problem**\n\nOkay, here's how I'm thinking about this. The problem gives me a set of congruences, and I need to find the smallest positive integer that satisfies them all. I see a clear pattern here: $x$ leaves a remainder of 1 when divided by 2, 3, 4, 5, and 6. Also, $x$ is divisible by 7.\n\nImmediately, I recognize that the first five congruences imply that $x - 1$ must be a multiple of the least common multiple of 2, 3, 4, 5, and 6. I can compute that quickly:  $\\text{lcm}(2, 3, 4, 5, 6) = 60$.  So I know $x$ can be expressed as $60k + 1$ for some non-negative integer $k$.\n\nNow I need to incorporate the last condition, that $x$ is divisible by 7.  This means $60k + 1 \\equiv 0 \\pmod 7$.  I'll simplify this congruence.  Since $60 \\equiv 4 \\pmod 7$, I have $4k + 1 \\equiv 0 \\pmod 7$.  Then $4k \\equiv -1 \\equiv 6 \\pmod 7$. I'll need to solve for $k$. Since 4 and 7 are relatively prime, I can find an inverse of 4 mod 7. Multiplying by 2, I get $8k \\equiv 12 \\pmod 7$, which simplifies to $k \\equiv 5 \\pmod 7$.\n\nNow, the smallest non-negative $k$ that works is 5.  Plugging that back in, I get $x = 60(5) + 1 = 301$.  It's a good habit to verify, so I'll check my answer.  301 divided by 7 is exactly 43, and 301 = 60 * 5 + 1. So, yes, it satisfies all conditions. Therefore, 301 is the smallest positive integer that fits the problem.\n\n\n",
+                "thought": true
+              },
+              {
+                "text": "301",
+                "thoughtSignature": "EucHCuQHAWkUfRMfQomLZbmoTScG7+kS8PHNpzrB8Wt/kp0BtMcqPN2+wUuZtKBTf5PzGkmXdsItuKLxK2Oppez3iahkXVKDF4bkhz9mnX6Uks3e1TyWpfgun9njrFs+qrvMF6ETFgZQnmMB3592ekEESUUFja36y+ic2VeSpUy0DOatZcQB48vAfQNT2zQCaK/h32YLEXo3mnhXD8x+Hykxd9Vk2sVHBlYy7hEHCSgQeI4MPZWlRsCQ0fFfkPVfFu05HNd/qCL4pgdCeR//+T4JqNIjiyH8pC3VCwzfErG0VDYVPwGrL+2ZPGKM9WQFzUe2FyT0dHSM37b/FCDx0uB0KnKAbF7BSfYt17ctItu5mO31IC5wzvYW91FUwFlGC60MLkL12iI9lNLb8UTlCcxaII02MTazDpIGCgJ2vU+Xty99fexlybVm/Y0JnbYn/fY6IAUcwvDfv+TPGGagmn+6/DkTPZ56Ue88jJddFfRv2jY2Z1to05FAi5fNFERJxfNcCaUqKkq5UO9xBIeefZJglJ+7jRIgFCw/ucRPjtZidZFAgyoYdMZeQlZ4vwhK4x0/ncUCpl9AV1HvvPxaAfVekf53MFGhLy/jA+PkymO5QC1L+taDNYESNIUgroBdq3v0Mw52P1q5v84sEQNQyRa7cwpKrxlhSljBESNr6lBnGzrq59TKbKlvwvQ4BGvDiMf2KhiQkbBvg4RizIzw78UOv/Rg3uu7g+K7gDyXjdtIcPR5pD2OWNPoHu9QIbmVD6QDI35jMmO1/yze1gcFAmBbV3f0k2sAXJXh4lcrP00ZI2pfnVof9DP13oYT+VpBEb+PYp62bu0TV0mDiAUp2b6YEH2thckckL3NZ52nJlpKu8C4MRlDQXM2Xq4Fmuvm0CSTU8pIpZE9ansoHc2JpWXDwcNl7sP9HjzW7CKXpGYnoTFeiW36LrcA6Nr+QD8hwqOchYlt2rxEsHQpIXQ/KyMkyyIeeF4DFFYrKd6rsPeOo/kPhQ58oMis222Sc3pBOLtJfSPf64UWFujPJjM7rK1Jq+XJlUOWUdKtoFeZHTenDC77MTqcqrXB4492twvOLdNhc6IJzKidymOEC5ltsm/Zk+wcYZwTysRfw2hTHCXJGfdNFT+2v90Z0vyRAfuWdAr1zWiR+Ek8ToD1mZ0Ak7e8SH6zV7x+XkIAPFhxjJobF1/2KSQP1Z4CP2Pf02Nv7AmCjYwhhPXxuHdqiyfAiWskm9sqpqCOC7PGEhyMQzUwtixNBZ+/U33r8l/ftmwH5X4quCkGHBHhbTbZJpRJ90+Uq8Oba+wwXtPwXskQYa/PIADs/PKBuPrf"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 86,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 522,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 86
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 7
+          }
+        ],
+        "thoughtsTokenCount": 429,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "n-L6aoSUIuuc28oPpfyvwAY"
+    }
+  },
+  "recorded_at": "2026-11-16T11:01:55Z"
+}

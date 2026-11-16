@@ -1,0 +1,88 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Which planet of the solar system is the largest?"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "parts": [
+            {
+              "text": "Jupiter is the largest planet in the solar system.",
+              "thoughtSignature": "EpMECpAEAWkUfRN2O9WoQ6puvfDdKjELgSzDQc5AWlELMEGIJ+STbRiJRBjoR/eB2tDNURDVmwgqfDyfF9ScI669jbZdCs1/whmuFJ7dEMsn9N0dDELFIRuOzKJj0MgOJPhWdr0xed22qX7oU7X3UN8E3mn3+Gz17IuzteAdzO+86pARuNtEbPaDdOD2AhZcVneWz3b1i79VV2tkv64bM4/C+RPS97dyRdAlx4QpadfoiBZ4e+ctfPdasB3+2BpB41AgC3cIXTvLsj03wmP1Fp9bz0xl4DBHvWlHZw3sC/tzGxHWNZPaaeXe333xZgutA/EOb3nbgsF3Tk08tw9N/DXVaXNa2FV/MXHIgnEXhoVk7Hqc+akceK09cQkwyUsI5ChTCDfISwnP5lIfnb5JWNZlzvbxAK322NMM2+hF/LU6/zVWtQ/Y76S7R9kPeNBuoP4XxiAYY7SgC/gOlgzcHLB1L1M2mkik7dydsnaujKm30DATnt2J4q6/MQzdTosFM9yjanTPCs42vRhmKjROvTkA4IUzGN7ONrdjZjsRH4hzh6C0cwCLoIAkbwj+SGehXtbQrfAueCIKsvkw4JZ7e93N5bB3g0rfDrYkhrVEaJpI5aBq+4q+yk3iGysMwttfcGe+vVbPgKRUPu4WHiuVBENpTNJrZtH0fKACwDVkV722/vf8XNRoJgeKWE7zTFqFuZ3iMtad"
+            }
+          ],
+          "role": "model"
+        },
+        {
+          "parts": [
+            {
+              "text": "And the smallest?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant: answer in one short sentence."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Mercury is the smallest planet in the solar system.",
+                "thoughtSignature": "EoIFCv8EAWkUfRO8atm+gXJnDUK7jqLpE8sQBpLfT6ZYPUJKfd0W89uOgggx0G9O2KrF+Mbm5+SHnacdDjKfZEjdaaG1xGm6pNwQRhU88COA8E8YV5RgS33d0vj741X0N12BjSNO1VF0jmSWGc+86XtDrUD7OYnCOI0PLEUaCy2/31R2AoW+SP67+NBBGrJf+omkhPx1pvbIhIooqaXgLxfScPc8k5D0t7tdT5IecjWNjNm9TDEBAsn/u1ncgpoOu1iKn7I8BF+5QxmQRtrXlUPVKKtTmol2McCjOxi5xNrS+NT0LRFtBUy6P3+YLMdI0IelQ55jzOnCsKL3P4flNF5Ur5ndCNt0mKNuA8hjL/v7q8AnwtM0EZ1b/6JOgXqmpsFSnUK8Dxrid7FKKaUhlYS3BUKEvjxZf6IxNwD+VRqrwVsHlF3o+hbeNee3HBLwTnvTkypfsZxlABl0EKlof/Dd4Wn8KE5KP1OlMoCpneIwWYFqrNpL2uTUgDL9P281KE1aKZBLwO8W0hmjDC/96LnrOj3trr+VfMqQGnzl2+10HTd1Oou8i9esl7hz3ShmduALQ+YNJgSMcFTT96EPhp81l0GDB+Jq06Ou7VjSpeRRaiyyYgpP5UpkZwSojZdpRXFE1Pv6gOFH1K1Lcuzq7tAUh3pukLw/sj4tC3JwrKMzZOBe+uj0A4OyVpjsEHuYoYUuHxgFpyku2BlwEiHumQ/QlphVFjXCyBSpF69uVx3g3YKCK3n6IB/Kw4wjoMkUd0VhN5WU/Z1z3bOu7zz/QOnV63JbbVhceHyQr8LG2nDyAQ7iuH0sZ28CkhGc57L6G2B/z+8EqKpSdHp/FyMY6NWCXRyr"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 188,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 326,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 188
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 14
+          }
+        ],
+        "thoughtsTokenCount": 124,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "tuL6auWTI-DPvdIPlpqooQM"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:15Z"
+}

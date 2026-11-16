@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "POST",
-    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
     "body": {
       "contents": [
         {
@@ -58,11 +58,11 @@
                 "functionCall": {
                   "name": "get_weather",
                   "args": {
-                    "city": "Brasilia"
+                    "city": "Brasília"
                   },
-                  "id": "call_1410682"
+                  "id": "call_9528171445665412142"
                 },
-                "thoughtSignature": "EoYDCoMDAWkUfROoE5tGdIEfZ9AsOWYA4exmGC5BqovTXROnibvRavsf5MR85pyXqF6P7EDEijjXpG1VPIJP6TZtWv8ZpBWeZ9IHNM0hQ/n0IHHhc4OAldscvQZzlFVWcMUipTohS1wZ8HiR9iLh6n/8zjIIdgw8+meQdLntQ1GYJH81vz/HV77aP4NgWxq+rMhWKybgrJ6tusQ3uLDle4sCLMEPp+wGdn3rj+OYxrEMtmR0rmFEIfebecpTQ4Dp0qVOl4f9mqj9aHmvqxYI59TMEjz9OaB++/TC+Xu19v8y1mocQK6ku5ksI4RkBorvB3IA1jagNwOiU7UeVFEUnX5UJS3bBYOkxT1kX2rfJ/7qvlPtnlD9a10l8ZnyyXlS7wcgsx7GaObkqxhWZOrWNuvbfhDLsCYkuy7wcrdG9MyQqQnNWG0EP8FxpoEOl7GifG+8I9VzEzHPzWUF1L5GEkucZidLoNzBTxESDEmT2OvQzvT2aPhduklcZVLuTtwZHR3SIoxvRJ1E"
+                "thoughtSignature": "EvoBCvcBAWkUfRMDZ3Gj0DCkk75nwx/pSC2iGG1h+od+StnFLCaH5tkWR8TC0Pj/xDIbU8XUxRCRVcVN3lktK8ZOKneuAfbWGof6JuH+ROfZA1ctPTcBoot9/ViZGnJbBMdAtOJoWjO3H3gomfRk934lapNkxJNefYcLEzfeGOprhd5SDb4JzU1mlcMMLuBgCm73RVY1RWT7Z04jO9Ph7kok1K6NFT7EQikg/xroz/VZJ2ixSmHI2PTNdRj7N+wempRqV7wrVdQDaqncIcirNUgmf3lhNx6wXCN9xKY2v6+uuMS3oBCBOFAc/KjQBt1XrtgxmaN/DDY2e7WWXw=="
               }
             ],
             "role": "model"
@@ -73,21 +73,27 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 71,
-        "candidatesTokenCount": 17,
-        "totalTokenCount": 165,
+        "promptTokenCount": 110,
+        "candidatesTokenCount": 23,
+        "totalTokenCount": 172,
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 71
+            "tokenCount": 110
           }
         ],
-        "thoughtsTokenCount": 77,
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 23
+          }
+        ],
+        "thoughtsTokenCount": 39,
         "serviceTier": "standard"
       },
-      "modelVersion": "gemini-3.8-flash",
-      "responseId": "XRXeave6BIfknsEP5vj1mAY"
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "pOL6atjEK4TqkdUPtfeKwAk"
     }
   },
-  "recorded_at": "2026-10-25T14:42:39Z"
+  "recorded_at": "2026-11-16T11:01:59Z"
 }

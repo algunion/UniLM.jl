@@ -1,0 +1,62 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "And an interpreter?",
+      "model": "gemini-4-hydrogen",
+      "previous_interaction_id": "v1_Chd1T0w2YXVhbEFjcVAyOG9QcWRLTDBRMBIXdU9MNmF1YWxBY3FQMjhvUHFkS0wwUTA"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_Chd1T0w2YXVhbEFjcVAyOG9QcWRLTDBRMBIXdmVMNmFzU0hDT3E5a2RVUDU5V3V1QWs",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 893,
+        "total_input_tokens": 497,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 497
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 33,
+        "output_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 33
+          }
+        ],
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 363,
+        "initial_input_tokens": 497
+      },
+      "created": "2026-11-16T11:02:26Z",
+      "updated": "2026-11-16T11:02:26Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "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",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "An interpreter reads and executes source code directly—translating it statement by statement at runtime—without first compiling the entire program into standalone machine code.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:28Z"
+}

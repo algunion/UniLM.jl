@@ -1,0 +1,71 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Which planet of the solar system is the largest?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant: answer in one short sentence."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Jupiter is the largest planet in the solar system.",
+                "thoughtSignature": "EpMECpAEAWkUfRN2O9WoQ6puvfDdKjELgSzDQc5AWlELMEGIJ+STbRiJRBjoR/eB2tDNURDVmwgqfDyfF9ScI669jbZdCs1/whmuFJ7dEMsn9N0dDELFIRuOzKJj0MgOJPhWdr0xed22qX7oU7X3UN8E3mn3+Gz17IuzteAdzO+86pARuNtEbPaDdOD2AhZcVneWz3b1i79VV2tkv64bM4/C+RPS97dyRdAlx4QpadfoiBZ4e+ctfPdasB3+2BpB41AgC3cIXTvLsj03wmP1Fp9bz0xl4DBHvWlHZw3sC/tzGxHWNZPaaeXe333xZgutA/EOb3nbgsF3Tk08tw9N/DXVaXNa2FV/MXHIgnEXhoVk7Hqc+akceK09cQkwyUsI5ChTCDfISwnP5lIfnb5JWNZlzvbxAK322NMM2+hF/LU6/zVWtQ/Y76S7R9kPeNBuoP4XxiAYY7SgC/gOlgzcHLB1L1M2mkik7dydsnaujKm30DATnt2J4q6/MQzdTosFM9yjanTPCs42vRhmKjROvTkA4IUzGN7ONrdjZjsRH4hzh6C0cwCLoIAkbwj+SGehXtbQrfAueCIKsvkw4JZ7e93N5bB3g0rfDrYkhrVEaJpI5aBq+4q+yk3iGysMwttfcGe+vVbPgKRUPu4WHiuVBENpTNJrZtH0fKACwDVkV722/vf8XNRoJgeKWE7zTFqFuZ3iMtad"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 58,
+        "candidatesTokenCount": 14,
+        "totalTokenCount": 174,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 58
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 14
+          }
+        ],
+        "thoughtsTokenCount": 102,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "tOL6arOJMIC2nsEP6eCC-Ak"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:14Z"
+}

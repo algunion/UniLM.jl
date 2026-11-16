@@ -342,7 +342,7 @@ sends again, or `quota_exceeded`, "your daily quota", which it returns at once
 | `finish_reason == "content_filter"` | a filter or a policy stopped the reply — a safety filter, an unsupported language, an escalation rule, or an account limited for Prohibited Use Policy violations; `refusal_message` holds Google's `finishMessage`, else the stop's name | another request; for `PUP_LIMITED_DISABLED`, the account's standing, since another request cannot help ([Finish reasons and safety](@ref gemini_finish_reasons)) |
 | `LLMResultError` from `text` or `reasoning_text` | the result is a failure, which holds no reply | check `issuccess(result)` first |
 
-Recorded on 25 October 2026 on `gemini-3.8-flash` with UniLM's development branch after 0.26.0 and the Gemini
+Recorded on 16 November 2026 on `gemini-4-hydrogen` with UniLM's development branch after 0.32.0 and the Gemini
 API at `v1beta`.
 
 See also: [`GEMINIServiceEndpoint`](@ref), [`GEMINIOpenAIServiceEndpoint`](@ref), [`Chat`](@ref),

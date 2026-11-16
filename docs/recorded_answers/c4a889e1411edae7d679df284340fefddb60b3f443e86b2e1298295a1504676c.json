@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "POST",
-    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
     "body": {
       "contents": [
         {
@@ -58,7 +58,7 @@
             "parts": [
               {
                 "text": "{\n  \"city\": \"Oslo\",\n  \"country\": \"Norway\"\n}",
-                "thoughtSignature": "EpkECpYEAWkUfRPqFmVmJMcZWZbH/R8WokROGnXGojwVUsOpVHIAI8mG4iBQhoqMlqGdkmf1Y9W83T/t/EI3bG2DMSNfRAwWVo5uWsnnEc9zb41d1d37abGw6RBbw/n5pa89CBTYtq7om0io5jMpShNJQiUY9ASYxDG4DYvyugLwJxgXEm9yLCGgUHLGsS3/793zTdlGdtG/LsptzlQECUIlgaGXO29A257Nmi7X27Hb6GrFhyRQ++01fpKhpmW5B+B4akXc0DMkv4IlBRwYnUVfrzsK31VOFl6ebum8qNzLWDYyi4m9OcV63u71leneqXPluM+oCSy1wBG4vwPpSyU7CgABdSagw+b27oTRf9HM8/EBXw8YNufCuSG2OEoqi7ov4/oDNPwMFfq8PBHM8K9TewbDIdo30S1HhH/ruNaMlzTOTtSCwgrKWtRcJVCr5dWmcB+CgCISrftHgtYRonC1cE3oN4ZxDTX9AiTD5WAeeUDMAs5c3/fKZXL8rvGXI4+GbGD1mBOxibtOk/xMfB7SUyW43wgUjZFTE3Xa7XL+hYigxGjowmdHuhDDo9Qu7tSJO2742TQ+ASujoEQ8lDEmV9DI25HJ626umQ+Gr9R8hJzfIUt6Mj6Gg25zxDZINIvH9m4JDQq9SK9WVvnqKOTRzLoTYQGif9yb1I49OKu4LIvpcSCFYoOv85C5qDGI4/4dUzoNBw8w+6Jg"
+                "thoughtSignature": "EusDCugDAWkUfRNTo/XAAPUvL2VpMW6oUF0v9bPDlzLmSlyIgnjlk0kWy9ba7rMA9CrFoqnbZp5T83uWd/DEbz2NG5niTT3itPLovC2LNSgpL+3B0d3zbGhnS9bAvSzWiUBrJ/c3J/+nKNMoyCnsExJ+HSG9C2nnfEwMz/PITzCsktCd+f5WKM/KqcgMjucwWAqFh5KAIULexVAmHKyQApk0lvufH4ZawE2wyFwMFkTnhtArB5/2S9jl6JiD8DX2PCWavLcpd/lCJIq+cx3xNJSAc0WhJQU95g92FHXqgSCdmeeE+3dj5IWjwapHJY0g4dejqbiDlucuun+UkN4mnmFFQZu0HZwY4W8/Cg9uy7aiQ0C2nFGOzMcsDKPKoFtl7ssJRddgh7kSPlEc0dz1xN/MdYhoIwKi3csn0M0UqE6MVpWTyh1NAREqbcFH+iRYgDzxS6b2yzDEDNOeKnklgOfYMzl36WjhZRfM5av6lbOmV3Tb108ByCra6ElPjhnPnptJA9ueTDUqHgYnkY2O7wnKGHd6O6vJGCe9RfekrtuuTHmLq7RF3N8qDLRlgH/C2WmP1BKc+6vFq9zF7XyVC+xO7H1ZeK6x0BWbH7mqBG42OJm7qWh+fMzLLlnQ+d/f5IkFThUkL0vfKG1xvno="
               }
             ],
             "role": "model"
@@ -68,21 +68,27 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 13,
-        "candidatesTokenCount": 20,
-        "totalTokenCount": 159,
+        "promptTokenCount": 118,
+        "candidatesTokenCount": 36,
+        "totalTokenCount": 251,
         "promptTokensDetails": [
           {
             "modality": "TEXT",
-            "tokenCount": 13
+            "tokenCount": 118
           }
         ],
-        "thoughtsTokenCount": 126,
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 36
+          }
+        ],
+        "thoughtsTokenCount": 97,
         "serviceTier": "standard"
       },
-      "modelVersion": "gemini-3.8-flash",
-      "responseId": "YRXeapPEKYHi7M8Pt4jXkA0"
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "qOL6au_eKK68vdIPuKqXkQM"
     }
   },
-  "recorded_at": "2026-10-25T14:42:43Z"
+  "recorded_at": "2026-11-16T11:02:02Z"
 }

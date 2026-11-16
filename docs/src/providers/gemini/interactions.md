@@ -378,5 +378,5 @@ reference marks "required" — is a `ResponseCallError` from `respond`, `get_res
 reach `response.error`, the first of them, and `response.raw["errors"]` holds them all. How a call is
 retried, and the daily quota that is not, is on [When something fails](@ref gemini_failures).
 
-Recorded on 25 October 2026 on `gemini-3.8-flash` with UniLM's development branch after 0.26.0 and the Gemini
+Recorded on 16 November 2026 on `gemini-4-hydrogen` with UniLM's development branch after 0.32.0 and the Gemini
 API at `v1beta`.

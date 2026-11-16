@@ -1,0 +1,87 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/gemini-decisions/v1beta/decisions",
+    "body": {
+      "model": "gemini-decision-1",
+      "input": "The app crashes every time I open my order history. Third time this week, and my parcel is due today!",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "billing": "payments, charges, invoices or refunds",
+            "technical": "the app or the website does not work as expected",
+            "shipping": "a parcel that is late, lost or arrived damaged",
+            "other": "anything else"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this message?",
+          "criteria": [
+            "Can wait",
+            "Needs attention this week",
+            "Needs attention today"
+          ]
+        },
+        "repeat": {
+          "type": "noul",
+          "instructions": "Has the customer had this problem before?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "answers": {
+        "repeat": {
+          "confidence": 0.976737309845119,
+          "noul": 0.976737309845119,
+          "type": "noul"
+        },
+        "team": {
+          "confidence": 0.9101472480949424,
+          "choice": "technical",
+          "probabilities": {
+            "technical": 0.9101472480949424,
+            "billing": 0.005316212042392795,
+            "shipping": 0.05720157459946237,
+            "other": 0.027334965263202497
+          },
+          "type": "choice"
+        },
+        "urgency": {
+          "confidence": 0.7986624801698299,
+          "score": 1.7780727106497918,
+          "probabilities": {
+            "2": 0.7986624801698299,
+            "1": 0.18074775031013207,
+            "0": 0.020589769520038055
+          },
+          "legend": {
+            "0": "Can wait",
+            "2": "Needs attention today",
+            "1": "Needs attention this week"
+          },
+          "type": "score"
+        }
+      },
+      "usage": {
+        "total_tokens": 256,
+        "total_input_tokens": 256,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 256
+          }
+        ],
+        "total_output_tokens": 0
+      }
+    }
+  },
+  "recorded_at": "2026-11-16T11:01:23Z"
+}

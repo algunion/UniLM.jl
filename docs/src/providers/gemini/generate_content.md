@@ -523,5 +523,5 @@ table gives each change beside the shipped price. Check Google's page before rel
 Main.ProviderFacts.price_table(:gemini)
 ```
 
-Recorded on 25 October 2026 on `gemini-3.8-flash` with UniLM's development branch after 0.26.0 and the Gemini
+Recorded on 16 November 2026 on `gemini-4-hydrogen` with UniLM's development branch after 0.32.0 and the Gemini
 API at `v1beta`.

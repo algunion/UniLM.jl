@@ -1,0 +1,54 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/gemini-decisions/v1beta/decisions",
+    "body": {
+      "model": "gemini-decision-1",
+      "input": "I was charged twice for order #4471. Please refund the duplicate payment.",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "billing": "payments, charges, invoices or refunds",
+            "technical": "the app or the website does not work as expected",
+            "shipping": "a parcel that is late, lost or arrived damaged",
+            "other": "anything else"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "answers": {
+        "team": {
+          "confidence": 0.9951626603250568,
+          "choice": "billing",
+          "probabilities": {
+            "other": 0.0015682113543072729,
+            "shipping": 0.0017688868297956151,
+            "technical": 0.001500241490840172,
+            "billing": 0.9951626603250568
+          },
+          "type": "choice"
+        }
+      },
+      "usage": {
+        "total_tokens": 144,
+        "total_input_tokens": 144,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 144
+          }
+        ],
+        "total_output_tokens": 0
+      }
+    }
+  },
+  "recorded_at": "2026-11-16T11:01:22Z"
+}

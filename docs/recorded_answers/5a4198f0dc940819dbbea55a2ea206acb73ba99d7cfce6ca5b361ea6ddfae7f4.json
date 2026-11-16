@@ -1,0 +1,71 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "generation_config": {
+        "thinking_level": "high",
+        "thinking_summaries": "auto"
+      },
+      "input": "A bat and a ball cost 1.10 in total, and the bat costs 1.00 more than the ball. How much does the ball cost? Answer with the amount only.",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_Chd4T0w2YXJUSUpwcWlrZFVQakxYaDBRaxIXeE9MNmFyVElKcHFpa2RVUGpMWGgwUWs",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 374,
+        "total_input_tokens": 72,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 72
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 8,
+        "output_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 8
+          }
+        ],
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 294,
+        "initial_input_tokens": 72
+      },
+      "created": "2026-11-16T11:02:32Z",
+      "updated": "2026-11-16T11:02:32Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "ErwGCrkGAWkUfRN8Xty95ADhWXM8Q67wMTuWTFv5ELbr84+flpLXXCqh4MUBIB2/mC3te8Z/FdDK8b+wi6PVakuneuM0YpcyFiDp5CoQ48u6XrIJQw0UopVpbOQDEDqDkWoyF47AZ1Ii5+rIyTO0jHbJkFstTg5J96wOwQsm26QHp/7bbRj6pOSQBhxWiVTW3Oc5zrUj1dAc6MFn1szkr0bqfg/HFypRc802D1yFEFz6Zrl/NGW+fbQqnxqlb32hu3FLa/qhMnr5Zl2vgwWa3yD/ZukH2zINwW2s04CDDuuV8P8/Mwr/Mntws7fC5+iHoTOjJZgnMUMikRQGRTkHPAXP+Kse1bK9h5hAM44yiLKLYelnn1qB0346V8NrgM/5963IUP509yh0yk6YjDuXAuo3c3EcMbUPSkbKly548mRr4N3wE0j/QDxsBYTr12CdVcv2vbWSyJ6K8kakDEUIXkHCscWSA5MzeNUOPrrg3rsfW2d7ogs3gY9T5mXw2POAmg1Pi6N80crhQXgXtmkQepQ4yEgAxv1IytWwncVrIKefsuFyuuKLWGUU7kvQLaL/3HWIyI/nXfVx1EyAFnRvNDfDDLhVp3vrVC0Y6zFrdSLG3y8T1X4ReyzWC8UcvSYkdwfACcotSd9KUmyZQ7q4RfbzV6jgqgfSClAy3QfYXBjc78R4KBGQLZFKOQ+uFkNjNLILw+WYK+Uy0wq9aMEs/+SvakXi59up0yyKTQC5AiwFVzMRIOB0fAWLft7DxIbi+YXpSAck33GmfenE6/S054vKa7G6eMX+JZ6LVAFGAC0p6p2xB8uhpT+xgsDJaB2kJJW9D0h6mErAnFCogeeMVXG9EkxqZF+JRdOa5c9JV0WsQ0/QIZDxrmn93Vs7M4yh5Fm7izsfdsqu+CSoEUwzrVsv+lr189n8du+A3lAwVEL8qLCl7efJ/WNmkxoHyzaKG24ik5VqzsFWbXYtU0laSRO/HM2e9Uwb7mxc4MffVQ/JCRw8YAaKi/IDOI0hpXulLtXUvAkgWrhqBsc0g6QK04c1OWSNyWAVzq+cVd0ehPbH5dqdiNeiOTGQi6WfOOZmGXI0OMM2IoQ8Z9Qr/ZAm",
+          "summary": [
+            {
+              "text": "**My Analysis of the Bat and Ball Riddle**\n\nOkay, let's break this down. The objective is clear: figure out the cost of the ball in this classic riddle and provide *only* the amount. No units, just the number. I see the prompt uses numbers like \"1.10\" and \"1.00\", so I should return an answer that matches that formatting as well.\n\nFirst, I'll need to define some variables. Let's call the ball's cost 'x' and the bat's cost 'y'. Now, I'll translate the problem into a system of equations, which is the most efficient way to handle this. We know:\n\n*   x + y = 1.10 (The combined cost)\n*   y = x + 1.00 (The bat costs $1.00 more than the ball)\n\nI'll substitute the second equation into the first to get everything in terms of 'x'. So, that gives me: x + (x + 1.00) = 1.10. Simplifying, this becomes 2x + 1.00 = 1.10. Now, I'll isolate 'x': 2x = 0.10, so x = 0.05.\n\nBefore returning the answer, I'll quickly check the format: just the amount, without any currency symbol. The given amounts in the prompt are \"1.10\" and \"1.00\", so \"0.05\" fits that format perfectly.\n\nFinally, just to be absolutely certain, I'll verify the answer: if the ball costs $0.05, then the bat costs $1.05 ($0.05 + $1.00). That checks out. $0.05 + $1.05 = $1.10, the total cost. And the difference between the two costs is indeed $1.00 ($1.05 - $0.05 = $1.00). Alright, I'm confident.\n\n\n",
+              "type": "text"
+            }
+          ],
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "0.05",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:34Z"
+}

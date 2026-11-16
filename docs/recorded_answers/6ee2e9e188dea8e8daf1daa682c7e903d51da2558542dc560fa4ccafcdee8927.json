@@ -1,0 +1,67 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/gemini-decisions/v1beta/decisions",
+    "body": {
+      "model": "gemini-decision-1",
+      "input": [
+        {
+          "type": "text",
+          "text": "The customer sent this picture of the sticker they received:"
+        },
+        {
+          "type": "image",
+          "mime_type": "image/png",
+          "data": "data:image/png;sha256,1fc94bcf05f63a163b0b16ab018a310299cf3d9c14eb2e6429259c9e5b71787f",
+          "resolution": "low"
+        }
+      ],
+      "questions": {
+        "colour": {
+          "type": "choice",
+          "instructions": "What colour is the sticker?",
+          "criteria": {
+            "red": "",
+            "green": "",
+            "blue": ""
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "answers": {
+        "colour": {
+          "confidence": 0.9992137302565078,
+          "choice": "red",
+          "probabilities": {
+            "red": 0.9992137302565078,
+            "blue": 0.0004990553988772535,
+            "green": 0.0002872143446147585
+          },
+          "type": "choice"
+        }
+      },
+      "usage": {
+        "total_tokens": 357,
+        "total_input_tokens": 357,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 101
+          },
+          {
+            "modality": "image",
+            "tokens": 256
+          }
+        ],
+        "total_output_tokens": 0
+      }
+    }
+  },
+  "recorded_at": "2026-11-16T11:01:24Z"
+}

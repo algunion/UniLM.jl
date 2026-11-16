@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-4-hydrogen:streamGenerateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "List the planets of the solar system in order, one per line."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "stream": [
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Mercury\\nVenus\\nEarth\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 20,\"candidatesTokenCount\": 17,\"totalTokenCount\": 162,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 20}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 17}],\"thoughtsTokenCount\": 125,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-4-hydrogen\",\"responseId\": \"r-L6at2vBMWAkdUPyrDr-A0\"}\r",
+      "\r",
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\nMars\\nJupiter\\nSaturn\\nUranus\\nNeptune\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 20,\"candidatesTokenCount\": 17,\"totalTokenCount\": 162,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 20}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 17}],\"thoughtsTokenCount\": 125,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-4-hydrogen\",\"responseId\": \"r-L6at2vBMWAkdUPyrDr-A0\"}\r",
+      "\r",
+      "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"EvYECvMEAWkUfRO0kW/Eu7UryxuueQYMg0GrvcKS6d+UJNLELb2rCozUBC5VI8s0Svoq4CRk++2ok506AzY95jYP/0QMta52pjuxoM639tUDXL5AkKmVRQ5mDNB5hqviRcP47sQDZSDLO8rX8AfBu/cSwoGbDDA01DTpndfTRRX4BYnBBVE45DVcNg0FTd1/6baRiqsi0WOEzEos8yUGy393wXvBapkI4FDsTDqGREmGbTZYgRgXAGCgR3e8LrFGcoio797HBaMIeiPLExBp5Ymn6PzptHfodCf3n5ydgtiBUIDetO25HMEMWVAGWcPoR9pllQiCwMc/eCfrxZsIWKQJfv0NI2EsAmydJagi5CL4NwsbDqj89eh2Yf05p9afY38xwMQXA5quXwVrHWLlyEfv/L/oedxKIFjZGlmaNnfa7+Lu5yRpSJfbJJ+SSEqd+clMGkM6MvfMFMAHF/Z8dyhZ+GUqfX0LCsKQJ7h9cLb+XtZWeCF2QKMBUVaI9ld33bxgDyAjnQDqoWXYGIEGJrzv16KMLsytPPEUQpZqm9MgCOGZ8DHXfGB8FbO6xNhLZ8abYzEQezh9cigcqmVpj1HXIIg1uPL3983P92Y4+o6R8AinrGc8reQMUKm/GCObxEPRF4HPgMwhN/cBecI6loLZc9Vkz8h3sXeWvq5JIutA0nXpn5B8wNDPV8Il2m0E44YOAnMZxjsGPpKmbePFeozRRC3P16D3+wv1vF1EzK9cJJ47sEDxGGRVsipTXDoxNwfFT4YaWwFL6hc0W5b42Ibou53yErRq6yisrXPG2SpCeF40FyL9ALCjyTTbYA9yEgUukdrAJ6gj\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 56,\"candidatesTokenCount\": 21,\"totalTokenCount\": 202,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 56}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 21}],\"thoughtsTokenCount\": 125,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-4-hydrogen\",\"responseId\": \"r-L6at2vBMWAkdUPyrDr-A0\"}\r",
+      "\r",
+      ""
+    ]
+  },
+  "recorded_at": "2026-11-16T11:02:09Z"
+}

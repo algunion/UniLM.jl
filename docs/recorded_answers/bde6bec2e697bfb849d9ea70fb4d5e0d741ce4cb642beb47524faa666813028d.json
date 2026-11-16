@@ -1,0 +1,80 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "Give the capital of Peru.",
+      "model": "gemini-4-hydrogen",
+      "response_format": {
+        "mime_type": "application/json",
+        "schema": {
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city",
+            "country"
+          ],
+          "type": "object"
+        },
+        "type": "text"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_ChcxLUw2YXFiSElwR1ozYm9QbnUybS1BTRIXMS1MNmFxYkhJcEdaM2JvUG51Mm0tQU0",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 316,
+        "total_input_tokens": 207,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 207
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 28,
+        "output_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 28
+          }
+        ],
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 81,
+        "initial_input_tokens": 207
+      },
+      "created": "2026-11-16T11:02:49Z",
+      "updated": "2026-11-16T11:02:49Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "Ep0DCpoDAWkUfRPwvYSMYUOLC5Qmb4AjJGLolBito7mrdbiBLdrhhMoLLQYCae8vKxbQRBfEWXgfFFs1SMAx4aXxsSSD0reJ9UXrbHjiNhkhlZ1GYjdzhBEax1w0dNH9SjFRMU/V3MwKhMHr1EZz26C7zlet/LoV6N34n5mUpzaSWuUL2+nIx/DnZa8BLnPEnOXDhfl352TvZHHhH0LierAmLTHnhd8tOIutNzSaHgm2a4NsYV5UPSyI7tKBcyf9qqLcXVmu7WqWcHdp5j/X9+CtDZ0Hk8Spt8o7x+khyny/RzBvlXc1RssZv4O5W6QezwP7WIh6SImTArIBUEf+BCqWjJv20OablMXoLYpAuYz9lqR9cI5Uigi3PWMTTXMUNdM9h9JMlIlilUljY93wOKZZy3GKR8LMowuqZKJHqyWc7GEPE08f9uByMJ51pHEoBXthqgTAGQ7dB5pettp5toUioFNCbCxkod7TiSLzeJ2D9lpZDz4UWydfqbXhBG87TASYabYLEPlwHN+YI6sxIrWbfGfN5RP1Q5aJIDILJNU=",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "{\"city\": \"Lima\", \"country\": \"Peru\"}",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:50Z"
+}

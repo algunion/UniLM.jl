@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "POST",
-    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
     "body": {
       "contents": [
         {
@@ -41,7 +41,7 @@
             "parts": [
               {
                 "text": "Red",
-                "thoughtSignature": "EuMBCuABAWkUfRPPXmUXZJ4knjpg9VBkiAOpQCBRRdeN65ZkFnFpgZ1cNHIja5GyOcCCDhWlONOzAge/6IQ34AamLkLCr93CH7mjRyRIZdBYEef7QLnGv8pbXDUV4s1v7Ff/fgr+N73kSvef3kGxpo4gryp2bN4og5XJZ4lHED9Sl/0Ict51iodaziyrUIs5H29JlXAyZVNjz9G53VQjxncAIKP0HBFCeKYgjeMaPN+jEZ50q+pTgfmqQxgD3aUNmoaiSXPQsjYHkQY92kf5C/qXwHAvcT8O8NN2OzThqHIzbPWkX7U="
+                "thoughtSignature": "EpACCo0CAWkUfRMEVwGNkLHI8AVWo6/HqdZbAwHR0hR26i9ndDKm8oTwRpInBYeXGlnPWEWrabkucZERpJ8uktAF4PPyLh2PqX3AryOSpN5eNLHkmLpK4zy8q1ynpn+54bToXZBIxJ1O0Ce48CNGUhuspfhxqnumqBYncONQ+d5AKzqBuaIlWRK7mOxZpN8BPg6MyIZPurGLJ8vYU6HHgpH7jwKafYd6WBt2AFvfBgno79JkBhbr6hF2jRkW673tgDpon32o54JeJ7vAlJgKx28kZhHZXtyeYps/s2WJuukJIQiaAg6WYuaLtv+PaLpwM9df+alry8iv6jeOokEU0/PdzJ+EuRC7wj8cH1tyFRDND0w="
               }
             ],
             "role": "model"
@@ -51,25 +51,31 @@
         }
       ],
       "usageMetadata": {
-        "promptTokenCount": 1105,
-        "candidatesTokenCount": 1,
-        "totalTokenCount": 1139,
+        "promptTokenCount": 1142,
+        "candidatesTokenCount": 5,
+        "totalTokenCount": 1190,
         "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 53
+          },
           {
             "modality": "IMAGE",
             "tokenCount": 1089
-          },
-          {
-            "modality": "TEXT",
-            "tokenCount": 16
           }
         ],
-        "thoughtsTokenCount": 33,
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 5
+          }
+        ],
+        "thoughtsTokenCount": 43,
         "serviceTier": "standard"
       },
-      "modelVersion": "gemini-3.8-flash",
-      "responseId": "ZBXeaoxHiJiR1Q_ArJeACg"
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "quL6at2MItum3boPhbXjwAo"
     }
   },
-  "recorded_at": "2026-10-25T14:42:46Z"
+  "recorded_at": "2026-11-16T11:02:03Z"
 }

@@ -1,0 +1,71 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-4-hydrogen:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "In one sentence: what is a prime number?"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a concise assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {
+      "x-gemini-service-tier": "standard"
+    },
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "A prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.",
+                "thoughtSignature": "EoYJCoMJAWkUfRNsA9pBMOh6TJr+8vjjcfJr2cv4GIxWOdoVISYTJLIVdKit68rS+wwbw9fivoc/s7oaeLXGfWOaX/ry9hw8BrjGe7tWCqrbfutE/FHrVApD4mj9/sUaVnd5gtyXBviG+gKpY2GenugRcHONO2lZTUe5ZLqBKy4O3RIeHk1rm7ckapA49lgfxNlobHoIgitl1KCaLlSggeQO21Ftyj4YU7OedrgtBfB85d9TL3tASJhc3elaBUZHfSuPpJb/arksL37UTTFnB6xFmMorTHM8ubOQ6McIadd8q0EIQleOF1Rej494iSDRpcqbaVtFgi1ImaQiqDdY60a1CfwjaOv3xT2qys00oGN3pjuu8TUEOm60gOy3S/RYxw7JAsH2pUs302Mx5R+SOQ7340kkqMwnGLRSQ9J5Heavj6UQ9Z60vYIyfbuXEfM1X62vkZFG7cgmtAOcpMzYmM8eBONK1a0mf2ureJlCYke2EDqBlbIFnKeM6ptA2V0EkHtAWKkKEE9JZaxXLLYgh79zB/9cTUfz4uQRSViqWAj4d9CsUauUaM3DVUuouYj0tgslCP+vpeslnDcnZmFYnRzSspS1lsCwsdI5+OAuVR2bKwko7Ix5F1Jvn+fenToYQFr8vek+5WVnZumgSDaZLL2Tv95iarSzyzcQHH0t9KmsynQUDYDJbpj2SbeBI7BEChKdU6AcusT+qU0MpbQGv54avdzhMilWrYPd1OyvPEy/rbAt0fcUXlx/V/pVZHKc2nnmGEn26M0hxpsk6tSKwgfZwNg2xMTXn5p/qhQIkWO7peBIsA6zZjsBLjSvXN9Gz44L0wjUKCgpWq8E8Nk0dIFXvIGA1px6T34Iy//V3qSC7vqFmjvACcpqOx5IqOHMxQFnDZGvQkPmo0lC0vOmjdqykqLIZQ/jBYtkxjj61VHop/sda/1MythXBxW/pn5qNcwC8aWl/2lu+DNw9bPrdUmzqTrwgUhUZSG/wPXDlAhmM+wqabAR+cYr8m6uu1PCziVcJqCtL0sSrjxp1MxFzH5dTTx7s9dh5UxLDZtkBd+yc/rtURD7Ntz38jv3SoAdq3fS8RHvBbwZiOf2ZlF6wuHqtdbY3cNIq/6+KOwGzCGKhaGtx2NLAU5+i7c9GIr+2TGyEr+VselwdC8rLfKyADmJck8u/wQOqz95ADwPHQgj6+qOMZSaRtk7M6EvzocY8EQUe/Qd4jBKn0mvaA6qTcGu/yaGTxna39scha+I05nNa1arSWyD3F2UKaq5XPVY3MRDJ6kV5f2SdptNqNfUSt+eRXmjS3QheqAvmYY1iBIX39IqS+cwW5SBsG6uCw3Nb8Zvqesx+77R/gC1JfNmDDBKhEgEIerJtuuZdLJvOur5K8lS3mUYZElpX3CjekpB3a5l3DfFVErWFx5jBkW91Ny9TUWdVorB6xO192M0qxDwcndsk9MdWLVsC8g41IsUX499lVurgWr1JYLhFVX03t4HV0xA3IELj7BE5UUiXn1DYB8AURs1D2O5DNY8FpO4YqN+lGoKNn6S"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 52,
+        "candidatesTokenCount": 27,
+        "totalTokenCount": 348,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 52
+          }
+        ],
+        "candidatesTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 27
+          }
+        ],
+        "thoughtsTokenCount": 269,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-4-hydrogen",
+      "responseId": "suL6avzmDbinnsEP_IO-6Ak"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:12Z"
+}

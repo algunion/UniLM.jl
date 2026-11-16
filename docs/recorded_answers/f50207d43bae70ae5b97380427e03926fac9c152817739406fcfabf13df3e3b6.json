@@ -1,0 +1,61 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "In one sentence: what does a compiler do?",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "headers": {},
+    "body": {
+      "id": "v1_Chd1T0w2YXVhbEFjcVAyOG9QcWRLTDBRMBIXdU9MNmF1YWxBY3FQMjhvUHFkS0wwUTA",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 483,
+        "total_input_tokens": 41,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 41
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 40,
+        "output_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 40
+          }
+        ],
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 402,
+        "initial_input_tokens": 41
+      },
+      "created": "2026-11-16T11:02:18Z",
+      "updated": "2026-11-16T11:02:18Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "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",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "A compiler translates human-readable source code written in a high-level programming language into machine code (or a lower-level language) so that a computer can execute the program.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-4-hydrogen"
+    }
+  },
+  "recorded_at": "2026-11-16T11:02:20Z"
+}

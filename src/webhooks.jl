@@ -17,8 +17,10 @@ API specification lists).
 `live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
 existing subscriptions. The reference also lists `eval.run.succeeded`, `eval.run.failed` and
 `eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026
-([deprecations](https://developers.openai.com/api/docs/deprecations)): they are left out, so a
-filter on this list drops them.
+([deprecations](https://developers.openai.com/api/docs/deprecations)), and OpenAI's list of event
+types ([`list_webhook_event_types`](@ref), November 16, 2026) still names `video.completed` and
+`video.failed`, the events of its Videos API, which shut down on September 24, 2026: they are all
+left out, so a filter on this list drops them.
 """
 const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",
@@ -168,7 +170,8 @@ A project's webhook endpoint: its `id`, `name`, `url`, the `event_types` it rece
 and `updated_at` (Unix seconds; `updated_at` moves with a change of its configuration or secret),
 the masked `signing_secret_hint`, and the `signing_secret` itself, which OpenAI returns only from
 [`create_webhook_endpoint`](@ref) and [`rotate_webhook_endpoint_secret`](@ref) (`nothing` otherwise):
-keep it for [`verify_webhook`](@ref). `raw` holds the reply.
+keep it for [`verify_webhook`](@ref). `raw` holds the reply. A printed endpoint shows the secret as
+`<not shown>` and leaves `raw` out.
 """
 @kwdef struct WebhookEndpoint
     id::String
@@ -182,12 +185,25 @@ keep it for [`verify_webhook`](@ref). `raw` holds the reply.
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
-"A page of [`WebhookEndpoint`](@ref)s from [`list_webhook_endpoints`](@ref); `has_more` signals further pages, `raw` holds the reply (`first_id`, `last_id`)."
+"A page of [`WebhookEndpoint`](@ref)s from [`list_webhook_endpoints`](@ref); `has_more` signals further pages, `raw` holds the reply (`first_id`, `last_id`) and is left out when the page is printed."
 @kwdef struct WebhookEndpointList
     data::Vector{WebhookEndpoint}
     has_more::Bool
     raw::Dict{String,Any} = Dict{String,Any}()
 end
+
+# The signing secret lets anyone sign a delivery the endpoint accepts, and the default field dump prints it
+# twice (the field, and the reply again in `raw`), so a REPL echo or a logged create or rotation would hand
+# it out. An endpoint prints without it and without `raw`, and so does a page of them (its `raw` holds each
+# endpoint's reply) and every result that holds either; the fields keep both.
+function Base.show(io::IO, e::WebhookEndpoint)
+    print(io, "WebhookEndpoint(")
+    for f in (:id, :name, :url, :event_types, :created_at, :updated_at, :signing_secret_hint)
+        print(io, f, "=", repr(getfield(e, f)), ", ")
+    end
+    print(io, "signing_secret=", isnothing(e.signing_secret) ? "nothing" : "<not shown>", ")")
+end
+Base.show(io::IO, l::WebhookEndpointList) = print(io, "WebhookEndpointList(data=", repr(l.data), ", has_more=", l.has_more, ")")
 
 "The sample delivery of [`test_webhook_endpoint`](@ref): the `event_type` sent to the endpoint `webhook_endpoint_id`, and the HTTP `status_code` the endpoint answered with."
 @kwdef struct WebhookEndpointTest
@@ -309,12 +325,13 @@ end
     delete_webhook_endpoint(id; service=OPENAIServiceEndpoint)
 
 Delete the webhook endpoint `id`: a [`WebhookEndpointDeleteSuccess`](@ref) when OpenAI's record
-names the endpoint and says `"deleted": true`, the `WebhookEndpointCallError` otherwise.
+names the endpoint, is a `"webhook_endpoint.deleted"` object and says `"deleted": true`, the
+`WebhookEndpointCallError` otherwise.
 """
 delete_webhook_endpoint(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
     _webhook_endpoints_call("DELETE", _webhook_endpoint_route(id), service, config, cancel) do d
-        WebhookEndpointDeleteSuccess(id=_reply_required(d, "id", String, _WH), deleted=_confirm_deleted(d))
+        _vs_deletion(WebhookEndpointDeleteSuccess, d, "webhook_endpoint.deleted")
     end
 
 """

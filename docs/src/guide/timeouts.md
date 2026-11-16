@@ -261,15 +261,17 @@ Automatic retries apply to the inference verbs — `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
 `generate_image`, `edit_image`, `transcribe`, `speak` and `translate` when they send one HTTP request
 (Gemini's `generateContent`, Ollama's audio routes), `ask`, `list_models`, and the `tool_loop` family through them (streams retry
-only before the first callback fires) — and to `moderate`, which is free and changes nothing when
-it is sent again. Every other verb makes a single bounded attempt and `max_attempts` has
-no effect on it: the platform and lifecycle verbs (batch, container, conversation, file,
+only before the first callback fires) —, to `moderate`, which is free and changes nothing when
+it is sent again, to [`retrieve_model`](@ref) and [`count_tokens`](@ref), and to
+[`delete_model`](@ref) on an Ollama server. Every other verb makes a single bounded attempt and
+`max_attempts` has no effect on it: the platform and lifecycle verbs (batch, container, conversation, file,
 fine-tuning, upload, vector-store, realtime, and the Responses lifecycle operations), including
 `upload_file` — a create is never retried, because a POST that timed out or drew a gateway 5xx
-may already have stored the file — and speech and translation over a Realtime session (`speak`,
+may already have stored the file —, `delete_model` on OpenAI, which deletes a fine-tuned model,
+and speech and translation over a Realtime session (`speak`,
 `translate`), since a retry after the session's `response.create` or its audio may bill a second
 response, and a session's audio cannot be resumed. The polling
-helpers [`poll_batch`](@ref) and [`poll_file_batch`](@ref) instead poll through
+helpers [`poll_batch`](@ref), [`poll_file_batch`](@ref) and [`poll_file`](@ref) instead poll through
 retryable statuses and per-attempt timeouts until their own wall-clock `timeout`.
 
 `max_attempts` (default 3) caps the total attempts. All attempts of a request share

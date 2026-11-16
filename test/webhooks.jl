@@ -143,6 +143,10 @@ end
     @test occursin("also lists `eval.run.succeeded`, `eval.run.failed` and", doc) &&
           occursin("`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026", doc)
     @test occursin("agent sessions", doc) && occursin("environments", doc)
+    # The Videos API shut down on 2026-09-24, yet OpenAI's event-type list still names its two events: left out, and said.
+    @test !any(e -> startswith(e, "video."), WEBHOOK_EVENTS)
+    @test occursin("still names `video.completed` and", doc) &&
+          occursin("`video.failed`, the events of its Videos API, which shut down on September 24, 2026", doc)
 end
 
 @testset "parse_webhook reads each event family's envelope" begin
@@ -224,6 +228,29 @@ UniLM.provider_capabilities(::Type{_WebhookProbe}) = Set([:webhooks])
     @test rs[9] isa WebhookEventTypesSuccess && rs[9].event_types == ["batch.completed", "agent.session.created"]
 end
 
+@testset "Webhook endpoints — a printed or logged endpoint shows no signing secret" begin
+    # The signing secret verifies every delivery: a REPL echo or a logged create or rotation must not print it,
+    # neither as the field nor inside `raw`, while the field still holds it.
+    secret = "whsec_bGl2ZXNpZ25pbmdzZWNyZXQ="
+    d = Dict{String,Any}("id" => "we_1", "object" => "webhook_endpoint", "created_at" => 1, "name" => "ops",
+        "url" => "https://example.com/hook", "event_types" => ["batch.completed"], "signing_secret_hint" => "whsec_...cmV0",
+        "signing_secret" => secret)
+    ep = UniLM._parse_webhook_endpoint(d; secret=true)
+    @test ep.signing_secret == secret && ep.raw["signing_secret"] == secret
+    page = WebhookEndpointList(data=[ep], has_more=false, raw=Dict{String,Any}("object" => "list", "data" => [d]))
+    for x in (ep, WebhookEndpointSuccess(response=ep), page, WebhookEndpointListSuccess(response=page), [ep])
+        log = IOBuffer()
+        Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(log)) do
+            @info "made" result = x
+        end
+        for s in (repr(x), sprint(show, x), repr(MIME"text/plain"(), x), string(x), takestring!(log))
+            @test !occursin("bGl2ZXNpZ25pbmdzZWNyZXQ", s) && occursin("we_1", s)
+        end
+    end
+    @test occursin("signing_secret=<not shown>", repr(ep))
+    @test occursin("signing_secret=nothing", repr(UniLM._parse_webhook_endpoint(delete!(copy(d), "signing_secret"))))
+end
+
 @testset "Webhook endpoints — malformed replies, failures, refusals, seams" begin
     s = _WebhookProbe
     ep = Dict{String,Any}("id" => "we_1", "object" => "webhook_endpoint", "created_at" => 1, "name" => "ops",
@@ -240,9 +267,12 @@ end
     for page in (Dict(), Dict("data" => [ep]), Dict("has_more" => false))
         @test answer(() -> list_webhook_endpoints(; service=s), page) isa WebhookEndpointCallError
     end
-    for rec in (Dict("deleted" => true), Dict("id" => "we_1", "deleted" => false), Dict("id" => "we_1"))
+    for rec in (Dict("deleted" => true), Dict("id" => "we_1", "deleted" => false), Dict("id" => "we_1"),
+                Dict("id" => "we_1", "deleted" => true), Dict("object" => "webhook_endpoint", "id" => "we_1", "deleted" => true))
         @test answer(() -> delete_webhook_endpoint("we_1"; service=s), rec) isa WebhookEndpointCallError
     end
+    r = answer(() -> delete_webhook_endpoint("we_1"; service=s), Dict("object" => "webhook_endpoint", "id" => "we_1", "deleted" => true))
+    @test r isa WebhookEndpointCallError && occursin("\"webhook_endpoint.deleted\"", r.error)
     @test answer(() -> test_webhook_endpoint("we_1", "batch.completed"; service=s),
                  Dict("webhook_endpoint_id" => "we_1", "event_type" => "batch.completed")) isa WebhookEndpointCallError
     @test answer(() -> list_webhook_event_types(; service=s), Dict("object" => "list")) isa WebhookEndpointCallError

@@ -6,7 +6,7 @@ using UniLM
 
 Besides its model APIs, OpenAI serves APIs that hold what a request works with — files,
 conversations, code-interpreter containers — and that run work beside it: batches, fine-tuning
-jobs and their graders, moderation, the webhooks that report on them, the safety records behind
+jobs, moderation, the webhooks that report on them, the safety records behind
 some of those webhooks, and provenance checks. UniLM wraps each with verbs of its own, on
 `OPENAIServiceEndpoint` unless a call names another `service`; `OPENAIServiceEndpoint()` returns
 that same type. The vector stores of file search
@@ -38,7 +38,8 @@ These calls are not recorded, so their output on this page is quoted from dated 
   changes nothing when it is sent again, is sent again after a transient status or a transport
   failure, as a `Chat` is ([Timeouts & Retries](@ref timeouts_retries)).
 - **The key** is read when the call is made: without `OPENAI_API_KEY` the result is the family's
-  call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)).
+  call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)). The
+  checkpoint-permission verbs send an admin key instead ([Fine-tuning](@ref openai_fine_tuning)).
 - **Cancellation.** Each takes `cancel`, a [`CancelToken`](@ref): the ambient one of
   [`with_cancel`](@ref) unless given. With the key set, a token already cancelled sends nothing, and a
   cancel during the call aborts it, either way with the call error, whose `cause` is a
@@ -51,16 +52,17 @@ These calls are not recorded, so their output on this page is quoted from dated 
   container, a conversation, a checkpoint permission or a webhook endpoint — counts only when the
   record says `"deleted": true`: a reply without it, or with `false`, is the call error, the object
   being in place as far as UniLM can tell. The
-  record of a vector store, a container or a file in either must also carry the `id` it deleted
-  (the requested one is not put in its place) and name what it deleted as its `object` —
-  `"vector_store.deleted"`, `"vector_store.file.deleted"`, `"container.deleted"` or
-  `"container.file.deleted"`; one without them, or naming another kind, is the call error. A checkpoint
-  permission's or a webhook endpoint's record must also name what it deleted.
+  record of a vector store, a container, a file in either, a checkpoint permission or a webhook
+  endpoint must also carry the `id` it deleted (the requested one is not put in its place) and name
+  what it deleted as its `object` — `"vector_store.deleted"`, `"vector_store.file.deleted"`,
+  `"container.deleted"`, `"container.file.deleted"`, `"checkpoint.permission"` or
+  `"webhook_endpoint.deleted"`; one without them, or naming another kind, is the call error.
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
   carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it, a
-  container and a fine-tuning job their `status`, as OpenAI's reference requires: a reply without
-  them is the call error, never an empty last page or a status read as unknown.
+  container, a fine-tuning job and a Batch API batch their `status`, as OpenAI's reference
+  requires: a reply without them is the call error, never an empty last page or a status read as
+  unknown.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
   `:fine_tuning`, `:moderation`, `:webhooks`, `:safety`, `:content_provenance`, `:transcription`
@@ -503,21 +505,16 @@ A checkpoint is shared with other projects of the organization by
 [`create_fine_tuning_checkpoint_permission`](@ref)`(checkpoint, project_ids)`, and its permissions
 are listed and deleted by [`list_fine_tuning_checkpoint_permissions`](@ref) and
 [`delete_fine_tuning_checkpoint_permission`](@ref). Each "requires an admin API key"
-([Fine-tuning](https://developers.openai.com/api/reference/resources/fine_tuning)): they send
-`OPENAI_API_KEY` as every verb does, so set it to an admin key for the call; a project key's
-refusal is a `FineTuningFailure` (a 401 naming the missing scope `api.fine_tuning.checkpoints.read`,
-on 16 November 2026).
+([Fine-tuning](https://developers.openai.com/api/reference/resources/fine_tuning)), which is not the
+project key `OPENAI_API_KEY` holds: they send their `admin_key` keyword, else the `OPENAI_ADMIN_KEY`
+variable, as the request's only credential, and without either throw an `ArgumentError` naming
+both before any request. A project key sent as the admin key is refused, a `FineTuningFailure` (a
+401 naming the missing scope `api.fine_tuning.checkpoints.read`, on 16 November 2026).
 
-A reinforcement job scores its samples with a grader, which [`run_grader`](@ref)`(grader,
-model_sample; item)` runs on one sample and [`validate_grader`](@ref)`(grader)` checks, without a
-job. "OpenAI is deprecating graders as part of the evals and fine-tuning workflows they support"
-([graders](https://developers.openai.com/api/docs/guides/graders)). A grader is a
-[`StringCheckGrader`](@ref), a [`TextSimilarityGrader`](@ref) or a [`PythonGrader`](@ref), each of
-which refuses an operation or a metric OpenAI does not list, or a `Dict` in OpenAI's form — the
-`score_model`, `label_model` and `multi` graders, whose inputs are messages or other graders —, the
-form a reinforcement `method` holds, where a typed grader may stand too. Grader verbs answer as the
-other fine-tuning verbs: a [`GraderRunSuccess`](@ref) holds the `reward`, the grader's `metadata`
-and each `sub_rewards`; a grader OpenAI rejects is its 400, a `FineTuningFailure`.
+A reinforcement job scores its samples with the grader its `method` `Dict` holds, in OpenAI's form,
+sent as given. UniLM does not wrap the endpoints that run or validate a grader without a job:
+"OpenAI is deprecating graders as part of the evals and fine-tuning workflows they support"
+([graders](https://developers.openai.com/api/docs/guides/graders)).
 
 ## [Moderation](@id openai_moderation)
 
@@ -607,7 +604,10 @@ incoming calls of the Realtime and Live APIs, a Live session that connects (`liv
 safety notices, whose records [Safety and provenance](@ref openai_safety) reads, and the sessions
 of OpenAI's Agents API and their environments (`agent.session.*`, `agent.environment.*`). It leaves
 out the `eval.run.*`
-events, which OpenAI sends until the Evals API shuts down on 30 November 2026, so a filter on it
+events, which OpenAI sends until the Evals API shuts down on 30 November 2026, and `video.completed`
+and `video.failed`, the events of the Videos API, which shut down on 24 September 2026
+([deprecations](https://developers.openai.com/api/docs/deprecations)) though
+[`list_webhook_event_types`](@ref) still returned them on 16 November 2026, so a filter on it
 drops them. On a server, the payload is the request's body as it arrived, before any JSON parsing,
 here in an `HTTP.serve` handler, with `handle_batch` your own function:
 
@@ -638,7 +638,8 @@ A project's endpoints are managed with its API key (the `:webhooks` capability).
 `event_types` to the HTTPS `url`, and returns it with its `signing_secret`, which OpenAI returns only
 then and from [`rotate_webhook_endpoint_secret`](@ref) — whose `keep_old_secret_active_for_24_hours=true`
 keeps the previous secret valid for a day —, so keep it for `verify_webhook`; a reply without one
-is the `WebhookEndpointCallError`. [`list_webhook_endpoints`](@ref) (`limit`, `after`, newest first),
+is the `WebhookEndpointCallError`. A printed or logged endpoint, or a result or page holding one,
+shows the secret as `<not shown>` and leaves `raw` out; the field still holds it. [`list_webhook_endpoints`](@ref) (`limit`, `after`, newest first),
 [`retrieve_webhook_endpoint`](@ref), [`update_webhook_endpoint`](@ref) (`name`, `url` and the whole
 new set of `event_types`) and [`delete_webhook_endpoint`](@ref) read, change and remove endpoints;
 [`test_webhook_endpoint`](@ref)`(id, event_type)` has OpenAI send a sample delivery and returns the
@@ -677,7 +678,7 @@ Four kinds of work go on at OpenAI after the call that starts them returns:
 
 | Job | Started by | Read back by | Final statuses | Stopped by | Webhook events |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| a vector-store file batch | `create_file_batch` | `poll_file_batch`, every 2 s for at most 300 s | `completed`, `failed`, `cancelled` | — (OpenAI's cancel is not wrapped) | — |
+| a vector-store file batch | `create_file_batch` | `poll_file_batch`, every 2 s for at most 300 s | `completed`, `failed`, `cancelled` | `cancel_file_batch` | — |
 | a batch | `create_batch` | `poll_batch`, every 10 s for at most 86,400 s | `completed`, `failed`, `cancelled`, `expired` | `cancel_batch` | `batch.*` |
 | a fine-tuning job | `create_fine_tuning_job` | `retrieve_fine_tuning_job`, called by you | `succeeded`, `failed`, `cancelled` | `cancel_fine_tuning_job` (paused by `pause_fine_tuning_job`) | `fine_tuning.job.*` |
 | a background response | `respond(…; background=true)` | `get_response`, called by you | any but `queued` and `in_progress` | `cancel_response` | `response.*` |
@@ -744,7 +745,7 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `upload_file`, `add_container_file` or `check_content_provenance` with a path that is no file | `file not found:` | the path of the file |
 | `create_fine_tuning_job` with a `seed` below 0 or above 2147483647 | `create_fine_tuning_job takes a seed from 0 to 2147483647`: the reference's range | a seed in it |
 | `list_fine_tuning_checkpoint_permissions` with an `order` other than `"ascending"` and `"descending"` | `takes order "ascending" or "descending"` | one of them |
-| a `StringCheckGrader` `operation` other than `"eq"`, `"ne"`, `"like"` and `"ilike"`, or a `TextSimilarityGrader` `evaluation_metric` other than the eleven OpenAI lists | `StringCheckGrader takes operation`, `TextSimilarityGrader takes evaluation_metric`: the values of OpenAI's grader objects | one of them |
+| a checkpoint-permission verb with neither `admin_key` nor `OPENAI_ADMIN_KEY` (or an empty one) | `needs an OpenAI admin API key`: OpenAI's reference requires one, and the project key is not | an admin key, as `admin_key` or in `OPENAI_ADMIN_KEY` |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
 | `upload_file` without a purpose | `OpenAI's Files API requires a purpose` | one of the purposes above |

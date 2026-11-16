@@ -120,7 +120,8 @@ end
 
 The safety case `id` (a `safety.warning_issued` or `safety.deactivation_issued` webhook's
 `data["id"]`) as a [`SafetyCaseSuccess`](@ref); a case that does not exist, or that the key may not
-read, is OpenAI's 404, a `SafetyFailure`.
+read, is OpenAI's 404, and a key without the `api.safety.read` scope gets its 403 (witnessed on
+November 16, 2026): each a `SafetyFailure`.
 
 Each safety and provenance verb makes one attempt bounded by its `config` and takes `cancel`: a
 cancelled token returns a `SafetyCallError` whose `cause` is a [`UniLMCancelled`](@ref), without
@@ -151,8 +152,11 @@ _parse_provenance_result(d::AbstractDict) = ProvenanceResult(type=_reply_require
 
 Check the image, audio or PDF file at `path` for OpenAI's provenance signals: a
 [`ProvenanceCheckSuccess`](@ref) holding a [`ProvenanceResult`](@ref) per signal that applies to the
-file. The file goes as the one multipart part `file`, whose own `Content-Type` is `mime_type`: by
-default the one its extension names, as [`upload_file`](@ref) sends it; pass it for an extension
+file. The [content provenance](https://developers.openai.com/api/docs/guides/content-provenance) guide
+lists the formats: "Images: PNG, JPEG, WebP, and GIF. Audio: MP3, Opus, AAC, FLAC, WAV, and PCM.
+Documents: PDF." (OpenAI's API specification names image and audio files only). The file goes as
+the one multipart part `file`, whose own `Content-Type` is `mime_type`: by default the one its
+extension names, as [`upload_file`](@ref) sends it; pass it for an extension
 that names none, such as `.opus` or `.aac`. A path that is no file is an `ArgumentError`.
 
 `"not_detected"` means the check found no supported signal: the file may still come from OpenAI,

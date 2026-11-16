@@ -45,3 +45,18 @@ end
     @test g == ["/v1/fine_tuning/jobs/ftjob-abc123/events",
                 "/v1/fine_tuning/jobs?after=ftjob-abc123"]
 end
+
+
+@testset "Fine-tuning API — a list reply without data or has_more is a call error, not an empty last page" begin
+    lists = () -> [list_fine_tuning_jobs(; service=URLProbe), list_fine_tuning_events("ftjob_1"; service=URLProbe),
+                   list_fine_tuning_checkpoints("ftjob_1"; service=URLProbe)]
+    for body in ("{}", """{"data":[]}""", """{"has_more":false}""", """{"data":null,"has_more":false}""",
+                 """{"data":{},"has_more":false}""", """{"data":[],"has_more":"no"}""")
+        rs = first(_with_scripted(lists, (_, _) -> _json(200, body)))
+        @test all(r -> r isa FineTuningCallError, rs)
+    end
+    r = _answered(() -> list_fine_tuning_jobs(; service=URLProbe), 200; body="{}")
+    @test r isa FineTuningCallError && occursin("\"data\"", r.error)
+    rs = first(_with_scripted(lists, (_, _) -> _json(200, """{"object":"list","data":[{"id":"x"}],"has_more":true}""")))
+    @test all(r -> r isa FineTuningListSuccess && r.response.has_more && r.response.data[1]["id"] == "x", rs)
+end

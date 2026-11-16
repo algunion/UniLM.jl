@@ -40,16 +40,31 @@ end
 "Fine-tuning API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
 @kwdef struct FineTuningCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
+# A field of an OpenAI platform reply: absent or null where the reference allows it; any other JSON type
+# than the documented one is a malformed reply, and the throw becomes the verb's call error.
+function _reply_field(d::AbstractDict, key::String, ::Type{T}, api::String)::Union{T,Nothing} where {T}
+    v = get(d, key, nothing)
+    isnothing(v) || v isa T || throw(ArgumentError("$api reply field $(repr(key)) holds a $(typeof(v)), not the documented $T"))
+    v
+end
+
+# A field the reference requires: a 200 without it is no reply of that kind, never an empty page or a
+# value made up for it.
+_reply_required(d::AbstractDict, key::String, ::Type{T}, api::String) where {T} =
+    @something(_reply_field(d, key, T, api), throw(ArgumentError("the $api reply has no $(repr(key))")))
+
 _parse_ft_job(d::AbstractDict) = FineTuningJob(id=d["id"], status=get(d, "status", nothing),
     model=get(d, "model", nothing), fine_tuned_model=get(d, "fine_tuned_model", nothing), raw=Dict{String,Any}(d))
 _ft_job_resp(resp) = resp.status == 200 ?
     FineTuningSuccess(response=_parse_ft_job(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     _failure(FineTuningFailure, resp)
+# OpenAI's list replies require `data` and `has_more`.
 function _ft_list_resp(resp)
     resp.status == 200 || return _failure(FineTuningFailure, resp)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    FineTuningListSuccess(response=FineTuningList(data=Vector{Dict{String,Any}}(get(data, "data", [])),
-        has_more=get(data, "has_more", false), raw=data))
+    FineTuningListSuccess(response=FineTuningList(
+        data=Vector{Dict{String,Any}}(_reply_required(data, "data", AbstractVector, "Fine-tuning API")),
+        has_more=_reply_required(data, "has_more", Bool, "Fine-tuning API"), raw=data))
 end
 # The cursor query every fine-tuning list takes: `limit` page size, `after` the last id seen.
 function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,Nothing})::String

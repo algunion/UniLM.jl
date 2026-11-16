@@ -538,16 +538,20 @@ export
     test_webhook_endpoint,
     list_webhook_event_types
 
-# ─── Safety ───────────────────────────────────────────────────────────────────
+# ─── Safety & content provenance ──────────────────────────────────────────────
 export
     SafetyCase,
     SafetyAlert,
+    ProvenanceResult,
+    ProvenanceCheck,
     SafetyCaseSuccess,
     SafetyAlertSuccess,
+    ProvenanceCheckSuccess,
     SafetyFailure,
     SafetyCallError,
     retrieve_safety_case,
-    retrieve_safety_alert
+    retrieve_safety_alert,
+    check_content_provenance
 
 # ─── Containers API ───────────────────────────────────────────────────────────
 export

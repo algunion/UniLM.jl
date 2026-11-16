@@ -1,10 +1,10 @@
-# test/safety.jl — OpenAI's safety cases and alerts. Local servers only.
+# test/safety.jl — OpenAI's safety cases and alerts, and its content provenance checks. Local servers only.
 
-# An endpoint at the scripted address that declares the safety API.
+# An endpoint at the scripted address that declares the safety and provenance APIs.
 struct _SafetyProbe <: UniLM.ServiceEndpoint end
 UniLM._resolve_base_url(::Type{_SafetyProbe}) = _url_probe_base[]
 UniLM.auth_header(::Type{_SafetyProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{_SafetyProbe}) = Set([:safety])
+UniLM.provider_capabilities(::Type{_SafetyProbe}) = Set([:safety, :content_provenance])
 
 @testset "Safety — retrieve a safety case and a project safety alert" begin
     s = _SafetyProbe
@@ -50,4 +50,50 @@ UniLM.provider_capabilities(::Type{_SafetyProbe}) = Set([:safety])
         @test isempty(seen) && r isa SafetyCallError && r.cause isa UniLMCancelled
     end
     @test has_capability(OPENAIServiceEndpoint, :safety)
+end
+
+@testset "Safety — check a file for content provenance" begin
+    s = _SafetyProbe
+    png = tempname() * ".png"
+    write(png, UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    checked = Dict("object" => "content_provenance_check", "created_at" => 1778000000, "results" => [
+        Dict("type" => "c2pa", "outcome" => "detected", "validation_state" => "trusted", "issuer" => "OpenAI OpCo, LLC",
+             "model" => "gpt-image", "generated_at" => "2026-07-27T18:34:12Z"),
+        Dict("type" => "synthid", "outcome" => "not_detected", "model" => nothing, "generated_at" => nothing)])
+    r, seen = _with_scripted((_, _) -> _json(200, JSON.json(checked))) do
+        check_content_provenance(png; service=s)
+    end
+    req = only(seen)
+    @test (req.method, req.target) == ("POST", "/v1/content_provenance_checks")
+    # One multipart part, `file`, whose own Content-Type names the media: the reference takes no other field.
+    @test occursin("name=\"file\"; filename=\"$(basename(png))\"", req.body) && occursin("Content-Type: image/png", req.body)
+    @test count("Content-Disposition", req.body) == 1
+    @test r isa ProvenanceCheckSuccess && r.response.created_at == 1778000000 && length(r.response.results) == 2
+    c2pa, synthid = r.response.results
+    @test (c2pa.type, c2pa.outcome, c2pa.validation_state, c2pa.issuer, c2pa.model, c2pa.generated_at) ==
+          ("c2pa", "detected", "trusted", "OpenAI OpCo, LLC", "gpt-image", "2026-07-27T18:34:12Z")
+    @test (synthid.type, synthid.outcome) == ("synthid", "not_detected") &&
+          all(isnothing, (synthid.validation_state, synthid.issuer, synthid.model, synthid.generated_at))
+    # An explicit media type wins over the one the extension names.
+    _, seen = _with_scripted((_, _) -> _json(200, JSON.json(checked))) do
+        check_content_provenance(png; mime_type="audio/aac", service=s)
+    end
+    @test occursin("Content-Type: audio/aac", only(seen).body) && !occursin("image/png", only(seen).body)
+    for bad in (Dict("object" => "content_provenance_check", "created_at" => 1),
+                Dict("object" => "content_provenance_check", "results" => []),
+                merge(checked, Dict("results" => [Dict("type" => "c2pa")])))
+        @test _answered(() -> check_content_provenance(png; service=s), 200; body=JSON.json(bad)) isa SafetyCallError
+    end
+    r = _answered(() -> check_content_provenance(png; service=s), 400; body="""{"error":{"message":"unsupported"}}""")
+    @test r isa SafetyFailure && r.status == 400
+    err = try check_content_provenance(png * ".missing"; service=s); nothing catch e; e end
+    @test err isa ArgumentError && occursin("file not found", err.msg)
+    @test _seam_timeout(check_content_provenance(png; service=s, config=_TINY_DEADLINE), SafetyCallError)
+    err = try check_content_provenance(png; service=SeamProbe); nothing catch e; e end
+    @test err isa ArgumentError && occursin("Content provenance API is not supported by", err.msg)
+    tok = CancelToken(); cancel!(tok)
+    r, seen = _with_scripted(() -> check_content_provenance(png; service=s, cancel=tok), (_, _) -> _json(200, "{}"))
+    @test isempty(seen) && r isa SafetyCallError && r.cause isa UniLMCancelled
+    @test has_capability(OPENAIServiceEndpoint, :content_provenance)
+    rm(png)
 end

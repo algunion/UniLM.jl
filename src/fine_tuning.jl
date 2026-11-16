@@ -53,8 +53,9 @@ end
 _reply_required(d::AbstractDict, key::String, ::Type{T}, api::String) where {T} =
     @something(_reply_field(d, key, T, api), throw(ArgumentError("the $api reply has no $(repr(key))")))
 
-_parse_ft_job(d::AbstractDict) = FineTuningJob(id=d["id"], status=get(d, "status", nothing),
-    model=get(d, "model", nothing), fine_tuned_model=get(d, "fine_tuned_model", nothing), raw=Dict{String,Any}(d))
+# OpenAI's FineTuningJob requires its `status`: a reply without one is no job of known state.
+_parse_ft_job(d::AbstractDict) = FineTuningJob(id=_reply_required(d, "id", String, "Fine-tuning API"),
+    status=_reply_required(d, "status", String, "Fine-tuning API"), model=get(d, "model", nothing), fine_tuned_model=get(d, "fine_tuned_model", nothing), raw=Dict{String,Any}(d))
 _ft_job_resp(resp) = resp.status == 200 ?
     FineTuningSuccess(response=_parse_ft_job(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     _failure(FineTuningFailure, resp)

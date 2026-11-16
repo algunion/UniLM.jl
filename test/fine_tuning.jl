@@ -60,3 +60,18 @@ end
     rs = first(_with_scripted(lists, (_, _) -> _json(200, """{"object":"list","data":[{"id":"x"}],"has_more":true}""")))
     @test all(r -> r isa FineTuningListSuccess && r.response.has_more && r.response.data[1]["id"] == "x", rs)
 end
+
+@testset "Fine-tuning API — a job reply without its status is a call error" begin
+    # OpenAI's FineTuningJob requires `status`; a reply without one is no job of known state.
+    jobs = () -> [create_fine_tuning_job(; model="m", training_file="file_1", service=URLProbe),
+                  retrieve_fine_tuning_job("ftjob_1"; service=URLProbe), cancel_fine_tuning_job("ftjob_1"; service=URLProbe)]
+    for body in ("""{"id":"ftjob_1"}""", """{"id":"ftjob_1","status":null}""", """{"id":"ftjob_1","status":3}""",
+                 """{"status":"queued"}""")
+        rs = first(_with_scripted(jobs, (_, _) -> _json(200, body)))
+        @test all(r -> r isa FineTuningCallError, rs)
+    end
+    r = _answered(() -> retrieve_fine_tuning_job("ftjob_1"; service=URLProbe), 200; body="""{"id":"ftjob_1"}""")
+    @test r isa FineTuningCallError && occursin("\"status\"", r.error)
+    rs = first(_with_scripted(jobs, (_, _) -> _json(200, """{"id":"ftjob_1","status":"queued","model":"m"}""")))
+    @test all(r -> r isa FineTuningSuccess && r.response.status == "queued" && r.response.model == "m", rs)
+end

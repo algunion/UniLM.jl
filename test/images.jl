@@ -974,6 +974,33 @@ end
     end
 end
 
+@testset "OpenAI images — GIF output takes no output_compression, and a GIF edit no mask" begin
+    # The Images reference: "GIF output does not support streaming, partial images, masks, or custom output
+    # compression"; on 2026-11-16 the API answered both with HTTP 400 ("'output_compression' is not supported for GIF
+    # output.", "'mask' is not supported for GIF output."). Other formats keep them.
+    err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", output_format="gif", output_compression=50)))
+    @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("output_compression", "GIF", "OpenAI"))
+    @test _image_json(ImageGeneration(prompt="p", output_format="webp", output_compression=50))["output_compression"] == 50
+    thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        _refusal(() -> generate_image("p"; model="m", service=URLProbe, output_format="gif", output_compression=50))
+    end
+    @test thrown isa ArgumentError && isempty(seen)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        e = ImageEdit(image=path, prompt="p", mask=path, output_format="gif")
+        err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, e))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("mask", "GIF", "OpenAI"))
+        thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, mask=path, output_format="gif"))
+        end
+        @test thrown isa ArgumentError && isempty(seen)
+        @test occursin("name=\"mask\"", _edit_form(ImageEdit(image=path, prompt="p", mask=path, output_format="png")))
+    finally
+        rm(path; force=true)
+    end
+end
+
 @testset "OpenAI images — SvgOptions names the SVG author; SVG output takes n=1 and no output_compression" begin
     # The Images reference: `svg: optional object { model, reasoning }`, model `minLength: 1`, reasoning.effort one of
     # none, minimal, low, medium, high, xhigh, max; "Requires output_format=svg"; "SVG generation requires n=1 and

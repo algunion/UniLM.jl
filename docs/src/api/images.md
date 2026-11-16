@@ -139,8 +139,8 @@ end
 | `size`               | OpenAI   | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
 | `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` |
 | `background`         | OpenAI   | String | `"auto"`          | `"transparent"`, `"opaque"`        |
-| `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"` (SVG on a generation only) |
-| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG output |
+| `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"` (the SVG author, `svg`, on a generation only) |
+| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG or GIF output |
 | `moderation`         | OpenAI   | String | `"auto"`          | `"auto"`, `"low"`                  |
 | `complexity`         | OpenAI   | String | `"high"` (2.6)    | `"low"`, `"medium"`, `"high"`: planning before rendering, on the GPT-Image-2.6 models |
 | `frame_count`        | OpenAI   | Int    | `9`               | 2–16, with `output_format="gif"` only |

@@ -1093,7 +1093,7 @@ println(tokens["input_tokens"])
     quality::Union{String,Nothing} = nothing                # OpenAI: "low","medium","high","auto"; gpt-image-2.5-flare/-sunburst add "xhigh","max"
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
     output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg","gif","svg"
-    output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only; not with "svg")
+    output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only; not with "svg" or "gif")
     safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 lowercase letters, numerals, _ or -, any script)
     moderation::Union{String,Nothing} = nothing             # OpenAI: "auto","low"
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini: "1:1","1:4","4:1","1:8","8:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
@@ -1113,7 +1113,7 @@ end
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
-    mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
+    mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit; not with output_format "gif"
     markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
                                                             #   image to guide the edit; not with mask (ArgumentError); OpenAI
                                                             #   states "Supports GPT Image 2.5 and 2.6" and judges the model (on
@@ -1143,8 +1143,9 @@ OpenAI) throw `ArgumentError` naming the provider and the field — when the req
 serialized, and in `generate_image` / `edit_image` before any request; other OpenAI values
 are sent as given, for OpenAI to judge. The GPT-Image-2.6 controls are checked: `complexity`,
 `frame_count` and `frame_duration_ms` values at construction, the frame fields only with
-`output_format="gif"`, `svg` only with `output_format="svg"`, and SVG output only with `n` 1 and no
-`output_compression` (`ArgumentError` when serialized and before any request). A reply's `svg_usage`
+`output_format="gif"`, `svg` only with `output_format="svg"`, SVG output only with `n` 1 and no
+`output_compression`, and GIF output with no `output_compression` (a generation) or `mask` (an edit)
+(`ArgumentError` when serialized and before any request). A reply's `svg_usage`
 (the SVG author's tokens) is not priced: `estimated_cost(result; model=…)` of an image result that
 carries one bills its `usage` alone and warns once per model that it leaves those tokens out.
 

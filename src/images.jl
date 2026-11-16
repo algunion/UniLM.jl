@@ -47,7 +47,8 @@ provider takes it.
   `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` also accept `"xhigh"` and `"max"`
 - `background::Union{String,Nothing}`: Background (`"transparent"`, `"opaque"`, `"auto"`)
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"`);
-  GIF output "Requires access to the GIF preview for the selected model"
+  GIF output "Requires access to the GIF preview for the selected model" and takes no
+  `output_compression`
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `moderation::Union{String,Nothing}`: Content-moderation strictness (`"auto"`, `"low"`)
 - `complexity::Union{String,Nothing}`: `"low"`, `"medium"` or `"high"`, "Computation spent planning
@@ -62,7 +63,8 @@ provider takes it.
   `output_format="svg"` only. "SVG generation requires n=1 and does not support streaming,
   partial images, prompt_rewriter, or output_compression"; the SVG comes back as the image's base64
   data, its author's tokens as the reply's `svg_usage`. An edit takes none: "The image edit endpoint
-  does not support SVG output" (OpenAI's image generation guide)
+  does not support SVG output" (OpenAI's image generation guide), though on 2026-11-16 the API answered
+  a multipart edit with `output_format=svg` and `svg[model]` with HTTP 200
 
 # Fields — Gemini only
 [Gemini's image controls](https://ai.google.dev/gemini-api/docs/image-generation#aspect-ratios-and-image-size):
@@ -77,8 +79,8 @@ A field the request's provider does not take (an OpenAI-only field on Gemini;
 `aspect_ratio` or `resolution` outside the lists above, and a `safety_identifier` outside
 its provider's rule throw `ArgumentError` naming the provider and the field — when the
 request is serialized, and in [`generate_image`](@ref) before any request — as do a frame
-field without `output_format="gif"`, `svg` without `output_format="svg"`, and SVG output with `n`
-other than 1 or with an `output_compression`. Other OpenAI values are sent as given, for OpenAI to
+field without `output_format="gif"`, `svg` without `output_format="svg"`, SVG output with `n`
+other than 1 or with an `output_compression`, and GIF output with an `output_compression`. Other OpenAI values are sent as given, for OpenAI to
 judge. `input_fidelity` is an image-edit
 parameter: set it on [`ImageEdit`](@ref), not here.
 
@@ -464,7 +466,8 @@ when the edit is sent.
 [`ImageGeneration`](@ref): Gemini takes `n=1` only.
 
 # Fields — OpenAI only
-- `mask::Union{String,Nothing}`: path of a mask whose transparent area marks what to edit
+- `mask::Union{String,Nothing}`: path of a mask whose transparent area marks what to edit; not with
+  `output_format="gif"`
 - `markup::Union{String,Vector{UInt8},Nothing}`: a PNG, by path or as its bytes, sent as the form
   part `markup`: "A transparent PNG overlaid on the first image to guide the edit. Must match that
   image's dimensions after orientation and contain transparent pixels" (the edit reference). It
@@ -484,8 +487,8 @@ image follows the input's aspect ratio.
 `image` names at least one file: [`edit_image`](@ref) throws `ArgumentError` for an empty
 vector before any request, as it does for a `markup` beside a `mask` and, naming the provider and the
 field, for a field the request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
-`resolution` outside its list, a `safety_identifier` outside its provider's rule, and a frame field
-without `output_format="gif"`. Other OpenAI values are sent as given, for OpenAI to judge.
+`resolution` outside its list, a `safety_identifier` outside its provider's rule, a frame field
+without `output_format="gif"`, and a `mask` with it. Other OpenAI values are sent as given, for OpenAI to judge.
 """
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -624,6 +627,7 @@ function _check_image_request(service, r::_ImageRequest)
         "an empty one as none, and a longer identifier can be hashed (a SHA-256 hex digest is 64 characters)"))
     _check_image_format("OpenAI image", r.output_format, r.frame_count, r.frame_duration_ms, _svg(r))
     _check_svg_output(r)
+    _check_gif_output(r)
     _check_markup(r)
 end
 _svg(ig::ImageGeneration)::Union{SvgOptions,Nothing} = ig.svg
@@ -639,6 +643,20 @@ function _check_svg_output(ig::ImageGeneration)::Nothing
     isnothing(ig.output_compression) || throw(ArgumentError(
         "OpenAI SVG output takes no output_compression: SVG generation \"does not support ... output_compression\"; " *
         "unset output_compression"))
+    nothing
+end
+
+# "GIF output does not support streaming, partial images, masks, or custom output compression" (the Images
+# reference): the API answers an output_compression on a GIF generation and a mask on a GIF edit with HTTP 400
+# (2026-11-16). An ImageGeneration streams nothing; an edit has no output_compression.
+_gif_refused_fields(::ImageGeneration) = (:output_compression,)
+_gif_refused_fields(::ImageEdit) = (:mask,)
+function _check_gif_output(r::_ImageRequest)::Nothing
+    r.output_format == "gif" || return nothing
+    set = _set_image_fields(r, _gif_refused_fields(r))
+    isempty(set) || throw(ArgumentError(
+        "OpenAI GIF output takes no $(join(set, " or ")): \"GIF output does not support streaming, partial images, " *
+        "masks, or custom output compression\"; unset $(join(set, " and ")), or choose another output_format"))
     nothing
 end
 

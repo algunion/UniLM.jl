@@ -48,10 +48,15 @@ control, markup-guided edits, SVG output, and animated GIF output through the Im
   "integers from 2 through 16", 9 when omitted, and the "delay per GIF frame, in milliseconds", at least
   20 and 200 when omitted; the Images API sets no largest delay ("caps the encoded delay at 655,350 ms
   per frame"), which the guide gives as 2000. GIF output "Requires access to the GIF preview for the
-  selected model". On a generation and an edit.
+  selected model", and "does not support streaming, partial images, masks, or custom output
+  compression": a GIF generation with an `output_compression`, and a GIF edit with a `mask`, are refused
+  before anything is sent (the API answered each with HTTP 400 on 16 November 2026, "'output_compression'
+  is not supported for GIF output.", "'mask' is not supported for GIF output."). On a generation and an
+  edit.
 - **`svg`**: an [`SvgOptions`](@ref), the model that authors an SVG and its reasoning effort, with
-  `output_format="svg"` on a generation only: "The image edit endpoint does not support SVG output"
-  (the guide). "SVG generation requires n=1 and does not support streaming, partial images,
+  `output_format="svg"`, on a generation: an [`ImageEdit`](@ref) has no `svg`, as OpenAI's guide says
+  "The image edit endpoint does not support SVG output", though on 16 November 2026 the API answered a
+  multipart edit with `output_format=svg` and `svg[model]` with HTTP 200 and an SVG. "SVG generation requires n=1 and does not support streaming, partial images,
   prompt_rewriter, or output_compression"; "When model selection is enabled, supply svg.model. When
   model selection is disabled, omit this object". The SVG comes back as the image's base64 data,
   "UTF-8 XML bytes" to save with a `.svg` extension, and the tokens of its author as the reply's
@@ -377,6 +382,7 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | `edit_image` with both a `mask` and a `markup`, or `markup` bytes that are no PNG | `takes a mask or a markup, not both`, `these bytes are no PNG`: the markup "Cannot be combined with mask" and is "A transparent PNG" | one of the two; a PNG |
 | a `complexity` other than `"low"`, `"medium"` and `"high"`, a `frame_count` outside 2 to 16 or a `frame_duration_ms` under 20, on an image request or an `ImageGenerationTool` (when it is built) | `complexity must be`, `frame_count must be 2 to 16`, `frame_duration_ms must be at least 20`: the reference's values | a value in the range |
 | `frame_count` or `frame_duration_ms` without `output_format="gif"`, or `svg` without `output_format="svg"`, on an image request or an `ImageGenerationTool` | `only with output_format="gif"`, `only with output_format="svg"`: each is "Only supported with output_format=gif", "Requires output_format=svg" | the format, or unset the field |
+| GIF output (`output_format="gif"`) with an `output_compression`, or a GIF edit with a `mask` | `GIF output takes no`: "GIF output does not support streaming, partial images, masks, or custom output compression" | unset it |
 | SVG output (`output_format="svg"`) with an `n` other than 1, or with an `output_compression` | `SVG output takes n=1`, `SVG output takes no output_compression`: "SVG generation requires n=1 and does not support [...] output_compression" | `n=1`, no compression |
 | an `SvgOptions` with an empty `model`, or an `effort` other than `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"` (when it is built) | `SvgOptions model`, `SvgOptions effort`: the reference's `minLength: 1` and its efforts | a model name; one of the efforts |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |

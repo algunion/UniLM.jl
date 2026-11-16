@@ -275,4 +275,28 @@ end
     @test isapprox(estimated_cost(r), 2 * (u.prompt_tokens * 8.0 + u.completion_tokens * 40.0) / 1e6; rtol=1e-12)
 end
 
+# Token counting "is free to use" (https://platform.claude.com/docs/en/build-with-claude/token-counting), and so
+# are the Models API's listing and lookup.
+@testset "Anthropic count_tokens — a Chat's input tokens, on the GA route and with betas on the beta route" begin
+    chat = _live_claude("Reply with exactly: hello"; max_tokens=64, stop=["END"], user="u-1")
+    r = count_tokens(chat)
+    @test r isa TokenCountSuccess && r.input_tokens > 0 && r.raw == Dict{String,Any}("input_tokens" => r.input_tokens)
+    beta = _live_claude("Reply with exactly: hello"; service=ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]),
+                        max_tokens=64)
+    @test count_tokens(beta) isa TokenCountSuccess && count_tokens(beta).input_tokens == r.input_tokens
+    tools = _live_claude("What is the weather in Paris?"; tools=[_LIVE_WEATHER])
+    @test count_tokens(tools).input_tokens > r.input_tokens
+end
+
+@testset "Anthropic retrieve_model — an alias resolves to its dated id; a retired model is a 404" begin
+    r = retrieve_model("claude-opus-4-5"; service=ANTHROPICServiceEndpoint)
+    @test r isa ModelSuccess && r.model.id == "claude-opus-4-5-20251101" && r.model.input_token_limit == 200000
+    r = retrieve_model(_LIVE_CLAUDE; service=ANTHROPICServiceEndpoint())
+    @test r isa ModelSuccess && r.model.id == _LIVE_CLAUDE && r.model.output_token_limit > 0
+    r = retrieve_model("claude-3-opus-20240229"; service=ANTHROPICServiceEndpoint)
+    @test r isa ModelListFailure && r.status == 404
+    listed = list_models(; service=ANTHROPICServiceEndpoint)
+    @test listed isa ModelListSuccess && length(listed.raw) == 1   # one page of up to 1000 models
+end
+
 end  # if ANTHROPIC_API_KEY

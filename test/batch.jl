@@ -693,3 +693,60 @@ _gm_reply(text) = Dict("candidates" => [Dict("content" => Dict("parts" => [Dict(
     end
     @test gone isa BatchFailure && gone.status == 404
 end
+
+# batch_results(id; requests): given the pairs that created the batch, each result is the one chatrequest! returns
+# for its request's Chat: a success's `self` a copy of that Chat with the reply appended (the caller's Chat as it
+# was), a failure's the Chat itself.
+# Refuted if: a success's self lacks the request's messages or the reply, the caller's Chat is mutated, a failure's
+# self is a stand-in, a result whose custom id names no request decodes, or repeated custom ids reach the network.
+@testset "batch_results(id; requests): each result's self is its request's Chat, as chatrequest! returns it" begin
+    quiet(f) = Base.CoreLogging.with_logger(f, Base.CoreLogging.NullLogger())   # a probe has no Batch rates
+    oa_served = Dict("/v1/batches/b1" => JSON.json(Dict("id" => "b1", "status" => "completed", "model" => "gpt-6-luna",
+            "endpoint" => "/v1/chat/completions", "output_file_id" => "file-out")),
+        "/v1/files/file-out/content" => _batch_jsonl(
+            Dict("custom_id" => "ok", "response" => Dict("status_code" => 200, "body" => _batch_oa_reply("ok"))),
+            Dict("custom_id" => "bad", "response" => Dict("status_code" => 400, "body" => Dict("error" => Dict("message" => "bad"))))))
+    an_lines = _batch_jsonl(Dict("custom_id" => "ok", "result" => Dict("type" => "succeeded", "message" => _an_message("ok"))),
+        Dict("custom_id" => "bad", "result" => Dict("type" => "errored", "error" => Dict("type" => "error",
+            "error" => Dict("type" => "invalid_request_error", "message" => "bad")))))
+    gm_done = JSON.json(_gm_op(state="BATCH_STATE_SUCCEEDED", done=true, response=Dict("inlinedResponses" => Dict(
+        "inlinedResponses" => [Dict("response" => _gm_reply("ok"), "metadata" => Dict("key" => "ok")),
+                               Dict("error" => Dict("code" => 3, "message" => "bad"), "metadata" => Dict("key" => "bad"))]))))
+    for (service, model, script) in ((_OAB, "gpt-6-luna", (_, req) -> _json(200, oa_served[String(req.target)])),
+                                     (_ANB, "claude-haiku-5-5", (_, _) -> _json(200, an_lines)),
+                                     (_GMB, "gemini-3.8-flash", (_, _) -> _json(200, gm_done)))
+        ok = Chat(service=service, model=model, max_tokens=16,
+                  messages=[Message(Val(:system), "Be brief."), Message(Val(:user), "one")])
+        bad = Chat(service=service, model=model, max_tokens=16, messages=[Message(Val(:user), "two")])
+        r, _ = quiet() do
+            _with_scripted(script) do
+                batch_results("b1"; service, requests=["ok" => ok, "bad" => bad])
+            end
+        end
+        @test r isa BatchResultsSuccess
+        r isa BatchResultsSuccess || continue
+        s, e = Dict(r.results)["ok"], Dict(r.results)["bad"]
+        @test s isa LLMSuccess && s.self !== ok && s.self.service === service && s.self.model == model
+        @test [(m.role, m.content) for m in s.self.messages] == [("system", "Be brief."), ("user", "one"), ("assistant", "ok")]
+        @test s.usage.service_tier == "batch" && quiet(() -> cumulative_cost(s.self) == estimated_cost(s) > 0)
+        @test length(ok.messages) == 2 && cumulative_cost(ok) == 0          # the caller's Chat as it was
+        @test e isa Union{LLMFailure,LLMCallError} && e.self === bad
+        # A result whose custom id names none of the requests pairs with no Chat: the reply is not the batch's.
+        u, _ = quiet() do
+            _with_scripted(script) do
+                batch_results("b1"; service, requests=["ok" => ok, "other" => bad])
+            end
+        end
+        @test u isa BatchCallError && u.cause isa ArgumentError
+        u isa BatchCallError && @test occursin("\"bad\"", u.error)
+    end
+    # Repeated custom ids are refused before any request; so is a Chat whose reply could not be appended.
+    c = Chat(service=_OAB, model="gpt-6-luna", messages=[Message(Val(:user), "q")])
+    replied = Chat(service=_OAB, model="gpt-6-luna", messages=[Message(Val(:user), "q"), Message(role=RoleAssistant, content="a")])
+    for (requests, T) in ((["a" => c, "a" => c], ArgumentError), (["a" => replied], InvalidConversationError))
+        e, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _batch_refused(() -> batch_results("b1"; service=_OAB, requests))
+        end
+        @test e isa T && isempty(seen)
+    end
+end

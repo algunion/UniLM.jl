@@ -444,7 +444,9 @@ without either file yet is a `BatchCallError` naming its status, and one that en
 failed validation, or expired or was cancelled before a request ran — a `BatchCallError` holding the
 batch's `errors`. A batch of another endpoint, such as
 the `/v1/responses` one above, is a `BatchCallError` naming `file_content(output_file_id)`, which reads
-its output file.
+its output file. Pass the pairs that created the batch, `batch_results(id; requests)`, and each result's
+`self` is its request's own `Chat`, a copy with the reply appended for a success, so the conversation goes
+on with `chatrequest!`.
 
 ```julia
 luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,

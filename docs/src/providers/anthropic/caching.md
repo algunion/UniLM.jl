@@ -166,7 +166,9 @@ Anthropic's error object as JSON — `invalid_request_error` for a request to fi
 that "can be retried directly" — and whose `request_id` is the one it names; a request `canceled` or `expired` before it
 ran, which Anthropic does not bill, is an `LLMCallError` saying so. Before the batch ends, the results
 are Anthropic's HTTP 404, a `BatchFailure`. A result's `self` is a `Chat` naming the model that served
-it, without messages: a batch keeps no request of its own.
+it, without messages: a batch keeps no request of its own. Pass the pairs that created the batch,
+`batch_results(id; service, requests)`, and each result's `self` is its request's own `Chat`, a copy with
+the reply appended for a success, so the conversation goes on with `chatrequest!`.
 
 [`list_batches`](@ref) lists the workspace's batches, most recent first (`limit`, and `after`, a batch
 id, sent as `after_id`), [`retrieve_batch`](@ref) reads one, and [`delete_batch`](@ref) deletes an

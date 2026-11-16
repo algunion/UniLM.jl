@@ -16,7 +16,11 @@ and `gemini-2.5-flash-lite`) — and [`estimated_cost`](@ref) prices a batch res
   returns — an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) per custom id —,
   decoded by the provider's own decoder, each success's usage at the tier `"batch"`. On OpenAI it
   reads a `/v1/chat/completions` batch alone: another endpoint's is a `BatchCallError` naming
-  [`file_content`](@ref)`(output_file_id)`, which reads its output file as OpenAI writes it.
+  [`file_content`](@ref)`(output_file_id)`, which reads its output file as OpenAI writes it. Given the
+  pairs that created the batch, `batch_results(id; service, requests)`, each result is the one
+  `chatrequest!` returns for its request's `Chat`: a success's `self` is a copy of that `Chat` with the
+  reply appended (the `Chat` passed is not changed), a failure's the `Chat` itself; without them, a
+  stand-in `Chat` without messages.
 - [`retrieve_batch`](@ref), [`list_batches`](@ref), [`cancel_batch`](@ref) and [`poll_batch`](@ref)
   run on all three; [`delete_batch`](@ref) on Anthropic and Gemini; [`update_batch`](@ref) (a batch's
   priority) on Gemini.
@@ -71,6 +75,17 @@ if results isa BatchResultsSuccess
     for (id, r) in results.results
         r isa LLMSuccess && println(id, ": ", r.message.content, " (USD ", estimated_cost(r), ")")
     end
+end
+
+# With the requests, each result's self is its request's Chat with the reply appended: talk on
+requests = ["norway" => ask("Capital of Norway?"), "peru" => ask("Capital of Peru?")]
+batch = create_batch(requests)
+poll_batch(batch.response.id; service=ANTHROPICServiceEndpoint, interval=60)
+results = batch_results(batch.response.id; service=ANTHROPICServiceEndpoint, requests)
+norway = Dict(results.results)["norway"]
+if norway isa LLMSuccess
+    push!(norway.self, Message(Val(:user), "And its population?"))
+    chatrequest!(norway.self)
 end
 
 # OpenAI's file-based form: upload a JSONL request file, then create a batch from it

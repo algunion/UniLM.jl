@@ -3251,6 +3251,29 @@ end
     end
 end
 
+# Refuted if: an image generation tool with partial images or an input_image_mask beside GIF output, or
+# partial images beside SVG output, builds — the API answered each pair with HTTP 400 on 2026-11-16 —
+# or the refusal does not quote the API; or no partial images (0), or a mask beside another format, is
+# refused (the tool's reference rules out only `partial_images` "greater than `0`" for GIF).
+@testset "ImageGenerationTool — GIF output takes no partial images or mask, SVG output no partial images" begin
+    gif, svg = (; output_format="gif", frame_count=2), (; output_format="svg", svg=SvgOptions(model="m"))
+    mask = Dict("image_url" => "data:image/png;base64,AAAA")
+    for (kw, field, api) in (((; gif..., partial_images=1), "partial_images", "'partial_images' is not supported for GIF output."),
+                             ((; gif..., partial_images=3), "partial_images", "'partial_images' is not supported for GIF output."),
+                             ((; gif..., input_image_mask=mask), "input_image_mask", "'mask' is not supported for GIF output."),
+                             ((; svg..., partial_images=2), "partial_images", "SVG output does not support partial images."))
+        for build in (ImageGenerationTool, image_generation_tool)
+            err = try build(; kw...); nothing catch e; e end
+            @test err isa ArgumentError &&
+                  all(w -> occursin(w, err.msg), ("image_generation", uppercase(kw.output_format), field, "HTTP 400", api))
+        end
+    end
+    for kw in ((; gif..., partial_images=0), (; svg..., partial_images=0), (; svg..., input_image_mask=mask),
+               (; output_format="png", partial_images=2, input_image_mask=mask), (; partial_images=2, input_image_mask=mask))
+        @test JSON.lower(image_generation_tool(; kw...))[:type] == "image_generation"
+    end
+end
+
 @testset "input_transformations: a list that is no array is no list of transformations — reading it fails loud" begin
     reply(v) = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
         "id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna", "output" => Any[],

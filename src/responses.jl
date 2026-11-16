@@ -370,8 +370,9 @@ images inline during a response.
 
 Unset, `model` is the tool's default, `"gpt-image-2.6-sunburst"`. `action`, `moderation`,
 `partial_images`, `input_fidelity`, `complexity`, `frame_count`, `frame_duration_ms` and `svg`
-are validated at construction (`ArgumentError`), as is an `output_compression` with GIF or SVG output,
-which the API answers with HTTP 400. `quality`, `background`, and `output_format` are passed
+are validated at construction (`ArgumentError`), as are an `output_compression` or a `partial_images`
+above 0 with GIF or SVG output and an `input_image_mask` with GIF output, each of which the API answers
+with HTTP 400. `quality`, `background`, and `output_format` are passed
 through unchecked (the accepted `quality` values depend on the model). Unset fields are
 omitted from the request.
 """
@@ -406,7 +407,8 @@ omitted from the request.
         # The Images API's GPT-Image-2.6 controls (images.jl), with the tool's own name.
         _check_image_controls("image_generation", complexity, frame_count, frame_duration_ms)
         _check_image_format("image_generation", output_format, frame_count, frame_duration_ms, svg)
-        _check_tool_compression(output_format, output_compression)
+        _check_tool_format(output_format, (; output_compression=!isnothing(output_compression),
+            partial_images=something(partial_images, 0) > 0, input_image_mask=!isnothing(input_image_mask)))
         new(background, output_format, output_compression, quality, size,
             model, action, moderation, partial_images, input_fidelity, input_image_mask, complexity,
             frame_count, frame_duration_ms, svg)
@@ -415,13 +417,22 @@ end
 
 # GIF output "does not support streaming, partial images, masks, or custom output compression", and SVG generation
 # "does not support streaming, partial images, prompt_rewriter, or output_compression" (the Images reference); the
-# API answers the tool with either pair with HTTP 400 (2026-11-16).
-const _TOOL_NO_COMPRESSION = Dict("gif" => "\"'output_compression' is not supported for GIF output.\"",
-                                  "svg" => "\"SVG output does not support output_compression.\"")
-function _check_tool_compression(output_format, output_compression)::Nothing
-    isnothing(output_compression) || isnothing(output_format) || !haskey(_TOOL_NO_COMPRESSION, output_format) ||
-        throw(ArgumentError("image_generation $(uppercase(output_format)) output takes no output_compression: the API " *
-            "answers it with HTTP 400, $(_TOOL_NO_COMPRESSION[output_format]); unset output_compression"))
+# tool's reference rules out GIF's "partial image streaming (`partial_images` greater than `0`)". The API answers the
+# tool with each pair below with HTTP 400, in these words (2026-11-16).
+const _TOOL_FORMAT_REFUSALS = Dict{Tuple{String,Symbol},String}(
+    ("gif", :output_compression) => "\"'output_compression' is not supported for GIF output.\"",
+    ("gif", :partial_images) => "\"'partial_images' is not supported for GIF output.\"",
+    ("gif", :input_image_mask) => "\"'mask' is not supported for GIF output.\"",
+    ("svg", :output_compression) => "\"SVG output does not support output_compression.\"",
+    ("svg", :partial_images) => "\"SVG output does not support partial images.\"")
+# `set`: whether the tool sets each field (partial images: more than 0).
+function _check_tool_format(output_format, set::NamedTuple)::Nothing
+    isnothing(output_format) && return nothing
+    for (field, on) in pairs(set)
+        api = get(_TOOL_FORMAT_REFUSALS, (output_format, field), nothing)
+        on && !isnothing(api) && throw(ArgumentError("image_generation $(uppercase(output_format)) output takes no " *
+            "$field: the API answers it with HTTP 400, $api; unset $field"))
+    end
     nothing
 end
 

@@ -732,7 +732,8 @@ end
 
 # action, moderation, partial_images, input_fidelity, complexity, frame_count, frame_duration_ms
 # and svg are validated at construction (ArgumentError; the frame fields only with output_format
-# "gif", svg only with "svg", no output_compression with "gif" or "svg"); quality, background, and output_format pass through unchecked
+# "gif", svg only with "svg", no output_compression or partial_images above 0 with "gif" or "svg", no
+# input_image_mask with "gif"); quality, background, and output_format pass through unchecked
 # (the accepted quality values depend on the model). Unset, the tool runs gpt-image-2.6-sunburst.
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing

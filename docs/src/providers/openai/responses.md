@@ -148,11 +148,13 @@ controls of the GPT-Image-2.6 models ([Image generation](@ref openai_images)): `
 `frame_count` (2 to 16) and `frame_duration_ms` (at least 20; the tool's reference gives 2000 as its
 largest) with `output_format="gif"`; and `svg`, an [`SvgOptions`](@ref) naming the SVG author, with
 `output_format="svg"`. `ImageGenerationTool` throws `ArgumentError` for a value outside these, for a
-frame or SVG field without its format, and for an `output_compression` with GIF or SVG output. On 16
-November 2026 the API answered an invalid value of each of the four with HTTP 400 naming it, and an
-`output_compression` with GIF or SVG output with HTTP 400 too ("'output_compression' is not supported for
-GIF output.", "SVG output does not support output_compression."); a tool with `complexity="low"` on
-`gpt-6-luna` drew an image. A call that drew an SVG reports its author's tokens as `svg_usage`, which
+frame or SVG field without its format, for an `output_compression` or a `partial_images` above 0 with
+GIF or SVG output, and for an `input_image_mask` with GIF output. On 16 November 2026 the API answered
+an invalid value of each of the four with HTTP 400 naming it, and each of those pairs with HTTP 400 too
+("'output_compression' is not supported for GIF output.", "SVG output does not support
+output_compression.", "'partial_images' is not supported for GIF output.", "SVG output does not
+support partial images.", "'mask' is not supported for GIF output."); a tool with `complexity="low"`
+on `gpt-6-luna` drew an image. A call that drew an SVG reports its author's tokens as `svg_usage`, which
 [`estimated_cost`](@ref) leaves out of the estimate, with one warning per model.
 
 ## [Structured output on Responses](@id openai_responses_structured_output)

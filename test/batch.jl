@@ -171,3 +171,68 @@ end
         @test err isa ArgumentError && occursin("output_expires_after", err.msg) && occursin("3600", err.msg)
     end
 end
+
+# A batched request bills at its provider's Batch rates; its usage names the tier "batch" (Anthropic's own value for
+# a Message Batches result, and the tier `batch_results` records on every result it decodes). Each figure below is
+# the pricing page's Batch price, per million tokens.
+using Dates: Date
+using Base.ScopedValues: with
+_batch_priced(service, model; kw...) = LLMSuccess(message=Message(role=RoleAssistant, content="ok"),
+    self=Chat(service=service, model=model), model=model,
+    usage=TokenUsage(; service_tier="batch", kw...))
+
+@testset "Batch pricing — Anthropic: half of every rate, stacked with caching, long prompts and US inference" begin
+    # Haiku 5.5 Batch: $0.05 in, $0.25 out; a cache read 0.1x and a 5-minute write 1.25x of the batch input.
+    r = _batch_priced(ANTHROPICServiceEndpoint, "claude-haiku-5-5"; prompt_tokens=1000, completion_tokens=200,
+                 total_tokens=1200, cached_tokens=100, cache_write_tokens=50)
+    @test estimated_cost(r) ≈ (850 * 0.05 + 100 * 0.005 + 50 * 1.25 * 0.05 + 200 * 0.25) / 1e6
+    # "Claude Haiku 5.5 (for prompts over 100,000 tokens)": $0.25 / $1.25.
+    long = _batch_priced(ANTHROPICServiceEndpoint, "claude-haiku-5-5"; prompt_tokens=150_000, completion_tokens=10)
+    @test estimated_cost(long) ≈ (150_000 * 0.25 + 10 * 1.25) / 1e6
+    us = _batch_priced(ANTHROPICServiceEndpoint(), "claude-haiku-5-5"; prompt_tokens=1000, completion_tokens=100,
+                  inference_geo="us")
+    @test estimated_cost(us) ≈ 1.1 * (1000 * 0.05 + 100 * 0.25) / 1e6
+end
+
+@testset "Batch pricing — OpenAI: the Batch table's rates, half of Standard, where it lists the model" begin
+    # gpt-6-luna Batch: $0.05 in, $0.005 cached, $0.0625 30m write, $0.125 12h write, $0.25 out.
+    r = _batch_priced(OPENAIServiceEndpoint, "gpt-6-luna"; prompt_tokens=1000, completion_tokens=50, cached_tokens=200,
+                 cache_write_tokens=100, cache_write_extended_tokens=40)
+    @test estimated_cost(r) ≈ (700 * 0.05 + 200 * 0.005 + 60 * 0.0625 + 40 * 0.125 + 50 * 0.25) / 1e6
+    # Long context (over 272K input tokens): $0.10 in, $0.375 out.
+    long = _batch_priced(OPENAIServiceEndpoint, "gpt-6-luna"; prompt_tokens=300_000, completion_tokens=100)
+    @test estimated_cost(long) ≈ (300_000 * 0.10 + 100 * 0.375) / 1e6
+    snap = _batch_priced(OPENAIServiceEndpoint, "gpt-6-luna-2026-09-14"; prompt_tokens=1000, completion_tokens=100)
+    @test estimated_cost(snap) ≈ (1000 * 0.05 + 100 * 0.25) / 1e6
+    # gpt-4.1 Batch lists $1.00 / $4.00 and no cached-input price ("-"): a cache read bills as batch input.
+    g41 = _batch_priced(OPENAIServiceEndpoint, "gpt-4.1"; prompt_tokens=1000, completion_tokens=100, cached_tokens=400)
+    @test estimated_cost(g41) ≈ (1000 * 1.00 + 100 * 4.00) / 1e6
+    # gpt-6-cyber is not in the Batch table, nor is a gpt-5.5-pro prompt over 272K tokens ("-"): the standard rates,
+    # with one warning per model.
+    cyber = _batch_priced(OPENAIServiceEndpoint, "gpt-6-cyber"; prompt_tokens=1000, completion_tokens=100)
+    @test (@test_logs (:warn, r"Batch API rates") estimated_cost(cyber)) ≈ (1000 * 20.0 + 100 * 100.0) / 1e6
+    pro = _batch_priced(OPENAIServiceEndpoint, "gpt-5.5-pro"; prompt_tokens=300_000, completion_tokens=100)
+    @test (@test_logs (:warn, r"Batch API rates") estimated_cost(pro)) ≈ (300_000 * 60.0 + 100 * 270.0) / 1e6
+end
+
+@testset "Batch pricing — Gemini: each model's Batch tab, half of Standard but where it keeps the cache-hit price" begin
+    on(day, r) = with(() -> estimated_cost(r), UniLM._PRICING_DATE => day)
+    nov, jan = Date(2026, 11, 16), Date(2027, 1, 2)
+    # Gemini 3.8 Flash Batch: $0.375 in, $0.0375 cache hit, $1.875 out, through 2026-12-31; $0.75 / $0.075 / $3.75 after.
+    f38 = _batch_priced(GEMINIServiceEndpoint, "gemini-3.8-flash"; prompt_tokens=1000, completion_tokens=100, cached_tokens=200)
+    @test on(nov, f38) ≈ (800 * 0.375 + 200 * 0.0375 + 100 * 1.875) / 1e6
+    @test on(jan, f38) ≈ (800 * 0.75 + 200 * 0.075 + 100 * 3.75) / 1e6
+    # Gemini 2.5 Flash Batch: $0.15 text / $0.50 audio in, $1.25 out, cache hits "Same as Standard" — $0.03 text, $0.1 audio.
+    f25 = _batch_priced(GEMINIServiceEndpoint, "gemini-2.5-flash"; prompt_tokens=1000, prompt_audio_tokens=300,
+                   cached_tokens=100, cached_audio_tokens=40, completion_tokens=50)
+    @test on(nov, f25) ≈ (640 * 0.15 + 260 * 0.50 + 60 * 0.03 + 40 * 0.10 + 50 * 1.25) / 1e6
+    # Gemini 3.5 Flash-Lite Batch: $0.15 in, $0.015 cache hit (Flex lists $0.02), $1.25 out.
+    lite = _batch_priced(GEMINIServiceEndpoint, "gemini-3.5-flash-lite"; prompt_tokens=1000, cached_tokens=500, completion_tokens=10)
+    @test on(nov, lite) ≈ (500 * 0.15 + 500 * 0.015 + 10 * 1.25) / 1e6
+    # Gemini 2.5 Pro over 200K tokens, Batch: $1.25 in, $0.25 cache hit (the standard figure), $7.50 out.
+    pro = _batch_priced(GEMINIServiceEndpoint, "gemini-2.5-pro"; prompt_tokens=300_000, cached_tokens=100_000, completion_tokens=1000)
+    @test on(nov, pro) ≈ (200_000 * 1.25 + 100_000 * 0.25 + 1000 * 7.5) / 1e6
+    # "Batch API isn't supported" on Gemini Decision 1: the standard rates, with a warning.
+    d1 = _batch_priced(GEMINIServiceEndpoint, "gemini-decision-1"; prompt_tokens=1000)
+    @test (@test_logs (:warn, r"Batch API rates") on(nov, d1)) ≈ 1000 * 0.10 / 1e6
+end

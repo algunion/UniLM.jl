@@ -294,6 +294,15 @@ The row's rates bill fresh input tokens and cache writes at `input`, cache reads
 `cached_input` and completion tokens at `output`, except where UniLM models a provider's
 surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref)).
 
+A Chat result whose usage names the tier `"batch"` — a request of a batch, as [`batch_results`](@ref)
+returns it — is billed at its provider's Batch rates: on OpenAI half of every rate of the models its
+pricing page's Batch table lists (a cache read bills as batch input where the table gives no cached-input
+price); on Anthropic half of every rate, the cache, region and long-prompt multipliers stacking; on native
+Gemini half of every rate, except a cache hit on the models whose Batch table keeps its standard price
+(`gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview`, the
+`gemini-2.5-` models). A model the page gives no Batch price for is estimated at the standard rates, with
+one warning per model and endpoint.
+
 A Responses result from `OPENAIServiceEndpoint` also bills what its hosted tools used, as the
 reply's [`tool_usage`](@ref) reports it ([pricing](https://developers.openai.com/api/docs/pricing)):
 each billable web search at USD 10 per 1,000 calls — USD 25 for the legacy `web_search_preview` tool on
@@ -319,7 +328,7 @@ function estimated_cost(result::LLMRequestResponse;
     _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
-    billed = _billed_cost(service, mdl, u, rates)
+    billed = u.service_tier == "batch" ? _batch_cost(service, mdl, u, rates) : _billed_cost(service, mdl, u, rates)
     tools = _hosted_tool_cost(service, result, mdl)
     isnothing(tools) ? 0.0 : billed + tools
 end
@@ -385,6 +394,69 @@ function _unpriced_audio(service, model::String)::Float64
     @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model endpoint _id = Symbol(
         "unilm_unpriced_audio_", endpoint, "_", model) maxlog = 1
     0.0
+end
+
+# ─── Batch API rates ─────────────────────────────────────────────────────────
+# A batched request bills at its provider's Batch rates. Its usage names the tier "batch": Anthropic's own value
+# for a Message Batches result, and the tier `batch_results` records on every result it decodes. The rates are the
+# provider's standard ones scaled as its pricing page lists them (each page read on 2026-11-16):
+# - OpenAI (https://developers.openai.com/api/docs/pricing, "Batch"): half of every Standard rate, cache writes and
+#   long-context rates included, on the models the Batch table lists. Where it lists no cached-input price ("-":
+#   gpt-4.1, gpt-4.1-mini, o3) a cache read bills as batch input.
+# - Anthropic (https://platform.claude.com/docs/en/about-claude/pricing.md, "Batch processing"): "a 50 percent
+#   discount on both input and output tokens", which the cache, data-residency and long-prompt multipliers stack with.
+# - Gemini (https://ai.google.dev/gemini-api/docs/pricing, each model's "Batch" tab): half the Standard input price
+#   of every modality and half its output price; the cache-hit price is half too, except where the tab keeps the
+#   standard one ("Same as Standard", or the standard figure).
+# A model the page gives no Batch price for is estimated at the standard rates, with one warning per model.
+
+_standard_tier(u::TokenUsage)::TokenUsage = TokenUsage(; _usage_fields(u)..., service_tier=nothing)
+
+function _unlisted_batch_cost(service, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    @warn "the pricing page lists no Batch API rates for this model; its cost is estimated at the standard rates" model endpoint = _service_name(service) _id = Symbol(
+        "unilm_unpriced_batch_", _service_name(service), "_", model) maxlog = 1
+    _billed_cost(service, model, _standard_tier(u), rates)
+end
+_batch_cost(service, model::String, u::TokenUsage, rates::PriceRow)::Float64 = _unlisted_batch_cost(service, model, u, rates)
+
+_batch_cost(service::_AnthropicEndpoint, model::String, u::TokenUsage, rates::PriceRow)::Float64 =
+    0.5 * _billed_cost(service, model, _standard_tier(u), rates)
+
+# The OpenAI models of the Batch table: whether it lists a cached-input price, and long-context prices.
+const _OPENAI_BATCH_PRICES = let
+    both, short = (cached=true, long=true), (cached=true, long=false)
+    Dict{String,@NamedTuple{cached::Bool, long::Bool}}(
+        "gpt-6-astra" => both, "gpt-6.1-sol" => both, "gpt-6.1-terra" => both, "gpt-6-sol" => both, "gpt-6-luna" => both,
+        "gpt-5.6-sol" => both, "gpt-5.6-terra" => both, "gpt-5.6-luna" => both, "gpt-5.5" => both, "gpt-5.4" => both,
+        "gpt-5.5-pro" => (cached=false, long=false), "gpt-5.4-pro" => (cached=false, long=true),
+        "gpt-5.4-mini" => short, "gpt-5.4-nano" => short, "gpt-5.2" => short, "gpt-5.2-pro" => (cached=false, long=false),
+        "gpt-4.1" => (cached=false, long=false), "gpt-4.1-mini" => (cached=false, long=false), "o3" => (cached=false, long=false))
+end
+
+function _batch_cost(service::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    listed = _openai_row(_OPENAI_BATCH_PRICES, model)
+    long = _long_context(_openai_row(_OPENAI_PRICE_TERMS, model), u.prompt_tokens)
+    (isnothing(listed) || long && !listed.long) && return _unlisted_batch_cost(service, model, u, rates)
+    half = (input=rates.input / 2, cached_input=(listed.cached ? rates.cached_input : rates.input) / 2, output=rates.output / 2)
+    _billed_cost(service, model, _standard_tier(u), half)
+end
+
+# The Gemini models whose Batch tab keeps the standard cache-hit price, and the one without a Batch tab.
+const _GEMINI_BATCH_STANDARD_CACHE = ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
+                                      "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+const _GEMINI_NO_BATCH = ("gemini-decision-1",)
+
+function _batch_cost(service::Type{GEMINIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    model in _GEMINI_NO_BATCH && return _unlisted_batch_cost(service, model, u, rates)
+    standard = _billed_cost(service, model, _standard_tier(u), rates)
+    model in _GEMINI_BATCH_STANDARD_CACHE || return standard / 2
+    # Audio no rate prices left the call unpriced (0.0, with its warning): its cache hits are not added back.
+    _counts_audio(u) && isnothing(_gemini_audio_rate(model, u, rates)) && return standard
+    cached_audio = _gemini_cached_audio(model, u)
+    hits = first(_gemini_context_multiples(model, u.prompt_tokens)) *
+           ((min(u.cached_tokens, u.prompt_tokens) - cached_audio) * rates.cached_input +
+            cached_audio * get(_GEMINI_CACHED_AUDIO_RATES, model, 0.0))
+    (standard - hits) / 2 + hits
 end
 
 # ─── OpenAI hosted tools ─────────────────────────────────────────────────────

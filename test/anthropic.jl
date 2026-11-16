@@ -372,6 +372,36 @@ end
     end
 end
 
+# A tool_use block's input_json_delta pieces replace its start input; a piece without text (the streaming guide's
+# example sends `""` first) carries none.
+# Refuted if: blank pieces after a non-empty start input leave the call, or the block kept for the round trip,
+# without that input, or pieces with text after blank ones do not replace it.
+@testset "stream — blank input_json_delta pieces keep the start's input" begin
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    function turn(start, partials...)
+        st = StreamState()
+        UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join([
+            ev(Dict("type" => "content_block_start", "index" => 0, "content_block" =>
+                Dict{String,Any}("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => start)));
+            [ev(Dict("type" => "content_block_delta", "index" => 0,
+                     "delta" => Dict("type" => "input_json_delta", "partial_json" => p))) for p in partials];
+            ev(Dict("type" => "content_block_stop", "index" => 0));
+            ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use")));
+            ev(Dict("type" => "message_stop"))]), st)
+        _build_stream_message(st)
+    end
+    paris = Dict{String,Any}("city" => "Paris")
+    for partials in (("",), ("", " ", "\n"))
+        m = turn(paris, partials...)
+        @test only(m.tool_calls).func.arguments == paris
+        @test !isnothing(m.provider_content) && only(m.provider_content.blocks)["input"] == paris
+    end
+    oslo = Dict{String,Any}("city" => "Oslo")
+    m = turn(paris, "", "{\"city\":", " \"Oslo\"}")
+    @test only(m.tool_calls).func.arguments == oslo
+    @test !isnothing(m.provider_content) && only(m.provider_content.blocks)["input"] == oslo
+end
+
 # Refuted if: a tool_use without its name or its id — absent, null, not a string, or empty — decodes to
 # a call, streamed or not (a call named "" runs no tool the model named; Anthropic's ToolUseBlock
 # requires both), on_tool_call is handed it, or the refusal does not name Anthropic and the field.

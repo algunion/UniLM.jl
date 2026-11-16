@@ -801,8 +801,9 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
             _anthropic_publish_tool_args!(state)
             # The block's own input is the call's arguments until input_json_delta pieces
             # replace it: Anthropic starts a streamed block with `{}` and sends the input in
-            # pieces, so a block that sends none holds its whole input here. A block without
-            # its name or id is the turn's error when the turn is built (`_stream_tool_call`).
+            # pieces, so a block that sends none, or blank ones, holds its whole input here.
+            # A block without its name or id is the turn's error when the turn is built
+            # (`_stream_tool_call`).
             input = get(cb, "input", nothing)
             state.tool_calls[ev["index"]] = Dict{String,Any}(
                 "id" => get(cb, "id", ""), "type" => "function", "provider" => "Anthropic",
@@ -823,11 +824,14 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
         elseif dt == "input_json_delta"
             # One partial-JSON buffer per block feeds both the raw block's input and
             # the neutral tool-call arguments (published at stop); the pieces replace
-            # the input the block started with, whatever it held.
+            # the input the block started with, whatever it held, from the first piece
+            # with text: a blank piece (the API sends "" first) carries no input, so
+            # blank pieces alone leave the start input in place.
             if !isnothing(blk)
+                piece = get(d, "partial_json", "")::AbstractString
                 buf = get(blk, "input", nothing)
-                buf isa IOBuffer || (blk["input"] = buf = IOBuffer())
-                print(buf, get(d, "partial_json", "")::AbstractString)
+                buf isa IOBuffer || isempty(strip(piece)) || (blk["input"] = buf = IOBuffer())
+                buf isa IOBuffer && print(buf, piece)
             end
         elseif dt == "thinking_delta"
             isnothing(blk) || print(_anthropic_buf!(blk, "thinking"), get(d, "thinking", "")::AbstractString)

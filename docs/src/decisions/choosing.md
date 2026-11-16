@@ -6,9 +6,10 @@ using UniLM
 
 UniLM has one decision surface. The questions — [`choice`](@ref), [`score`](@ref), [`noul`](@ref), [`bounding_box`](@ref) —
 the verbs — [`ask`](@ref), [`ask_each`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref) —
-and the typed results are the same whichever model answers. Three providers answer them, each with an entry of its
-own: [Jev (TypeSafe)](@ref jev_start), the default; [OpenAI Decisions API](@ref openai_decisions_start); and
-[Local decision models](@ref ollama_decisions_start) served by Ollama on your own machine. Each provider has a
+and the typed results are the same whichever model answers. Four providers answer them, each with an entry of its
+own: [Jev (TypeSafe)](@ref jev_start), the default; [OpenAI Decisions API](@ref openai_decisions_start);
+[Gemini Decisions API](@ref gemini_decisions_start); and [Local decision models](@ref ollama_decisions_start)
+served by Ollama on your own machine. Each provider has a
 wrapper that knows its rules. What a provider cannot carry is refused with an `ArgumentError` before anything is
 sent, so a request never reaches a provider in a form that provider would read differently.
 
@@ -113,39 +114,42 @@ and `tev1:0.8b` means nothing to TypeSafe.
 
 ## [What each provider takes](@id backends_table)
 
-| | Jev (TypeSafe) | OpenAI's Decisions API | Local models (Ollama) |
-| :--- | :--- | :--- | :--- |
-| `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
-| Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1/systemone` |
-| Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
-| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
-| Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
-| Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
-| Guidance | strings, objects, arrays and pictures, anywhere | `instructions` on every question: a string, or text, pictures and JSON objects as its parts; strings elsewhere; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
-| Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state (an image, or a vector or tuple of strings and images) and a question's instructions | the state only, the images before the texts; vision models only |
-| A vector of [`Message`](@ref)s as the state | data: its messages as JSON objects | the conversation: a message per role, tool calls and their outputs ([Questions](@ref openai_decisions_questions)) | data: its messages as JSON objects |
-| Box | Jev 1.14 | refused | refused |
-| Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
-| `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |
-| Request id | `x-typesafe-request-id` | `x-request-id` | none |
-| Options | `long_context` | `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` | `keep_alive` |
-| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only: \$0.10 per million uncached, cache reads and writes at the model's caching rates ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#pricing-and-availability)) | nothing: your machine (a cloud model — a tag of `cloud`, or one ending in `-cloud` — is priced by the requested name) |
-| Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
-| [`ask_each`](@ref) in flight | 16 | 16 | 1 |
-| Recordings filed under | `/v1/systemone` | `/openai-decisions/v1/decisions` | `/ollama/v1/systemone` |
-| Status | `jev-latest` and `jev-preview` are Jev 1.14 (2 November 2026); images "dreamer-ready" (25 October 2026) | generally available (25 October 2026) | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026); the live suite passed unchanged on Ollama 0.40.14 (3 November 2026) |
+| | Jev (TypeSafe) | OpenAI's Decisions API | Gemini's Decisions API | Local models (Ollama) |
+| :--- | :--- | :--- | :--- | :--- |
+| `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`GEMINIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
+| Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1beta/decisions` | `POST /v1/systemone` |
+| Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | `GEMINI_API_KEY` | none |
+| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else the default model of [its entry](@ref jev_start) | the default model of [its entry](@ref openai_decisions_start), the only one | the default model of [its entry](@ref gemini_decisions_start), the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
+| Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul | Choice, Score, Noul |
+| Limits UniLM checks | 1–255 options, 1–10 levels | 2–255 options, 2–10 levels, 400 questions | 2–255 options, 2–255 levels, 1,000 questions; an option's name ≤ 128 characters | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([Limits](@ref ollama_decisions_limits)) |
+| Guidance | strings, objects, arrays and pictures, anywhere | `instructions` on every question: a string, or text, pictures and JSON objects as its parts; strings elsewhere; no Noul `yes`/`no` | `instructions` on every question, text only: a string, or strings as text blocks; strings elsewhere | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
+| Where a picture may stand | anywhere a string can: the state, instructions, options, levels | the state (an image, or a vector or tuple of strings and images) and a question's instructions | the state only (an image, or a vector or tuple of strings and images) | the state only, the images before the texts; vision models only |
+| A vector of [`Message`](@ref)s as the state | data: its messages as JSON objects | the conversation: a message per role, tool calls and their outputs ([Questions](@ref openai_decisions_questions)) | refused: pass its text | data: its messages as JSON objects |
+| Box | Jev 1.14 | refused | refused | refused |
+| Refusals | none | per question, a [`RefusalAnswer`](@ref) | a blocked input, a [`RefusalAnswer`](@ref) for every question | none |
+| `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Google's own value in `raw` | computed by UniLM; Ollama's own value in `raw` |
+| Request id | `x-typesafe-request-id` | `x-request-id` | none | none |
+| Options | `long_context` | `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` | none | `keep_alive` |
+| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only: \$0.10 per million uncached, cache reads and writes at the model's caching rates ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#pricing-and-availability)) | input tokens only: \$0.10 per million, every modality ([Pricing](https://ai.google.dev/gemini-api/docs/pricing#gemini-decision)) | nothing: your machine (a cloud model — a tag of `cloud`, or one ending in `-cloud` — is priced by the requested name) |
+| Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
+| [`ask_each`](@ref) in flight | 16 | 16 | 8 | 1 |
+| Recordings filed under | `/v1/systemone` | `/openai-decisions/v1/decisions` | `/gemini-decisions/v1beta/decisions` | `/ollama/v1/systemone` |
+| Status | `jev-latest` and `jev-preview` are Jev 1.14 (2 November 2026); images "dreamer-ready" (25 October 2026) | generally available (25 October 2026) | Beta, released 11 November 2026; measured on 16 November 2026 | measured with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026); the live suite passed unchanged on Ollama 0.40.14 (3 November 2026) |
 
 The Where a picture may stand row is what UniLM sends. TypeSafe takes a picture "anywhere text can go in a System
 One request" ([Images](https://docs.typesafe.ai/images)). OpenAI's API takes pictures in the input and in a
 question's instructions, the latter one of the additions its guide lists since the public beta
 ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions#include-images-in-question-instructions)),
-and UniLM sends both. Ollama takes a request's pictures as one list, `images`, shared by every question
+and UniLM sends both. Google's takes pictures in the input alone: "Question instructions accept text only"
+([Limitations](https://ai.google.dev/gemini-api/docs/decisions-api#limitations)). Ollama takes a request's pictures as one list, `images`, shared by every question
 ([System One](https://docs.ollama.com/api/systemone)), apart from the state's text, and by Ollama's source Clef reads
 them before that text ([decision/clef.go](https://github.com/ollama/ollama/blob/v0.40.11/decision/clef.go)); UniLM
 refuses a picture after a text on every model. Each entry has the rest: [Jev's Images](@ref jev_images),
-[OpenAI's Questions](@ref openai_decisions_questions) and [Ollama's Images](@ref ollama_decisions_images).
+[OpenAI's Questions](@ref openai_decisions_questions), [Gemini's Images](@ref gemini_decisions_images) and
+[Ollama's Images](@ref ollama_decisions_images).
 
-- **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at `https://api.openai.com`; Ollama at the
+- **Hosts.** Jev answers at `https://api.typesafe.ai`, OpenAI at `https://api.openai.com` and Gemini at
+  `https://generativelanguage.googleapis.com`; Ollama at the
   endpoint's host: `OLLAMA_HOST`, else `http://127.0.0.1:11434` ([Setup](@ref ollama_decisions_setup)).
 - **Other models.** On Jev, a call may name `jev-preview`, or a version such as `jev-1.13.0`, instead
   ([Models](@ref jev_models)); on Ollama, any installed decision model
@@ -154,7 +158,8 @@ refuses a picture after a text on every model. Each entry has the rest: [Jev's I
   recordings, and a replay never answers one provider with another's answer. The options that change how a request
   is served but never what it is answered — OpenAI's three, Ollama's `keep_alive` — are left out of the key and the
   file; TypeSafe's `long_context` and the runner an `OllamaEndpoint` names are part of the key. Recording needs
-  each provider's access — `TYPESAFE_API_KEY`, `OPENAI_API_KEY` or a running Ollama server — and replaying needs
+  each provider's access — `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` or a running Ollama server — and
+  replaying needs
   none ([Test and Develop](@ref jev_testing_recorded)).
 
 A timeout you set yourself — `config =`, [`with_request_config`](@ref) or [`set_default_config!`](@ref) — replaces
@@ -192,14 +197,15 @@ None of these reached a server. A wrapper refuses rather than adapts: dropping a
 image as text, would answer a question you did not write, and the answer would carry no sign of the change. The
 question types themselves set no limit, so a program built for one provider is checked against another's rules
 only when it is sent there. Each entry's Limits and refusals section lists its refusals:
-[Jev](@ref jev_limits), [OpenAI](@ref openai_decisions_limits), [Ollama](@ref ollama_decisions_limits).
+[Jev](@ref jev_limits), [OpenAI](@ref openai_decisions_limits), [Gemini](@ref gemini_decisions_limits),
+[Ollama](@ref ollama_decisions_limits).
 
 ## [One formula, calibrated per model](@id backends_confidence)
 
 **The job:** act on an answer only when the provider is sure enough, on whichever provider answers. **Without a
 shared definition:** each provider's "confidence" is its own number. **With one:** TypeSafe sends `confidence` by one
-formula, UniLM computes it by the same formula on Ollama, and OpenAI's own value matched it in the Choice answers
-recorded here; how much a value is worth still depends on the model, so a threshold is tuned for each.
+formula, UniLM computes it by the same formula on Ollama and on Gemini's Decisions API, and OpenAI's own value
+matched it in the Choice answers recorded here; how much a value is worth still depends on the model, so a threshold is tuned for each.
 
 `confidence` is TypeSafe's published measure ([Confidence](https://docs.typesafe.ai/confidence)):
 `(n·p_max − 1)/(n − 1)` for a Choice of `n` options, and `1 − Σᵢ pᵢ·|i − m| / MAD_unif` for a Score whose most
@@ -208,7 +214,9 @@ Choice formula, to two decimals, in every Choice answer recorded for this manual
 ([Confidence and tuning](@ref openai_decisions_confidence)). Ollama documents its own measure,
 `1 − H(p)/ln N`, a measure of the whole distribution's entropy ([System One](https://docs.ollama.com/api/systemone)),
 so the Ollama wrapper computes TypeSafe's from the probabilities for every model and keeps the server's value in
-the answer's `raw` ([Confidence and tuning](@ref ollama_decisions_confidence)):
+the answer's `raw` ([Confidence and tuning](@ref ollama_decisions_confidence)). Google's own `confidence` is the
+top probability, so the Gemini wrapper does the same
+([Confidence and tuning](@ref gemini_decisions_confidence)):
 
 ```@example choosing
 team, a = results[4, 3]          # the Norway question, answered by tev1
@@ -254,8 +262,8 @@ one provider does not carry over to another.
   ([Act on the answer](@ref jev_act_on_answer)).
 - A `decide` policy that prices mistakes ([When mistakes have different prices](@ref jev_loss_matrix)) trusts the
   probabilities to be calibrated: check them on a provider before you move the policy there.
-- On Ollama, gate on `confidence`, not on `raw["confidence"]`, when a threshold must mean what it means on the
-  other providers.
+- On Ollama and on Gemini's Decisions API, gate on `confidence`, not on `raw["confidence"]`, when a threshold must
+  mean what it means on the other providers.
 
 Recorded on 28 September 2026 on `jev-1.13.0` with UniLM's development branch after 0.21.0, and on 19 October 2026
 on `gpt-6-luna` and on `tev1:0.8b` (Ollama 0.40.6) with UniLM's development branch after 0.23.0, through

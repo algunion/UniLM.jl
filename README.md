@@ -109,6 +109,7 @@ and a language model when the output is text a person reads. Each decision provi
 | :--- | :--- | :--- | :--- |
 | [Jev (TypeSafe)](https://algunion.github.io/UniLM.jl/dev/decisions/jev/) | `TYPESAFEServiceEndpoint` | `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL` | `jev-latest` |
 | [OpenAI Decisions API](https://algunion.github.io/UniLM.jl/dev/decisions/openai/) | `OPENAIServiceEndpoint` | `OPENAI_API_KEY` | `gpt-6-luna` |
+| [Gemini Decisions API](https://algunion.github.io/UniLM.jl/dev/decisions/gemini/) | `GEMINIServiceEndpoint` | `GEMINI_API_KEY` | `gemini-decision-1` |
 | [Local decision models](https://algunion.github.io/UniLM.jl/dev/decisions/ollama/) | `OllamaEndpoint()` | `OLLAMA_HOST`, `OLLAMA_API_KEY` | none: a call names one |
 
 The same decision on each, from the first decision of each entry, with the answers they recorded:

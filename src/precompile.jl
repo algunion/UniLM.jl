@@ -3,7 +3,7 @@
 #
 # Runs once, while the package image is built, so that a session's first System
 # One call — `ask`, `ask_each`, `nl_dispatch`, `nl_classify` or `@branch`, on
-# TypeSafe, OpenAI's Decisions API or Ollama — costs what the
+# TypeSafe, OpenAI's or Gemini's Decisions API or Ollama — costs what the
 # network costs, not what compiling its path costs: building and encoding the
 # request (images and multipart parts included), the exchange and its recording
 # seam, decoding the reply or an error body, checking the answers, and planning a
@@ -111,9 +111,11 @@ function _workload_decision(q::AbstractDict)::JSON.Object{String,Any}
 end
 
 # Which wire a keyed path belongs to: a recording is filed under its backend's namespace
-# (`/openai-decisions/…`, `/ollama/…`; TypeSafe's under the plain path).
+# (`/openai-decisions/…`, `/gemini-decisions/…`, `/ollama/…`; TypeSafe's under the plain path).
+# Gemini's answers are in the System One JSON form, keyed by name.
 _workload_decisions(path::AbstractString)::Bool = endswith(path, _DECISIONS_PATH)
 _workload_ollama(path::AbstractString)::Bool = startswith(path, "/ollama/")
+_workload_gemini(path::AbstractString)::Bool = startswith(path, "/gemini-decisions/")
 
 # The reply to the request `body` sent to the keyed `path`: a models listing, a Decisions
 # reply, or a reply in the System One JSON form (Ollama's with its cache count).
@@ -146,9 +148,10 @@ function _workload_reply(path::String, body::String)::JSON.Object{String,Any}
     reply
 end
 
-# The header a backend sends its request id in, by keyed path; Ollama sends none.
+# The header a backend sends its request id in, by keyed path; Ollama and Gemini send none.
 _workload_id_header(path::AbstractString)::Union{Nothing,String} =
-    _workload_ollama(path) ? nothing : _workload_decisions(path) ? "x-request-id" : "x-typesafe-request-id"
+    _workload_ollama(path) || _workload_gemini(path) ? nothing :
+    _workload_decisions(path) ? "x-request-id" : "x-typesafe-request-id"
 
 _workload_headers(path::AbstractString)::Vector{Pair{String,String}} =
     (h = _workload_id_header(path); isnothing(h) ? Pair{String,String}[] : [h => "req_precompile"])
@@ -172,7 +175,7 @@ _workload_images() = (ImageAttachment(_WORKLOAD_PNG),
 
 # The backends of the workload, each with a model to name: the default where there is one.
 _workload_backends() = ((TYPESAFEServiceEndpoint, nothing), (OPENAIServiceEndpoint, nothing),
-                        (OllamaEndpoint(; base_url = "http://127.0.0.1:11434"), "tev1:0.8b"))
+                        (GEMINIServiceEndpoint, nothing), (OllamaEndpoint(; base_url = "http://127.0.0.1:11434"), "tev1:0.8b"))
 
 # Error bodies in each backend's shapes, with the headers that carry a request id or a
 # wait; two TypeSafe failures get a hint.
@@ -192,6 +195,11 @@ function _workload_errors(p::SystemOneProtocol)::Vector{Tuple{Int,Vector{Pair{St
         [(404, id, """{"error":{"message":"The model does not exist.","type":"invalid_request_error","param":null,"code":"model_not_found"}}"""),
          (429, [id; retry], """{"error":{"message":"Rate limit reached.","type":"requests","param":null,"code":null}}"""),
          (500, Pair{String,String}[], "upstream connect error")]
+    elseif p isa GeminiDecisionsProtocol
+        [(400, Pair{String,String}[], """{"error":{"message":"Missing text in content of type text.","code":"invalid_request"}}"""),
+         (400, Pair{String,String}[], """{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}"""),
+         (429, retry, """{"error":{"code":429,"message":"Resource exhausted.","status":"RESOURCE_EXHAUSTED"}}"""),
+         (503, Pair{String,String}[], "upstream connect error")]
     else
         [(404, Pair{String,String}[], """{"error":"model 'tev1:0.8b' not found"}"""),
          (400, Pair{String,String}[], """{"error":"too many options"}"""),

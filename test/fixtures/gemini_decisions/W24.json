@@ -1,0 +1,37 @@
+{
+ "tag": "W24",
+ "utc": "2026-11-16T09:22:48+00:00",
+ "path": "/v1beta/decisions",
+ "request": {
+  "model": "gemini-decision-1",
+  "input": "The package arrived with a broken screen.",
+  "questions": {
+   "c": {
+    "type": "choice",
+    "instructions": "Which word fits best?",
+    "criteria": {
+     "tab\there": "",
+     "ok": ""
+    }
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"gemini-decision-1\",\"input\":\"The package arrived with a broken screen.\",\"questions\":{\"c\":{\"type\":\"choice\",\"instructions\":\"Which word fits best?\",\"criteria\":{\"tab\\there\":\"\",\"ok\":\"\"}}}}",
+ "status": 400,
+ "headers": {
+  "vary": "Origin,Accept-Encoding",
+  "content-type": "application/json; charset=UTF-8",
+  "date": "Mon, 16 Nov 2026 09:22:48 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=54",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.1469,
+ "body_text": "{\"error\":{\"message\":\"* CreateDecisionRequest.questions[c].choice.criteria[tab\\there]: has an id containing a control character or Unicode separator; ids must not contain newlines, tabs, non-ASCII spaces, or other control or format characters\\n\",\"code\":\"invalid_request\"}}"
+}

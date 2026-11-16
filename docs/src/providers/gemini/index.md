@@ -14,7 +14,8 @@ caching, managed agents such as Deep Research, music and video generation — no
 verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
 ([Background requests](@ref gemini_background)). `speak` reads aloud through Gemini TTS, and
-`transcribe` refuses both endpoints ([Audio](@ref gemini_audio)).
+`transcribe` refuses both endpoints ([Audio](@ref gemini_audio)). Google's Decisions API, which `ask` speaks through
+`GEMINIServiceEndpoint`, has an entry of its own: [Gemini Decisions API](@ref gemini_decisions_start).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:gemini)
@@ -343,4 +344,5 @@ Recorded on 25 October 2026 on `gemini-3.8-flash` with UniLM's development branc
 API at `v1beta`.
 
 See also: [`GEMINIServiceEndpoint`](@ref), [`GEMINIOpenAIServiceEndpoint`](@ref), [`Chat`](@ref),
-[`chatrequest!`](@ref), [`Respond`](@ref) and [`respond`](@ref) in the API reference.
+[`chatrequest!`](@ref), [`Respond`](@ref) and [`respond`](@ref) in the API reference; the
+[Gemini Decisions API](@ref gemini_decisions_start) in the Decisions chapter.

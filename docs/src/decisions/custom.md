@@ -56,10 +56,12 @@ methods make it a provider. They are UniLM's public extension API, not exported:
 | [`UniLM.encode_system_one`](@ref UniLM.encode_system_one)`(p, service, request)` | returns the [`UniLM.SystemOneWire`](@ref UniLM.SystemOneWire) the request is sent as, and what a recording is keyed on; throws, before any I/O, an `ArgumentError` naming your provider, the rule and the fix for what your wire cannot carry; sends the default model when `request.model` is `nothing` |
 | [`UniLM.decode_system_one`](@ref UniLM.decode_system_one)`(p, service, request, response)` | returns the typed result of the reply: a [`SystemOneSuccess`](@ref), or a [`SystemOneFailure`](@ref) for a status other than 200; throws for a 200 that is no usable answer, which [`ask`](@ref) returns as a [`SystemOneCallError`](@ref) |
 
-Three protocols ship with UniLM: [`UniLM.TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) (TypeSafe's
+Four protocols ship with UniLM: [`UniLM.TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) (TypeSafe's
 `POST /v1/systemone`), [`UniLM.OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol) (OpenAI's
-`POST /v1/decisions`, for `OPENAIServiceEndpoint`) and [`UniLM.OllamaSystemOneProtocol`](@ref UniLM.OllamaSystemOneProtocol)
-(Ollama's `POST /v1/systemone`, for `OllamaEndpoint`). The endpoint itself declares `:system_one` in
+`POST /v1/decisions`, for `OPENAIServiceEndpoint`), [`UniLM.GeminiDecisionsProtocol`](@ref UniLM.GeminiDecisionsProtocol)
+(Gemini's `POST /v1beta/decisions`, for `GEMINIServiceEndpoint`) and
+[`UniLM.OllamaSystemOneProtocol`](@ref UniLM.OllamaSystemOneProtocol) (Ollama's `POST /v1/systemone`, for
+`OllamaEndpoint`). The endpoint itself declares `:system_one` in
 [`provider_capabilities`](@ref) and gives its credentials in
 `auth_header`, which UniLM reads only when a request goes out, so a replay needs no key. The rest is shared by every
 provider: the provider, model and options a call resolves ([`with_system_one`](@ref)), recording and replay,

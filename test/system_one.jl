@@ -261,6 +261,9 @@ struct _S1Undeclared <: UniLM.ServiceEndpoint end
     end
     e = _s1_caught(() -> ask("s", noul("q?"); service=AZUREServiceEndpoint))
     @test e isa ArgumentError && contains(e.msg, "System One API is not supported by AZUREServiceEndpoint")
+    @test UniLM.system_one_protocol(GEMINIServiceEndpoint) === UniLM.GeminiDecisionsProtocol()
+    e = _s1_caught(() -> ask("s", noul("q?"); service=GEMINIOpenAIServiceEndpoint))
+    @test e isa ArgumentError && contains(e.msg, "System One API is not supported by GEMINIOpenAIServiceEndpoint")
 end
 
 @testset "System One — another backend's namespace never replays TypeSafe's recordings" begin
@@ -575,6 +578,14 @@ end
         @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
     end
     @test !ran[]
+    # Gemini's Decisions API takes no option at all: the scope and the encoder refuse alike.
+    for options in ((long_context = true,), (keep_alive = 5, prompt_cache_key = "k"))
+        e = _s1_caught(() -> with_system_one(() -> (ran[] = true), GEMINIServiceEndpoint; options...))
+        sent = _s1_caught(() -> UniLM.encode_system_one(UniLM.GeminiDecisionsProtocol(), GEMINIServiceEndpoint,
+                                                       SystemOneRequest("s", q; options)))
+        @test e isa ArgumentError && sent isa ArgumentError && e.msg == sent.msg
+    end
+    @test !ran[]
     # A protocol UniLM does not wrap checks its options, if at all, when it sends: the scope runs f.
     @test with_system_one(() -> (ran[] = true; :ran), _XEndpoint; temperature=0, anything="goes") === :ran
     @test ran[]
@@ -681,6 +692,8 @@ end
           enc(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, choice("Which?", ["a" => ["x", "y"], "b" => nothing]))
     @test enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(("Is it", "red?"))) ==
           enc(UniLM.OpenAIDecisionsProtocol(), OPENAIServiceEndpoint, noul(["Is it", "red?"]))
+    @test enc(UniLM.GeminiDecisionsProtocol(), GEMINIServiceEndpoint, noul(("Is it", "red?"))) ==
+          enc(UniLM.GeminiDecisionsProtocol(), GEMINIServiceEndpoint, noul(["Is it", "red?"]))
 end
 
 @testset "System One — score refuses levels that are not a vector with an ArgumentError, as choice refuses its criteria" begin

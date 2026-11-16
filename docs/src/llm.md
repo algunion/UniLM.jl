@@ -40,7 +40,7 @@ UniLM.jl wraps these surfaces:
 3. **Image Generation** (`ImageGeneration` + `generate_image`, `ImageEdit` + `edit_image`) — text-to-image and edits with OpenAI's `gpt-image-2.5-sunburst`, or Gemini's Nano Banana (`gemini-nano-banana-2.1`) with `service=GEMINIServiceEndpoint`.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter; the task prompts of EmbeddingGemma and `gemini-embedding-2` via `task`; images and audio (`EmbeddingInput`) through Ollama.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
-6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over three backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
+6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
 7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and realtime, through `OPENAIServiceEndpoint`. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
 
 **Which API to use:**
@@ -342,7 +342,7 @@ end
 
 **Audio replies**: `AudioOutput(; id, data, expires_at, transcript)` — fields `id::String`, `data::Vector{UInt8}` (decoded from base64), `format::Union{String,Nothing}` (`"wav"`, `"mp3"`, `"flac"`, `"opus"`, `"aac"` by file signature; `nothing` for raw `pcm16`), `expires_at::Union{Int,Nothing}` (Unix seconds — until then OpenAI keeps the audio for later turns, and it answered an id it never issued with HTTP 400 `audio_not_found`; `nothing` when the reply names none, or when a stream closed after the turn's finish, before the update that alone carries it — the turn is kept either way; an `expires_at` that is not an integer fails a call that is not streamed, while a stream drops that update — counted in `sse_dropped`, with one warning — and keeps the turn with `expires_at = nothing`), `transcript::String`; an empty `id` throws `ArgumentError`. A Chat with `modalities=["text", "audio"]` and `audio=Dict("voice" => …, "format" => …)` (e.g. `gpt-audio-1.5`) gets it on the reply's `audio_output`, streamed (assembled from `delta.audio`; the transcript is forwarded to the callback as text) or not, with `content` = the transcript (also when the turn's `content` is unset or empty). Sent back on `OPENAIServiceEndpoint` and `AZUREServiceEndpoint` as `{"role":"assistant","content":content,"audio":{"id":id}}` until a minute before `expires_at` (always when it is `nothing`), and from then on as the content alone, which every other encoder sends. On `OPENAIServiceEndpoint`, `estimated_cost` bills its audio tokens at the model's audio-token rates (`gpt-audio-1.5`; see `TokenUsage`).
 
-**Attachments**: `ImageAttachment(path_or_bytes; detail=nothing)` (PNG, JPEG, GIF or WebP; `detail` ∈ `"auto"`, `"low"`, `"high"`, `"original"`), `AudioAttachment(path_or_bytes)` (WAV or MP3) and `DocumentAttachment(path)` / `DocumentAttachment(bytes; filename="document.pdf")` (PDF: `%PDF-` only, else `ArgumentError("document data is not PDF (checked by file signature; N bytes)")`; a blank `filename` throws), all `<: Attachment`, recognised by their leading bytes (a URL in place of a path throws). OpenAI-wire endpoints send them as `image_url` (data URL; `detail` only when set) / `input_audio` / `file` (`{"filename", "file_data": "data:application/pdf;base64,…"}`) content parts after the text part; `OllamaEndpoint` sends images and clips in the message's `images` and refuses a document and a detail level; native Anthropic sends an image and a document as base64 `image` / `document` blocks before the text and throws for a sound clip or an image `detail`; native Gemini sends every kind as an `inlineData` part ahead of the text, an image's `detail` as its per-part media resolution (`"low"`/`"high"`; `"auto"` sends none; `"original"`, or any level on the Gemini 2.5 and Gemma 4 models, throws), and on `respond` (Interactions) as `image`/`audio`/`document` parts of an `InputMessage`'s content; a System One request refuses documents, and an image's detail level except on OpenAI's Decisions API, whose `input_image` part takes it; an embeddings input refuses documents and detail levels. Each refusal is an `ArgumentError` before any request.
+**Attachments**: `ImageAttachment(path_or_bytes; detail=nothing)` (PNG, JPEG, GIF or WebP; `detail` ∈ `"auto"`, `"low"`, `"high"`, `"original"`), `AudioAttachment(path_or_bytes)` (WAV or MP3) and `DocumentAttachment(path)` / `DocumentAttachment(bytes; filename="document.pdf")` (PDF: `%PDF-` only, else `ArgumentError("document data is not PDF (checked by file signature; N bytes)")`; a blank `filename` throws), all `<: Attachment`, recognised by their leading bytes (a URL in place of a path throws). OpenAI-wire endpoints send them as `image_url` (data URL; `detail` only when set) / `input_audio` / `file` (`{"filename", "file_data": "data:application/pdf;base64,…"}`) content parts after the text part; `OllamaEndpoint` sends images and clips in the message's `images` and refuses a document and a detail level; native Anthropic sends an image and a document as base64 `image` / `document` blocks before the text and throws for a sound clip or an image `detail`; native Gemini sends every kind as an `inlineData` part ahead of the text, an image's `detail` as its per-part media resolution (`"low"`/`"high"`; `"auto"` sends none; `"original"`, or any level on the Gemini 2.5 and Gemma 4 models, throws), and on `respond` (Interactions) as `image`/`audio`/`document` parts of an `InputMessage`'s content; a System One request refuses documents, and an image's detail level except on OpenAI's Decisions API, whose `input_image` part takes it, and on Gemini's, which sends it as an image block's `resolution` (`"low"`/`"high"`; `"auto"` sends none; `"original"` throws) and refuses a sound clip; an embeddings input refuses documents and detail levels. Each refusal is an `ArgumentError` before any request.
 
 **Reasoning**: `reasoning_text(m::Message)` / `reasoning_text(r::LLMSuccess)` → the thinking text a provider returned (`:ollama` `thinking`, `:deepseek` `reasoning_content`, `:anthropic` thinking blocks joined by a blank line, `:gemini` the thought summaries a native Chat that sets `reasoning_effort` asks for (`includeThoughts`; the Chat sends them back with the reply's other parts, where they bill as input on the next turn), `:mistral` the thinking chunks of a reply, streamed or not, `:generic` the `reasoning_content` or `reasoning` of another generic server's reply, such as llama-server's or vLLM's), else `nothing`; throws `LLMResultError` on a failure result. On native Anthropic, a `reasoning_effort` level from `"low"` to `"max"` is the request's `output_config.effort`, and what else it sends follows the model's Thinking cell in the Claude family table ([Reasoning](@ref anthropic_reasoning)): on a model with adaptive thinking, `thinking = {"type": "adaptive", "display": "summarized"}`, so `reasoning_text` holds the summarized thinking; on a model with extended thinking (`budget_tokens`) only, the effort alone. `"none"` sends no effort: what it sends instead — `thinking = {"type": "disabled"}`, `{"type": "between_tools"}` or nothing — follows the same cell, and a model whose thinking cannot be disabled refuses it. A model whose Effort levels cell is "—" refuses every `reasoning_effort`, `"none"` included.
 
@@ -1344,7 +1344,8 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   bills its input tokens alone, whatever tier a reply names — the uncached ones at the
   row's `input` rate, cache reads at `cached_input`, cache writes at OpenAI's write rates
   (`gpt-6-luna`: 1.25 times `input`, 2.5 times for a 12-hour write), every rate twice
-  above 272K input tokens — and no output; one from a local model on an
+  above 272K input tokens — and no output; one from Gemini's Decisions API bills its
+  input tokens at the row's `input` rate and no output; one from a local model on an
   `OllamaEndpoint` costs `0.0` unless the caller gave the model's exact name a row (not one
   UniLM ships) or `model=` is passed, as do its chat, embeddings, Responses and FIM results (a cloud model reached through Ollama, a
   tag of `cloud` or ending in `-cloud`, is priced by the requested name).
@@ -1910,12 +1911,12 @@ result = prefix_complete(chat)
 
 ---
 
-## System One API (Jev, OpenAI Decisions, Ollama)
+## System One API (Jev, OpenAI Decisions, Gemini Decisions, Ollama)
 
 A System One model answers enumerated questions about a piece of `state` with a
 probability distribution over the outcomes you named — no generated text, no
 parsing. The generic surface below works with any backend that declares
-`:system_one`. Three ship, each behind a wrapper (its protocol) that checks
+`:system_one`. Four ship, each behind a wrapper (its protocol) that checks
 before anything is sent what its wire cannot carry, with an `ArgumentError`
 naming the backend, the rule and the fix:
 
@@ -1923,6 +1924,7 @@ naming the backend, the rule and the fix:
 | --- | --- | --- |
 | TypeSafe's Jev (default) | `TYPESAFEServiceEndpoint` (`TYPESAFE_API_KEY`) | `TYPESAFE_DEFAULT_MODEL`, else `"jev-latest"` |
 | OpenAI's Decisions API (generally available; [OpenAI Decisions API](@ref openai_decisions_start)) | `OPENAIServiceEndpoint` (`OPENAI_API_KEY`) | `"gpt-6-luna"` (the only model) |
+| Google's Gemini Decisions API (Beta, v1beta; [Gemini Decisions API](@ref gemini_decisions_start)) | `GEMINIServiceEndpoint` (`GEMINI_API_KEY`) | `"gemini-decision-1"` (the only model) |
 | Ollama decision models (Ollama ≥ 0.35; images ≥ 0.35.1; the MLX tev1 and clef-flash ≥ 0.40.0; measured on 0.40.6; live suite passed unchanged on 0.40.14, 3 November 2026) | `OllamaEndpoint()` (no key) | none: `model = "tev1:4b"` (`"clef-flash:9b"` for images) or a `with_system_one` model, else `ArgumentError` |
 
 Each wrapper's rules, refused before any I/O (on every backend also a `DocumentAttachment`, which no System One wire carries, and on TypeSafe and Ollama an image's `detail` level, for which their wires have no field):
@@ -1954,6 +1956,18 @@ Each wrapper's rules, refused before any I/O (on every backend also a `DocumentA
   `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128),
   `prompt_cache_options::PromptCacheOptions` (`mode`; `ttl` `"30m"` or `"12h"`;
   `prewarm` / `comparison_response_id` refused).
+- **Gemini:** 1–1,000 questions, each named by `^[A-Za-z0-9_-]{1,64}$`;
+  `instructions` on every question, text only: a non-empty string, or a
+  vector/tuple of non-empty strings (→ `text` blocks, joined by Google with no
+  separator; an object, an image or anything else refused); Choice 2–255 options,
+  each name 1–128 characters and ≤ 512 bytes, no leading or trailing whitespace,
+  no control (Cc), format (Cf) or separator character but the ASCII space, a
+  description a string or `nothing` (→ `""`); Score 2–255 levels, each a
+  non-empty string; a Noul's `yes`/`no` strings; Box refused; images only in the
+  state (an `ImageAttachment`, or a vector or tuple of strings and images),
+  ≤ 100 MiB of image bytes in all, `detail="original"` refused; a blank state, an
+  empty vector state or text block, a `Message` in the state, an `AudioAttachment`
+  anywhere and every provider option refused.
 - **Ollama:** see the Ollama bullet under Service Endpoints: 1–64 questions,
   `instructions` required by Ollama's API reference, and not blank, 2–255 options
   (its `minProperties: 2`), 2–10 levels (a
@@ -2015,6 +2029,36 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   reads at its cached rate (0.01), cache writes at OpenAI's write rates (0.125; 0.25
   for a 12-hour write), every rate twice above 272K input tokens, and no output
   ([Cost](@ref openai_decisions_cost)).
+- **Gemini's Decisions wire.** `POST https://generativelanguage.googleapis.com/v1beta/decisions`
+  with `x-goog-api-key` and `{model, input, questions}`, the model sent as written
+  (`"models/gemini-decision-1"` is answered too). `input` is the state string, a JSON
+  value's JSON text, or — for an `ImageAttachment` or a vector or tuple of strings and
+  images — content blocks in order (`{type: "text", text}`, `{type: "image", mime_type,
+  data, resolution?}`, `data` the base64 bytes); a recording keys and stores each image's
+  `data` as `data:<mime>;sha256,<hex>`. `questions` is a map keyed by name: `noul` →
+  `{type: "noul", instructions, criteria?: {true_description?, false_description?}}`,
+  `choice` → `{type: "choice", instructions, criteria: {option: description or ""}}`
+  (Google sorts the options by UTF-8 bytes before evaluating; ties go to the first),
+  `score` → `{type: "score", instructions, criteria: [levels]}`, a `RawQuestion`
+  verbatim. Answers come back keyed by name in TypeSafe's shape (`noul`; `choice`,
+  `probabilities`; `score`, `legend`, `probabilities` keyed `"0"`…), unrounded:
+  probability-sum tolerance and argmax slack 1e-6. Choice/Score `confidence` is
+  recomputed with TypeSafe's formulas (Google's, the top probability, stays in
+  `raw`). A 200 whose `prompt_feedback.block_reason` is set is a `RefusalAnswer`
+  for every question, its `raw` the `block_reason` and `block_reason_message`. The
+  reply names no model (`response.model` is the requested one without one leading
+  `models/`, which `estimated_cost` prices as the bare id) and no request id
+  (`nothing`). Usage: prompt = `total_input_tokens` (images, video frames and PDF
+  pages as image tokens), completion = `total_output_tokens` (always 0), cached =
+  `total_cached_tokens`, `prompt_audio_tokens` the input's audio modality; a bad
+  count reads as 0 with a warning. An error body `{"error": {code, message}}` gives
+  `error_type` = `code` when a string (`"invalid_request"`, `"not_found"`; a blocked
+  input `"safety"`, `"prohibited_content"`, `"blocklist"`, `"image_safety"`,
+  `"content_blocked"`), else `status` (`"INVALID_ARGUMENT"` for a bad key).
+  `estimated_cost` bills the input tokens at the row's input rate
+  (`gemini-decision-1`: 0.10 USD per million, every modality) and no output; the
+  default bounds of a hosted backend, 60 s per attempt and 150 s in all, and
+  `ask_each` 8 in flight ([Cost](@ref gemini_decisions_cost)).
 
 ```julia
 # What a piece of guidance may be: string | object | array (a vector or a tuple) | image (an image only where the backend sends images)
@@ -2250,6 +2294,7 @@ connections per host, kept 30 s), created by the first live request.
 
 - [Jev (TypeSafe)](@ref jev_start): `service = TYPESAFEServiceEndpoint`; reads `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`; default model `jev-latest`
 - [OpenAI Decisions API](@ref openai_decisions_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-luna`
+- [Gemini Decisions API](@ref gemini_decisions_start): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-decision-1`
 - [Local decision models](@ref ollama_decisions_start): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 
 ```@setup generated
@@ -2262,6 +2307,7 @@ connections per host, kept 30 s), created by the first live request.
 abstract type SystemOneProtocol end
 struct TypeSafeProtocol <: SystemOneProtocol end    # TypeSafe's wire; the trait's untyped fallback
 struct OpenAIDecisionsProtocol <: SystemOneProtocol end   # OpenAI's /v1/decisions; system_one_protocol(::Type{OPENAIServiceEndpoint})
+struct GeminiDecisionsProtocol <: SystemOneProtocol end   # Gemini's /v1beta/decisions; system_one_protocol(::Type{GEMINIServiceEndpoint})
 struct OllamaSystemOneProtocol <: SystemOneProtocol end   # Ollama's /v1/systemone; system_one_protocol(::OllamaEndpoint)
 
 UniLM.system_one_protocol(service) -> SystemOneProtocol    # Holy trait: Type{T} for singletons, instances
@@ -2346,7 +2392,8 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   so is a miss or lost recording of a call its callback or on_tool_call made (as the callback threw it)
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
-    #   System One backend other than TypeSafe ("/openai-decisions/v1/decisions", "/ollama/v1/systemone");
+    #   System One backend other than TypeSafe ("/openai-decisions/v1/decisions",
+    #   "/gemini-decisions/v1beta/decisions", "/ollama/v1/systemone");
     #   a request keyed on more (TypeSafe's long_context, list_input_items' limit, order and after,
     #   as sorted name=<JSON> lines; System One image-part digests) appends "\n" * that text to the
     #   body it is keyed on;
@@ -2358,7 +2405,8 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   "data:<mime>;base64,<payload>" (an OpenAI chat image_url, a Decisions or Responses
     #   input_image) reads "data:<mime>;sha256,<hex sha256 of the payload text>" (key, file and
     #   ReplayMissError alike; the request sent is unchanged); so are the images of an Ollama System One
-    #   request ("images") and the image/audio of an Ollama /api/embed item (`record_body`, the body keyed);
+    #   request ("images"), a Gemini Decisions image block's "data" and the image/audio of an Ollama
+    #   /api/embed item (`record_body`, the body keyed);
     #   media sent another way (Ollama chat "images", "input_audio") is written as sent
     # {"request": {method, path, body, key_extra (only when not empty)},
     #  "response": {status, request_id, request_id_header, headers, body | stream}, "recorded_at"}
@@ -2687,7 +2735,7 @@ has_capability(service, cap::Symbol) -> Bool
 |---|---|
 | OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
-| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech` |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API) |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
@@ -2742,7 +2790,7 @@ end
   1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
   2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
   3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions; `reset_default_config!()` or `set_default_config!(nothing)` (both `-> nothing`) clears it, after which calls resolve exactly as if none had ever been set;
-  4. a backend's own default — System One: `ask`, `ask_each` and the NL verbs on TypeSafe's wire and on OpenAI's Decisions API, and `list_models` on TypeSafe, use `request_timeout = 60`, `total_deadline = 150`; Ollama brings none — or a model's own default: `chatrequest!` and `respond` to a Gemini 4 model (`gemini-4-…` on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`) use `request_timeout = stream_idle_timeout = total_deadline = 1200` (Google ends a non-streamed Argon call after 10 minutes, a stream after 20, and advises a 20-minute read timeout). Either applies only while channels 1–3 supply nothing: a process default you set, even one equal to the built-in defaults, replaces it;
+  4. a backend's own default — System One: `ask`, `ask_each` and the NL verbs on TypeSafe's wire and on OpenAI's and Gemini's Decisions APIs, and `list_models` on TypeSafe, use `request_timeout = 60`, `total_deadline = 150`; Ollama brings none — or a model's own default: `chatrequest!` and `respond` to a Gemini 4 model (`gemini-4-…` on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`) use `request_timeout = stream_idle_timeout = total_deadline = 1200` (Google ends a non-streamed Argon call after 10 minutes, a stream after 20, and advises a 20-minute read timeout). Either applies only while channels 1–3 supply nothing: a process default you set, even one equal to the built-in defaults, replaces it;
   5. the built-in defaults above.
   `current_config()` returns the ambient struct (active scope, else the process default you set, else the built-in defaults) — channel 4 is never in it.
 
@@ -3054,14 +3102,15 @@ instead (the session closes with cause `:crash`), and a call on a closed session
 
 ## Public Extension API (not exported)
 
-Declared public, not exported (19 names) — qualify them (`UniLM.get_url`). These
+Declared public, not exported (20 names) — qualify them (`UniLM.get_url`). These
 are the functions a new backend adds methods to and the stream-state types its
 handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url`, `auth_header`,
 `default_model`, `encode_request`, `decode_response`, `handle_sse_event!`,
 `StreamState`, `encode_agentic`, `decode_agentic`, `decode_agentic_stream`,
 `AgenticStreamState`; and the System One protocol seam: `SystemOneProtocol`,
-`TypeSafeProtocol`, `OpenAIDecisionsProtocol`, `OllamaSystemOneProtocol`,
-`system_one_protocol`, `encode_system_one`, `decode_system_one`, `SystemOneWire`.
+`TypeSafeProtocol`, `OpenAIDecisionsProtocol`, `GeminiDecisionsProtocol`,
+`OllamaSystemOneProtocol`, `system_one_protocol`, `encode_system_one`,
+`decode_system_one`, `SystemOneWire`.
 
 ---
 

@@ -1623,6 +1623,8 @@ close(_RL_MOCK.server)
     @test UniLM._media_digest(img) == UniLM._image_digest("data:image/png;base64," * b64)
     @test startswith(UniLM._media_digest(wav), "data:audio/wav;sha256,")
     @test length(UniLM._media_digest(img)) == length("data:image/png;sha256,") + 64
+    block = UniLM._gemini_decisions_image(img)
+    @test block["data"] == b64 && UniLM._gemini_decisions_keyed(block)["data"] == UniLM._media_digest(img)
     mp3 = AudioAttachment(Vector{UInt8}("ID3" * "\0"^7))
     for (clip, mime) in ((wav, "audio/wav"), (mp3, "audio/mpeg"))
         @test UniLM._media_digest(clip) == UniLM._image_digest("data:$mime;base64," * UniLM.Base64.base64encode(clip.data))

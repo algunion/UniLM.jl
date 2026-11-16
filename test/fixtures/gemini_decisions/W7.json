@@ -1,0 +1,31 @@
+{
+ "tag": "W7",
+ "utc": "2026-11-16T09:18:54+00:00",
+ "path": "/v1/decisions",
+ "request": {
+  "model": "gemini-decision-1",
+  "input": "The package arrived with a broken screen.",
+  "questions": {
+   "damaged": {
+    "type": "noul",
+    "instructions": "Does the customer report a damaged item?"
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"gemini-decision-1\",\"input\":\"The package arrived with a broken screen.\",\"questions\":{\"damaged\":{\"type\":\"noul\",\"instructions\":\"Does the customer report a damaged item?\"}}}",
+ "status": 404,
+ "headers": {
+  "content-type": "text/html",
+  "date": "Mon, 16 Nov 2026 09:18:54 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "content-length": "0",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=8",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "connection": "close"
+ },
+ "latency_s": 0.1163,
+ "body_text": ""
+}

@@ -118,7 +118,10 @@ any other reason (`"length"`, `"content_filter"`, a provider-specific value) —
 turn may hold partial calls, so do not run them. Partial calls are dropped: a call
 cut off before its arguments formed a JSON object is removed from such a turn, which
 keeps its text, finish reason and usage. On a `"tool_calls"` turn, whose calls would
-run, arguments that do not parse are an `LLMCallError` instead.
+run, arguments that do not parse as a JSON object are an `LLMCallError` instead. An
+unstreamed Anthropic or Gemini reply is one whatever its finish reason when a call's
+arguments are a JSON array, string, number or boolean: its `cause` is an `ArgumentError`
+naming the provider and the JSON type. Absent or null arguments are a call without arguments.
 
 !!! tip "Streaming tool calls"
     When streaming (`stream=true`), pass `on_tool_call` to [`chatrequest!`](@ref) to be
@@ -289,7 +292,9 @@ the `Respond` sets. It runs function calls only on a `completed` or `requires_ac
 other status (for example `incomplete`, whose calls may be partial) stops it with `completed=false`
 and an `llm_error` naming the status and the `incomplete_details` reason. A call whose
 `arguments` are not a JSON object is answered with an `"Error: invalid arguments: …"`
-output, like a dispatcher error, and the loop goes on. A turn that asks for a call the
+output, like a dispatcher error, and the loop goes on. On Gemini Interactions such a call is
+the turn's `ResponseCallError` instead: the decode refuses it, and the loop stops with
+`completed=false`. A turn that asks for a call the
 application must carry out itself — a kind of call the loop cannot run — stops it with
 `completed=false`, naming the pending call's type, and none of that turn's calls run.
 

@@ -646,6 +646,20 @@ end
     end
 end
 
+# Refuted if: a streamed terminal without a model reads otherwise than the unstreamed decode of the same
+# interaction, which keeps the model as "": the reference does not mark an Interaction's `model` required
+# (an agent interaction names an `agent`), while its `id` and `status` are, and a terminal without either
+# is the call error the unstreamed decode reports (above).
+@testset "Interactions stream — a terminal without a model reads as unstreamed: model \"\"" begin
+    interaction = Dict("id" => "v1_x", "status" => "completed")
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(interaction))))
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, "event: interaction.completed\ndata: " *
+        JSON.json(Dict("event_type" => "interaction.completed", "interaction" => interaction)) * "\n\n",
+        UniLM.AgenticStreamState())
+    @test st.terminal === :completed
+    @test ro.model == st.data["response"]["model"] == ""
+end
+
 @testset "Interactions stream decode — no method boxes a variable" begin
     # A local that a closure captures and that is assigned more than once becomes a
     # Core.Box: every access is a dynamic lookup, paid on each SSE event of a stream.

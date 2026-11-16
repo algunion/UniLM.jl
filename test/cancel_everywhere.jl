@@ -53,11 +53,11 @@ function _ce_rows(file::String)
     ollama() = OllamaEndpoint(base_url=_url_probe_base[])
     item = [Dict("type" => "message", "role" => "user", "content" => "hi")]
     grader = StringCheckGrader(name="g", input="{{sample.output_text}}", reference="x", operation="eq")
-    anthropic_batches, gemini_batches = BatchProbe{UniLM._AnthropicBatches}, BatchProbe{UniLM._GeminiBatches}
     # A count's headers are its provider's, which read the provider's key.
     counted(request) = kw -> withenv(() -> count_tokens(request; kw...), "ANTHROPIC_API_KEY" => "sk-ant-local-0000",
                                      "GEMINI_API_KEY" => "g-local", "OPENAI_API_KEY" => "sk-local")
     hi = [Message(Val(:user), "hi")]
+    af, gf = FilesProbe{UniLM._AnthropicFiles}, GeminiFilesProbe
     Tuple{String,Type,Function}[
         ("upload_file(::FileUpload)", FileCallError,
          kw -> upload_file(FileUpload(file=file, purpose="batch", service=s); kw...)),
@@ -66,11 +66,20 @@ function _ce_rows(file::String)
         ("retrieve_file", FileCallError, kw -> retrieve_file("file_1"; service=s, kw...)),
         ("delete_file", FileCallError, kw -> delete_file("file_1"; service=s, kw...)),
         ("file_content", FileCallError, kw -> file_content("file_1"; service=s, kw...)),
+        ("upload_file(path), Anthropic", FileCallError, kw -> upload_file(file; service=af, kw...)),
+        ("upload_file(path), Gemini", FileCallError, kw -> upload_file(file; service=gf, kw...)),
+        ("list_files, Anthropic", FileCallError, kw -> list_files(; service=af, kw...)),
+        ("list_files, Gemini", FileCallError, kw -> list_files(; service=gf, kw...)),
+        ("retrieve_file, Anthropic", FileCallError, kw -> retrieve_file("file_1"; service=af, kw...)),
+        ("retrieve_file, Gemini", FileCallError, kw -> retrieve_file("files/f1"; service=gf, kw...)),
+        ("delete_file, Anthropic", FileCallError, kw -> delete_file("file_1"; service=af, kw...)),
+        ("delete_file, Gemini", FileCallError, kw -> delete_file("files/f1"; service=gf, kw...)),
+        # Gemini serves no download of an uploaded file: file_content refuses it before any request.
+        ("file_content, Anthropic", FileCallError, kw -> file_content("file_1"; service=af, kw...)),
         ("poll_file, OpenAI", FileCallError, kw -> poll_file("file_1"; service=s, kw...)),
-        ("poll_file, Anthropic", FileCallError,
-         kw -> poll_file("file_1"; service=FilesProbe{UniLM._AnthropicFiles}, kw...)),
-        ("poll_file, Gemini", FileCallError, kw -> poll_file("files/f1"; service=GeminiFilesProbe, kw...)),
-        ("register_files", FileCallError, kw -> register_files(["gs://bucket/o"]; service=GeminiFilesProbe, kw...)),
+        ("poll_file, Anthropic", FileCallError, kw -> poll_file("file_1"; service=af, kw...)),
+        ("poll_file, Gemini", FileCallError, kw -> poll_file("files/f1"; service=gf, kw...)),
+        ("register_files", FileCallError, kw -> register_files(["gs://bucket/o"]; service=gf, kw...)),
         ("create_upload", UploadCallError,
          kw -> create_upload(; filename="a.jsonl", purpose="batch", bytes=3, mime_type="application/jsonl",
                              service=s, kw...)),
@@ -95,6 +104,8 @@ function _ce_rows(file::String)
         ("vector_store_file_content", VectorStoreCallError,
          kw -> vector_store_file_content("vs_1", "file_1"; service=s, kw...)),
         ("create_file_batch", VectorStoreCallError, kw -> create_file_batch("vs_1", ["file_1"]; service=s, kw...)),
+        ("create_file_batch(::Vector{VectorStoreFileEntry})", VectorStoreCallError,
+         kw -> create_file_batch("vs_1", [VectorStoreFileEntry(file_id="file_1")]; service=s, kw...)),
         ("retrieve_file_batch", VectorStoreCallError,
          kw -> retrieve_file_batch("vs_1", "vsfb_1"; service=s, kw...)),
         ("cancel_file_batch", VectorStoreCallError, kw -> cancel_file_batch("vs_1", "vsfb_1"; service=s, kw...)),
@@ -129,14 +140,26 @@ function _ce_rows(file::String)
         ("retrieve_batch", BatchCallError, kw -> retrieve_batch("batch_1"; service=s, kw...)),
         ("cancel_batch", BatchCallError, kw -> cancel_batch("batch_1"; service=s, kw...)),
         ("list_batches", BatchCallError, kw -> list_batches(; service=s, kw...)),
+        ("create_batch(requests), OpenAI", BatchCallError,
+         kw -> create_batch(["a" => Chat(service=_OAB, model="gpt-6-luna", messages=hi)]; kw...)),
+        ("create_batch(requests), Anthropic", BatchCallError,
+         kw -> create_batch(["a" => Chat(service=_ANB, model="claude-haiku-5-5", messages=hi)]; kw...)),
+        ("create_batch(requests), Gemini", BatchCallError,
+         kw -> create_batch(["a" => Chat(service=_GMB, model="gemini-3.8-flash", messages=hi)]; kw...)),
+        ("retrieve_batch, Anthropic", BatchCallError, kw -> retrieve_batch("msgbatch_1"; service=_ANB, kw...)),
+        ("retrieve_batch, Gemini", BatchCallError, kw -> retrieve_batch("batches/b1"; service=_GMB, kw...)),
+        ("cancel_batch, Anthropic", BatchCallError, kw -> cancel_batch("msgbatch_1"; service=_ANB, kw...)),
+        ("cancel_batch, Gemini", BatchCallError, kw -> cancel_batch("batches/b1"; service=_GMB, kw...)),
+        ("list_batches, Anthropic", BatchCallError, kw -> list_batches(; service=_ANB, kw...)),
+        ("list_batches, Gemini", BatchCallError, kw -> list_batches(; service=_GMB, kw...)),
         ("batch_results, OpenAI", BatchCallError, kw -> batch_results("batch_1"; service=s, kw...)),
         ("batch_results, Anthropic", BatchCallError,
-         kw -> batch_results("msgbatch_1"; service=anthropic_batches, kw...)),
-        ("batch_results, Gemini", BatchCallError, kw -> batch_results("batches/b1"; service=gemini_batches, kw...)),
-        ("delete_batch, Anthropic", BatchCallError, kw -> delete_batch("msgbatch_1"; service=anthropic_batches, kw...)),
-        ("delete_batch, Gemini", BatchCallError, kw -> delete_batch("batches/b1"; service=gemini_batches, kw...)),
+         kw -> batch_results("msgbatch_1"; service=_ANB, kw...)),
+        ("batch_results, Gemini", BatchCallError, kw -> batch_results("batches/b1"; service=_GMB, kw...)),
+        ("delete_batch, Anthropic", BatchCallError, kw -> delete_batch("msgbatch_1"; service=_ANB, kw...)),
+        ("delete_batch, Gemini", BatchCallError, kw -> delete_batch("batches/b1"; service=_GMB, kw...)),
         ("update_batch, Gemini", BatchCallError,
-         kw -> update_batch("batches/b1"; priority=1, service=gemini_batches, kw...)),
+         kw -> update_batch("batches/b1"; priority=1, service=_GMB, kw...)),
         ("create_fine_tuning_job", FineTuningCallError,
          kw -> create_fine_tuning_job(; model="m", training_file="file_1", service=s, kw...)),
         ("retrieve_fine_tuning_job", FineTuningCallError,
@@ -245,7 +268,7 @@ end
                      sent(() -> with_cancel(() -> call((; cancel=CancelToken())), fired))))
              for (label, T, call) in _ce_rows(file)]
         end
-        @test length(results) == 105
+        @test length(results) == 124
         for (label, T, modes) in results, (mode, (r, n)) in modes
             @testset "$label, $mode" begin
                 if startswith(mode, "a live token")

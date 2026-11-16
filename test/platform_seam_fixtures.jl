@@ -166,3 +166,7 @@ UniLM.default_model(::Type{<:BatchProbe}) = "probe-default"
 _batch_probe(W, E) = (@eval UniLM.encode_request(::Type{BatchProbe{$W}}, c::Chat) = UniLM.encode_request($E, c);
                       @eval UniLM.decode_response(::Type{BatchProbe{$W}}, r::HTTP.Response) = UniLM.decode_response($E, r);
                       BatchProbe{W})
+# The probe of each provider's batch wire, its Chats encoded as that provider's are.
+const _OAB = _batch_probe(UniLM._OpenAIBatches, OPENAIServiceEndpoint)
+const _ANB = _batch_probe(UniLM._AnthropicBatches, ANTHROPICServiceEndpoint)
+const _GMB = _batch_probe(UniLM._GeminiBatches, GEMINIServiceEndpoint)

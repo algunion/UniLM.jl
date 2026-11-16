@@ -237,9 +237,9 @@ end
     @test (@test_logs (:warn, r"Batch API rates") on(nov, d1)) ≈ 1000 * 0.10 / 1e6
 end
 
-# ── A batch endpoint speaking provider wire W, served by `_with_scripted` (BatchProbe, platform_seam_fixtures.jl) ──
-# Its Chats encode and its replies decode as the provider's do; its batch paths hang from the scripted server.
-const _OAB = _batch_probe(UniLM._OpenAIBatches, OPENAIServiceEndpoint)
+# ── A batch endpoint speaking provider wire W, served by `_with_scripted` ──
+# BatchProbe and its OpenAI, Anthropic and Gemini forms `_OAB`, `_ANB` and `_GMB` (platform_seam_fixtures.jl):
+# their Chats encode and their replies decode as the provider's do; their batch paths hang from the scripted server.
 _batch_refused(f) = try f(); nothing catch e; e end
 _batch_targets(seen) = [(s.method, s.target) for s in seen]
 
@@ -360,7 +360,6 @@ end
           "https://api.anthropic.com"
 end
 
-const _ANB = _batch_probe(UniLM._AnthropicBatches, ANTHROPICServiceEndpoint)
 const _AN_BATCH = Dict{String,Any}("id" => "msgbatch_1", "type" => "message_batch", "processing_status" => "in_progress",
     "request_counts" => Dict{String,Any}("processing" => 2, "succeeded" => 0, "errored" => 0, "canceled" => 0, "expired" => 0),
     "ended_at" => nothing, "created_at" => "2026-11-16T20:16:21.225859+00:00",
@@ -486,7 +485,6 @@ end
     @test UniLM._batch_root(GEMINIServiceEndpoint) == "https://generativelanguage.googleapis.com"
 end
 
-const _GMB = _batch_probe(UniLM._GeminiBatches, GEMINIServiceEndpoint)
 _gm_batch(; state="BATCH_STATE_PENDING", more...) = Dict{String,Any}(
     "@type" => "type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch",
     "model" => "models/gemini-3.8-flash", "createTime" => "2026-11-16T20:15:28.712760500Z",

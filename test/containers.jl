@@ -150,3 +150,15 @@ end
     @test !occursin("s3cr3t", repr(policy)) && !occursin("s3cr3t", repr(MIME"text/plain"(), policy))
     @test occursin("API_TOKEN", repr(policy))
 end
+
+@testset "list_containers takes order and a name filter" begin
+    t = _recorded_targets() do
+        list_containers(; limit=3, order="asc", after="cntr_a", name="price check", service=URLProbe)
+        list_containers(; name="sandbox", service=URLProbe)
+    end
+    @test t == ["/v1/containers?limit=3&order=asc&after=cntr_a&name=price%20check", "/v1/containers?name=sandbox"]
+    err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        try list_containers(; order="up", service=URLProbe); nothing catch e; e end
+    end
+    @test err isa ArgumentError && occursin("list_containers", err.msg) && isempty(seen)
+end

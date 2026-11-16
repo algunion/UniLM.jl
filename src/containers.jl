@@ -223,22 +223,25 @@ function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServi
 end
 
 """
-    list_containers(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+    list_containers(; limit=nothing, order=nothing, after=nothing, name=nothing, service=OPENAIServiceEndpoint)
+
+List containers, a page at a time: `order` is `"asc"` or `"desc"` (OpenAI's default) by creation
+time, another an `ArgumentError` before anything is sent; `after` is the id that ends the page
+before, and `name` keeps the containers of that name.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+function list_containers(; limit::Union{Int,Nothing}=nothing, order::Union{String,Nothing}=nothing,
+    after::Union{String,Nothing}=nothing, name::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
+    query = _vs_list_query("list_containers", "limit" => limit, "order" => order, "after" => after, "name" => name)
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        url = _api_base_url(service) * CONTAINERS_PATH
-        params = String[]
-        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
-        !isnothing(after) && push!(params, "after=$(_uripart(after))")
-        !isempty(params) && (url *= "?" * join(params, "&"))
+        url = _api_base_url(service) * CONTAINERS_PATH * query
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})

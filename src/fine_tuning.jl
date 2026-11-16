@@ -67,11 +67,14 @@ function _ft_list_resp(resp)
         data=Vector{Dict{String,Any}}(_reply_required(data, "data", AbstractVector, "Fine-tuning API")),
         has_more=_reply_required(data, "has_more", Bool, "Fine-tuning API"), raw=data))
 end
-# The cursor query every fine-tuning list takes: `limit` page size, `after` the last id seen.
-function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,Nothing})::String
+# The cursor query every fine-tuning list takes: `limit` page size, `after` the last id seen; then
+# the list's own query parts, each already encoded.
+function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,Nothing},
+                  extra::Vector{String}=String[])::String
     params = String[]
     isnothing(limit) || push!(params, "limit=$(_uripart(limit))")
     isnothing(after) || push!(params, "after=$(_uripart(after))")
+    append!(params, extra)
     isempty(params) ? url : url * "?" * join(params, "&")
 end
 
@@ -209,18 +212,26 @@ resume_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEnd
     _ft_job_action(id, "resume", service, config, cancel)
 
 """
-    list_fine_tuning_jobs(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+    list_fine_tuning_jobs(; limit=nothing, after=nothing, metadata=nothing, service=OPENAIServiceEndpoint)
+
+`metadata`, a `Dict` of strings, keeps the jobs whose metadata holds each of its pairs (sent as
+`metadata[key]=value`; an empty value matches a key set to `""`).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `FineTuningCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
+    metadata::Union{AbstractDict{<:AbstractString,<:AbstractString},Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
+    # The reference's deep-object filter, `metadata[k]=v`, its brackets encoded as every other query here.
+    query = isnothing(metadata) ? String[] :
+        ["metadata%5B$(_uripart(k))%5D=$(_uripart(metadata[k]))" for k in sort!(collect(keys(metadata)))]
     try
-        _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH, limit, after),
+        _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH, limit, after, query),
             auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()

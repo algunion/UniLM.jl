@@ -128,3 +128,17 @@ end
         @test isempty(seen) && r isa FineTuningCallError && r.cause isa UniLMCancelled
     end
 end
+
+@testset "Fine-tuning API — list_fine_tuning_jobs filters on metadata" begin
+    # The reference's deep-object filter: `metadata[k]=v`, each key and value one encoded query part.
+    t = _recorded_targets() do
+        list_fine_tuning_jobs(; metadata=Dict("team" => "a b", "k/1" => ""), service=URLProbe)
+        list_fine_tuning_jobs(; limit=2, after="ftjob_1", metadata=Dict("env" => "prod"), service=URLProbe)
+        list_fine_tuning_jobs(; metadata=Dict(_HOSTILE_ID => _HOSTILE_ID), service=URLProbe)
+        list_fine_tuning_jobs(; metadata=Dict{String,String}(), service=URLProbe)
+    end
+    @test t == ["/v1/fine_tuning/jobs?metadata%5Bk%2F1%5D=&metadata%5Bteam%5D=a%20b",
+                "/v1/fine_tuning/jobs?limit=2&after=ftjob_1&metadata%5Benv%5D=prod",
+                "/v1/fine_tuning/jobs?metadata%5B$_HOSTILE_ENC%5D=$_HOSTILE_ENC",
+                "/v1/fine_tuning/jobs"]
+end

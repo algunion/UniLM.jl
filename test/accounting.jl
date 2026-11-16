@@ -1170,6 +1170,21 @@ end
     u = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, completion_tokens=100, total_tokens=10_100)
     @test isapprox((@test_logs estimated_cost(_oa_result("gpt-6-cyber", u))), (9_000 * 20.0 + 1_000 * 2.0 + 100 * 100.0) / 1e6;
                    rtol=1e-12)
+    # Its cache writes: "Short-context cache writes cost $25 per 1M tokens for 30 minutes or $50 per 1M tokens for 12
+    # hours" (the model page); over 272K input tokens "$40 for input, $4 for cached input, and $150 for output", and
+    # the page's "-" for a long prompt's writes, which bill at the long-context input rate, never an inferred one.
+    @test UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, "gpt-6-cyber") isa UniLM._OpenAIPriceTerms
+    short = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, cache_write_tokens=4_000, cache_write_extended_tokens=1_000,
+                       completion_tokens=100, total_tokens=10_100)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-cyber", short)),
+                   (5_000 * 20.0 + 1_000 * 2.0 + 3_000 * 25.0 + 1_000 * 50.0 + 100 * 100.0) / 1e6; rtol=1e-12)
+    long = TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000, cache_write_extended_tokens=10_000,
+                      completion_tokens=1_000, total_tokens=301_000)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-cyber", long)),
+                   (150_000 * 40.0 + 100_000 * 4.0 + 50_000 * 40.0 + 1_000 * 150.0) / 1e6; rtol=1e-12)
+    # A model whose page prices a long prompt's writes keeps the write multiples there (GPT-6 Rosalind: $37.50, $75).
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", long)),
+                   (150_000 * 30.0 + 100_000 * 3.0 + 40_000 * 37.50 + 10_000 * 75.0 + 1_000 * 112.50) / 1e6; rtol=1e-12)
 end
 
 @testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin

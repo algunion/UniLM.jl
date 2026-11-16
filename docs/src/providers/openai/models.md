@@ -288,7 +288,9 @@ estimate.
 later price published yet. OpenAI lists `gpt-6-rosalind` at Standard rates alone, and "Access is limited
 to approved internal research through the trusted-access program"; `gpt-6-cyber` at Standard rates alone
 too, for organizations with "Daybreak Red access and approval"
-([GPT-6 Cyber](https://developers.openai.com/api/docs/models/gpt-6-cyber)).
+([GPT-6 Cyber](https://developers.openai.com/api/docs/models/gpt-6-cyber)). Its page gives no cache-write
+price for a prompt over 272K input tokens: such a write bills at its long-context input rate, as a price
+the page does not give does, never at a multiple inferred from another model.
 
 ```@eval
 Main.ProviderFacts.price_table(:openai)

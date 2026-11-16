@@ -417,6 +417,7 @@ end
     long_context::Bool = false     # over 272K input tokens: input and cache rates 2×, output 1.5×
     tiers::Dict{String,Float64} = Dict{String,Float64}()
     long_tiers::Dict{String,Float64} = Dict{String,Float64}()
+    long_cache_writes::Bool = true # the page prices a long prompt's writes (the write multiples of its input rate)
 end
 
 const _OPENAI_PRICE_TERMS = let
@@ -431,6 +432,10 @@ const _OPENAI_PRICE_TERMS = let
         "gpt-6-sol" => current(), "gpt-6-luna" => current(),
         # GPT-6 Rosalind lists cache-write and long-context rates at Standard alone (2026-11-02).
         "gpt-6-rosalind" => _OpenAIPriceTerms(cache_writes=true, long_context=true),
+        # GPT-6 Cyber lists Standard alone (2026-11-16): 30-minute and 12-hour writes at $25 and $50, and over 272K
+        # input tokens $40 / $4 / $150 with "-" for both writes. Such a write bills at the long-context input rate
+        # alone, the fallback for a price the page does not give (`_cache_write_multiples`), never an inferred one.
+        "gpt-6-cyber" => _OpenAIPriceTerms(cache_writes=true, long_context=true, long_cache_writes=false),
         "gpt-5.6-sol" => current(), "gpt-5.6-terra" => current(), "gpt-5.6-luna" => current(),
         # Earlier models bill no cache-write premium; Fast has no long-context price on the page.
         "gpt-5.5" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5, "fast" => 2.5),
@@ -472,6 +477,11 @@ _long_context(terms::_OpenAIPriceTerms, prompt_tokens::Int) =
     terms.long_context && prompt_tokens > _OPENAI_SHORT_CONTEXT
 _cache_write_multiples(::Nothing) = (1.0, 1.0)
 _cache_write_multiples(terms::_OpenAIPriceTerms) = terms.cache_writes ? (1.25, 2.5) : (1.0, 1.0)
+# The multiples of a prompt over the short-context limit: a write the page gives no long-context price for bills
+# at the input rate, as every write without a price does — here the long-context input rate.
+_cache_write_multiples(::Nothing, ::Bool) = (1.0, 1.0)
+_cache_write_multiples(terms::_OpenAIPriceTerms, long::Bool) =
+    long && !terms.long_cache_writes ? (1.0, 1.0) : _cache_write_multiples(terms)
 
 # The multiple of the standard rates the billed tier costs. GPT-5.6 and earlier report Fast
 # mode as "priority", its former name. A tier the pricing page gives no number for is
@@ -503,7 +513,7 @@ function _billed_cost(service::Type{OPENAIServiceEndpoint}, model::String, u::To
     long = _long_context(terms, u.prompt_tokens)
     tier = _openai_tier_multiple(terms, model, u.service_tier, long)
     input, output = tier * (long ? 2.0 : 1.0), tier * (long ? 1.5 : 1.0)
-    w30, w12 = _cache_write_multiples(terms)
+    w30, w12 = _cache_write_multiples(terms, long)
     audio_in = min(u.prompt_audio_tokens, u.prompt_tokens)
     audio_out = min(u.completion_audio_tokens, u.completion_tokens)
     text_in = u.prompt_tokens - audio_in

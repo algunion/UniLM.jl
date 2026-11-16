@@ -2,7 +2,8 @@
 # into ProviderModels — ids, names, token limits, capabilities, lifecycle dates — with every
 # page fetched, against a local server replaying the listings each provider returned for the
 # repository's keys on 2026-10-22 (test/fixtures/models/); and the provider drift checks of the
-# live drift suite, on those listings and on broken facts. Offline.
+# live drift suite, on those listings and on broken facts, and the models UniLM uses by default on
+# the listings of 2026-11-16 (the *-2026-11-16.json fixtures). Offline.
 
 using Dates
 using Logging: with_logger, NullLogger
@@ -525,11 +526,11 @@ end
 
 # Refuted if: a model UniLM uses when a call names none — translate's Realtime model among them —
 # is left out of the drift check's defaults, or is unlisted, or past its retirement date, on the
-# listings of 2026-10-22.
-@testset "drift checks: every default model is listed on 2026-10-22, before its retirement" begin
+# listings of 2026-11-16.
+@testset "drift checks: every default model is listed on 2026-11-16, before its retirement" begin
     for (provider, wire) in (:openai => UniLM._OpenAIModels(), :anthropic => UniLM._AnthropicModels(),
                              :gemini => UniLM._GeminiModels())
-        n = _drift_named_models(_ml_models(String(provider), wire), provider; named=_drift_defaults())
+        n = _drift_named_models(_ml_models("$(provider)-2026-11-16", wire), provider; named=_drift_defaults())
         @test !isempty(n.named)
         @test (provider, n.unlisted, n.retired) == (provider, [], [])
     end

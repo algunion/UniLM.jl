@@ -89,6 +89,11 @@ _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d,
 _parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=get(d, "status", nothing),
     file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
 
+# A list reply's page (containers.jl shares it): OpenAI's reference requires `data` and
+# `has_more`, so a 200 without them is malformed (the verb's *CallError) rather than an empty
+# last page.
+_vs_page(d::AbstractDict) = (d["data"]::AbstractVector, d["has_more"]::Bool)
+
 # Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
 # rethrows for the caller's catch). status_exception=false is imposed by _http.
 function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
@@ -176,8 +181,9 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
         resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            stores = VectorStoreObject[_parse_vector_store(s) for s in get(data, "data", [])]
-            VectorStoreListSuccess(response=VectorStoreList(data=stores, has_more=get(data, "has_more", false), raw=data))
+            page, has_more = _vs_page(data)
+            stores = VectorStoreObject[_parse_vector_store(s) for s in page]
+            VectorStoreListSuccess(response=VectorStoreList(data=stores, has_more=has_more, raw=data))
         else
             _failure(VectorStoreFailure, resp)
         end

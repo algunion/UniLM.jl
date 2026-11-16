@@ -86,3 +86,12 @@ end
     @test g == ["/v1/vector_stores/vs_abc123/file_batches/vsfb_abc123",
                 "/v1/vector_stores?after=vs_abc123"]
 end
+
+@testset "list_vector_stores: a 200 without data or has_more is a call error, not an empty last page" begin
+    list(body) = _answered(() -> list_vector_stores(; service=URLProbe), 200; body)
+    @test list("{}") isa VectorStoreCallError
+    @test list("""{"object": "list", "data": []}""") isa VectorStoreCallError
+    @test list("""{"object": "list", "has_more": false}""") isa VectorStoreCallError
+    ok = list("""{"object": "list", "data": [{"id": "vs_1", "name": "a", "status": "completed"}], "has_more": true}""")
+    @test ok isa VectorStoreListSuccess && [v.id for v in ok.response.data] == ["vs_1"] && ok.response.has_more
+end

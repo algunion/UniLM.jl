@@ -107,6 +107,12 @@ const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill
 
 # Dates: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
 const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
+    # "Claude Fable 5.2 and Claude Mythos 5.2 share these specs" — adaptive thinking always on, all five
+    # efforts — and neither takes forced tool use or a prefill; both serve fast mode with no beta header
+    # (https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2.md). Mythos 5.2 is offered
+    # only to organizations verified through Anthropic's verification programs: its row follows that page.
+    "claude-fable-5-2"      => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true, fast=:ga),
+    "claude-mythos-5-2"     => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true, fast=:ga),
     "claude-fable-5-1"      => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
     # "The prefix check runs on Claude 5.1 and later models", and Mythos 5.1 answers a block that
     # fails it with HTTP 400 on every account (preserved-thinking.md, read on 2026-11-02).
@@ -291,7 +297,9 @@ end
 # with no `thinking.block_binding`, Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 answer HTTP 400
 # on an account created on or after 00:00 UTC 31 August 2026, and on an older one pass the
 # failing blocks to the model, which reads and bills them as input; Mythos 5.1 answers HTTP 400
-# on every account. An id no row names is placed append-only: Anthropic asks every integration
+# on every account, and so do Fable 5.2 and Mythos 5.2, which "enforce the prefix check for every
+# account, whatever its age" (https://platform.claude.com/docs/en/release-notes/overview.md,
+# 2026-11-09). An id no row names is placed append-only: Anthropic asks every integration
 # to be append-only, and a newer model may check thinking blocks.
 @enum _SystemPlacement _HOIST _IN_PLACE _APPEND_ONLY
 _system_placement(::Nothing) = _APPEND_ONLY

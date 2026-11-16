@@ -656,6 +656,35 @@ end
     @test UniLM._claude_family("claude-haiku-4-5-20251001") === UniLM._claude_family("claude-haiku-4-5")
 end
 
+# https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2.md: Fable 5.2 and Mythos 5.2 share every
+# spec — adaptive thinking always on ("disabled" is a 400), all five efforts, no forced tool use, no prefill,
+# mid-conversation system messages, the prefix check on every account, fast mode without a beta header.
+@testset "Claude Fable 5.2 and Mythos 5.2 rows: the 5.2 rules, refused before any request" begin
+    tools = [Tool(func=FunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict())))]
+    for model in ("claude-fable-5-2", "claude-mythos-5-2", "claude-fable-5-2-20261109")
+        e(; kw...) = _anthropic_err(; model, kw...)
+        b(; kw...) = _anthropic_body(; model, kw...)
+        for tc in ("required", UniLM.GPTToolChoice(func="f"))
+            x = e(; tools, tool_choice=tc)
+            @test x isa ArgumentError && occursin(model, x.msg) && occursin("tool_choice", x.msg)
+        end
+        x = e(; messages=[Message(Val(:user), "q"), Message(role=RoleAssistant, content="Sure:")])
+        @test x isa ArgumentError && occursin(model, x.msg)
+        x = e(; reasoning_effort="none")
+        @test x isa ArgumentError && occursin("cannot disable thinking", x.msg)
+        for effort in ("low", "medium", "high", "xhigh", "max")
+            @test b(; reasoning_effort=effort)["output_config"]["effort"] == effort
+        end
+        @test b(; service_tier="fast")["speed"] == "fast"
+        us = ANTHROPICServiceEndpoint(inference_geo="us")
+        @test JSON.parse(encode_request(us, Chat(; service=us, model, messages=[Message(Val(:user), "q")])))["inference_geo"] == "us"
+        fam = UniLM._claude_family(model)
+        @test fam isa UniLM._ClaudeFamily && fam.prefix_checked && fam.system && fam.fast === :ga &&
+              UniLM._system_placement(fam) == UniLM._APPEND_ONLY
+    end
+    @test issubset(("claude-fable-5-2", "claude-mythos-5-2"), UniLM._CLAUDE_FAST_MODELS)
+end
+
 @testset "stream — long blocks accumulate in linear space, byte-identical" begin
     # 8000 deltas of 40 bytes per block. Re-concatenating the growing String per delta
     # allocated ~3.7 GiB for this stream; buffered accumulation allocates ~37 MiB

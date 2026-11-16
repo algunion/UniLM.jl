@@ -343,10 +343,11 @@ end
 
 _json_object(body)::Dict{String,Any} = JSON.parse(body; dicttype=Dict{String,Any})
 
+# OpenAI's File object: `filename` and `purpose` are required strings; `bytes` alone may be null.
 function _parse_file_object(d::AbstractDict)
     FileObject(
-        id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=d["filename"], purpose=d["purpose"],
-        status=get(d, "status", nothing), raw=Dict{String,Any}(d))
+        id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=_file_required(d, "filename", String),
+        purpose=_file_required(d, "purpose", String), status=get(d, "status", nothing), raw=Dict{String,Any}(d))
 end
 
 _parse_file(::_OpenAIFiles, d::AbstractDict)::FileObject = _parse_file_object(d)

@@ -184,6 +184,25 @@ end
     end
 end
 
+# OpenAI's File object requires `filename` and `purpose` as strings; of its fields only `bytes` may be null.
+# Refuted if: a reply whose filename or purpose is null decodes as a file, from a retrieve, a listing or an upload.
+@testset "an OpenAI file object whose filename or purpose is null is a FileCallError" begin
+    full = Dict{String,Any}("id" => "file-1", "object" => "file", "bytes" => 3, "created_at" => 1,
+                            "filename" => "a.jsonl", "purpose" => "batch")
+    for key in ("filename", "purpose")
+        null = merge(full, Dict{String,Any}(key => nothing))
+        r = _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=JSON.json(null))
+        @test r isa FileCallError && occursin(key, r.error)
+        page = JSON.json(Dict("object" => "list", "data" => [null], "has_more" => false))
+        @test _answered(() -> list_files(; service=URLProbe), 200; body=page) isa FileCallError
+        done = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "completed", "bytes" => 3,
+                              "created_at" => 1, "expires_at" => 2, "filename" => "a.jsonl", "purpose" => "batch",
+                              "file" => null))
+        @test _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=done) isa
+              UniLM.UploadCallError
+    end
+end
+
 @testset "upload_file: a cancelled token reads no file" begin
     # The file exists, but its mode forbids reading it: a call that read it would end in that
     # SystemError. (Root reads it anyway; the result is the same.)

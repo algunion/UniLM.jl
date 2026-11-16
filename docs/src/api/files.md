@@ -21,8 +21,8 @@ A Gemini file's `id` is its `name` without the `files/` prefix; the verbs take e
 Anthropic Files request sends the key, `anthropic-version` and the endpoint's `workspace_id`, and
 neither its `betas` nor its `user_profile_id`, which the Files reference does not name. A reply
 without a field the provider's reference requires is a [`FileCallError`](@ref), never a result
-with the field made up: a page without OpenAI's `data` or `has_more`, a delete reply without the
-deleted file's id.
+with the field made up: a page without OpenAI's `data` or `has_more`, an OpenAI file whose `filename`
+or `purpose` is null, a delete reply without the deleted file's id.
 
 ## Request Type
 

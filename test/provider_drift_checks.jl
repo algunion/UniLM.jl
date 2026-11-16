@@ -45,15 +45,15 @@ _drift_quoted_ids(text::AbstractString)::Vector{String} =
                                                               replace(_drift_uncommented(text), _DRIFT_PREFIX_TEST => "")))
            if !isnothing(_drift_provider(id))]
 
-# The models UniLM uses when a call names none: the default-model functions, the speech and
-# Decisions defaults, and the keyword defaults its source writes as `model::String="…"`.
+# The models UniLM uses when a call names none: the default-model functions, the speech,
+# translation and Decisions defaults, and the keyword defaults its source writes as `model::String="…"`.
 function _drift_defaults()::Vector{String}
     named = String[UniLM.default_model(OPENAIServiceEndpoint), UniLM.default_embedding_model(OPENAIServiceEndpoint),
                    UniLM.default_image_model(OPENAIServiceEndpoint), UniLM._default_transcription_model(OPENAIServiceEndpoint),
                    UniLM._REALTIME_SPEECH.model, UniLM._DECISIONS_MODEL, UniLM.default_model(ANTHROPICServiceEndpoint),
                    UniLM.default_model(GEMINIServiceEndpoint), UniLM.default_model(GEMINIOpenAIServiceEndpoint),
                    UniLM.default_embedding_model(GEMINIOpenAIServiceEndpoint), UniLM.default_image_model(GEMINIServiceEndpoint),
-                   UniLM._GEMINI_SPEECH.model]
+                   UniLM._GEMINI_SPEECH.model, UniLM._TRANSLATE_DEFAULT_MODEL]
     for f in readdir(joinpath(pkgdir(UniLM), "src"); join=true)
         isfile(f) && endswith(f, ".jl") || continue
         for m in eachmatch(r"\bmodel::(?:Abstract)?String\s*=\s*\"([^\"]+)\"", read(f, String))

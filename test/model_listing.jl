@@ -522,3 +522,16 @@ end
     # The live suites' sources are read by the same rule.
     @test ProviderDriftChecks._drift_quoted_ids("Chat(model=\"gpt-6-sol\")  # not \"gpt-5.4\"\n#= \"gpt-5.2\" =#") == ["gpt-6-sol"]
 end
+
+# Refuted if: a model UniLM uses when a call names none — translate's Realtime model among them —
+# is left out of the drift check's defaults, or is unlisted, or past its retirement date, on the
+# listings of 2026-10-22.
+@testset "drift checks: every default model is listed on 2026-10-22, before its retirement" begin
+    for (provider, wire) in (:openai => UniLM._OpenAIModels(), :anthropic => UniLM._AnthropicModels(),
+                             :gemini => UniLM._GeminiModels())
+        n = _drift_named_models(_ml_models(String(provider), wire), provider; named=_drift_defaults())
+        @test !isempty(n.named)
+        @test (provider, n.unlisted, n.retired) == (provider, [], [])
+    end
+    @test UniLM._TRANSLATE_DEFAULT_MODEL in _drift_defaults()
+end

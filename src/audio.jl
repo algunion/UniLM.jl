@@ -815,7 +815,10 @@ function translate(path::AbstractString; language::AbstractString="en",
     _with_resolved_cancel(() -> _translate(service, path, language, source_language, model, config), cancel)
 end
 
-# OpenAI: a Realtime translation session, on `gpt-realtime-translate` unless the call names another model.
+# The model of an OpenAI Realtime translation session when the call names none.
+const _TRANSLATE_DEFAULT_MODEL = "gpt-realtime-translate"
+
+# OpenAI: a Realtime translation session, on `_TRANSLATE_DEFAULT_MODEL` unless the call names another model.
 function _translate(service, path::AbstractString, language::AbstractString,
                     source_language::Union{Nothing,AbstractString}, model::Union{AbstractString,Nothing},
                     config::Union{Nothing,RequestConfig})
@@ -827,7 +830,7 @@ function _translate(service, path::AbstractString, language::AbstractString,
         "target language (audio.output.language) and has no field for the spoken one " *
         "(https://developers.openai.com/api/reference/resources/realtime/translation-client-events); " *
         "omit source_language"))
-    m = String(something(model, "gpt-realtime-translate"))
+    m = String(something(model, _TRANSLATE_DEFAULT_MODEL))
     url = _realtime_translation_url(service, m)
     lang = _translation_language(language)
     pcm = _translation_pcm(path)

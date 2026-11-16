@@ -372,6 +372,37 @@ end
     end
 end
 
+# Refuted if: a tool_use without its name or its id — absent, null, not a string, or empty — decodes to
+# a call, streamed or not (a call named "" runs no tool the model named; Anthropic's ToolUseBlock
+# requires both), on_tool_call is handed it, or the refusal does not name Anthropic and the field.
+@testset "a tool_use without a name or an id fails loud, streamed or not" begin
+    block(field, v) = (b = Dict{String,Any}("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => Dict());
+                       v === missing ? delete!(b, field) : (b[field] = v); b)
+    dec(b) = decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "stop_reason" => "tool_use", "content" => [b])))))
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    function stream(b)
+        st = StreamState()
+        UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join([
+            ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => b)),
+            ev(Dict("type" => "content_block_stop", "index" => 0)),
+            ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use"))),
+            ev(Dict("type" => "message_stop"))]), st)
+        st
+    end
+    refusal(f) = try f(); nothing catch e; e end
+    for field in ("name", "id"), (v, got) in ((missing, "none"), (nothing, "a JSON null"), ("", "an empty string"),
+                                              (3, "a JSON number"), (Dict("x" => 1), "a JSON object"))
+        rule = "Anthropic tool-call $field must be a non-empty string, got $got"
+        for e in (refusal(() -> dec(block(field, v))), refusal(() -> _build_stream_message(stream(block(field, v)))))
+            @test e isa ArgumentError && e.msg == rule
+        end
+        fired = ToolCall[]
+        @test_logs (:warn, r"not firing") UniLM._fire_tool_calls!(tc -> push!(fired, tc), stream(block(field, v)), true)
+        @test isempty(fired)
+    end
+end
+
 @testset "stream — provider-native blocks assembled verbatim (thinking + text + tool_use)" begin
     state = UniLM.StreamState()
     lines = [
@@ -1154,6 +1185,36 @@ end
             @test r isa LLMCallError && r.cause isa ArgumentError &&
                   r.cause.msg == "Anthropic tool-call arguments must be a JSON object, got a JSON array"
             @test length(chat) == 1
+        end
+    finally
+        close(srv.server)
+    end
+end
+
+# Refuted if: a reply whose tool_use carries no name reads as a success at the verb, streamed or not,
+# or the turn reaches the history.
+@testset "a tool_use without a name is a call error at the verb, streamed or not" begin
+    ev(d) = "event: " * d["type"] * "\ndata: " * JSON.json(d) * "\n\n"
+    use = Dict("type" => "tool_use", "id" => "toolu_1", "input" => Dict())
+    reply = Dict("id" => "msg_t", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                 "content" => [use], "stop_reason" => "tool_use", "usage" => Dict("input_tokens" => 5, "output_tokens" => 8))
+    sse = ev(Dict("type" => "message_start", "message" => merge(reply, Dict("content" => Any[], "stop_reason" => nothing)))) *
+          ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => use)) *
+          ev(Dict("type" => "content_block_stop", "index" => 0)) *
+          ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use"), "usage" => Dict("output_tokens" => 8))) *
+          ev(Dict("type" => "message_stop"))
+    srv = _anthropic_capture_server(_ -> JSON.json(reply), _ -> sse)
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for streamed in (false, true)
+                chat = Chat(service=_AnthropicCapture(srv.url), model="claude-haiku-5-5", stream=streamed,
+                            messages=[Message(Val(:user), "q")])
+                cfg = RequestConfig(max_attempts=1, total_deadline=10.0)
+                r = streamed ? fetch(chatrequest!(chat; config=cfg)) : chatrequest!(chat; config=cfg)
+                @test r isa LLMCallError && r.cause isa ArgumentError &&
+                      r.cause.msg == "Anthropic tool-call name must be a non-empty string, got none"
+                @test length(chat) == 1
+            end
         end
     finally
         close(srv.server)

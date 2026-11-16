@@ -645,11 +645,34 @@ function _tool_call_arguments(provider::String, args)::Dict{String,Any}
     args
 end
 
-# The RFC 8259 name of a parsed JSON value's type, objects and null aside.
+# The RFC 8259 name of a parsed JSON value's type.
+_json_type(::AbstractDict) = "object"
 _json_type(::AbstractVector) = "array"
 _json_type(::AbstractString) = "string"
 _json_type(::Bool) = "boolean"
 _json_type(::Number) = "number"
+_json_type(::Nothing) = "null"
+
+# A decoded tool call (Anthropic, Gemini, Interactions) names the tool it calls and carries the id
+# its provider requires: the complaint about the first of `fields` the call does not carry as a
+# non-empty string, else `nothing`. A call named "" runs no tool the model named.
+function _tool_call_defect(provider::String, call::AbstractDict, fields::Tuple{Vararg{String}})::Union{Nothing,String}
+    for field in fields
+        v = get(call, field, missing)
+        v isa AbstractString && !isempty(v) && continue
+        got = v === missing ? "none" : v isa AbstractString ? "an empty string" : "a JSON $(_json_type(v))"
+        return "$provider tool-call $field must be a non-empty string, got $got"
+    end
+    nothing
+end
+function _check_tool_call(provider::String, call::AbstractDict, fields::Tuple{Vararg{String}})::Nothing
+    defect = _tool_call_defect(provider, call, fields)
+    isnothing(defect) || throw(ArgumentError(defect))
+    nothing
+end
+
+# A ToolUseBlock's `name` and `id` are both required (the Messages API reference).
+const _ANTHROPIC_CALL_FIELDS = ("name", "id")
 
 function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -678,6 +701,7 @@ function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)
         if bt == "text"
             print(text, get(b, "text", ""))
         elseif bt == "tool_use"
+            _check_tool_call("Anthropic", b, _ANTHROPIC_CALL_FIELDS)
             args = _tool_call_arguments("Anthropic", get(b, "input", nothing))
             push!(tool_calls, ToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
         end
@@ -777,10 +801,12 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
             _anthropic_publish_tool_args!(state)
             # The block's own input is the call's arguments until input_json_delta pieces
             # replace it: Anthropic starts a streamed block with `{}` and sends the input in
-            # pieces, so a block that sends none holds its whole input here.
+            # pieces, so a block that sends none holds its whole input here. A block without
+            # its name or id is the turn's error when the turn is built (`_stream_tool_call`).
             input = get(cb, "input", nothing)
             state.tool_calls[ev["index"]] = Dict{String,Any}(
                 "id" => get(cb, "id", ""), "type" => "function", "provider" => "Anthropic",
+                "defect" => _tool_call_defect("Anthropic", cb, _ANTHROPIC_CALL_FIELDS),
                 "function" => Dict{String,Any}("name" => get(cb, "name", ""),
                                                "arguments" => isnothing(input) ? "" : JSON.json(input)))
         end

@@ -374,8 +374,10 @@ Interactions API does not have, so each throws `ArgumentError` for this endpoint
 
 A body that is not an interaction — a 200 without a non-empty `id` or `status`, which the API
 reference marks "required" — is a `ResponseCallError` from `respond`, `get_response` and
-`cancel_response`, never an empty success. The faults an interaction records in its `errors` array
-reach `response.error`, the first of them, and `response.raw["errors"]` holds them all. How a call is
+`cancel_response`, never an empty success. So is one with a `function_call` step without a
+non-empty `name` or `id`, which the reference marks "required" too: the error names the field. The
+faults an interaction records in its `errors` array reach `response.error`, the first of them, and
+`response.raw["errors"]` holds them all. How a call is
 retried, and the daily quota that is not, is on [When something fails](@ref gemini_failures).
 
 Recorded on 16 November 2026 on `gemini-4-hydrogen` with UniLM's development branch after 0.32.0 and the Gemini

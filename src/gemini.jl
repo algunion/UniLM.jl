@@ -637,6 +637,10 @@ function _gemini_refusal(cand)::String
     isnothing(definition) ? "Model response blocked by safety filter." : "$stop: $definition"
 end
 
+# A FunctionCall's `name` is "Required"; its `id` is "Optional" (the FunctionCall schema of the
+# Gemini API's discovery document), and a call without one gets a synthetic `unilm_call_<k>`.
+const _GEMINI_CALL_FIELDS = ("name",)
+
 # The reply names the model that served it in modelVersion: a deprecated id Google routes to its
 # successor answers as that successor, which is the model priced. A reply that ends at the
 # per-request cap of a long generation carries the token that continues it (`continuation_token`).
@@ -663,11 +667,12 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
             print(text, p["text"])
         elseif haskey(p, "functionCall")
             fc = p["functionCall"]
+            _check_tool_call("Gemini", fc, _GEMINI_CALL_FIELDS)
             args = _tool_call_arguments("Gemini", get(fc, "args", nothing))
             raw_id = get(fc, "id", "")
             id = isempty(raw_id) ? "unilm_call_$(length(tool_calls) + 1)" : raw_id
             push!(tool_calls, ToolCall(id=id,
-                func=GPTFunction(get(fc, "name", ""), args),
+                func=GPTFunction(fc["name"], args),
                 thought_signature=get(p, "thoughtSignature", nothing)))
         end
     end
@@ -740,6 +745,8 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                     state.tool_calls[idx] = Dict{String,Any}(
                         "id" => (isempty(raw_id) ? "unilm_call_$(idx + 1)" : raw_id),
                         "type" => "function", "provider" => "Gemini",
+                        # A call without its name is the turn's error when the turn is built.
+                        "defect" => _tool_call_defect("Gemini", fc, _GEMINI_CALL_FIELDS),
                         "function" => Dict{String,Any}(
                             "name" => get(fc, "name", ""),
                             # Absent or null args: a call without arguments, as unstreamed.

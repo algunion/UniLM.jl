@@ -1103,8 +1103,11 @@ _call_arguments(args::AbstractString, finish::String,
 
 # Streamed tool call `tc`, its function dict `fdict`, on a turn whose tool-call finish
 # reason is `finish`: the ToolCall, or `nothing` when `_call_arguments` drops it. A
-# native decoder tags the calls it assembles with its `provider`.
+# native decoder tags the calls it assembles with its `provider`, and with the `defect`
+# of one without its name or a required id (`_tool_call_defect`), which is refused.
 function _stream_tool_call(tc::Dict{String,Any}, fdict::Dict{String,Any}, finish::String)::Union{Nothing,ToolCall}
+    defect = get(tc, "defect", nothing)
+    isnothing(defect) || throw(ArgumentError(defect))
     args = _call_arguments(fdict["arguments"], finish, get(tc, "provider", nothing))
     isnothing(args) ? nothing : ToolCall(id=tc["id"], func=GPTFunction(fdict["name"], args),
                                          thought_signature=get(tc, "thought_signature", nothing))
@@ -1612,7 +1615,7 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
             e isa InterruptException && rethrow()
             # A COMPLETE call's arguments cannot improve later: warn once, never retry.
             push!(state.fired_tool_calls, idx)
-            @warn "on_tool_call: undecodable tool-call arguments; not firing" index = idx exception = e
+            @warn "on_tool_call: undecodable tool call; not firing" index = idx exception = e
             continue
         end
         push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire

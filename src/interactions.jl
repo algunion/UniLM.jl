@@ -356,10 +356,12 @@ function _interaction_output(steps)::Vector{Any}
             _extend_answer!(out[answer], s)
         elseif t == "function_call"
             answer = 0
+            # A FunctionCallStep's `name` and `id` are both required (https://ai.google.dev/api/interactions-api).
+            _check_tool_call("Gemini Interactions", s, ("name", "id"))
             push!(out, Dict{String,Any}(
                 "type" => "function_call",
-                "call_id" => get(s, "id", ""),
-                "name" => get(s, "name", ""),
+                "call_id" => s["id"],
+                "name" => s["name"],
                 # Interactions returns arguments as a JSON OBJECT; the reused function_calls
                 # accessor JSON.parses a STRING → stringify here so the accessor round-trips.
                 "arguments" => _interaction_arguments(get(s, "arguments", nothing))))

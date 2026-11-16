@@ -511,6 +511,33 @@ end
     @test m.finish_reason == "length" && only(m.tool_calls).func.arguments == Dict{String,Any}("q" => 1)
 end
 
+# Refuted if: a functionCall without its name — absent, null, not a string, or empty — decodes to a call,
+# streamed or not (FunctionCall's name is "Required"), on_tool_call is handed it, or the refusal does not
+# name Gemini; or one without an id, which is "Optional", no longer gets a synthetic id.
+@testset "a functionCall without a name fails loud, streamed or not; one without an id is still a call" begin
+    body(fc) = JSON.json(Dict("candidates" => [Dict("content" => Dict("role" => "model",
+        "parts" => [Dict("functionCall" => fc)]), "finishReason" => "STOP")]))
+    dec(fc) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body(fc))))
+    function stream(fc)
+        st = StreamState()
+        UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), "data: " * body(fc) * "\n\n", st)
+        st
+    end
+    call(v) = (fc = Dict{String,Any}("id" => "fc_1", "args" => Dict()); v === missing || (fc["name"] = v); fc)
+    refusal(f) = try f(); nothing catch e; e end
+    for (v, got) in ((missing, "none"), (nothing, "a JSON null"), ("", "an empty string"), (3, "a JSON number"))
+        for e in (refusal(() -> dec(call(v))), refusal(() -> _build_stream_message(stream(call(v)))))
+            @test e isa ArgumentError && e.msg == "Gemini tool-call name must be a non-empty string, got $got"
+        end
+        fired = ToolCall[]
+        @test_logs (:warn, r"not firing") UniLM._fire_tool_calls!(tc -> push!(fired, tc), stream(call(v)), true)
+        @test isempty(fired)
+    end
+    fc = Dict{String,Any}("name" => "f", "args" => Dict())
+    @test startswith(only(dec(fc).message.tool_calls).id, "unilm_call_")
+    @test startswith(only(_build_stream_message(stream(fc)).tool_calls).id, "unilm_call_")
+end
+
 @testset "stream — a refusal is recorded once, however many chunks follow it" begin
     blocked = """{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}"""
     state = StreamState()

@@ -412,6 +412,29 @@ end
     end
 end
 
+# Refuted if: a function_call step without its name or its id — absent, null, not a string, or empty —
+# decodes to a call, streamed or not (FunctionCallStep requires both), or the refusal does not name
+# Gemini Interactions and the field.
+@testset "Interactions — a function_call step without a name or an id fails loud, streamed or not" begin
+    step(field, v) = (s = Dict{String,Any}("type" => "function_call", "id" => "fc_1", "name" => "f", "arguments" => Dict());
+                      v === missing ? delete!(s, field) : (s[field] = v); s)
+    interaction = Dict("id" => "v1_a", "status" => "requires_action", "model" => "m")
+    dec(s) = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(
+        merge(interaction, Dict("steps" => [s]))))))
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    terminal(s) = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        ev("step.start", Dict("index" => 0, "step" => s)) * ev("interaction.completed", Dict("interaction" => interaction)),
+        UniLM.AgenticStreamState())
+    for field in ("name", "id"), (v, got) in ((missing, "none"), (nothing, "a JSON null"), ("", "an empty string"),
+                                              (3, "a JSON number"))
+        rule = "Gemini Interactions tool-call $field must be a non-empty string, got $got"
+        e = try dec(step(field, v)); nothing catch e; e end
+        @test e isa ArgumentError && e.msg == rule
+        st = terminal(step(field, v))
+        @test st.done && st.terminal === :error && st.data["message"] == rule
+    end
+end
+
 @testset "Interactions stream — text + thought signature assembly" begin
     st = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
@@ -862,6 +885,38 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
         @test timedwait(() -> istaskdone(t), 25.0) == :ok
         res = fetch(t)
         @test res isa ResponseCallError && startswith(res.error, "Gemini Interactions tool-call arguments must be a JSON object")
+    finally
+        close(server)
+    end
+end
+
+# Refuted if: an interaction whose function_call carries no name reads as a success at the verb,
+# streamed or not.
+@testset "Interactions — a function_call without a name is a call error at the verb, streamed or not" begin
+    interaction = Dict("id" => "v1_a", "status" => "requires_action", "model" => "m")
+    call = Dict("type" => "function_call", "id" => "fc_1", "arguments" => Dict())
+    rule = "Gemini Interactions tool-call name must be a non-empty string, got none"
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1)
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do _
+        HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(merge(interaction, Dict("steps" => [call]))))
+    end
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$(HTTP.port(srv))/v1beta/interactions"
+    try
+        r = respond(Respond(service=_IxNonStreamMock, input="hi"); config=cfg)
+        @test (r isa ResponseCallError ? (ResponseCallError, typeof(r.cause), r.cause.msg) : (typeof(r), r)) ==
+              (ResponseCallError, ArgumentError, rule)
+    finally
+        close(srv)
+    end
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    server, url = _ix_sse_server(ev("step.start", Dict("index" => 0, "step" => call)) *
+                                 ev("interaction.completed", Dict("interaction" => interaction)) * "event: done\ndata: [DONE]\n\n")
+    _IX_MOCK_URL[] = url
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseCallError && res.error == rule
     finally
         close(server)
     end

@@ -228,11 +228,11 @@ is `respond`'s, and `respond` refuses this endpoint. Setting `close[] = true` st
   from the deltas into the message's `provider_content` once every block has arrived whole, so such a
   streamed turn goes back on the next request as an unstreamed one does
   ([what goes back otherwise](@ref anthropic_reasoning)).
-- **Tool calls.** `on_tool_call(tc)` runs once per call whose arguments decode, as soon as its block
-  closes (`content_block_stop`), before the turn ends, and for a call whose arguments do not decode
-  UniLM logs a warning instead. The final `Message` holds the calls that decode; one that does not
-  makes the result an `LLMCallError` or is dropped, by how the turn stopped
-  ([Reasoning](@ref anthropic_reasoning)).
+- **Tool calls.** `on_tool_call(tc)` runs once per call that decodes, as soon as its block
+  closes (`content_block_stop`), before the turn ends, and for a call that does not — its arguments,
+  its name or its id — UniLM logs a warning instead. The final `Message` holds the calls that decode;
+  one that does not makes the result an `LLMCallError`, or is dropped when its input was cut short on
+  a turn cut at `max_tokens` or the context window ([Reasoning](@ref anthropic_reasoning)).
 - **Refusals.** A refusal ends the turn with no content, as an unstreamed refusal does; the text and
   the tool calls already passed to the callbacks cannot be recalled.
 - **Pings.** Anthropic's `ping` events are bytes on the wire, so they reset the idle clock:

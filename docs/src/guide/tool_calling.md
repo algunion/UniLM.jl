@@ -122,6 +122,8 @@ run, arguments that do not parse as a JSON object are an `LLMCallError` instead.
 Anthropic or Gemini reply, streamed or not, is one whatever its finish reason when a call's
 arguments are a whole JSON array, string, number or boolean: its `cause` is an `ArgumentError`
 naming the provider and the JSON type. Absent or null arguments are a call without arguments.
+So is a reply with a call that has no name, or an Anthropic call that has no id: the
+`ArgumentError` names the provider and the field.
 
 !!! tip "Streaming tool calls"
     When streaming (`stream=true`), pass `on_tool_call` to [`chatrequest!`](@ref) to be
@@ -293,8 +295,8 @@ other status (for example `incomplete`, whose calls may be partial) stops it wit
 and an `llm_error` naming the status and the `incomplete_details` reason. A call whose
 `arguments` are not a JSON object is answered with an `"Error: invalid arguments: …"`
 output, like a dispatcher error, and the loop goes on. On Gemini Interactions such a call is
-the turn's `ResponseCallError` instead: the decode refuses it, and the loop stops with
-`completed=false`. A turn that asks for a call the
+the turn's `ResponseCallError` instead: the decode refuses it, as it refuses a call without
+its name or its id, and the loop stops with `completed=false`. A turn that asks for a call the
 application must carry out itself — a kind of call the loop cannot run — stops it with
 `completed=false`, naming the pending call's type, and none of that turn's calls run.
 

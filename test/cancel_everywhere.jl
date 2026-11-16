@@ -20,18 +20,27 @@ UniLM.auth_header(::Type{_CEGeminiSpeech}) = ["x-goog-api-key" => "t", "Content-
 
 const _CE_WAV = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")   # 16-bit PCM
 
-# Every verb that sends a request from the platform, lifecycle and audio files.
+# Every verb that sends a request from the platform, lifecycle, model lookup, token counting and audio files.
 const _CE_VERBS = (
-    upload_file, list_files, retrieve_file, delete_file, file_content,
+    upload_file, list_files, retrieve_file, delete_file, file_content, poll_file, register_files,
     create_upload, add_upload_part, complete_upload, cancel_upload,
-    create_vector_store, retrieve_vector_store, list_vector_stores, delete_vector_store,
-    add_vector_store_file, create_file_batch, retrieve_file_batch,
+    create_vector_store, retrieve_vector_store, update_vector_store, list_vector_stores, delete_vector_store,
+    search_vector_store, add_vector_store_file, list_vector_store_files, retrieve_vector_store_file,
+    update_vector_store_file, delete_vector_store_file, vector_store_file_content,
+    create_file_batch, retrieve_file_batch, cancel_file_batch, list_file_batch_files,
     create_conversation, retrieve_conversation, update_conversation, delete_conversation,
     add_conversation_items, list_conversation_items, retrieve_conversation_item, delete_conversation_item,
     create_container, retrieve_container, list_containers, delete_container, add_container_file,
-    create_batch, retrieve_batch, cancel_batch, list_batches,
-    create_fine_tuning_job, retrieve_fine_tuning_job, cancel_fine_tuning_job,
-    list_fine_tuning_jobs, list_fine_tuning_events, list_fine_tuning_checkpoints,
+    list_container_files, retrieve_container_file, container_file_content, delete_container_file,
+    create_batch, retrieve_batch, cancel_batch, list_batches, batch_results, delete_batch, update_batch,
+    create_fine_tuning_job, retrieve_fine_tuning_job, cancel_fine_tuning_job, pause_fine_tuning_job,
+    resume_fine_tuning_job, list_fine_tuning_jobs, list_fine_tuning_events, list_fine_tuning_checkpoints,
+    create_fine_tuning_checkpoint_permission, list_fine_tuning_checkpoint_permissions,
+    delete_fine_tuning_checkpoint_permission, run_grader, validate_grader,
+    create_webhook_endpoint, list_webhook_endpoints, retrieve_webhook_endpoint, update_webhook_endpoint,
+    delete_webhook_endpoint, rotate_webhook_endpoint_secret, test_webhook_endpoint, list_webhook_event_types,
+    retrieve_safety_case, retrieve_safety_alert, check_content_provenance,
+    retrieve_model, delete_model, count_tokens,
     moderate, speak, transcribe, translate, mint_realtime_secret,
     get_response, delete_response, list_input_items, cancel_response, compact_response, count_input_tokens)
 
@@ -43,6 +52,12 @@ function _ce_rows(file::String)
     ep() = GenericOpenAIEndpoint(_url_probe_base[], "")
     ollama() = OllamaEndpoint(base_url=_url_probe_base[])
     item = [Dict("type" => "message", "role" => "user", "content" => "hi")]
+    grader = StringCheckGrader(name="g", input="{{sample.output_text}}", reference="x", operation="eq")
+    anthropic_batches, gemini_batches = BatchProbe{UniLM._AnthropicBatches}, BatchProbe{UniLM._GeminiBatches}
+    # A count's headers are its provider's, which read the provider's key.
+    counted(request) = kw -> withenv(() -> count_tokens(request; kw...), "ANTHROPIC_API_KEY" => "sk-ant-local-0000",
+                                     "GEMINI_API_KEY" => "g-local", "OPENAI_API_KEY" => "sk-local")
+    hi = [Message(Val(:user), "hi")]
     Tuple{String,Type,Function}[
         ("upload_file(::FileUpload)", FileCallError,
          kw -> upload_file(FileUpload(file=file, purpose="batch", service=s); kw...)),
@@ -51,6 +66,11 @@ function _ce_rows(file::String)
         ("retrieve_file", FileCallError, kw -> retrieve_file("file_1"; service=s, kw...)),
         ("delete_file", FileCallError, kw -> delete_file("file_1"; service=s, kw...)),
         ("file_content", FileCallError, kw -> file_content("file_1"; service=s, kw...)),
+        ("poll_file, OpenAI", FileCallError, kw -> poll_file("file_1"; service=s, kw...)),
+        ("poll_file, Anthropic", FileCallError,
+         kw -> poll_file("file_1"; service=FilesProbe{UniLM._AnthropicFiles}, kw...)),
+        ("poll_file, Gemini", FileCallError, kw -> poll_file("files/f1"; service=GeminiFilesProbe, kw...)),
+        ("register_files", FileCallError, kw -> register_files(["gs://bucket/o"]; service=GeminiFilesProbe, kw...)),
         ("create_upload", UploadCallError,
          kw -> create_upload(; filename="a.jsonl", purpose="batch", bytes=3, mime_type="application/jsonl",
                              service=s, kw...)),
@@ -59,13 +79,27 @@ function _ce_rows(file::String)
         ("cancel_upload", UploadCallError, kw -> cancel_upload("upload_1"; service=s, kw...)),
         ("create_vector_store", VectorStoreCallError, kw -> create_vector_store(; name="vs", service=s, kw...)),
         ("retrieve_vector_store", VectorStoreCallError, kw -> retrieve_vector_store("vs_1"; service=s, kw...)),
+        ("update_vector_store", VectorStoreCallError, kw -> update_vector_store("vs_1"; name="vs", service=s, kw...)),
         ("list_vector_stores", VectorStoreCallError, kw -> list_vector_stores(; service=s, kw...)),
         ("delete_vector_store", VectorStoreCallError, kw -> delete_vector_store("vs_1"; service=s, kw...)),
+        ("search_vector_store", VectorStoreCallError, kw -> search_vector_store("vs_1", "q"; service=s, kw...)),
         ("add_vector_store_file", VectorStoreCallError,
          kw -> add_vector_store_file("vs_1", "file_1"; service=s, kw...)),
+        ("list_vector_store_files", VectorStoreCallError, kw -> list_vector_store_files("vs_1"; service=s, kw...)),
+        ("retrieve_vector_store_file", VectorStoreCallError,
+         kw -> retrieve_vector_store_file("vs_1", "file_1"; service=s, kw...)),
+        ("update_vector_store_file", VectorStoreCallError,
+         kw -> update_vector_store_file("vs_1", "file_1", Dict("k" => "v"); service=s, kw...)),
+        ("delete_vector_store_file", VectorStoreCallError,
+         kw -> delete_vector_store_file("vs_1", "file_1"; service=s, kw...)),
+        ("vector_store_file_content", VectorStoreCallError,
+         kw -> vector_store_file_content("vs_1", "file_1"; service=s, kw...)),
         ("create_file_batch", VectorStoreCallError, kw -> create_file_batch("vs_1", ["file_1"]; service=s, kw...)),
         ("retrieve_file_batch", VectorStoreCallError,
          kw -> retrieve_file_batch("vs_1", "vsfb_1"; service=s, kw...)),
+        ("cancel_file_batch", VectorStoreCallError, kw -> cancel_file_batch("vs_1", "vsfb_1"; service=s, kw...)),
+        ("list_file_batch_files", VectorStoreCallError,
+         kw -> list_file_batch_files("vs_1", "vsfb_1"; service=s, kw...)),
         ("create_conversation", ConversationCallError, kw -> create_conversation(; service=s, kw...)),
         ("retrieve_conversation", ConversationCallError, kw -> retrieve_conversation("conv_1"; service=s, kw...)),
         ("update_conversation", ConversationCallError,
@@ -84,10 +118,25 @@ function _ce_rows(file::String)
         ("list_containers", ContainerCallError, kw -> list_containers(; service=s, kw...)),
         ("delete_container", ContainerCallError, kw -> delete_container("cntr_1"; service=s, kw...)),
         ("add_container_file", ContainerCallError, kw -> add_container_file("cntr_1", file; service=s, kw...)),
+        ("list_container_files", ContainerCallError, kw -> list_container_files("cntr_1"; service=s, kw...)),
+        ("retrieve_container_file", ContainerCallError,
+         kw -> retrieve_container_file("cntr_1", "cfile_1"; service=s, kw...)),
+        ("container_file_content", ContainerCallError,
+         kw -> container_file_content("cntr_1", "cfile_1"; service=s, kw...)),
+        ("delete_container_file", ContainerCallError,
+         kw -> delete_container_file("cntr_1", "cfile_1"; service=s, kw...)),
         ("create_batch", BatchCallError, kw -> create_batch("file_1", "/v1/responses"; service=s, kw...)),
         ("retrieve_batch", BatchCallError, kw -> retrieve_batch("batch_1"; service=s, kw...)),
         ("cancel_batch", BatchCallError, kw -> cancel_batch("batch_1"; service=s, kw...)),
         ("list_batches", BatchCallError, kw -> list_batches(; service=s, kw...)),
+        ("batch_results, OpenAI", BatchCallError, kw -> batch_results("batch_1"; service=s, kw...)),
+        ("batch_results, Anthropic", BatchCallError,
+         kw -> batch_results("msgbatch_1"; service=anthropic_batches, kw...)),
+        ("batch_results, Gemini", BatchCallError, kw -> batch_results("batches/b1"; service=gemini_batches, kw...)),
+        ("delete_batch, Anthropic", BatchCallError, kw -> delete_batch("msgbatch_1"; service=anthropic_batches, kw...)),
+        ("delete_batch, Gemini", BatchCallError, kw -> delete_batch("batches/b1"; service=gemini_batches, kw...)),
+        ("update_batch, Gemini", BatchCallError,
+         kw -> update_batch("batches/b1"; priority=1, service=gemini_batches, kw...)),
         ("create_fine_tuning_job", FineTuningCallError,
          kw -> create_fine_tuning_job(; model="m", training_file="file_1", service=s, kw...)),
         ("retrieve_fine_tuning_job", FineTuningCallError,
@@ -98,6 +147,48 @@ function _ce_rows(file::String)
          kw -> list_fine_tuning_events("ftjob_1"; service=s, kw...)),
         ("list_fine_tuning_checkpoints", FineTuningCallError,
          kw -> list_fine_tuning_checkpoints("ftjob_1"; service=s, kw...)),
+        ("pause_fine_tuning_job", FineTuningCallError, kw -> pause_fine_tuning_job("ftjob_1"; service=s, kw...)),
+        ("resume_fine_tuning_job", FineTuningCallError, kw -> resume_fine_tuning_job("ftjob_1"; service=s, kw...)),
+        ("create_fine_tuning_checkpoint_permission", FineTuningCallError,
+         kw -> create_fine_tuning_checkpoint_permission("ft:m:ckpt", ["proj_1"]; service=s, kw...)),
+        ("list_fine_tuning_checkpoint_permissions", FineTuningCallError,
+         kw -> list_fine_tuning_checkpoint_permissions("ft:m:ckpt"; service=s, kw...)),
+        ("delete_fine_tuning_checkpoint_permission", FineTuningCallError,
+         kw -> delete_fine_tuning_checkpoint_permission("ft:m:ckpt", "cp_1"; service=s, kw...)),
+        ("run_grader", FineTuningCallError, kw -> run_grader(grader, "x"; service=s, kw...)),
+        ("validate_grader", FineTuningCallError, kw -> validate_grader(grader; service=s, kw...)),
+        ("create_webhook_endpoint", WebhookEndpointCallError,
+         kw -> create_webhook_endpoint(; name="n", url="https://example.com/hook", event_types=["batch.completed"],
+                                       service=s, kw...)),
+        ("list_webhook_endpoints", WebhookEndpointCallError, kw -> list_webhook_endpoints(; service=s, kw...)),
+        ("retrieve_webhook_endpoint", WebhookEndpointCallError,
+         kw -> retrieve_webhook_endpoint("we_1"; service=s, kw...)),
+        ("update_webhook_endpoint", WebhookEndpointCallError,
+         kw -> update_webhook_endpoint("we_1"; name="n", service=s, kw...)),
+        ("delete_webhook_endpoint", WebhookEndpointCallError, kw -> delete_webhook_endpoint("we_1"; service=s, kw...)),
+        ("rotate_webhook_endpoint_secret", WebhookEndpointCallError,
+         kw -> rotate_webhook_endpoint_secret("we_1"; service=s, kw...)),
+        ("test_webhook_endpoint", WebhookEndpointCallError,
+         kw -> test_webhook_endpoint("we_1", "batch.completed"; service=s, kw...)),
+        ("list_webhook_event_types", WebhookEndpointCallError, kw -> list_webhook_event_types(; service=s, kw...)),
+        ("retrieve_safety_case", SafetyCallError, kw -> retrieve_safety_case("C-1"; service=s, kw...)),
+        ("retrieve_safety_alert", SafetyCallError, kw -> retrieve_safety_alert("alert_1"; service=s, kw...)),
+        ("check_content_provenance", SafetyCallError, kw -> check_content_provenance(_CE_WAV; service=s, kw...)),
+        ("retrieve_model, OpenAI", ModelListCallError,
+         kw -> retrieve_model("gpt-6-luna"; service=ListingProbe{UniLM._OpenAIModels}, kw...)),
+        ("retrieve_model, Anthropic", ModelListCallError,
+         kw -> retrieve_model("claude-haiku-5-5"; service=ListingProbe{UniLM._AnthropicModels}, kw...)),
+        ("retrieve_model, Gemini", ModelListCallError,
+         kw -> retrieve_model("gemini-3.8-flash"; service=ListingProbe{UniLM._GeminiModels}, kw...)),
+        ("delete_model, OpenAI", ModelListCallError,
+         kw -> delete_model("ft:m:org:x:1"; service=ListingProbe{UniLM._OpenAIModels}, kw...)),
+        ("delete_model, Ollama", OllamaCallError, kw -> delete_model("phonon"; service=ollama(), kw...)),
+        ("count_tokens, Anthropic", TokenCountCallError,
+         counted(Chat(service=_CountAt(ANTHROPICServiceEndpoint), model="claude-haiku-5-5", messages=hi))),
+        ("count_tokens, Gemini", TokenCountCallError,
+         counted(Chat(service=_CountAt(GEMINIServiceEndpoint), model="gemini-3.8-flash", messages=hi))),
+        ("count_tokens, OpenAI", TokenCountCallError,
+         counted(Respond(service=_CountAt(OPENAIServiceEndpoint), model="gpt-6-luna", input="hi"))),
         ("moderate", ModerationCallError, kw -> moderate("hi"; service=s, kw...)),
         ("mint_realtime_secret", RealtimeCallError, kw -> mint_realtime_secret(; service=s, kw...)),
         ("speak(::SpeechRequest), Realtime", AudioCallError,
@@ -127,7 +218,7 @@ _ce_cancelled(r, ::Type{T}) where {T} =
     r isa T && isnothing(r.status) && r.cause isa UniLMCancelled && r.cause.source === :token
 
 @testset "every method of every platform, lifecycle and audio verb takes `cancel` as its last keyword" begin
-    @test length(_CE_VERBS) == 50
+    @test length(_CE_VERBS) == 89
     for f in _CE_VERBS, m in methods(f)
         named = filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m))
         @test (f, last(named)) == (f, :cancel)
@@ -154,7 +245,7 @@ end
                      sent(() -> with_cancel(() -> call((; cancel=CancelToken())), fired))))
              for (label, T, call) in _ce_rows(file)]
         end
-        @test length(results) == 56
+        @test length(results) == 105
         for (label, T, modes) in results, (mode, (r, n)) in modes
             @testset "$label, $mode" begin
                 if startswith(mode, "a live token")

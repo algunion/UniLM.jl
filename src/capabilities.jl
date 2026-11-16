@@ -114,7 +114,7 @@ Public extension API (not exported); see the Custom Backends guide.
 """
 default_model(::Type{OPENAIServiceEndpoint})  = "gpt-6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
-default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.8-flash"
+default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-4-hydrogen"  # as native Gemini; it answered a chat and a stream here (2026-11-16)
 default_model(::DeepSeekEndpoint)              = "deepseek-flash"
 default_model(::GenericOpenAIEndpoint)          = nothing
 default_model(_) = nothing

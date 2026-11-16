@@ -37,7 +37,7 @@ end
     compat(; kw...) = Chat(; service=GEMINIOpenAIServiceEndpoint, messages=[Message(role=UniLM.RoleUser, content="hi")], kw...)
     encode(chat) = UniLM.encode_request(GEMINIOpenAIServiceEndpoint, chat)
     for (field, kw) in (("temperature", (temperature=0.5,)), ("top_p", (top_p=0.9,)))
-        # gemini-3.8-flash is the endpoint's default model.
+        # gemini-4-hydrogen is the endpoint's default model.
         for chat in (compat(; kw...), compat(; model="gemini-4-argon", kw...), compat(; model="gemini-5-x", kw...))
             err = try encode(chat); nothing catch e; e end
             @test err isa ArgumentError && occursin("Gemini ignores $field", err.msg) && occursin(chat.model, err.msg)

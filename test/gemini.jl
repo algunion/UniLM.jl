@@ -42,7 +42,14 @@ end
     @test UniLM.provider_capabilities(GEMINIServiceEndpoint) ==
           Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech])
     @test has_capability(GEMINIServiceEndpoint, :json_output)
-    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.8-flash"
+    # Gemini 4 Hydrogen, Google's named successor to 3.8 Flash ("Change your model string from
+    # `gemini-3.8-flash` to `gemini-4-hydrogen`", ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen),
+    # on both APIs: a Chat and a Respond with no model, and priced, so default spend is never a silent 0.0.
+    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-4-hydrogen"
+    @test Chat(service=GEMINIServiceEndpoint).model == Respond(service=GEMINIServiceEndpoint, input="hi").model ==
+          "gemini-4-hydrogen"
+    @test UniLM.get_url(Chat(service=GEMINIServiceEndpoint)) == "$(GEMINI_NATIVE_BASE)/models/gemini-4-hydrogen:generateContent"
+    @test haskey(DEFAULT_PRICING, UniLM.default_model(GEMINIServiceEndpoint))
     @test_throws ArgumentError UniLM._api_base_url(GEMINIServiceEndpoint)
 end
 

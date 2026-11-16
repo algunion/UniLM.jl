@@ -55,7 +55,11 @@ take the levels of the models that served them when this release was made. A req
 thinking level, Gemini will use the model's default thinking level (e.g., `"medium"` for Gemini 4
 Argon, Gemini 3.8 Flash, and Gemini 3.6 Flash)", and "You cannot disable thinking for Gemini 4
 Argon. Gemini 3 Flash and Flash-Lite also do not support full thinking-off"
-([thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)).
+([thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)). The default model,
+Gemini 4 Hydrogen, "defaults to `high` rather than `medium`, adds `xhigh`, and rejects `minimal` with an
+error" ([Gemini 4 Hydrogen](https://ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen)), so a
+`Chat` or a `Respond` without an effort thinks at `high` on it and bills those thinking tokens; set
+`reasoning_effort="low"` (a `Reasoning(effort="low")`) for the fewest.
 
 ```@example gemini
 chat = Chat(service=GEMINIServiceEndpoint, reasoning_effort="low")
@@ -433,7 +437,8 @@ Gemini 4 Argon also thinks for minutes: on a non-streaming call "The server clos
 10 minutes", on a stream "The server closes the stream after 20 minutes", and Google advises "Set your
 HTTP read timeout to 20 minutes"
 ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)). A
-`chatrequest!` or `respond` call to a model whose id starts `gemini-4-`, on either endpoint, takes
+`chatrequest!` or `respond` call to a model whose id starts `gemini-4-` (the default model among them), on
+either endpoint, takes
 `request_timeout`, `stream_idle_timeout` and `total_deadline` of 1200 seconds while no
 `RequestConfig` of yours is set in any channel; one you set replaces them as a whole
 ([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer is continued in hops,

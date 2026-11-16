@@ -32,7 +32,11 @@ auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
 provider_capabilities(::Type{GEMINIServiceEndpoint}) =
     Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech])
 
-default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.8-flash"
+# Google names Gemini 4 Hydrogen the successor to 3.8 Flash ("Change your model string from
+# `gemini-3.8-flash` to `gemini-4-hydrogen`",
+# https://ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen). It thinks at "high" unless a
+# level is set, and refuses "minimal" (`_GEMINI_THINKING_LEVELS`).
+default_model(::Type{GEMINIServiceEndpoint}) = "gemini-4-hydrogen"
 
 # The models released before Gemini 3.6 Flash (2026-07-21) and still served, by exact id: the text
 # and image models of the 2026-10-22 model listing. From Gemini 3.6 Flash and 3.5 Flash-Lite on, for

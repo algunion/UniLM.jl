@@ -311,7 +311,7 @@ end
 `_cumulative_cost` is internal bookkeeping for [`cumulative_cost`](@ref) — read it
 through that accessor, never directly.
 
-- **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-6-sol"`. Per provider: `"gpt-6-sol"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.8-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-5-5"` for native Anthropic (whose `max_tokens` defaults to 16000), `"deepseek-flash"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` / `MistralEndpoint` and user-defined endpoints without a `UniLM.default_model` method there is no default — an unset model throws `ArgumentError` at construction.
+- **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-6-sol"`. Per provider: `"gpt-6-sol"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-4-hydrogen"` for Gemini (native and OpenAI-compat; it thinks at `"high"` when no effort is set and refuses `"minimal"`), `"claude-opus-5-5"` for native Anthropic (whose `max_tokens` defaults to 16000), `"deepseek-flash"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` / `MistralEndpoint` and user-defined endpoints without a `UniLM.default_model` method there is no default — an unset model throws `ArgumentError` at construction.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` may be set together: OpenAI's, DeepSeek's and Mistral's references recommend altering one "but not both", and none refuses the pair, so both are sent where the endpoint takes sampling parameters (Anthropic takes neither; native Gemini and `GEMINIOpenAIServiceEndpoint` take them on the models released before Gemini 3.6 Flash).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
@@ -2657,7 +2657,7 @@ timestamps) are documented only for `whisper-1` and `diarized_json` (speaker lab
 
 - [OpenAI](@ref openai_start): `service = OPENAIServiceEndpoint`; reads `OPENAI_API_KEY`; default model `gpt-6-sol`
 - [Anthropic](@ref anthropic_start): `service = ANTHROPICServiceEndpoint`; reads `ANTHROPIC_API_KEY`; default model `claude-opus-5-5`
-- [Google Gemini](@ref gemini_start): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-3.8-flash`
+- [Google Gemini](@ref gemini_start): `service = GEMINIServiceEndpoint`; reads `GEMINI_API_KEY`; default model `gemini-4-hydrogen`
 - [Ollama](@ref ollama_guide): `service = OllamaEndpoint()`; reads `OLLAMA_HOST`, `OLLAMA_API_KEY`; no default model (a call names one)
 - [vLLM, LM Studio & llama.cpp](@ref local_servers_start): `service = GenericOpenAIEndpoint("http://localhost:8000", "")`; reads no environment variable; no default model (a call names one)
 - [Azure OpenAI](@ref azure_start): `service = AZUREServiceEndpoint`; reads `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`; default model `gpt-5.2`

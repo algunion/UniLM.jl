@@ -116,3 +116,16 @@ end
     end
     @test g == ["/v1/batches/batch_abc123/cancel", "/v1/batches?after=batch_abc123"]
 end
+
+# The Batch object's `status` is required (OpenAI's Batch schema): a reply without it, or with another JSON type, is
+# a malformed batch — a call error — and a poll on it ends at once instead of polling to its deadline.
+@testset "Batch API — a reply without a string status is a call error, and poll_batch ends on it at once" begin
+    for body in ("{\"id\":\"batch_1\"}", "{\"id\":\"batch_1\",\"status\":null}", "{\"id\":\"batch_1\",\"status\":3}")
+        r = _answered(() -> retrieve_batch("batch_1"; service=URLProbe), 200; body)
+        @test r isa BatchCallError && r.cause isa ArgumentError && occursin("\"status\"", r.error)
+    end
+    p, seen = _with_scripted((_, _) -> _json(200, "{\"id\":\"batch_1\"}")) do
+        poll_batch("batch_1"; interval=0.01, timeout=5.0, service=URLProbe)
+    end
+    @test p isa BatchCallError && p.cause isa ArgumentError && length(seen) == 1
+end

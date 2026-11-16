@@ -46,10 +46,29 @@ end
 _transient(r::BatchFailure) = _is_retryable(r.status, r.response)
 _transient(r::BatchCallError) = _per_attempt_timeout(r.cause)
 
-_parse_batch(d::AbstractDict) = BatchObject(id=d["id"], status=get(d, "status", nothing),
-    endpoint=get(d, "endpoint", nothing), input_file_id=get(d, "input_file_id", nothing),
-    output_file_id=get(d, "output_file_id", nothing), error_file_id=get(d, "error_file_id", nothing),
-    request_counts=Dict{String,Any}(get(d, "request_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
+# A reply is the documented object or a malformed one: a field the reference requires is never read with a
+# default, and a field of another JSON type is never coerced.
+function _batch_required(d::AbstractDict, key::String, ::Type{T}) where {T}
+    v = get(d, key, nothing)
+    v isa T || throw(ArgumentError("the batch reply has no $(repr(key)) of the documented type " *
+                                   "(got $(isnothing(v) ? "none" : "a JSON " * _json_type(v)))"))
+    v
+end
+
+function _batch_optional(d::AbstractDict, key::String, ::Type{T}) where {T}
+    v = get(d, key, nothing)
+    isnothing(v) || v isa T || throw(ArgumentError("the batch reply's $(repr(key)) is a JSON $(_json_type(v)), " *
+                                                   "not the documented type"))
+    v
+end
+
+# OpenAI's Batch object: `id` and `status` are required.
+_parse_batch(d::AbstractDict) = BatchObject(id=_batch_required(d, "id", String),
+    status=_batch_required(d, "status", String), endpoint=_batch_optional(d, "endpoint", String),
+    input_file_id=_batch_optional(d, "input_file_id", String), output_file_id=_batch_optional(d, "output_file_id", String),
+    error_file_id=_batch_optional(d, "error_file_id", String),
+    request_counts=Dict{String,Any}(something(_batch_optional(d, "request_counts", AbstractDict), Dict{String,Any}())),
+    raw=Dict{String,Any}(d))
 
 """
     create_batch(input_file_id, endpoint; completion_window="24h", metadata=nothing, service=OPENAIServiceEndpoint)

@@ -1825,6 +1825,17 @@ end
                              config=_TINY_DEADLINE) isa ResponseCallError
 end
 
+# TokenCountsResource requires `object` and `input_tokens`.
+# Refuted if: a 200 whose body is not the documented count returns as a count.
+@testset "count_input_tokens: a 200 that is not a token count is a call error" begin
+    for reply in ("{}", """{"object":"response.input_tokens"}""", """{"input_tokens":"7"}""", "[7]")
+        r, seen = _count_at(reply)
+        @test r isa ResponseCallError && occursin("input_tokens", r.error) && length(seen) == 1
+    end
+    r, _ = _count_at(_COUNTED)
+    @test r == Dict{String,Any}("object" => "response.input_tokens", "input_tokens" => 7)
+end
+
 # ─── Expanded coverage: _parse_response_stream_chunk edge cases ──────────────
 
 @testset "_parse_response_stream_chunk edge cases" begin

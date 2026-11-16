@@ -2604,7 +2604,8 @@ The keywords are the fields of OpenAI's token count body, each sent only when se
 64 characters (`"friendly"`, `"pragmatic"`, …), which only the count takes. A value outside those
 limits throws `ArgumentError` before any request.
 
-Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
+Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys; a 200 reply
+without an integer `"input_tokens"` is a `ResponseCallError`.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
 one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording
 cannot be written throws [`RecordingWriteError`](@ref), instead of returning a
@@ -2660,7 +2661,7 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         body = JSON.json(d)
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
-            return JSON.parse(resp.body; dicttype=Dict{String,Any})
+            return _input_token_count(resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -2668,4 +2669,13 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
+end
+
+# The token count (TokenCountsResource requires `object` and `input_tokens`). A 200 without an
+# integer count is no count, and the call fails as for any reply that is not the documented one.
+function _input_token_count(resp::HTTP.Response)::Dict{String,Any}
+    d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    d isa Dict{String,Any} && get(d, "input_tokens", nothing) isa Int ||
+        throw(ArgumentError("the input token count has no integer \"input_tokens\""))
+    d
 end

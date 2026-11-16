@@ -492,6 +492,8 @@ export
     create_fine_tuning_job,
     retrieve_fine_tuning_job,
     cancel_fine_tuning_job,
+    pause_fine_tuning_job,
+    resume_fine_tuning_job,
     list_fine_tuning_jobs,
     list_fine_tuning_events,
     list_fine_tuning_checkpoints

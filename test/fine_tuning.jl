@@ -105,3 +105,26 @@ end
         @test err isa ArgumentError && occursin("create_fine_tuning_job", err.msg) && occursin("2147483647", err.msg)
     end
 end
+
+@testset "Fine-tuning API — pause and resume a job" begin
+    rs, seen = _with_scripted((n, _) -> _json(200, """{"id":"ftjob_1","status":"$(n == 1 ? "pausing" : "running")"}""")) do
+        [pause_fine_tuning_job(_HOSTILE_ID; service=URLProbe), resume_fine_tuning_job(_HOSTILE_ID; service=URLProbe)]
+    end
+    @test [(s.method, s.target) for s in seen] == [("POST", "/v1/fine_tuning/jobs/$_HOSTILE_ENC/pause"),
+                                                    ("POST", "/v1/fine_tuning/jobs/$_HOSTILE_ENC/resume")]
+    @test rs[1] isa FineTuningSuccess && rs[1].response.status == "pausing"
+    @test rs[2] isa FineTuningSuccess && rs[2].response.status == "running"
+    # A job that cannot pause in its state is OpenAI's 400, kept with its request id.
+    r = _answered(() -> pause_fine_tuning_job("ftjob_1"; service=URLProbe), 400;
+                  body="""{"error":{"message":"cannot pause"}}""", headers=["x-request-id" => "req_p"])
+    @test r isa FineTuningFailure && r.status == 400 && r.request_id == "req_p"
+    @test _answered(() -> resume_fine_tuning_job("ftjob_1"; service=URLProbe), 200; body="""{"id":"ftjob_1"}""") isa
+          FineTuningCallError
+    for verb in (pause_fine_tuning_job, resume_fine_tuning_job)
+        @test _seam_timeout(verb("ftjob_1"; service=SeamProbe, config=_TINY_DEADLINE), FineTuningCallError)
+        @test_throws ArgumentError verb("ftjob_1"; service=GEMINIOpenAIServiceEndpoint)
+        tok = CancelToken(); cancel!(tok)
+        r, seen = _with_scripted(() -> verb("ftjob_1"; service=URLProbe, cancel=tok), (_, _) -> _json(200, "{}"))
+        @test isempty(seen) && r isa FineTuningCallError && r.cause isa UniLMCancelled
+    end
+end

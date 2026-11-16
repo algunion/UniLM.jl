@@ -172,6 +172,42 @@ function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIS
     end
 end
 
+# A POST on a job's action route (`pause`, `resume`), answered with the job.
+function _ft_job_action(id::String, action::String, service, config, cancel)
+    validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/" * action,
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(FineTuningCallError, e)
+    end
+end
+
+"""
+    pause_fine_tuning_job(id; service=OPENAIServiceEndpoint)
+
+Pause a running fine-tuning job; the result holds the job, whose `status` passes through `pausing`
+to `paused`. A job that cannot pause in its state, or does not support pausing, is OpenAI's 400, a
+`FineTuningFailure`.
+
+Takes `config` and `cancel` as [`cancel_fine_tuning_job`](@ref) does: one bounded attempt, and a
+cancelled token returns a `FineTuningCallError` whose `cause` is a [`UniLMCancelled`](@ref).
+"""
+pause_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    _ft_job_action(id, "pause", service, config, cancel)
+
+"""
+    resume_fine_tuning_job(id; service=OPENAIServiceEndpoint)
+
+Resume a paused fine-tuning job; the result holds the job. Otherwise as [`pause_fine_tuning_job`](@ref).
+"""
+resume_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    _ft_job_action(id, "resume", service, config, cancel)
+
 """
     list_fine_tuning_jobs(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 

@@ -8,8 +8,9 @@
   `complexity`, `frame_count`, `frame_duration_ms` and `svg`; `ImageEdit` adds `complexity`, `frame_count`,
   `frame_duration_ms` and `svg`; `ImageResponse` gains `svg_usage` before `raw`; `ResponseObject` gains
   `image_context_compression`, and its 8-argument form still works.
-- **`respond_tool_loop!` on Gemini Interactions stops at a call whose arguments are no JSON object.** The loop ends
-  with `completed=false` and the call error, instead of answering the call with "Error: invalid arguments: …".
+- **`tool_loop` on a Gemini Interactions `Respond` stops at a call whose arguments are no JSON object.** The turn is
+  a `ResponseCallError` and the loop ends with `completed=false`, where it used to answer the call with "Error:
+  invalid arguments: …" and go on.
 
 ### Added
 - **Gemini's Decisions API is a System One backend.** `GEMINIServiceEndpoint` declares `:system_one` and speaks
@@ -96,13 +97,17 @@
   UniLM sends. The Responses truncation clause says trimming can begin earlier.
 
 ### CI
-- **The provider drift check ignores model ids that only a Julia comment names** in a docs code block or a live
-  suite: pages print listing output as comments, so a retired snapshot shown there failed the release gate.
+- **The provider drift check ignores model ids that only a Julia comment names, and checks translate's default
+  model.** Pages print listing output as comments in docs code blocks, so a retired snapshot shown there failed the
+  release gate. `gpt-realtime-translate`, which only a docs comment used to name, is now checked as a default, and a
+  keyless test checks every default against the recorded listings.
 - **The hosted-providers job runs the DeepSeek, TypeSafe and natural-language live suites.** `test/live_hosted.jl`
   lists `integration_deepseek.jl`, `integration_typesafe.jl` and `integration_semantic.jl` and fails, naming the
   key, when `DEEPSEEK_API_KEY` or `TYPESAFE_API_KEY` is unset; the job passes both from the repository's secrets.
   The hosted suites also cover Gemini's Decisions API and each feature above that a provider serves.
 - **The release gate installs Ollama 0.40.16**, pinned by the SHA-256 Ollama publishes for its Linux build.
+- **Dependencies:** `julia-actions/julia-runtest` 1.13.0; the site's `@sindresorhus/slugify` 4.0.0, Next.js 16.4.5,
+  Tailwind CSS 4.3.5 and ESLint 10.14.0.
 
 ## 0.32.0
 

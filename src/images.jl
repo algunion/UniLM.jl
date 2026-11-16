@@ -46,12 +46,18 @@ provider takes it.
 - `quality::Union{String,Nothing}`: Quality level (`"low"`, `"medium"`, `"high"`, `"auto"`);
   `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` also accept `"xhigh"` and `"max"`
 - `background::Union{String,Nothing}`: Background (`"transparent"`, `"opaque"`, `"auto"`)
-- `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`)
+- `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"`);
+  GIF output "Requires access to the GIF preview for the selected model"
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `moderation::Union{String,Nothing}`: Content-moderation strictness (`"auto"`, `"low"`)
 - `complexity::Union{String,Nothing}`: `"low"`, `"medium"` or `"high"`, "Computation spent planning
   the image, independently of rendering quality" (the GPT-Image-2.6 models, which "use `high`" when it
   is omitted); another value throws `ArgumentError` when the request is built
+- `frame_count::Union{Int,Nothing}`: the frames of a GIF, 2 to 16 (9 when omitted), with
+  `output_format="gif"` only
+- `frame_duration_ms::Union{Int,Nothing}`: each GIF frame's delay in milliseconds, at least 20 (200
+  when omitted), with `output_format="gif"` only; OpenAI "caps the encoded delay at 655,350 ms per
+  frame", and UniLM sets no largest
 
 # Fields — Gemini only
 [Gemini's image controls](https://ai.google.dev/gemini-api/docs/image-generation#aspect-ratios-and-image-size):
@@ -65,8 +71,8 @@ A field the request's provider does not take (an OpenAI-only field on Gemini;
 `aspect_ratio` or `resolution` on OpenAI), `n` other than 1 on Gemini, a Gemini
 `aspect_ratio` or `resolution` outside the lists above, and a `safety_identifier` outside
 its provider's rule throw `ArgumentError` naming the provider and the field — when the
-request is serialized, and in [`generate_image`](@ref) before any request. Other OpenAI
-values are sent as given, for OpenAI to judge. `input_fidelity` is an image-edit
+request is serialized, and in [`generate_image`](@ref) before any request — as does a frame
+field without `output_format="gif"`. Other OpenAI values are sent as given, for OpenAI to judge. `input_fidelity` is an image-edit
 parameter: set it on [`ImageEdit`](@ref), not here.
 
 # Examples
@@ -103,11 +109,14 @@ ImageGeneration(service=GEMINIServiceEndpoint, prompt="A lighthouse at dusk",
     aspect_ratio::Union{String,Nothing} = nothing
     resolution::Union{String,Nothing} = nothing
     complexity::Union{String,Nothing} = nothing
+    frame_count::Union{Int,Nothing} = nothing
+    frame_duration_ms::Union{Int,Nothing} = nothing
     function ImageGeneration(service, model, prompt, n, size, quality, background, output_format, output_compression,
-                             safety_identifier, moderation, aspect_ratio, resolution, complexity)
-        _check_image_controls("OpenAI image", complexity)
+                             safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count,
+                             frame_duration_ms)
+        _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
         new(service, model, prompt, n, size, quality, background, output_format, output_compression,
-            safety_identifier, moderation, aspect_ratio, resolution, complexity)
+            safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms)
     end
 end
 
@@ -115,9 +124,24 @@ end
 # (https://developers.openai.com/api/reference/resources/images/methods/generate), checked where the
 # request is built: `who` names the request in the message.
 const _IMAGE_COMPLEXITIES = ("low", "medium", "high")
-function _check_image_controls(who::String, complexity::Union{AbstractString,Nothing})::Nothing
+function _check_image_controls(who::String, complexity::Union{AbstractString,Nothing},
+                               frame_count::Union{Integer,Nothing}=nothing, frame_duration_ms::Union{Integer,Nothing}=nothing)::Nothing
     isnothing(complexity) || complexity in _IMAGE_COMPLEXITIES || throw(ArgumentError(
         "$who complexity must be \"low\", \"medium\" or \"high\" (got $(repr(complexity)))"))
+    isnothing(frame_count) || 2 <= frame_count <= 16 || throw(ArgumentError(
+        "$who frame_count must be 2 to 16, the frames of a GIF (got $frame_count)"))
+    isnothing(frame_duration_ms) || frame_duration_ms >= 20 || throw(ArgumentError(
+        "$who frame_duration_ms must be at least 20, a GIF frame's milliseconds (got $frame_duration_ms)"))
+    nothing
+end
+
+# A GIF's frame fields are "Only supported with output_format=gif".
+function _check_image_format(who::String, output_format::Union{AbstractString,Nothing}, frame_count::Union{Integer,Nothing},
+                             frame_duration_ms::Union{Integer,Nothing})::Nothing
+    frames = String[f for (f, v) in (("frame_count", frame_count), ("frame_duration_ms", frame_duration_ms)) if !isnothing(v)]
+    isempty(frames) || output_format == "gif" || throw(ArgumentError(
+        "$who $(join(frames, " and ")): only with output_format=\"gif\", the frames of a GIF (got output_format=" *
+        "$(repr(output_format))); set output_format=\"gif\", or unset $(join(frames, " and "))"))
     nothing
 end
 
@@ -138,7 +162,7 @@ function _image_payload(service, ig::ImageGeneration)::Dict{Symbol,Any}
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
     for f in (:n, :size, :quality, :background, :output_format, :output_compression, :safety_identifier, :moderation,
-              :complexity)
+              :complexity, :frame_count, :frame_duration_ms)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -433,7 +457,7 @@ when the edit is sent.
 - `size`, `quality`, `background`, `output_format`: as on [`ImageGeneration`](@ref)
 - `input_fidelity::Union{String,Nothing}`: how closely the edit keeps the input's
   features (`"high"`, `"low"`)
-- `complexity`: as on [`ImageGeneration`](@ref)
+- `complexity`, `frame_count`, `frame_duration_ms`: as on [`ImageGeneration`](@ref)
 
 # Fields — Gemini only
 `aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
@@ -442,8 +466,8 @@ image follows the input's aspect ratio.
 `image` names at least one file: [`edit_image`](@ref) throws `ArgumentError` for an empty
 vector before any request, as it does for a `markup` beside a `mask` and, naming the provider and the
 field, for a field the request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
-`resolution` outside its list, and a `safety_identifier` outside its provider's rule. Other
-OpenAI values are sent as given, for OpenAI to judge.
+`resolution` outside its list, a `safety_identifier` outside its provider's rule, and a frame field
+without `output_format="gif"`. Other OpenAI values are sent as given, for OpenAI to judge.
 """
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -462,11 +486,14 @@ OpenAI values are sent as given, for OpenAI to judge.
     aspect_ratio::Union{String,Nothing} = nothing
     resolution::Union{String,Nothing} = nothing
     complexity::Union{String,Nothing} = nothing
+    frame_count::Union{Int,Nothing} = nothing
+    frame_duration_ms::Union{Int,Nothing} = nothing
     function ImageEdit(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
-                       output_format, safety_identifier, aspect_ratio, resolution, complexity)
-        _check_image_controls("OpenAI image", complexity)
+                       output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count,
+                       frame_duration_ms)
+        _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
         new(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
-            output_format, safety_identifier, aspect_ratio, resolution, complexity)
+            output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms)
     end
 end
 
@@ -577,6 +604,7 @@ function _check_image_request(service, r::_ImageRequest)
     isnothing(id) || 1 <= length(id) <= 128 || throw(ArgumentError(
         "the OpenAI Images API takes a safety_identifier of 1 to 128 characters (got $(length(id))); it reads " *
         "an empty one as none, and a longer identifier can be hashed (a SHA-256 hex digest is 64 characters)"))
+    _check_image_format("OpenAI image", r.output_format, r.frame_count, r.frame_duration_ms)
     _check_markup(r)
 end
 
@@ -621,7 +649,8 @@ function _image_request(service, e::ImageEdit)
         isnothing(markup) || push!(parts, "markup" => _markup_part(markup))
         for (k, f) in (("n", :n), ("size", :size), ("quality", :quality), ("input_fidelity", :input_fidelity),
                        ("background", :background), ("output_format", :output_format),
-                       ("safety_identifier", :safety_identifier), ("complexity", :complexity))
+                       ("safety_identifier", :safety_identifier), ("complexity", :complexity),
+                       ("frame_count", :frame_count), ("frame_duration_ms", :frame_duration_ms))
             v = getfield(e, f)
             !isnothing(v) && push!(parts, k => string(v))
         end
@@ -652,9 +681,11 @@ end
 # The OpenAI Images API fields generateContent has no counterpart for, and how a refusal names
 # the request.
 _openai_only_image_fields(::ImageGeneration) =
-    (:size, :quality, :background, :output_format, :output_compression, :moderation, :complexity)
+    (:size, :quality, :background, :output_format, :output_compression, :moderation, :complexity, :frame_count,
+     :frame_duration_ms)
 _openai_only_image_fields(::ImageEdit) =
-    (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format, :complexity)
+    (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format, :complexity, :frame_count,
+     :frame_duration_ms)
 _image_verb(::ImageGeneration) = "image generation"
 _image_verb(::ImageEdit) = "image editing"
 

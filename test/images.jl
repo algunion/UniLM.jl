@@ -927,3 +927,49 @@ _edit_form(e::ImageEdit) = String(read(last(withenv(() -> UniLM._image_request(O
     err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
     @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take complexity,")
 end
+
+@testset "OpenAI images — a GIF takes frame_count 2 to 16 and frame_duration_ms of at least 20, with output_format \"gif\" only" begin
+    # The Images reference: frame_count "Accepts integers from 2 through 16", frame_duration_ms `minimum: 20` and no
+    # maximum ("caps the encoded delay at 655,350 ms per frame"); both "Only supported with output_format=gif".
+    gif = _image_json(ImageGeneration(prompt="p", output_format="gif", frame_count=2, frame_duration_ms=20))
+    @test (gif["output_format"], gif["frame_count"], gif["frame_duration_ms"]) == ("gif", 2, 20)
+    @test _image_json(ImageGeneration(prompt="p", output_format="gif", frame_count=16,
+                                      frame_duration_ms=655_350))["frame_duration_ms"] == 655_350
+    @test !any(k -> haskey(_image_json(ImageGeneration(prompt="p", output_format="gif")), k), ("frame_count", "frame_duration_ms"))
+    for (kw, words) in ((; frame_count=1) => ("frame_count", "2", "16"), (; frame_count=17) => ("frame_count", "2", "16"),
+                        (; frame_duration_ms=19) => ("frame_duration_ms", "20"))
+        for make in (() -> ImageGeneration(; prompt="p", output_format="gif", kw...),
+                     () -> ImageEdit(; image="never-read.png", prompt="p", output_format="gif", kw...))
+            err = _refusal(make)
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        end
+    end
+    # Without output_format "gif" a frame field has no animation to shape: refused when serialized, before any request.
+    for fmt in (nothing, "png", "webp"), kw in ((; frame_count=4), (; frame_duration_ms=100))
+        field = string(only(keys(kw)))
+        err = _refusal(() -> JSON.json(ImageGeneration(; prompt="p", output_format=fmt, kw...)))
+        @test err isa ArgumentError && occursin(field, err.msg) && occursin("output_format=\"gif\"", err.msg)
+        e = ImageEdit(; image="never-read.png", prompt="p", output_format=fmt, kw...)
+        err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, e))
+        @test err isa ArgumentError && occursin(field, err.msg) && occursin("output_format=\"gif\"", err.msg)
+    end
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="gif", frame_count=3, frame_duration_ms=40))
+        @test occursin("name=\"frame_count\"\r\n\r\n3\r\n", form) && occursin("name=\"frame_duration_ms\"\r\n\r\n40\r\n", form)
+        r, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, frame_count=3))
+        end
+        @test r isa ArgumentError && isempty(seen)
+    finally
+        rm(path; force=true)
+    end
+    for (field, value) in (:frame_count => 4, :frame_duration_ms => 100)
+        err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take $field,")
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
+    end
+end

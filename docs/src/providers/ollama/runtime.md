@@ -64,7 +64,9 @@ OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runn
   message, keeping its first tokens and its tail: a 5,407-token message was cut to 2,050 tokens, the
   first 4 kept (Ollama 0.40.6), so the start of a long document is lost without a word, not only the
   oldest messages. An embeddings input is cut at its end instead
-  ([Long inputs](@ref ollama_embedding_window)).
+  ([Long inputs](@ref ollama_embedding_window)). `respond` carries no `truncate`: from Ollama 0.40.16 a
+  `Respond`'s own `truncation` decides, and an input that does not fit is the same HTTP 400 unless it is
+  `"auto"` ([respond and FIM](@ref ollama_respond)).
 - **A reply that fills the window.** `shift=false` stops it at finish reason `"length"` instead of
   letting it continue on shortened context.
 - **Keep-alive.** "By default models are kept in memory for 5 minutes before being unloaded", and
@@ -123,9 +125,11 @@ unchanged; their effect on `:mlx` is not verified.
     for runners: <runner>`, also while the model was loaded, and so was every runner
     but the listed one on each of the nine decision models measured. The 2,048-token
     floor of a model with vision was measured on 22 October 2026 (and on Ollama
-    0.40.7 on Linux). The live suites `test/integration_ollama.jl` (106
-    tests) and `test/integration_ollama_models.jl` (25) passed unchanged
-    on Ollama 0.40.14 (3 November 2026).
+    0.40.7 on Linux). The live suite `test/integration_ollama.jl` passed on
+    Ollama 0.40.16 (16 November 2026), 110 tests with `gemma4:e4b` (MLX) as its
+    chat model and 109 with `gemma4:e4b-it-q4_K_M` (llama.cpp);
+    `test/integration_ollama_models.jl` (25 tests) passed unchanged on Ollama
+    0.40.14 (3 November 2026).
 
 ## [Models](@id ollama_models)
 

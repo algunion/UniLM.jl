@@ -47,7 +47,7 @@ Ollama 0.35.0 or later serves the route, and the Clef models, which read picture
 MLX on Apple silicon ([v0.40.0](https://github.com/ollama/ollama/releases/tag/v0.40.0)), and a cloud model through
 the local server needs 0.40.5 ([System One](https://docs.ollama.com/api/systemone)). This page's measurements ran on
 Ollama 0.40.6, and its new examples on 0.40.11. The live suite `test/integration_ollama_system_one.jl` passed
-unchanged on Ollama 0.40.14 (3 November 2026): 784 tests on the nine models of [Models](@ref ollama_decisions_models).
+unchanged on Ollama 0.40.16 (16 November 2026): 784 tests on the nine models of [Models](@ref ollama_decisions_models).
 
 A call goes to Ollama when it names `service = OllamaEndpoint()`, or when it names no `service` and a
 [`with_system_one`](@ref)`(OllamaEndpoint(); model = …)` scope encloses it. Ollama has no default model: a call names
@@ -126,7 +126,10 @@ models measured below are decision models by their own pages, with text and imag
 name the tag you measured, since a name without one means its `latest` tag ([Setup](@ref ollama_setup)). The model
 that answered is the one the request named: Ollama documents the reply's `model` as the "Model name from the
 request", and a cloud model whose reply drops its tag keeps the requested name in `r.response.model`, the reply's
-in `raw`.
+in `raw`. Ollama 0.40.15 added AutoTrust's decision models ([autotrust-jev](https://ollama.com/library/autotrust-jev),
+on Apple silicon in that release, 8 GB and up), whose Score questions take six levels where Ollama's
+[Decision](https://docs.ollama.com/capabilities/decision) page still gives 2–10 for every model; UniLM has not
+measured them, and they are not among the models below.
 
 Nine decision models answered the same 129 labelled support tickets, one Choice of seven intents each, through
 UniLM on one machine:

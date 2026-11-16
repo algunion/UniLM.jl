@@ -496,9 +496,9 @@ u = token_usage(result)
 ```
 
 Of a [`Respond`](@ref), UniLM sends `model`, `input`, `instructions`, function `tools`, `tool_choice`
-`"auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, a `text` format and the `effort` of
-`reasoning`, and refuses every other field before the request rather than have Ollama drop it: the
-fields that need a stored response (`store`, `previous_response_id`, `background`, `conversation`),
+`"auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, a `text` format, the `effort` of
+`reasoning` and `truncation`, and refuses every other field before the request rather than have Ollama drop
+it: the fields that need a stored response (`store`, `previous_response_id`, `background`, `conversation`),
 the other fields its compatibility page does not list as supported, and `seed`, which a `Chat` sends to Ollama
 instead ([Limits and refusals](@ref ollama_limits)). Ollama's page lists no `text` field either; UniLM sends a
 `json_schema` text format with its schema, which Ollama 0.40.11 followed in the one such request sent
@@ -512,6 +512,19 @@ loop on a `Chat` with `tool_loop!`. [`compact_response`](@ref) reaches `/v1/resp
 the compatibility page does not list, which Ollama 0.40.11 answered with a `compaction` item (observed
 on 25 October 2026), and, like a `Chat`, needs a `model`: a call that names none throws before any
 request.
+
+From Ollama 0.40.16, `/v1/responses` reads `truncation`, which its compatibility page still lists as unsupported
+("`/v1/responses` respects `truncation` and no longer silently truncates by default",
+[v0.40.16](https://github.com/ollama/ollama/releases/tag/v0.40.16)). An input longer than the context window the
+model is loaded with is an HTTP 400 [`ResponseFailure`](@ref) when `truncation` is unset or `"disabled"` —
+`request (170014 tokens) exceeds the available context size (131072 tokens), try increasing it` — and `"auto"`
+answers from a shortened input: 65,539 of those 170,014 tokens (`gemma4:e4b-it-q4_K_M` on the `:llamacpp`
+runner, Ollama 0.40.16, 16 November 2026; `qwen2.5-coder:1.5b-base`, in a 32,768-token window, answered from
+16,386 of 41,004; on `:mlx` not measured). Any other value throws `ArgumentError` before
+the request, since Ollama answers it with HTTP 400 `unknown truncation strategy`. An earlier server ignores the
+field and shortens such an input without a word (by its source and the release notes; not measured). The route
+takes no `num_ctx`, so the window is the one the model loads with by default: 131,072 tokens for that model on
+an Apple M4 Max with 64 GB ([Options](@ref ollama_options)).
 
 [`fim_complete`](@ref) reaches `/v1/completions` with a prompt and the `suffix` the reply fills up to,
 on a model that fills in the middle, one whose capabilities include `:insert`, such as
@@ -559,7 +572,8 @@ priced as local: `0.0`, with no warning, unless you gave it a row. How a call is
 A request meets the model's context window, which the endpoint's `num_ctx` sets when the model loads: by
 default a chat prompt that does not fit is an HTTP 400 on the `:llamacpp` runner, not a silently
 shortened prompt, while a model on the `:mlx` runner answers it (Ollama 0.40.6;
-[Runners](@ref ollama_runners)). UniLM checks no size itself: not the window, not the length of
+[Runners](@ref ollama_runners)). So is a `respond` input on Ollama 0.40.16, unless its `truncation` is `"auto"`
+([respond and FIM](@ref ollama_respond)). UniLM checks no size itself: not the window, not the length of
 a sound clip, not an image's size. An embeddings input longer than the model's window is the server's
 HTTP 400 too ([Long inputs](@ref ollama_embedding_window)).
 
@@ -581,7 +595,8 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 | a message with a `name` | `Ollama messages have no name field` | the message without `name` |
 | a `tool` message whose `tool_call_id` matches no tool call of an earlier assistant turn | `answers no earlier tool call`: Ollama identifies a result by the called function's name | the `id` of the tool call it answers |
 | on a `Respond`: `store`, `previous_response_id`, `background` or `conversation` | `Ollama's Responses API ignores`: it keeps no state between calls | the whole conversation in `input`, or a `Chat` |
-| on a `Respond`: another field its compatibility page does not list as supported, such as `include`, `truncation` or `service_tier` | `Ollama's Responses API reads no`, `reads none of`: Ollama would drop it | remove it |
+| on a `Respond`: another field its compatibility page does not list as supported, such as `include`, `metadata` or `service_tier` | `Ollama's Responses API reads no`, `reads none of`: Ollama would drop it | remove it |
+| a `Respond` `truncation` other than `"auto"` and `"disabled"` | `Ollama's Responses API takes truncation "auto" or "disabled"`: Ollama 0.40.16 answers another with HTTP 400 `unknown truncation strategy` | `"auto"`, `"disabled"`, or none |
 | a `Respond` with a `seed` | `Ollama's Responses API reads no seed` | a `Chat`, whose `seed` Ollama reads |
 | a `Reasoning` with a summary, a context or a mode | `Ollama reads only reasoning.effort` | the `effort` alone |
 | a `text` format with a `verbosity`, or of a type other than `text` and `json_schema` | `Ollama ignores text.verbosity`, `constrains output only to a json_schema text.format`: Ollama's compatibility page lists no `text` field (by Ollama 0.40.6's source; untested) | a `json_schema` text format without `verbosity` |
@@ -608,9 +623,10 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 The examples of First call, Tools, Structured output, Reasoning and Attachments were recorded on 21 October
 2026 on `gemma4:e4b` with UniLM's development branch after 0.24.0 and Ollama 0.40.6; those of Conversations,
 Streaming, and respond and FIM on 25 October 2026 on `gemma4:e4b` and `qwen2.5-coder:1.5b-base` with UniLM's
-development branch after 0.26.0 and Ollama 0.40.11; all on an Apple M4 Max with 64 GB. UniLM's live Ollama suites
-passed unchanged on Ollama 0.40.14 (3 November 2026): `test/integration_ollama.jl`, 106 tests, and
-`test/integration_ollama_models.jl`, 25.
+development branch after 0.26.0 and Ollama 0.40.11; all on an Apple M4 Max with 64 GB. UniLM's live suite
+`test/integration_ollama.jl` passed on Ollama 0.40.16 (16 November 2026), 110 tests with `gemma4:e4b` and 109 with
+`gemma4:e4b-it-q4_K_M` as its chat model, and `test/integration_ollama_models.jl` passed unchanged on Ollama 0.40.14
+(3 November 2026), 25 tests.
 
 See also: [`OllamaEndpoint`](@ref), [`OllamaOptions`](@ref), [`Chat`](@ref), [`chatrequest!`](@ref) and
 [`LLMSuccess`](@ref) in the API reference, and the [Ollama API reference](@ref ollama_api) page; the

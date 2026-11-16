@@ -597,7 +597,7 @@ end
     @test w["instructions"] == "Be brief." && w["reasoning"]["effort"] == "none"
     @test w["input"][1]["content"][2]["image_url"] == "data:image/png;base64,iVBORw0KGgo="
     for (f, v) in (:previous_response_id => "resp_1", :conversation => "conv_1", :store => true,
-                   :metadata => Dict("a" => "b"), :truncation => "auto", :background => true,
+                   :metadata => Dict("a" => "b"), :background => true,
                    :include => ["reasoning.encrypted_content"], :parallel_tool_calls => true, :user => "u",
                    :max_tool_calls => 2, :service_tier => "auto", :top_logprobs => 2, :safety_identifier => "s",
                    :prompt_cache_key => "k", :prompt_cache_options => PromptCacheOptions(mode="implicit"))
@@ -643,6 +643,26 @@ end
     # A Respond tool loop cannot chain turns without server-side state.
     err = try tool_loop(Respond(service=e, model="m", input="x"), (n, a) -> "r"); nothing catch x; x end
     @test err isa ArgumentError && occursin("tool_loop!", err.msg)
+end
+
+@testset "respond: truncation \"auto\" and \"disabled\" are sent; another value is refused before the request" begin
+    # Ollama 0.40.16 reads /v1/responses `truncation`: "auto" shortens an input that does not fit the context
+    # window, "disabled" (and no field) refuses it, and any other value is HTTP 400 "unknown truncation strategy".
+    # Refuted by: either value dropped or rewritten, a field sent that the Respond leaves unset, or another value sent.
+    e = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    enc(; kw...) = JSON.parse(UniLM.encode_agentic(e, Respond(; service=e, model="gemma4:e4b", input="Hi", kw...)))
+    @test enc(truncation="auto")["truncation"] == "auto"
+    @test enc(truncation="disabled")["truncation"] == "disabled"
+    @test !haskey(enc(), "truncation")
+    said(v) = try enc(truncation=v); "" catch x; x isa ArgumentError ? x.msg : rethrow() end
+    @test said("none") == "Ollama's Responses API takes truncation \"auto\" or \"disabled\" (read from Ollama " *
+        "0.40.16 on) and answers \"none\" with HTTP 400 \"unknown truncation strategy\": set \"auto\" to let it " *
+        "shorten an input that does not fit the context window, \"disabled\" or none to have such an input refused"
+    for v in ("Auto", "", "truncate", "enabled")
+        @test occursin("truncation \"auto\" or \"disabled\" (read from Ollama 0.40.16 on) and answers $(repr(v))", said(v))
+    end
+    # A throw before any I/O, not a result: the dead port is never dialled.
+    @test_throws ArgumentError respond(Respond(service=e, model="m", input="x", truncation="none"))
 end
 
 @testset "embeddings: native /api/embed, over-long input is an error" begin

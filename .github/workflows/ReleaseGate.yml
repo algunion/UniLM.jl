@@ -104,8 +104,8 @@ jobs:
     env:
       JULIA_NUM_THREADS: '4,2'
       UNILM_LIVE_OLLAMA: '1'
-      OLLAMA_VERSION: v0.40.14
-      OLLAMA_SHA256: 993e83d08c3d13d17c55009a3e2664c8a25445e644aec3a68bef5abb6abce67d
+      OLLAMA_VERSION: v0.40.16
+      OLLAMA_SHA256: 87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d
       # The model-management suite also needs kev:0.8b-q8_0, which it names itself: keep it in this list.
       UNILM_OLLAMA_DECISION_MODELS: kev:0.8b-q8_0,d1-omni:600m
       # A build that sees and hears, so the embeddings suite's image, audio and mixed-item witnesses run.
@@ -208,7 +208,7 @@ jobs:
           pkill -f 'ollama serve' || true
 
   hosted-providers:
-    name: Hosted providers (real OpenAI, Anthropic and Gemini APIs)
+    name: Hosted providers (real OpenAI, Anthropic, Gemini, DeepSeek and TypeSafe APIs)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Spend bounds: the job starts only once the JET gate and the keyless test suite have
@@ -224,8 +224,9 @@ jobs:
       UNILM_LIVE: '1'
       UNILM_RUN_IMAGE_TESTS: 'true'
     # The only billed job: every hosted-provider live suite (listed in test/live_hosted.jl)
-    # calls the real APIs with the repository's keys, and the job fails when a key or flag is
-    # missing or a suite skipped itself instead of running.
+    # calls the real OpenAI, Anthropic, Gemini, DeepSeek and TypeSafe APIs with the repository's
+    # keys, and the job fails when a key or flag is missing or a suite skipped itself instead of
+    # running.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -249,4 +250,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: julia --color=yes --startup-file=no --compiled-modules=existing --pkgimages=existing --project=test -e 'include("test/live_hosted.jl")'

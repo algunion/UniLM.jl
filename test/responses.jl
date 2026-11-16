@@ -453,13 +453,13 @@ end
                       prompt_cache_options=PromptCacheOptions(mode="implicit"),
                       moderation=ModerationConfig(model="omni-moderation-latest"))
         vals = Any[getfield(ref, f) for f in fieldnames(Respond)]
-        @test length(vals) == 32
+        @test length(vals) == 33
         r = Respond(vals...)
         @test (r.model, r.input, r.instructions, r.safety_identifier) == ("gpt-5.4-mini", "hi", "be brief", "u1")
         @test r.prompt_cache_options == ref.prompt_cache_options && r.moderation == ref.moderation
-        # The positional form takes exactly the 32 fields; fewer is a MethodError.
+        # The positional form takes exactly the 33 fields; fewer is a MethodError.
+        @test_throws MethodError Respond(vals[1:32]...)
         @test_throws MethodError Respond(vals[1:31]...)
-        @test_throws MethodError Respond(vals[1:30]...)
     end
 
     @testset "no prompt field: OpenAI shuts reusable prompts down on 2026-11-30" begin
@@ -3270,5 +3270,62 @@ end
         (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
     for r in (plain, streamed)
         @test r isa ResponseSuccess && input_transformations(r) == want && input_transformations(r.response) == want
+    end
+end
+
+@testset "image_context_compression is the Responses API's image.context_compression, on a Respond and a compaction" begin
+    # The Responses reference: `image.context_compression` "Controls image context optimization. Defaults to `auto`,
+    # which uses the model, transport, and input to select a policy. Use `enabled` to require compression support or
+    # `disabled` to turn it off"; a response's `image.context_compression` is the policy it resolved. On 2026-11-16 the
+    # API answered "disabled" and "enabled" on /v1/responses, and "disabled" on /v1/responses/compact, with HTTP 200
+    # and the value echoed.
+    for v in ("auto", "enabled", "disabled")
+        r = Respond(model="gpt-6-luna", input="hi", image_context_compression=v)
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["image"] == Dict("context_compression" => v)
+    end
+    @test !haskey(JSON.parse(UniLM.encode_agentic(OPENAIServiceEndpoint, Respond(model="gpt-6-luna", input="hi"))), "image")
+    for bad in ("Auto", "", "on")
+        err = try Respond(model="m", input="hi", image_context_compression=bad); nothing catch e; e end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg) && occursin("\"auto\"", err.msg)
+    end
+    g = Respond(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="m", input="hi", image_context_compression="disabled")
+    @test JSON.parse(UniLM.encode_agentic(g.service, g))["image"] == Dict("context_compression" => "disabled")
+    # Gemini Interactions and Ollama have no such field: refused before any request, naming it.
+    for service in (GEMINIServiceEndpoint, OllamaEndpoint())
+        r = Respond(; service, model="m", input="hi", image_context_compression="disabled")
+        err = try UniLM.encode_agentic(r.service, r); nothing catch e; e end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg)
+    end
+    # The policy the reply resolved, unstreamed and streamed; `nothing` when the reply names none.
+    cfg = RequestConfig(max_attempts=1)
+    reply = Dict("id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna", "output" => Any[],
+                 "image" => Dict("context_compression" => "enabled"))
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi", image_context_compression="enabled";
+                                   kw...); config=cfg)
+    plain, seen = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(reply)))
+    @test JSON.parse(only(seen).body)["image"] == Dict("context_compression" => "enabled")
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => reply)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && r.response.image_context_compression == "enabled"
+    end
+    @test UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(delete!(copy(reply), "image"))))).image_context_compression === nothing
+    # A ResponseObject built from its eight earlier fields reads the policy from `raw`.
+    ro = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
+    @test ResponseObject(ro.id, ro.status, ro.model, ro.output, ro.usage, ro.error, ro.metadata, ro.raw).image_context_compression == "enabled"
+    # A compaction sends it as a Respond does, and refuses another value, or Ollama, before any request.
+    compacted = Dict("id" => "c", "object" => "response.compaction", "output" => Any[], "image" => Dict("context_compression" => "disabled"))
+    c, seen = _with_scripted(() -> compact_response(model="m", input="hi", image_context_compression="disabled",
+                                                    service=_ToolUsageProbe, config=cfg),
+                             (_, _) -> _json(200, JSON.json(compacted)))
+    @test JSON.parse(only(seen).body)["image"] == Dict("context_compression" => "disabled") && c["image"] == compacted["image"]
+    @test !haskey(JSON.parse(only(last(_with_scripted(() -> compact_response(model="m", input="hi", service=_ToolUsageProbe,
+        config=cfg), (_, _) -> _json(200, JSON.json(compacted))))).body), "image")
+    for (service, v, word) in ((_ToolUsageProbe, "on", "\"auto\""), (OllamaEndpoint(), "disabled", "Ollama"))
+        err, seen = _with_scripted((_, _) -> _json(200, JSON.json(compacted))) do
+            try compact_response(; model="m", input="hi", image_context_compression=v, service, config=cfg); nothing catch e; e end
+        end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg) && occursin(word, err.msg) && isempty(seen)
     end
 end

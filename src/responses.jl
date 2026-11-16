@@ -962,6 +962,17 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   `OPENAIServiceEndpoint` and the other endpoints on the OpenAI Responses wire (Azure,
   `GEMINIOpenAIServiceEndpoint`) throw `ArgumentError` for it before any request, as does
   [`OllamaEndpoint`](@ref), whose Responses API reads no seed
+- `image_context_compression::String`: `"auto"`, `"enabled"` or `"disabled"`, sent as the Responses
+  API's `image.context_compression`, which "Controls image context optimization. Defaults to `auto`,
+  which uses the model, transport, and input to select a policy. Use `enabled` to require compression
+  support or `disabled` to turn it off"
+  ([reference](https://developers.openai.com/api/reference/resources/responses/methods/create));
+  another value throws `ArgumentError` when the `Respond` is built. The policy the response resolved
+  is its [`ResponseObject`](@ref)'s `image_context_compression`. `OPENAIServiceEndpoint` and a
+  [`GenericOpenAIEndpoint`](@ref) send it; [`OllamaEndpoint`](@ref) and Gemini Interactions
+  (`GEMINIServiceEndpoint`), whose APIs have no such field, throw `ArgumentError` before any request,
+  as for `prompt_cache_retention`; the endpoints without a Responses API (Azure,
+  `GEMINIOpenAIServiceEndpoint`, DeepSeek) refuse `respond` itself
 
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
 efforts, sampling controls, `prompt_cache_retention`) to those GPT-6 and GPT-5.6 models, by
@@ -969,7 +980,7 @@ exact id or a dated snapshot, before any request; other models are checked by th
 Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone, so `"ultrafast"` throws
 `ArgumentError` on every other model, an unknown one included. See
 [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
-Build a `Respond` with keywords: the positional form takes all 32 fields in declaration
+Build a `Respond` with keywords: the positional form takes all 33 fields in declaration
 order.
 
 # Examples
@@ -1026,7 +1037,8 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing               # Gemini Interactions and generic endpoints
-    # The positional form takes all 32 fields in declaration order; keyword construction,
+    image_context_compression::Union{String,Nothing} = nothing  # "auto", "enabled", "disabled": image.context_compression
+    # The positional form takes all 33 fields in declaration order; keyword construction,
     # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
@@ -1034,7 +1046,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         previous_response_id, user, background, include, max_tool_calls,
         service_tier, top_logprobs, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options, prompt_cache_options, moderation, seed)
+        context_management, stream_options, prompt_cache_options, moderation, seed, image_context_compression)
         model = _resolve_model(service, model)
         tools = _respond_tools(tools)
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
@@ -1043,14 +1055,37 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
             "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
+        _check_image_context_compression(image_context_compression)
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
             previous_response_id, user, background, include, max_tool_calls,
             service_tier, top_logprobs, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
-            context_management, stream_options, prompt_cache_options, moderation, seed)
+            context_management, stream_options, prompt_cache_options, moderation, seed, image_context_compression)
     end
+end
+
+# The image context policies of the Responses API's `image.context_compression`
+# (https://developers.openai.com/api/reference/resources/responses/methods/create), and the object a
+# request and a compaction carry one in.
+const _IMAGE_CONTEXT_COMPRESSION = ("auto", "enabled", "disabled")
+
+function _check_image_context_compression(v::Union{AbstractString,Nothing})::Nothing
+    isnothing(v) || v in _IMAGE_CONTEXT_COMPRESSION || throw(ArgumentError(
+        "image_context_compression takes \"auto\", \"enabled\" or \"disabled\", the Responses API's " *
+        "image.context_compression policies (got $(repr(v)))"))
+    nothing
+end
+
+_image_options(v::AbstractString) = Dict{Symbol,Any}(:context_compression => v)
+
+# The policy a response or a compaction resolved, `image.context_compression` ("enabled" or "disabled"),
+# when it names one.
+function _resolved_image_compression(d::AbstractDict)::Union{String,Nothing}
+    image = get(d, "image", nothing)
+    v = image isa AbstractDict ? get(image, "context_compression", nothing) : nothing
+    v isa String ? v : nothing
 end
 
 # OpenAI's Responses API has no seed (its Chat Completions API has one), so no request on that
@@ -1078,6 +1113,7 @@ function JSON.lower(r::Respond)
         v = getfield(r, f)
         !isnothing(v) && (d[f] = v)
     end
+    isnothing(r.image_context_compression) || (d[:image] = _image_options(r.image_context_compression))
     return d
 end
 
@@ -1096,6 +1132,10 @@ Parsed response from the Responses API.
   model whose reply drops its tag keeps the requested name; the server's stays in `r.raw`)
 - `r.output` — full output array (raw dicts)
 - `r.usage` — token usage info
+- `r.image_context_compression` — the image context policy the response resolved, its
+  `image.context_compression` (`"enabled"` or `"disabled"`), read from an unstreamed reply and from a
+  stream's `response.completed`; `nothing` when the reply names none (Gemini Interactions and Ollama
+  never do)
 - `r.raw` — the complete raw JSON dict
 """
 @kwdef struct ResponseObject
@@ -1106,8 +1146,13 @@ Parsed response from the Responses API.
     usage::Union{Dict{String,Any},Nothing} = nothing
     error::Union{Dict{String,Any}, String, Nothing} = nothing
     metadata::Union{Dict{String,Any},Nothing} = nothing
+    image_context_compression::Union{String,Nothing} = nothing
     raw::Dict{String,Any}
 end
+# The positional form without the image policy, the struct's fields before it gained one, reads the policy
+# from `raw`, as the reply's decoder does.
+ResponseObject(id, status, model, output, usage, error, metadata, raw::AbstractDict) =
+    ResponseObject(id, status, model, output, usage, error, metadata, _resolved_image_compression(raw), raw)
 
 
 # ─── Result Types ─────────────────────────────────────────────────────────────
@@ -1474,6 +1519,7 @@ function parse_response(resp::HTTP.Response)::ResponseObject
         usage=get(data, "usage", nothing),
         error=get(data, "error", nothing),
         metadata=get(data, "metadata", nothing),
+        image_context_compression=_resolved_image_compression(data),
         raw=data
     )
 end
@@ -1684,6 +1730,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                         usage=get(rdata, "usage", nothing),
                         error=get(rdata, "error", nothing),
                         metadata=get(rdata, "metadata", nothing),
+                        image_context_compression=_resolved_image_compression(rdata),
                         raw=rdata
                     ))
                     done[] = true
@@ -2418,6 +2465,10 @@ that can be passed as input to subsequent requests, reducing token usage in long
   which has no default model and needs one named: a call to it without one throws
   `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
+- `image_context_compression::Union{String,Nothing}`: `"auto"`, `"enabled"` or `"disabled"`, sent as
+  `image.context_compression`, as on a [`Respond`](@ref); another value, or any on an
+  [`OllamaEndpoint`](@ref), whose API has no such field, throws `ArgumentError` before any request.
+  The reply's `"image"` holds the policy the compaction resolved
 
 The compaction is the Responses API's `/v1/responses/compact`: on an endpoint that declares its
 capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe, Google's
@@ -2446,17 +2497,21 @@ compacted = compact_response(model="gpt-5.6-sol", input=[
 """
 function compact_response(; model::Union{String,Nothing}=nothing,
     input::Any,
+    image_context_compression::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "compact_response", RESPONSES_PATH * "/compact")
+    _check_compaction_image(service, image_context_compression)
     model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
     url = _api_base_url(service) * RESPONSES_PATH * "/compact"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
+        d = Dict{Symbol,Any}(:model => model, :input => input)
+        isnothing(image_context_compression) || (d[:image] = _image_options(image_context_compression))
+        body = JSON.json(d)
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -2472,6 +2527,14 @@ end
 
 # The model a compaction that names none is sent with: OpenAI's default.
 _compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
+
+# A compaction's image policy, checked as a Respond's is; Ollama's Responses API has no image options, so
+# an Ollama compaction refuses one, as its `respond` does.
+_check_compaction_image(_, v::Union{String,Nothing})::Nothing = _check_image_context_compression(v)
+_check_compaction_image(::OllamaEndpoint, ::Nothing)::Nothing = nothing
+_check_compaction_image(s::OllamaEndpoint, ::String)::Nothing = throw(ArgumentError(
+    "Ollama's /v1/responses/compact has no image options: $(_service_name(s)) takes no image_context_compression " *
+    "(OpenAI's image.context_compression); unset it"))
 
 # `compact_response` and `count_input_tokens` call a route of the Responses API. An endpoint that
 # declares its capabilities without `:responses` has none: it is refused by name before any request,

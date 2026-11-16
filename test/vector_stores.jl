@@ -316,3 +316,71 @@ end
     @test_throws ArgumentError cancel_file_batch("vs_1", "b"; service=DeepSeekEndpoint("k"))
     @test_throws ArgumentError list_file_batch_files("vs_1", "b"; service=DeepSeekEndpoint("k"))
 end
+
+@testset "search_vector_store: the query and options sent, the page decoded" begin
+    hit = """{"file_id": "file-1", "filename": "policy.txt", "score": 0.91, "attributes": {"team": "docs"},
+              "content": [{"type": "text", "text": "Returns within 30 days."}]}"""
+    page = """{"object": "vector_store.search_results.page", "search_query": ["return window"], "data": [$hit],
+               "has_more": false, "next_page": null}"""
+    filters = Dict("type" => "eq", "key" => "team", "value" => "docs")
+    ranking = Dict("ranker" => "auto", "score_threshold" => 0.2)
+    r, seen = _with_scripted((_, _) -> _json(200, page)) do
+        search_vector_store("vs_1", "return window"; max_num_results=3, rewrite_query=true, filters,
+                            ranking_options=ranking, service=URLProbe)
+    end
+    @test r isa VectorStoreSearchSuccess && r.response isa VectorStoreSearchPage
+    p = r.response
+    @test (p.search_query, p.has_more, p.next_page) == (["return window"], false, nothing)
+    h = only(p.data)
+    @test h isa VectorStoreSearchResult
+    @test (h.file_id, h.filename, h.score, h.attributes) == ("file-1", "policy.txt", 0.91, Dict{String,Any}("team" => "docs"))
+    @test h.content == [Dict{String,Any}("type" => "text", "text" => "Returns within 30 days.")]
+    req = only(seen)
+    @test (req.method, req.target) == ("POST", "/v1/vector_stores/vs_1/search")
+    @test JSON.parse(req.body) == Dict("query" => "return window", "max_num_results" => 3, "rewrite_query" => true,
+                                       "filters" => filters, "ranking_options" => ranking)
+    # Several queries go as a list; the options not given are not sent.
+    _, seen = _with_scripted((_, _) -> _json(200, page)) do
+        search_vector_store("vs_1", ["refund", "return window"]; service=URLProbe)
+    end
+    @test JSON.parse(only(seen).body) == Dict("query" => ["refund", "return window"])
+    # A null attribute set reads as nothing; an integer score as a Float64.
+    nullattrs = """{"search_query": ["q"], "data": [{"file_id": "f", "filename": "a", "score": 1, "attributes": null,
+                    "content": []}], "has_more": false, "next_page": null}"""
+    n = _answered(() -> search_vector_store("vs_1", "q"; service=URLProbe), 200; body=nullattrs)
+    @test n isa VectorStoreSearchSuccess && isnothing(only(n.response.data).attributes) && only(n.response.data).score === 1.0
+    # A page without what OpenAI's reference requires of it, or a hit without its score, is a call error.
+    for body in ("{}", """{"search_query": ["q"], "data": [], "has_more": false}""",
+                 """{"data": [], "has_more": false, "next_page": null}""",
+                 """{"search_query": ["q"], "data": [{"file_id": "f", "filename": "a", "attributes": null, "content": []}],
+                     "has_more": false, "next_page": null}""")
+        @test _answered(() -> search_vector_store("vs_1", "q"; service=URLProbe), 200; body) isa VectorStoreCallError
+    end
+    @test _seam_timeout(search_vector_store("vs_x", "q"; service=SeamProbe, config=_TINY_DEADLINE), VectorStoreCallError)
+    @test _recorded_targets(() -> search_vector_store(_HOSTILE_ID, "q"; service=URLProbe)) ==
+          ["/v1/vector_stores/$_HOSTILE_ENC/search"]
+    @test_throws ArgumentError search_vector_store("vs_1", "q"; service=DeepSeekEndpoint("k"))
+end
+
+@testset "the vector-store verbs take cancel as their last keyword, and a cancelled token sends nothing" begin
+    for f in (create_vector_store, update_vector_store, list_vector_stores, add_vector_store_file, create_file_batch,
+              cancel_file_batch, list_file_batch_files, list_vector_store_files, retrieve_vector_store_file,
+              update_vector_store_file, delete_vector_store_file, vector_store_file_content, search_vector_store),
+        m in methods(f)
+        @test (f, last(filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m)))) == (f, :cancel)
+    end
+    tok = cancel!(CancelToken())
+    for call in (() -> update_vector_store("vs_1"; name="n", service=URLProbe, cancel=tok),
+                 () -> create_file_batch("vs_1", [VectorStoreFileEntry(file_id="f")]; service=URLProbe, cancel=tok),
+                 () -> cancel_file_batch("vs_1", "b"; service=URLProbe, cancel=tok),
+                 () -> list_file_batch_files("vs_1", "b"; service=URLProbe, cancel=tok),
+                 () -> list_vector_store_files("vs_1"; service=URLProbe, cancel=tok),
+                 () -> retrieve_vector_store_file("vs_1", "f"; service=URLProbe, cancel=tok),
+                 () -> update_vector_store_file("vs_1", "f", nothing; service=URLProbe, cancel=tok),
+                 () -> delete_vector_store_file("vs_1", "f"; service=URLProbe, cancel=tok),
+                 () -> vector_store_file_content("vs_1", "f"; service=URLProbe, cancel=tok),
+                 () -> search_vector_store("vs_1", "q"; service=URLProbe, cancel=tok))
+        r, seen = _with_scripted(call, (_, _) -> _json(200, "{}"))
+        @test r isa VectorStoreCallError && r.cause isa UniLMCancelled && isempty(seen)
+    end
+end

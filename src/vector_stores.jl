@@ -1,7 +1,8 @@
 # ============================================================================
 # OpenAI Vector Stores API — https://platform.openai.com/docs/api-reference/vector-stores
 # Create/manage vector stores (+ their files and file batches) that power the
-# Responses `file_search` tool. Upload files via the Files API first.
+# Responses `file_search` tool, and search them directly. Upload files via the
+# Files API first.
 # ============================================================================
 
 # ─── Parsed objects ───────────────────────────────────────────────────────────
@@ -92,6 +93,39 @@ OpenAI documents — and `"text"`), `has_more`, and `next_page`, the token of a 
 end
 
 """
+    VectorStoreSearchResult
+
+One file a [`search_vector_store`](@ref) found: `file_id`, `filename`, `score` (the similarity,
+0 to 1), the file's `attributes` (`nothing` when it has none) and `content`, the chunks that
+matched as OpenAI sent them (each a `Dict` with `"type" => "text"` and `"text"`); `raw` holds the
+unparsed JSON item.
+"""
+@kwdef struct VectorStoreSearchResult
+    file_id::String
+    filename::String
+    score::Float64
+    attributes::Union{Dict{String,Any},Nothing} = nothing
+    content::Vector{Dict{String,Any}} = Dict{String,Any}[]
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+"""
+    VectorStoreSearchPage
+
+A page of [`VectorStoreSearchResult`](@ref)s from [`search_vector_store`](@ref): `search_query`,
+the queries searched (rewritten when `rewrite_query` asked for it), `data`, `has_more`, and
+`next_page`, the token of a further page (`nothing` when there is none); `raw` holds the
+unparsed JSON response.
+"""
+@kwdef struct VectorStoreSearchPage
+    search_query::Vector{String}
+    data::Vector{VectorStoreSearchResult}
+    has_more::Bool = false
+    next_page::Union{String,Nothing} = nothing
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+"""
     VectorStoreFileEntry(; file_id, attributes=nothing, chunking_strategy=nothing)
 
 One file of a [`create_file_batch`](@ref) that carries its own `attributes` and
@@ -120,6 +154,8 @@ JSON.lower(e::VectorStoreFileEntry) =
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
 "Successful [`vector_store_file_content`](@ref) result wrapping a [`VectorStoreFileContent`](@ref)."
 @kwdef struct VectorStoreContentSuccess <: LLMRequestResponse; response::VectorStoreFileContent; end
+"Successful [`search_vector_store`](@ref) result wrapping a [`VectorStoreSearchPage`](@ref)."
+@kwdef struct VectorStoreSearchSuccess <: LLMRequestResponse; response::VectorStoreSearchPage; end
 "Successful file-batch result wrapping a [`VectorStoreFileBatch`](@ref)."
 @kwdef struct VectorStoreBatchSuccess <: LLMRequestResponse; response::VectorStoreFileBatch; end
 "Successful [`delete_vector_store`](@ref) or [`delete_vector_store_file`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
@@ -140,6 +176,9 @@ _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d,
 _parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=d["status"],
     file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
 _parse_vs_file(d::AbstractDict) = VectorStoreFileObject(id=d["id"], status=d["status"], raw=Dict{String,Any}(d))
+# Every field of a search result is required by OpenAI's reference (`attributes` may be null).
+_parse_vs_hit(d::AbstractDict) = VectorStoreSearchResult(file_id=d["file_id"], filename=d["filename"],
+    score=d["score"], attributes=d["attributes"], content=d["content"], raw=Dict{String,Any}(d))
 
 # A list reply's page (containers.jl shares it): OpenAI's reference requires `data` and
 # `has_more`, so a 200 without them is malformed (the verb's *CallError) rather than an empty
@@ -366,6 +405,39 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
     catch e
         e isa InterruptException && rethrow()
         _callerr(VectorStoreCallError, e)
+    end
+end
+
+"""
+    search_vector_store(vector_store_id, query; max_num_results=nothing, rewrite_query=nothing,
+                        filters=nothing, ranking_options=nothing, service=OPENAIServiceEndpoint)
+
+Search a vector store for the chunks that match `query`, a string or a vector of strings, as the
+Responses `file_search` tool does: `max_num_results` (OpenAI's reference: 1 to 50, 10 by
+default), `rewrite_query` to let OpenAI rewrite the query for vector search, `filters` on the
+files' `attributes` (a comparison or compound filter `Dict`, as [`file_search`](@ref) takes) and
+`ranking_options` (`Dict("ranker" => …, "score_threshold" => …)`), each sent as given when set.
+Returns `VectorStoreSearchSuccess`, whose `response` is a [`VectorStoreSearchPage`](@ref),
+`VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function search_vector_store(vs_id::String, query::Union{String,Vector{String}};
+    max_num_results::Union{Int,Nothing}=nothing, rewrite_query::Union{Bool,Nothing}=nothing,
+    filters::Union{AbstractDict,Nothing}=nothing, ranking_options::Union{AbstractDict,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    body = _vs_body(:query => query, :max_num_results => max_num_results, :rewrite_query => rewrite_query,
+                    :filters => filters, :ranking_options => ranking_options)
+    _vs_call("POST", "/" * _uripart(vs_id) * "/search", service, config, cancel; body) do d
+        # OpenAI's reference requires the page's search_query, data, has_more and next_page.
+        page, has_more = _vs_page(d)
+        VectorStoreSearchSuccess(response=VectorStoreSearchPage(search_query=d["search_query"],
+            data=VectorStoreSearchResult[_parse_vs_hit(h) for h in page], has_more=has_more, next_page=d["next_page"],
+            raw=Dict{String,Any}(d)))
     end
 end
 

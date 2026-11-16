@@ -392,6 +392,23 @@ end
     @test pending isa BatchCallError && occursin("file_content(output_file_id)", pending.error)
 end
 
+# A batch that ended without an output or error file (it failed validation, or expired or was cancelled before a
+# request ran) will have no results: its `errors` say why.
+# Refuted if: the error reads as a batch still running, or leaves out the batch's errors.
+@testset "batch_results on OpenAI: a batch that ended without results names its errors" begin
+    errors = Dict("object" => "list", "data" => [Dict("code" => "invalid_json_line", "line" => 1, "param" => nothing,
+                                                      "message" => "This line is not parseable as valid JSON.")])
+    for status in ("failed", "expired", "cancelled")
+        b = Dict("id" => "batch_1", "status" => status, "endpoint" => "/v1/chat/completions", "errors" => errors)
+        r, seen = _with_scripted((_, _) -> _json(200, JSON.json(b))) do
+            batch_results("batch_1"; service=_OAB)
+        end
+        @test r isa BatchCallError && r.cause isa ArgumentError && length(seen) == 1
+        @test occursin("ended without results (status $status)", r.error) && occursin("invalid_json_line", r.error)
+        @test !occursin("yet", r.error)
+    end
+end
+
 # ── Anthropic Message Batches ── the replies are the shapes the API returned on 2026-11-16.
 @testset "Message Batches: Anthropic serves the Batch API" begin
     @test has_capability(ANTHROPICServiceEndpoint, :batch)

@@ -332,7 +332,12 @@ function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
     b = got.response
     _chat_completions_batch(b)
     files = String[f for f in (b.output_file_id, b.error_file_id) if !isnothing(f)]
-    isempty(files) && throw(ArgumentError("batch $id has no output or error file yet (status $(b.status))"))
+    # A batch that ended without either file (it failed validation, or expired or was cancelled before a request
+    # ran) will get none: its `errors` say why.
+    isempty(files) && throw(ArgumentError(_batch_ended(wire, b.status) ?
+        "batch $id ended without results (status $(b.status)); its errors: " *
+        JSON.json(_batch_optional(b.raw, "errors", AbstractDict)) :
+        "batch $id has no output or error file yet (status $(b.status))"))
     model = _batch_optional(b.raw, "model", String)
     results = Pair{String,_BatchItem}[]
     for f in files
@@ -531,8 +536,9 @@ batch is a `"/v1/chat/completions"` one, as [`create_batch`](@ref)`(requests)` m
 endpoint is a `BatchCallError` whose `ArgumentError` names `file_content(output_file_id)`, raised after the
 batch is read and before any file is downloaded. A batch with no
 results yet is a `BatchFailure` on Anthropic (its 404) and a `BatchCallError` naming the batch's status on
-OpenAI and Gemini; so is a Gemini batch that ended without results (its error is in the message), and a
-Gemini response without the custom id [`create_batch`](@ref) sets in its `metadata` (`key`).
+OpenAI and Gemini; so is a batch that ended without results on either (the message holds OpenAI's
+`errors`, Gemini's `error`), and a Gemini response without the custom id [`create_batch`](@ref) sets in
+its `metadata` (`key`).
 
 $_BATCH_CONFIG_DOC The config bounds every request of the call together.
 """

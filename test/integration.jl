@@ -385,6 +385,11 @@ end
     @test retrieved.response.id == rid
     @test retrieved.response.status == "completed"
     @test !isempty(output_text(retrieved))
+
+    # The token count takes the stored response as the turns before its input (a count bills no tokens).
+    alone = count_input_tokens(model="gpt-5.6-luna", input="And again?")
+    after = count_input_tokens(model="gpt-5.6-luna", input="And again?", previous_response_id=rid)
+    @test after isa Dict && alone isa Dict && after["input_tokens"] > alone["input_tokens"]
 end
 
 @testset "Responses API — list_input_items" begin
@@ -452,6 +457,18 @@ end
                                personality="friendly")
     @test plain isa Dict && every isa Dict
     @test every["input_tokens"] > plain["input_tokens"] > 0
+    # A conversation's items count as the turns before the input (creating one bills nothing).
+    conv = create_conversation(; items=[Dict("type" => "message", "role" => "user",
+                                             "content" => "My name is Ada, and I write Julia every day.")])
+    @test conv isa ConversationSuccess
+    if conv isa ConversationSuccess
+        try
+            within = count_input_tokens(model="gpt-6-luna", input="Tell me a joke", conversation=conv.response.id)
+            @test within isa Dict && within["input_tokens"] > plain["input_tokens"]
+        finally
+            @test delete_conversation(conv.response.id) isa ConversationDeleteSuccess
+        end
+    end
 end
 
 @testset "count_tokens — a Respond's input tokens, as count_input_tokens counts them" begin

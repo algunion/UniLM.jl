@@ -292,6 +292,8 @@ end
             @test isapprox(expires - f.created_at, 3600; atol=1)
             got = retrieve_file(f.id; service=a)
             @test got isa FileSuccess && got.response.id == f.id && got.response.created_at == f.created_at
+            ready = poll_file(f.id; service=a)   # an Anthropic file needs no wait: one read
+            @test ready isa FileSuccess && ready.response.id == f.id
             listed = list_files(; limit=1000, service=a)
             @test listed isa FileListSuccess && any(x -> x.id == f.id, listed.response.data)
             one = list_files(; limit=1, service=a)

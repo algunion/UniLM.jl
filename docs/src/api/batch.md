@@ -12,7 +12,9 @@ provider's Batch rates — half its standard ones on every model each page lists
   `create_batch(input_file_id, endpoint)`, runs any endpoint its Batch API serves.
 - [`batch_results`](@ref) reads the results of an ended batch as the results [`chatrequest!`](@ref)
   returns — an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) per custom id —,
-  decoded by the provider's own decoder, each success's usage at the tier `"batch"`.
+  decoded by the provider's own decoder, each success's usage at the tier `"batch"`. On OpenAI it
+  reads a `/v1/chat/completions` batch alone: another endpoint's is a `BatchCallError` naming
+  [`file_content`](@ref)`(output_file_id)`, which reads its output file as OpenAI writes it.
 - [`retrieve_batch`](@ref), [`list_batches`](@ref), [`cancel_batch`](@ref) and [`poll_batch`](@ref)
   run on all three; [`delete_batch`](@ref) on Anthropic and Gemini; [`update_batch`](@ref) (a batch's
   priority) on Gemini.

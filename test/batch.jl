@@ -312,7 +312,7 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
                       "response" => Dict("status_code" => 200, "request_id" => "req_d", "body" => Dict("choices" => []))))
     err = _batch_jsonl(Dict("id" => "batch_req_3", "custom_id" => "c", "response" => nothing,
                       "error" => Dict("code" => "batch_expired", "message" => "This request could not be executed before the completion window expired.")))
-    batch = Dict("id" => "batch_1", "status" => "completed", "model" => "gpt-6-luna",
+    batch = Dict("id" => "batch_1", "status" => "completed", "model" => "gpt-6-luna", "endpoint" => "/v1/chat/completions",
                  "output_file_id" => "file-out", "error_file_id" => "file-err")
     served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out,
                   "/v1/files/file-err/content" => err)
@@ -336,7 +336,7 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     @test c isa LLMCallError && isnothing(c.status) && occursin("batch_expired", c.error)
     # Before the batch has an output or error file there are no results: a call error naming its status.
     pending = _answered(() -> batch_results("batch_1"; service=_OAB), 200;
-                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\"}")
+                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\",\"endpoint\":\"/v1/chat/completions\"}")
     @test pending isa BatchCallError && pending.cause isa ArgumentError && occursin("in_progress", pending.error)
     # A file the Files API does not serve is the results' failure.
     gone, _ = _with_scripted((n, _) -> n == 1 ? _json(200, JSON.json(batch)) : _json(404, "{\"error\":{}}")) do
@@ -344,12 +344,40 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     end
     @test gone isa BatchFailure && gone.status == 404
     # A line without its custom id cannot be paired with a request: the reply is malformed.
-    torn = Dict("/v1/batches/batch_1" => JSON.json(Dict("id" => "batch_1", "status" => "completed", "output_file_id" => "f")),
+    torn = Dict("/v1/batches/batch_1" => JSON.json(Dict("id" => "batch_1", "status" => "completed", "output_file_id" => "f",
+                                                        "endpoint" => "/v1/chat/completions")),
                 "/v1/files/f/content" => _batch_jsonl(Dict("response" => Dict("status_code" => 200, "body" => _batch_oa_reply("x")))))
     t = first(_with_scripted((_, req) -> _json(200, torn[String(req.target)])) do
         batch_results("batch_1"; service=_OAB)
     end)
     @test t isa BatchCallError && occursin("custom_id", t.error)
+end
+
+# batch_results decodes Chat Completions replies; a batch made from a file of another endpoint's requests
+# (create_batch(input_file_id, endpoint)) keeps its results in its output file.
+# Refuted if: such a batch's output is decoded as Chat Completions (each billed success an LLMCallError), a file is
+# downloaded, or the refusal does not name the endpoint and file_content.
+@testset "batch_results on OpenAI: a batch of another endpoint is refused, naming file_content" begin
+    reply = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                 "output" => [], "usage" => Dict("input_tokens" => 10, "output_tokens" => 2, "total_tokens" => 12))
+    out = _batch_jsonl(Dict("id" => "batch_req_1", "custom_id" => "a", "error" => nothing,
+                            "response" => Dict("status_code" => 200, "request_id" => "req_a", "body" => reply)))
+    for endpoint in ("/v1/responses", "/v1/embeddings", nothing)
+        batch = Dict{String,Any}("id" => "batch_1", "status" => "completed", "output_file_id" => "file-out")
+        isnothing(endpoint) || (batch["endpoint"] = endpoint)
+        served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out)
+        r, seen = _with_scripted((_, req) -> _json(200, served[String(req.target)])) do
+            batch_results("batch_1"; service=_OAB)
+        end
+        @test r isa BatchCallError && r.cause isa ArgumentError
+        @test _batch_targets(seen) == [("GET", "/v1/batches/batch_1")]
+        r isa BatchCallError && @test occursin("file_content(\"file-out\")", r.error) &&
+                                      occursin(something(endpoint, "no endpoint"), r.error)
+    end
+    # Before it has an output file, the refusal says where its results will be.
+    pending = _answered(() -> batch_results("batch_1"; service=_OAB), 200;
+                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\",\"endpoint\":\"/v1/responses\"}")
+    @test pending isa BatchCallError && occursin("file_content(output_file_id)", pending.error)
 end
 
 # ── Anthropic Message Batches ── the replies are the shapes the API returned on 2026-11-16.

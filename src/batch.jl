@@ -312,11 +312,21 @@ function _openai_batch_item(service, model, line::Dict{String,Any})::Pair{String
                       request_id=_batch_optional(resp, "request_id", String)))
 end
 
+# The results decode as Chat Completions replies, the requests create_batch(requests) sends. A batch of another
+# endpoint's requests, created from a file of them, keeps its results in its output file as OpenAI writes them.
+function _chat_completions_batch(b::BatchObject)
+    b.endpoint == CHAT_COMPLETIONS_PATH && return nothing
+    file = isnothing(b.output_file_id) ? "output_file_id) once it has one" : repr(b.output_file_id) * ")"
+    throw(ArgumentError("batch_results: batch $(b.id) " * (isnothing(b.endpoint) ? "names no endpoint" : "runs $(b.endpoint)") *
+        ", and batch_results decodes $CHAT_COMPLETIONS_PATH replies alone; read its results with file_content($file"))
+end
+
 # OpenAI's results: the output file's lines, then the error file's, once the batch has either.
 function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
     got = _retrieve_batch(wire, service, id, cfg, t0, tok)
     got isa BatchSuccess || return got
     b = got.response
+    _chat_completions_batch(b)
     files = String[f for f in (b.output_file_id, b.error_file_id) if !isnothing(f)]
     isempty(files) && throw(ArgumentError("batch $id has no output or error file yet (status $(b.status))"))
     model = _batch_optional(b.raw, "model", String)
@@ -346,6 +356,8 @@ Create an OpenAI batch job from an uploaded file. `endpoint` is e.g. `"/v1/chat/
 batch's output and error files expire, counted from each file's creation; outside that range it throws
 `ArgumentError` before any request. This is OpenAI's form: on an Anthropic or Gemini endpoint it throws
 `ArgumentError` before any request; pass the requests themselves, `create_batch(requests; service)`.
+[`batch_results`](@ref) decodes a `"/v1/chat/completions"` batch; another endpoint's results are its
+output file, which [`file_content`](@ref)`(output_file_id)` reads.
 
 $_BATCH_CONFIG_DOC
 """
@@ -509,7 +521,10 @@ cannot read. A result's `self` is a stand-in [`Chat`](@ref) on `service`, withou
 one the provider names for the reply or the batch, else the endpoint's default model.
 
 The results are read from OpenAI's output and error files ([`file_content`](@ref): output lines, then error
-lines), Anthropic's results stream, and Gemini's inlined responses or its responses file. A batch with no
+lines), Anthropic's results stream, and Gemini's inlined responses or its responses file. On OpenAI the
+batch is a `"/v1/chat/completions"` one, as [`create_batch`](@ref)`(requests)` makes it: a batch of another
+endpoint is a `BatchCallError` whose `ArgumentError` names `file_content(output_file_id)`, raised after the
+batch is read and before any file is downloaded. A batch with no
 results yet is a `BatchFailure` on Anthropic (its 404) and a `BatchCallError` naming the batch's status on
 OpenAI and Gemini; so is a Gemini batch that ended without results (its error is in the message), and a
 Gemini response without the custom id [`create_batch`](@ref) sets in its `metadata` (`key`).

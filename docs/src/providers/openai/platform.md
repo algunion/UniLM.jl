@@ -439,7 +439,9 @@ the output file's lines, then the error file's, and returns each request's resul
 `"batch"`, so [`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref openai_cost));
 another status is an [`LLMFailure`](@ref) with it; a request that got no response, such as one a batch
 expired before it ran, is an [`LLMCallError`](@ref) holding OpenAI's error object as JSON. A batch
-without either file yet is a `BatchCallError` naming its status.
+without either file yet is a `BatchCallError` naming its status. A batch of another endpoint, such as
+the `/v1/responses` one above, is a `BatchCallError` naming `file_content(output_file_id)`, which reads
+its output file.
 
 ```julia
 luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,

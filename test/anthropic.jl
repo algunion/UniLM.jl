@@ -1221,6 +1221,44 @@ end
     end
 end
 
+# Refuted if: on a streamed turn that stops with tool_use or end_turn, tool_use input pieces that are no
+# JSON fail with JSON.jl's parse error alone instead of an ArgumentError naming Anthropic, or the verb
+# returns anything but the LLMCallError, with nothing appended.
+@testset "stream — tool_use input that is no JSON under a tool finish: the refusal names Anthropic" begin
+    prefix = "Anthropic tool-call arguments are not valid JSON: "
+    ev(d) = "event: " * d["type"] * "\ndata: " * JSON.json(d) * "\n\n"
+    function sse(stop)
+        start = Dict("id" => "msg_t", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                     "content" => Any[], "stop_reason" => nothing, "usage" => Dict("input_tokens" => 5, "output_tokens" => 1))
+        ev(Dict("type" => "message_start", "message" => start)) *
+        ev(Dict("type" => "content_block_start", "index" => 0, "content_block" =>
+                Dict("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => Dict()))) *
+        ev(Dict("type" => "content_block_delta", "index" => 0,
+                "delta" => Dict("type" => "input_json_delta", "partial_json" => "{\"city\": \"Par"))) *
+        ev(Dict("type" => "content_block_stop", "index" => 0)) *
+        ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => stop), "usage" => Dict("output_tokens" => 8))) *
+        ev(Dict("type" => "message_stop"))
+    end
+    for stop in ("tool_use", "end_turn")
+        st = StreamState()
+        UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), sse(stop), st)
+        e = try _build_stream_message(st); nothing catch e; e end
+        @test e isa ArgumentError && startswith(e.msg, prefix) && length(e.msg) > length(prefix)
+    end
+    srv = _anthropic_capture_server(_ -> "{}", _ -> sse("tool_use"))
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            chat = Chat(service=_AnthropicCapture(srv.url), model="claude-haiku-5-5", stream=true,
+                        messages=[Message(Val(:user), "q")])
+            r = fetch(chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0)))
+            @test r isa LLMCallError && r.cause isa ArgumentError && startswith(r.cause.msg, prefix)
+            @test length(chat) == 1
+        end
+    finally
+        close(srv.server)
+    end
+end
+
 @testset "every request sends anthropic-version 2026-10-21; streamed and non-streamed calls cost the same" begin
     usage = merge(_ANTHROPIC_USAGE, Dict("speed" => "standard", "output_tokens_details" => Dict("thinking_tokens" => 0)))
     srv = _anthropic_capture_server(_ -> JSON.json(_anthropic_message("claude-haiku-5-5", usage)),

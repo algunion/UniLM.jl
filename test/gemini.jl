@@ -556,6 +556,18 @@ end
     end
 end
 
+# Refuted if: under a tool finish, a Gemini call's argument text that is no JSON fails with JSON.jl's
+# parse error alone instead of an ArgumentError naming Gemini (a streamed functionCall's args arrive
+# parsed and are written back as JSON, so the stream decoder hands the rule only JSON text), or a call
+# no native decoder named loses JSON.jl's error.
+@testset "tool-call argument text that is no JSON: the refusal names Gemini; an unnamed call keeps JSON.jl's" begin
+    named = try UniLM._call_arguments("{\"q\":", UniLM.TOOL_CALLS, "Gemini"); nothing catch e; e end
+    @test named isa ArgumentError && startswith(named.msg, "Gemini tool-call arguments are not valid JSON: ") &&
+          length(named.msg) > length("Gemini tool-call arguments are not valid JSON: ")
+    unnamed = try UniLM._call_arguments("{\"q\":", UniLM.TOOL_CALLS); nothing catch e; e end
+    @test unnamed isa ArgumentError && !occursin("tool-call arguments", unnamed.msg)
+end
+
 @testset "stream — a refusal is recorded once, however many chunks follow it" begin
     blocked = """{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}"""
     state = StreamState()

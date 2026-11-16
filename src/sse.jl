@@ -181,12 +181,18 @@ of destroying the turn. Anything else must be a JSON object; a
 non-object payload throws a loud `ArgumentError`. A call a native decoder
 streamed names its `provider` (Anthropic, Gemini), and its value is read by
 that decoder's unstreamed rule (`_tool_call_arguments`): null is a call
-without arguments, and the refusal names the provider and the JSON type.
+without arguments, and the refusal names the provider and the JSON type, or,
+for text that is no JSON, the provider and JSON.jl's account of it.
 Shared by `_build_stream_message` and the driver's `on_tool_call` firing.
 """
 function _parse_tool_arguments(args::AbstractString, provider::Union{String,Nothing}=nothing)::Dict{String,Any}
     isempty(strip(args)) && return Dict{String,Any}()
-    parsed = JSON.parse(String(args); dicttype=Dict{String,Any})
+    parsed = try
+        JSON.parse(String(args); dicttype=Dict{String,Any})
+    catch e
+        (e isa ArgumentError && !isnothing(provider)) || rethrow()   # JSON.jl's error for text that is no JSON
+        throw(ArgumentError("$provider tool-call arguments are not valid JSON: $((e::ArgumentError).msg)"))
+    end
     isnothing(provider) || return _tool_call_arguments(provider, parsed)
     parsed isa Dict{String,Any} || throw(ArgumentError(
         "streamed tool-call arguments must be a JSON object, got $(typeof(parsed))"))

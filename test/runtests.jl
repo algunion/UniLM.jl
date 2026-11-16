@@ -264,6 +264,10 @@ end
         include("integration.jl")
     end
 
+    @testset "integration — OpenAI platform" begin
+        include("integration_openai_platform.jl")
+    end
+
     @testset "integration — deepseek" begin
         include("integration_deepseek.jl")
     end

@@ -15,7 +15,7 @@
 using Test, HTTP, JSON, UniLM   # the suites call HTTP and JSON, as under test/runtests.jl
 
 const _HOSTED_LIVE_FILES = [
-    "integration.jl", "integration_tool_loop.jl", "integration_provider_compat.jl",
+    "integration.jl", "integration_openai_platform.jl", "integration_tool_loop.jl", "integration_provider_compat.jl",
     "integration_openai_decisions.jl", "integration_gemini_decisions.jl", "integration_openai_audio.jl",
     "integration_cost.jl",
     "integration_documents.jl", "integration_audio.jl", "integration_images.jl",

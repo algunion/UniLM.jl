@@ -1,7 +1,6 @@
-# test/integration_openai_platform.jl — live: OpenAI's fine-tuning, grader, webhook-endpoint, safety and content
+# test/integration_openai_platform.jl — live: OpenAI's fine-tuning, webhook-endpoint, safety and content
 # provenance verbs. Free calls only: no job is created (the training file is made up), the ids read are made
-# up, the grader is a string_check one (no model samples), and an endpoint this suite makes is deleted in a
-# `finally`. Needs UNILM_LIVE=1 and OPENAI_API_KEY.
+# up, and an endpoint this suite makes is deleted in a `finally`. Needs UNILM_LIVE=1 and OPENAI_API_KEY.
 if !haskey(ENV, "OPENAI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping OpenAI platform integration tests (set UNILM_LIVE=1 and OPENAI_API_KEY to run live)"
 else
@@ -37,18 +36,6 @@ end
           delete_fine_tuning_checkpoint_permission(ck, "cp_unilmlivemadeup")]
     @info "checkpoint permissions with the project key" statuses = [r isa FineTuningFailure ? r.status : r for r in rs] bodies = [r isa FineTuningFailure ? r.response : "" for r in rs]
     @test all(r -> r isa FineTuningFailure && r.status in (401, 403), rs)
-end
-
-@testset "Graders live — validate and run a string_check grader" begin
-    g = StringCheckGrader(name="exact", input="{{sample.output_text}}", reference="{{item.answer}}", operation="eq")
-    v = validate_grader(g)
-    @test v isa GraderValidateSuccess && v.grader["type"] == "string_check" && v.grader["operation"] == "eq"
-    hit, miss = run_grader(g, "Paris"; item=Dict("answer" => "Paris")), run_grader(g, "Lyon"; item=Dict("answer" => "Paris"))
-    @info "run_grader live" hit = (hit isa GraderRunSuccess ? hit.response.raw : hit) miss = (miss isa GraderRunSuccess ? miss.response.reward : miss)
-    @test hit isa GraderRunSuccess && hit.response.reward == 1.0 && hit.response.metadata["type"] == "string_check"
-    @test miss isa GraderRunSuccess && miss.response.reward == 0.0
-    bad = validate_grader(Dict("type" => "string_check", "name" => "x", "input" => "a", "reference" => "b", "operation" => "equals"))
-    @test bad isa FineTuningFailure && bad.status == 400
 end
 
 @testset "Webhook endpoints live — list the event types and the endpoints; make, test and delete one when the key may" begin

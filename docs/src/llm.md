@@ -41,7 +41,7 @@ UniLM.jl wraps these surfaces:
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter; the task prompts of EmbeddingGemma and `gemini-embedding-2` via `task`; images and audio (`EmbeddingInput`) through Ollama.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
 6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
-7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning and its graders, moderation, webhooks and webhook endpoints, safety cases and alerts, content provenance checks and realtime, through `OPENAIServiceEndpoint`; the file verbs also through `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint`, each provider's own Files API, with `poll_file` and Gemini's `register_files`. Batches run on `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` too: `create_batch` takes `custom_id => Chat` pairs on all three, and `batch_results` returns each request's Chat result, priced at the provider's Batch rates. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
+7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and webhook endpoints, safety cases and alerts, content provenance checks and realtime, through `OPENAIServiceEndpoint`; the file verbs also through `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint`, each provider's own Files API, with `poll_file` and Gemini's `register_files`. Batches run on `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` too: `create_batch` takes `custom_id => Chat` pairs on all three, and `batch_results` returns each request's Chat result, priced at the provider's Batch rates. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
@@ -1410,9 +1410,8 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   token-billed API — chat, Responses, embeddings, image generation, FIM and System
   One. Failures of those APIs report all-zero usage.
 - **Both functions throw `ArgumentError` for result types outside the token-billed
-  APIs** — audio, batch, container, conversation, file, fine-tuning (graders
-  included), moderation, upload, vector-store, realtime, webhook endpoint, safety and
-  provenance. Those calls carry no token usage at all,
+  APIs** — audio, batch, container, conversation, file, fine-tuning, moderation,
+  upload, vector-store, realtime, webhook endpoint, safety and provenance. Those calls carry no token usage at all,
   and a `0.0` would be indistinguishable from a genuinely free call. The requests of
   a batch are Chat results: `batch_results` returns each as an `LLMSuccess` whose usage
   names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates
@@ -2928,7 +2927,7 @@ reset_default_config!()                     # cleared: as if none had been set
 (per request), `list_models`, `retrieve_model`, `count_tokens`, and the `tool_loop` family (streams retry only
 before the first callback fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning and grader, upload, vector-store, webhook endpoint, safety and provenance, speech
+retried), fine-tuning, upload, vector-store, webhook endpoint, safety and provenance, speech
 and translation on OpenAI's Realtime API (`speak`,
 `translate`: a retry after the session's `response.create`, or after its audio, may bill a second
 response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
@@ -2955,7 +2954,7 @@ Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToke
 `prefix_complete`, `ask`, `ask_each`, `list_models`, `retrieve_model`, `delete_model` (on OpenAI too),
 `count_tokens`, the Ollama model calls, `poll_batch`,
 `poll_file_batch`, `poll_file`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
-lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, containers, batch, fine-tuning, graders,
+lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, containers, batch, fine-tuning,
 webhook endpoints, safety cases and alerts, content provenance checks,
 `moderate`, `speak`, `transcribe`, `translate`, `mint_realtime_secret`, and `get_response`,
 `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`).
@@ -3028,7 +3027,7 @@ not observe the token (`speak` and `translate`, which run Realtime sessions of t
 
 ## Result Type Hierarchy
 
-All 97 API call result types inherit from `LLMRequestResponse`, in 21 per-API
+All 95 API call result types inherit from `LLMRequestResponse`, in 21 per-API
 families:
 
 ```
@@ -3045,7 +3044,7 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError
-├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · GraderRunSuccess · GraderValidateSuccess · FineTuningFailure · FineTuningCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · FineTuningFailure · FineTuningCallError
 ├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
 ├─ Safety             SafetyCaseSuccess · SafetyAlertSuccess · ProvenanceCheckSuccess · SafetyFailure · SafetyCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerFileListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
@@ -3239,7 +3238,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (496), grouped by area:
+Every exported symbol (487), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3295,7 +3294,6 @@ Every exported symbol (496), grouped by area:
 **Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchResultsSuccess`, `BatchDeleteSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`, `batch_results`, `delete_batch`, `update_batch`
 
 **Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningDeleteSuccess`, `FineTuningFailure`, `FineTuningCallError`, `WandbIntegration`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `pause_fine_tuning_job`, `resume_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`, `create_fine_tuning_checkpoint_permission`, `list_fine_tuning_checkpoint_permissions`, `delete_fine_tuning_checkpoint_permission`
-- *Graders*: `Grader`, `StringCheckGrader`, `TextSimilarityGrader`, `PythonGrader`, `GraderRun`, `GraderRunSuccess`, `GraderValidateSuccess`, `run_grader`, `validate_grader`
 
 **Containers**: `ContainerObject`, `ContainerList`, `ContainerFileList`, `ContainerNetworkPolicy`, `ContainerNetworkDisabled`, `ContainerNetworkAllowlist`, `ContainerDomainSecret`, `SkillReference`, `ContainerSuccess`, `ContainerListSuccess`, `ContainerFileListSuccess`, `ContainerDeleteSuccess`, `ContainerFailure`, `ContainerCallError`, `create_container`, `retrieve_container`, `list_containers`, `delete_container`, `add_container_file`, `list_container_files`, `retrieve_container_file`, `container_file_content`, `delete_container_file`
 

@@ -55,7 +55,7 @@ const UNRECORDABLE = Set{String}([
     "create_fine_tuning_job", "retrieve_fine_tuning_job", "list_fine_tuning_jobs", "cancel_fine_tuning_job",
     "list_fine_tuning_events", "list_fine_tuning_checkpoints", "pause_fine_tuning_job", "resume_fine_tuning_job",
     "create_fine_tuning_checkpoint_permission", "list_fine_tuning_checkpoint_permissions",
-    "delete_fine_tuning_checkpoint_permission", "run_grader", "validate_grader",
+    "delete_fine_tuning_checkpoint_permission",
     "create_webhook_endpoint", "list_webhook_endpoints", "retrieve_webhook_endpoint", "update_webhook_endpoint",
     "delete_webhook_endpoint", "rotate_webhook_endpoint_secret", "test_webhook_endpoint", "list_webhook_event_types",
     "retrieve_safety_case", "retrieve_safety_alert", "check_content_provenance",

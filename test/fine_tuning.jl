@@ -193,3 +193,16 @@ end
         @test isempty(seen) && r isa FineTuningCallError && r.cause isa UniLMCancelled
     end
 end
+
+@testset "Fine-tuning API — the grader endpoints are not wrapped" begin
+    # OpenAI is deprecating graders (its graders guide); a reinforcement `method` Dict still carries one as sent.
+    for name in (:Grader, :StringCheckGrader, :TextSimilarityGrader, :PythonGrader, :GraderRun, :GraderRunSuccess,
+                 :GraderValidateSuccess, :run_grader, :validate_grader)
+        @test !isdefined(UniLM, name)
+    end
+    method = Dict("type" => "reinforcement", "reinforcement" => Dict("grader" => Dict("type" => "string_check",
+        "name" => "exact", "input" => "{{sample.output_text}}", "reference" => "{{item.answer}}", "operation" => "eq")))
+    _, seen = _with_scripted(() -> create_fine_tuning_job(; model="o4-mini", training_file="file_x", method,
+                                                          service=URLProbe), (_, _) -> _json(200, "{}"))
+    @test JSON.parse(only(seen).body; dicttype=Dict{String,Any})["method"] == method
+end

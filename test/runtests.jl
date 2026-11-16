@@ -246,9 +246,6 @@ end
     @testset "fine_tuning" begin
         include("fine_tuning.jl")
     end
-    @testset "graders" begin
-        include("graders.jl")
-    end
     @testset "cancel= on the platform, lifecycle and audio verbs" begin
         include("cancel_everywhere.jl")
     end

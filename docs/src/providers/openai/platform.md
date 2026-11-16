@@ -6,7 +6,7 @@ using UniLM
 
 Besides its model APIs, OpenAI serves APIs that hold what a request works with — files,
 conversations, code-interpreter containers — and that run work beside it: batches, fine-tuning
-jobs and their graders, moderation, the webhooks that report on them, the safety records behind
+jobs, moderation, the webhooks that report on them, the safety records behind
 some of those webhooks, and provenance checks. UniLM wraps each with verbs of its own, on
 `OPENAIServiceEndpoint` unless a call names another `service`; `OPENAIServiceEndpoint()` returns
 that same type. The vector stores of file search
@@ -509,16 +509,10 @@ are listed and deleted by [`list_fine_tuning_checkpoint_permissions`](@ref) and
 refusal is a `FineTuningFailure` (a 401 naming the missing scope `api.fine_tuning.checkpoints.read`,
 on 16 November 2026).
 
-A reinforcement job scores its samples with a grader, which [`run_grader`](@ref)`(grader,
-model_sample; item)` runs on one sample and [`validate_grader`](@ref)`(grader)` checks, without a
-job. "OpenAI is deprecating graders as part of the evals and fine-tuning workflows they support"
-([graders](https://developers.openai.com/api/docs/guides/graders)). A grader is a
-[`StringCheckGrader`](@ref), a [`TextSimilarityGrader`](@ref) or a [`PythonGrader`](@ref), each of
-which refuses an operation or a metric OpenAI does not list, or a `Dict` in OpenAI's form — the
-`score_model`, `label_model` and `multi` graders, whose inputs are messages or other graders —, the
-form a reinforcement `method` holds, where a typed grader may stand too. Grader verbs answer as the
-other fine-tuning verbs: a [`GraderRunSuccess`](@ref) holds the `reward`, the grader's `metadata`
-and each `sub_rewards`; a grader OpenAI rejects is its 400, a `FineTuningFailure`.
+A reinforcement job scores its samples with the grader its `method` `Dict` holds, in OpenAI's form,
+sent as given. UniLM does not wrap the endpoints that run or validate a grader without a job:
+"OpenAI is deprecating graders as part of the evals and fine-tuning workflows they support"
+([graders](https://developers.openai.com/api/docs/guides/graders)).
 
 ## [Moderation](@id openai_moderation)
 
@@ -749,7 +743,6 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `upload_file`, `add_container_file` or `check_content_provenance` with a path that is no file | `file not found:` | the path of the file |
 | `create_fine_tuning_job` with a `seed` below 0 or above 2147483647 | `create_fine_tuning_job takes a seed from 0 to 2147483647`: the reference's range | a seed in it |
 | `list_fine_tuning_checkpoint_permissions` with an `order` other than `"ascending"` and `"descending"` | `takes order "ascending" or "descending"` | one of them |
-| a `StringCheckGrader` `operation` other than `"eq"`, `"ne"`, `"like"` and `"ilike"`, or a `TextSimilarityGrader` `evaluation_metric` other than the eleven OpenAI lists | `StringCheckGrader takes operation`, `TextSimilarityGrader takes evaluation_metric`: the values of OpenAI's grader objects | one of them |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
 | `upload_file` without a purpose | `OpenAI's Files API requires a purpose` | one of the purposes above |

@@ -36,7 +36,7 @@ const _CE_VERBS = (
     create_fine_tuning_job, retrieve_fine_tuning_job, cancel_fine_tuning_job, pause_fine_tuning_job,
     resume_fine_tuning_job, list_fine_tuning_jobs, list_fine_tuning_events, list_fine_tuning_checkpoints,
     create_fine_tuning_checkpoint_permission, list_fine_tuning_checkpoint_permissions,
-    delete_fine_tuning_checkpoint_permission, run_grader, validate_grader,
+    delete_fine_tuning_checkpoint_permission,
     create_webhook_endpoint, list_webhook_endpoints, retrieve_webhook_endpoint, update_webhook_endpoint,
     delete_webhook_endpoint, rotate_webhook_endpoint_secret, test_webhook_endpoint, list_webhook_event_types,
     retrieve_safety_case, retrieve_safety_alert, check_content_provenance,
@@ -52,7 +52,6 @@ function _ce_rows(file::String)
     ep() = GenericOpenAIEndpoint(_url_probe_base[], "")
     ollama() = OllamaEndpoint(base_url=_url_probe_base[])
     item = [Dict("type" => "message", "role" => "user", "content" => "hi")]
-    grader = StringCheckGrader(name="g", input="{{sample.output_text}}", reference="x", operation="eq")
     # A count's headers are its provider's, which read the provider's key.
     counted(request) = kw -> withenv(() -> count_tokens(request; kw...), "ANTHROPIC_API_KEY" => "sk-ant-local-0000",
                                      "GEMINI_API_KEY" => "g-local", "OPENAI_API_KEY" => "sk-local")
@@ -178,8 +177,6 @@ function _ce_rows(file::String)
          kw -> list_fine_tuning_checkpoint_permissions("ft:m:ckpt"; service=s, kw...)),
         ("delete_fine_tuning_checkpoint_permission", FineTuningCallError,
          kw -> delete_fine_tuning_checkpoint_permission("ft:m:ckpt", "cp_1"; service=s, kw...)),
-        ("run_grader", FineTuningCallError, kw -> run_grader(grader, "x"; service=s, kw...)),
-        ("validate_grader", FineTuningCallError, kw -> validate_grader(grader; service=s, kw...)),
         ("create_webhook_endpoint", WebhookEndpointCallError,
          kw -> create_webhook_endpoint(; name="n", url="https://example.com/hook", event_types=["batch.completed"],
                                        service=s, kw...)),
@@ -241,7 +238,7 @@ _ce_cancelled(r, ::Type{T}) where {T} =
     r isa T && isnothing(r.status) && r.cause isa UniLMCancelled && r.cause.source === :token
 
 @testset "every method of every platform, lifecycle and audio verb takes `cancel` as its last keyword" begin
-    @test length(_CE_VERBS) == 89
+    @test length(_CE_VERBS) == 87
     for f in _CE_VERBS, m in methods(f)
         named = filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m))
         @test (f, last(named)) == (f, :cancel)
@@ -268,7 +265,7 @@ end
                      sent(() -> with_cancel(() -> call((; cancel=CancelToken())), fired))))
              for (label, T, call) in _ce_rows(file)]
         end
-        @test length(results) == 124
+        @test length(results) == 122
         for (label, T, modes) in results, (mode, (r, n)) in modes
             @testset "$label, $mode" begin
                 if startswith(mode, "a live token")

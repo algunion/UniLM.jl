@@ -599,8 +599,9 @@ end
 # ─── Pricing ─────────────────────────────────────────────────────────────────
 # What Anthropic bills on top of a model's price row
 # (https://platform.claude.com/docs/en/about-claude/pricing.md): cache writes at the input
-# rate × 1.25 (5-minute) or × 2 (1-hour); fast mode at every rate × 2 (Opus 5.5 $8/$40 for
-# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1 on
+# rate × 1.25 (5-minute) or × 2 (1-hour); fast mode at every rate × 2 (Fable 5.2 and Mythos 5.2
+# $16/$80 for $8/$40, Opus 5.5 $8/$40 for $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25);
+# US-only inference at every rate × 1.1 on
 # Claude 4.6 and later, the models whose row takes `inference_geo` ("Earlier models ... always
 # use standard pricing"; an id no row names is taken for a newer model); a prompt over a
 # model's long-prompt threshold — every input token, cache reads and writes included — at

@@ -465,6 +465,16 @@ end
     @test isnothing(UniLM._batch_custom_ids(UniLM._AnthropicBatches(), [repeat("x", 64), "a-B_9"]))
 end
 
+# Refuted if: a custom id that ends in a newline passes the rule (a regex `$` also matches before a final newline).
+@testset "create_batch(requests) on Anthropic: a custom id ending in a newline is refused" begin
+    haiku = Chat(service=_ANB, model="claude-haiku-5-5", max_tokens=16, messages=[Message(Val(:user), "q")])
+    e, seen = _with_scripted((_, _) -> _json(200, _an_batch())) do
+        _batch_refused(() -> create_batch(["abc\n" => haiku]))
+    end
+    @test e isa ArgumentError && isempty(seen)
+    e isa ArgumentError && @test occursin(repr("abc\n"), e.msg)
+end
+
 @testset "Message Batches: retrieve, list, cancel, delete and poll" begin
     r, seen = _with_scripted((_, _) -> _json(200, _an_batch())) do
         retrieve_batch("msgbatch_1"; service=_ANB)

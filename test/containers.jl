@@ -143,7 +143,7 @@ end
     @test_throws ArgumentError SkillReference("")
     @test_throws ArgumentError SkillReference("s"^65)
     @test SkillReference("s"^64).skill_id == "s"^64
-    for v in (0, -1, "0", "beta", "", true)
+    for v in (0, -1, "0", "beta", "", true, "1\n")
         @test_throws ArgumentError SkillReference("skill_abc"; version=v)
     end
     # A secret's value is never printed.

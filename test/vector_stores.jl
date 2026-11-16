@@ -162,3 +162,69 @@ end
           ["/v1/vector_stores/$_HOSTILE_ENC"]
     @test_throws ArgumentError update_vector_store("vs_1"; name="n", service=DeepSeekEndpoint("k"))
 end
+
+# A vector store file as OpenAI's reference shows one.
+const _VS_FILE_JSON = """{"id": "file-1", "object": "vector_store.file", "usage_bytes": 120, "created_at": 1,
+    "vector_store_id": "vs_1", "status": "completed", "last_error": null, "attributes": {"team": "docs"}}"""
+
+# Each request a call sends, as (method, target), against an endpoint that answers `{}`.
+_sent_requests(f::Function) = [(r.method, r.target) for r in last(_with_scripted(f, (_, _) -> _json(200, "{}")))]
+
+@testset "vector store files: list, retrieve, delete, and read the parsed content" begin
+    page = """{"object": "list", "data": [$_VS_FILE_JSON], "first_id": "file-1", "last_id": "file-1", "has_more": false}"""
+    l, seen = _with_scripted((_, _) -> _json(200, page)) do
+        list_vector_store_files("vs_1"; limit=5, order="asc", after="file-0", before="file-9", filter="completed",
+                                service=URLProbe)
+    end
+    @test l isa VectorStoreFileListSuccess && l.response isa VectorStoreFileList
+    @test [(f.id, f.status) for f in l.response.data] == [("file-1", "completed")] && !l.response.has_more
+    @test l.response.data[1].raw["attributes"] == Dict("team" => "docs")
+    @test only(seen).target == "/v1/vector_stores/vs_1/files?limit=5&order=asc&after=file-0&before=file-9&filter=completed"
+    @test _answered(() -> list_vector_store_files("vs_1"; service=URLProbe), 200; body="{}") isa VectorStoreCallError
+    @test_throws ArgumentError list_vector_store_files("vs_1"; filter="done", service=URLProbe)
+    @test_throws ArgumentError list_vector_store_files("vs_1"; order="up", service=URLProbe)
+
+    g = _answered(() -> retrieve_vector_store_file("vs_1", "file-1"; service=URLProbe), 200; body=_VS_FILE_JSON)
+    @test g isa VectorStoreFileSuccess && (g.response.id, g.response.status) == ("file-1", "completed")
+    @test _answered(() -> retrieve_vector_store_file("vs_1", "file-1"; service=URLProbe), 200;
+                    body="""{"id": "file-1"}""") isa VectorStoreCallError
+
+    del(body) = _answered(() -> delete_vector_store_file("vs_1", "file-1"; service=URLProbe), 200; body)
+    @test del("""{"id": "file-1", "object": "vector_store.file.deleted", "deleted": true}""") ==
+          VectorStoreDeleteSuccess(id="file-1", deleted=true)
+    @test del("""{"id": "file-1", "object": "vector_store.deleted", "deleted": true}""") isa VectorStoreCallError
+    @test del("""{"object": "vector_store.file.deleted", "deleted": true}""") isa VectorStoreCallError
+    @test del("""{"id": "file-1", "object": "vector_store.file.deleted", "deleted": false}""") isa VectorStoreCallError
+
+    content = """{"object": "vector_store.file_content.page", "data": [{"type": "text", "text": "Returns within 30 days."}],
+                  "has_more": false, "next_page": null}"""
+    c = _answered(() -> vector_store_file_content("vs_1", "file-1"; service=URLProbe), 200; body=content)
+    @test c isa VectorStoreContentSuccess && c.response isa VectorStoreFileContent
+    @test (c.response.data, c.response.has_more, c.response.next_page) ==
+          ([Dict{String,Any}("type" => "text", "text" => "Returns within 30 days.")], false, nothing)
+    @test _answered(() -> vector_store_file_content("vs_1", "file-1"; service=URLProbe), 200;
+                    body="""{"data": [], "has_more": false}""") isa VectorStoreCallError
+end
+
+@testset "vector store files: methods, ids as single path segments, the config seam, the capability" begin
+    E = _HOSTILE_ENC
+    sent = _sent_requests() do
+        list_vector_store_files(_HOSTILE_ID; service=URLProbe)
+        retrieve_vector_store_file(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+        delete_vector_store_file(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+        vector_store_file_content(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+    end
+    @test sent == [("GET", "/v1/vector_stores/$E/files"), ("GET", "/v1/vector_stores/$E/files/$E"),
+                   ("DELETE", "/v1/vector_stores/$E/files/$E"), ("GET", "/v1/vector_stores/$E/files/$E/content")]
+    for call in (cfg -> list_vector_store_files("vs_x"; service=SeamProbe, config=cfg),
+                 cfg -> retrieve_vector_store_file("vs_x", "f"; service=SeamProbe, config=cfg),
+                 cfg -> delete_vector_store_file("vs_x", "f"; service=SeamProbe, config=cfg),
+                 cfg -> vector_store_file_content("vs_x", "f"; service=SeamProbe, config=cfg))
+        @test _seam_timeout(call(_TINY_DEADLINE), VectorStoreCallError)
+    end
+    ds = DeepSeekEndpoint("k")
+    @test_throws ArgumentError list_vector_store_files("vs_1"; service=ds)
+    @test_throws ArgumentError retrieve_vector_store_file("vs_1", "f"; service=ds)
+    @test_throws ArgumentError delete_vector_store_file("vs_1", "f"; service=ds)
+    @test_throws ArgumentError vector_store_file_content("vs_1", "f"; service=ds)
+end

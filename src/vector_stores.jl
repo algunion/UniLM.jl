@@ -31,7 +31,7 @@ vector_store_id(v::VectorStoreObject) = v.id
     VectorStoreFileObject
 
 A file attached to a vector store: `id` and `status`; `raw` holds the
-unparsed JSON response.
+unparsed JSON response (its `attributes`, `usage_bytes`, `last_error`, …).
 """
 @kwdef struct VectorStoreFileObject
     id::String
@@ -64,17 +64,48 @@ A page of [`VectorStoreObject`](@ref)s from [`list_vector_stores`](@ref);
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    VectorStoreFileList
+
+A page of [`VectorStoreFileObject`](@ref)s from [`list_vector_store_files`](@ref) or
+[`list_file_batch_files`](@ref); `has_more` signals that further pages are available.
+"""
+@kwdef struct VectorStoreFileList
+    data::Vector{VectorStoreFileObject}
+    has_more::Bool = false
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+"""
+    VectorStoreFileContent
+
+The text OpenAI parsed from a vector store file, from [`vector_store_file_content`](@ref):
+`data`, its parts as OpenAI sent them (each a `Dict` with `"type"` — `"text"`, the one type
+OpenAI documents — and `"text"`), `has_more`, and `next_page`, the token of a further page
+(`nothing` when there is none); `raw` holds the unparsed JSON response.
+"""
+@kwdef struct VectorStoreFileContent
+    data::Vector{Dict{String,Any}}
+    has_more::Bool = false
+    next_page::Union{String,Nothing} = nothing
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
 # ─── Result types ─────────────────────────────────────────────────────────────
 
 "Successful create/retrieve/update result wrapping a [`VectorStoreObject`](@ref)."
 @kwdef struct VectorStoreSuccess <: LLMRequestResponse; response::VectorStoreObject; end
 "Successful [`list_vector_stores`](@ref) result wrapping a [`VectorStoreList`](@ref)."
 @kwdef struct VectorStoreListSuccess <: LLMRequestResponse; response::VectorStoreList; end
-"Successful [`add_vector_store_file`](@ref) result wrapping a [`VectorStoreFileObject`](@ref)."
+"Successful [`list_vector_store_files`](@ref) / [`list_file_batch_files`](@ref) result wrapping a [`VectorStoreFileList`](@ref)."
+@kwdef struct VectorStoreFileListSuccess <: LLMRequestResponse; response::VectorStoreFileList; end
+"Successful [`add_vector_store_file`](@ref) or [`retrieve_vector_store_file`](@ref) result wrapping a [`VectorStoreFileObject`](@ref)."
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
+"Successful [`vector_store_file_content`](@ref) result wrapping a [`VectorStoreFileContent`](@ref)."
+@kwdef struct VectorStoreContentSuccess <: LLMRequestResponse; response::VectorStoreFileContent; end
 "Successful file-batch result wrapping a [`VectorStoreFileBatch`](@ref)."
 @kwdef struct VectorStoreBatchSuccess <: LLMRequestResponse; response::VectorStoreFileBatch; end
-"Successful [`delete_vector_store`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
+"Successful [`delete_vector_store`](@ref) or [`delete_vector_store_file`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct VectorStoreDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Vector Stores API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -154,6 +185,13 @@ end
 _vs_call(decode::Function, method::String, path::String, service, config, cancel; body=nothing) =
     _vs_json_call(decode, VectorStoreFailure, VectorStoreCallError, method,
                   _api_base_url(service) * VECTOR_STORES_PATH * path, service, config, cancel; body)
+
+_vs_file_success(d::AbstractDict) = VectorStoreFileSuccess(response=_parse_vs_file(d))
+function _vs_file_list(d::AbstractDict)
+    page, has_more = _vs_page(d)
+    VectorStoreFileListSuccess(response=VectorStoreFileList(
+        data=VectorStoreFileObject[_parse_vs_file(f) for f in page], has_more=has_more, raw=Dict{String,Any}(d)))
+end
 
 # A request body of the fields given, those left `nothing` out.
 _vs_body(fields::Pair{Symbol}...) = Dict{Symbol,Any}(k => v for (k, v) in fields if !isnothing(v))
@@ -319,6 +357,85 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
     catch e
         e isa InterruptException && rethrow()
         _callerr(VectorStoreCallError, e)
+    end
+end
+
+"""
+    list_vector_store_files(vector_store_id; limit=nothing, order=nothing, after=nothing, before=nothing,
+                            filter=nothing, service=OPENAIServiceEndpoint)
+
+List the files of a vector store, a page at a time: `order` is `"asc"` or `"desc"` (OpenAI's
+default) by creation time, `after`/`before` the id that ends the page before or begins the page
+after, and `filter` keeps the files of one status, `"in_progress"`, `"completed"`, `"failed"` or
+`"cancelled"`; another `order` or `filter` is an `ArgumentError` before anything is sent. Returns
+`VectorStoreFileListSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function list_vector_store_files(vs_id::String; limit::Union{Int,Nothing}=nothing, order::Union{String,Nothing}=nothing,
+    after::Union{String,Nothing}=nothing, before::Union{String,Nothing}=nothing, filter::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    query = _vs_list_query("list_vector_store_files", "limit" => limit, "order" => order, "after" => after,
+                           "before" => before, "filter" => filter)
+    _vs_call(_vs_file_list, "GET", "/" * _uripart(vs_id) * "/files" * query, service, config, cancel)
+end
+
+"""
+    retrieve_vector_store_file(vector_store_id, file_id; service=OPENAIServiceEndpoint)
+
+Read a vector store file's record: its `status`, and in `raw` its `attributes`, `usage_bytes`
+and `last_error`. Returns `VectorStoreFileSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function retrieve_vector_store_file(vs_id::String, file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call(_vs_file_success, "GET", "/" * _uripart(vs_id) * "/files/" * _uripart(file_id), service, config, cancel)
+end
+
+"""
+    delete_vector_store_file(vector_store_id, file_id; service=OPENAIServiceEndpoint)
+
+Detach a file from a vector store; the file itself stays in the Files API ([`delete_file`](@ref)
+deletes it). Returns `VectorStoreDeleteSuccess` once the service confirms the removal,
+`VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function delete_vector_store_file(vs_id::String, file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call(d -> _vs_deletion(VectorStoreDeleteSuccess, d, "vector_store.file.deleted"), "DELETE",
+             "/" * _uripart(vs_id) * "/files/" * _uripart(file_id), service, config, cancel)
+end
+
+"""
+    vector_store_file_content(vector_store_id, file_id; service=OPENAIServiceEndpoint)
+
+Read the text OpenAI parsed from a vector store file, as a `VectorStoreContentSuccess` whose
+`response` is a [`VectorStoreFileContent`](@ref); else `VectorStoreFailure` or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function vector_store_file_content(vs_id::String, file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call("GET", "/" * _uripart(vs_id) * "/files/" * _uripart(file_id) * "/content", service, config, cancel) do d
+        # OpenAI's reference requires the page's data, has_more and next_page.
+        page, has_more = _vs_page(d)
+        VectorStoreContentSuccess(response=VectorStoreFileContent(data=page, has_more=has_more, next_page=d["next_page"],
+                                                                  raw=Dict{String,Any}(d)))
     end
 end
 

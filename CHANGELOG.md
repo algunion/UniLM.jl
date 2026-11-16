@@ -100,10 +100,11 @@
   UniLM sends. The Responses truncation clause says trimming can begin earlier.
 
 ### CI
-- **The provider drift check ignores model ids that only a Julia comment names, and checks translate's default
-  model.** Pages print listing output as comments in docs code blocks, so a retired snapshot shown there failed the
-  release gate. `gpt-realtime-translate`, which only a docs comment used to name, is now checked as a default, and a
-  keyless test checks every default against the recorded listings.
+- **The provider drift check ignores model ids that only a Julia comment names, and checks every default model.**
+  Pages print listing output as comments in docs code blocks, so a retired snapshot shown there failed the release
+  gate. Translate's default (`gpt-realtime-translate`), which only a docs comment named, and Gemini Decisions'
+  default (`gemini-decision-1`) are now among the defaults the check reads, and a keyless test checks every default
+  against the OpenAI, Gemini and Anthropic listings of 2026-11-16.
 - **The hosted-providers job runs the DeepSeek, TypeSafe and natural-language live suites.** `test/live_hosted.jl`
   lists `integration_deepseek.jl`, `integration_typesafe.jl` and `integration_semantic.jl` and fails, naming the
   key, when `DEEPSEEK_API_KEY` or `TYPESAFE_API_KEY` is unset; the job passes both from the repository's secrets.

@@ -111,3 +111,42 @@ end
     @test del("""{"id": "cntr_1", "object": "container.file.deleted", "deleted": true}""") isa ContainerCallError
     @test del("""{"id": "cntr_2", "object": "container.deleted", "deleted": true}""").id == "cntr_2"
 end
+
+@testset "create_container: memory_limit, network_policy and skills" begin
+    ok = """{"id": "cntr_1", "object": "container", "status": "running", "name": "a"}"""
+    sent(f) = JSON.parse(only(last(_with_scripted(f, (_, _) -> _json(200, ok)))).body)
+    policy = ContainerNetworkAllowlist(["pypi.org", "api.example.com"];
+                                       domain_secrets=[ContainerDomainSecret("api.example.com", "API_TOKEN", "s3cr3t")])
+    skills = [SkillReference("skill_abc"), SkillReference("skill_def"; version=2), SkillReference("skill_ghi"; version="latest")]
+    @test sent(() -> create_container(; name="a", memory_limit="4g", network_policy=policy, skills, service=URLProbe)) ==
+          Dict("name" => "a", "memory_limit" => "4g",
+               "network_policy" => Dict("type" => "allowlist", "allowed_domains" => ["pypi.org", "api.example.com"],
+                                        "domain_secrets" => [Dict("domain" => "api.example.com", "name" => "API_TOKEN",
+                                                                  "value" => "s3cr3t")]),
+               "skills" => [Dict("type" => "skill_reference", "skill_id" => "skill_abc"),
+                            Dict("type" => "skill_reference", "skill_id" => "skill_def", "version" => "2"),
+                            Dict("type" => "skill_reference", "skill_id" => "skill_ghi", "version" => "latest")])
+    @test sent(() -> create_container(; name="a", network_policy=ContainerNetworkDisabled(), service=URLProbe)) ==
+          Dict("name" => "a", "network_policy" => Dict("type" => "disabled"))
+    @test sent(() -> create_container(; name="a", network_policy=ContainerNetworkAllowlist(["pypi.org"]),
+                                      service=URLProbe))["network_policy"] ==
+          Dict("type" => "allowlist", "allowed_domains" => ["pypi.org"])
+    # Values outside OpenAI's reference are refused before anything is sent.
+    err, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        try create_container(; name="a", memory_limit="2g", service=URLProbe); nothing catch e; e end
+    end
+    @test err isa ArgumentError && occursin("create_container", err.msg) && occursin("\"4g\"", err.msg) && isempty(seen)
+    @test_throws ArgumentError ContainerNetworkAllowlist(String[])
+    @test_throws ArgumentError ContainerDomainSecret("api.example.com", "", "v")
+    @test_throws ArgumentError ContainerDomainSecret("", "API_TOKEN", "v")
+    @test_throws ArgumentError ContainerDomainSecret("api.example.com", "API_TOKEN", "")
+    @test_throws ArgumentError SkillReference("")
+    @test_throws ArgumentError SkillReference("s"^65)
+    @test SkillReference("s"^64).skill_id == "s"^64
+    for v in (0, -1, "0", "beta", "", true)
+        @test_throws ArgumentError SkillReference("skill_abc"; version=v)
+    end
+    # A secret's value is never printed.
+    @test !occursin("s3cr3t", repr(policy)) && !occursin("s3cr3t", repr(MIME"text/plain"(), policy))
+    @test occursin("API_TOKEN", repr(policy))
+end

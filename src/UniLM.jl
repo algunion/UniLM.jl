@@ -523,6 +523,11 @@ export
 export
     ContainerObject,
     ContainerList,
+    ContainerNetworkPolicy,
+    ContainerNetworkDisabled,
+    ContainerNetworkAllowlist,
+    ContainerDomainSecret,
+    SkillReference,
     ContainerSuccess,
     ContainerListSuccess,
     ContainerDeleteSuccess,

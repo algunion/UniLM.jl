@@ -46,6 +46,105 @@ A page of container records (raw JSON dicts) from [`list_containers`](@ref);
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+# The memory of a container, as OpenAI's reference lists it (`"1g"` its default); the Responses
+# code_interpreter tool's auto container takes the same values.
+const _CONTAINER_MEMORY_LIMITS = ("1g", "4g", "16g", "64g")
+function _check_memory_limit(verb::String, memory_limit::Union{String,Nothing})
+    isnothing(memory_limit) || memory_limit in _CONTAINER_MEMORY_LIMITS || throw(ArgumentError(
+        "$verb: memory_limit is $(join(repr.(_CONTAINER_MEMORY_LIMITS), ", ", " or ")) (got $(repr(memory_limit)))"))
+    return memory_limit
+end
+
+"""
+    ContainerNetworkPolicy
+
+The outbound network access of a container [`create_container`](@ref) makes:
+[`ContainerNetworkDisabled`](@ref) or [`ContainerNetworkAllowlist`](@ref).
+"""
+abstract type ContainerNetworkPolicy end
+
+"""
+    ContainerNetworkDisabled()
+
+No outbound network access for the container, sent as `{"type": "disabled"}`.
+"""
+struct ContainerNetworkDisabled <: ContainerNetworkPolicy end
+JSON.lower(::ContainerNetworkDisabled) = Dict{Symbol,Any}(:type => "disabled")
+
+"""
+    ContainerDomainSecret(domain, name, value)
+
+A secret OpenAI injects into the container's requests to `domain`, one of its allowlisted
+domains, under `name`. Each of the three is a non-empty string, as OpenAI's reference requires,
+else `ArgumentError`. The `value` is never printed.
+"""
+struct ContainerDomainSecret
+    domain::String
+    name::String
+    value::String
+    function ContainerDomainSecret(domain::AbstractString, name::AbstractString, value::AbstractString)
+        for (field, v) in (("domain", domain), ("name", name), ("value", value))
+            isempty(v) && throw(ArgumentError(
+                "ContainerDomainSecret: $field is empty; OpenAI's reference requires at least one character"))
+        end
+        new(domain, name, value)
+    end
+end
+Base.show(io::IO, s::ContainerDomainSecret) =
+    print(io, "ContainerDomainSecret(", repr(s.domain), ", ", repr(s.name), ", <value not shown>)")
+JSON.lower(s::ContainerDomainSecret) = Dict{Symbol,Any}(:domain => s.domain, :name => s.name, :value => s.value)
+
+"""
+    ContainerNetworkAllowlist(allowed_domains; domain_secrets=ContainerDomainSecret[])
+
+Outbound network access for the container to `allowed_domains` only (at least one, else
+`ArgumentError`), with optional [`ContainerDomainSecret`](@ref)s for them; sent as
+`{"type": "allowlist", "allowed_domains": […], "domain_secrets": […]}`, without
+`domain_secrets` when there are none.
+"""
+struct ContainerNetworkAllowlist <: ContainerNetworkPolicy
+    allowed_domains::Vector{String}
+    domain_secrets::Vector{ContainerDomainSecret}
+    function ContainerNetworkAllowlist(allowed_domains::Vector{String};
+                                       domain_secrets::Vector{ContainerDomainSecret}=ContainerDomainSecret[])
+        isempty(allowed_domains) && throw(ArgumentError(
+            "ContainerNetworkAllowlist: allowed_domains is empty; list at least one domain, " *
+            "or use ContainerNetworkDisabled() for no network access"))
+        new(allowed_domains, domain_secrets)
+    end
+end
+function JSON.lower(p::ContainerNetworkAllowlist)
+    d = Dict{Symbol,Any}(:type => "allowlist", :allowed_domains => p.allowed_domains)
+    isempty(p.domain_secrets) || (d[:domain_secrets] = p.domain_secrets)
+    d
+end
+
+"""
+    SkillReference(skill_id; version=nothing)
+
+A skill made with OpenAI's Skills API, for [`create_container`](@ref)'s `skills`: its id (1 to 64
+characters) and `version`, a positive integer (or its digits) or `"latest"`; without one, the
+skill's default version. Anything else is an `ArgumentError`. Sent as
+`{"type": "skill_reference", "skill_id": …, "version": …}`.
+"""
+struct SkillReference
+    skill_id::String
+    version::Union{String,Nothing}
+    function SkillReference(skill_id::AbstractString; version::Union{AbstractString,Integer,Nothing}=nothing)
+        1 <= length(skill_id) <= 64 || throw(ArgumentError(
+            "SkillReference: skill_id has 1 to 64 characters (got $(length(skill_id)))"))
+        v = isnothing(version) ? nothing : string(version)
+        isnothing(v) || v == "latest" || occursin(r"^[1-9][0-9]*$", v) || throw(ArgumentError(
+            "SkillReference: version is a positive integer or \"latest\" (got $(repr(version)))"))
+        new(skill_id, v)
+    end
+end
+function JSON.lower(s::SkillReference)
+    d = Dict{Symbol,Any}(:type => "skill_reference", :skill_id => s.skill_id)
+    isnothing(s.version) || (d[:version] = s.version)
+    d
+end
+
 "Successful Containers API result: a [`ContainerObject`](@ref) from create/retrieve, or the [`ContainerFileObject`](@ref) that [`add_container_file`](@ref) created."
 @kwdef struct ContainerSuccess <: LLMRequestResponse; response::Union{ContainerObject,ContainerFileObject}; end
 "Successful [`list_containers`](@ref) result wrapping a [`ContainerList`](@ref)."
@@ -67,22 +166,34 @@ _cont_resp(resp) = resp.status == 200 ?
     _failure(ContainerFailure, resp)
 
 """
-    create_container(; name, file_ids=nothing, expires_after=nothing, service=OPENAIServiceEndpoint)
+    create_container(; name, file_ids=nothing, expires_after=nothing, memory_limit=nothing,
+                     network_policy=nothing, skills=nothing, service=OPENAIServiceEndpoint)
+
+Create a container. `memory_limit` is `"1g"` (OpenAI's default), `"4g"`, `"16g"` or `"64g"`,
+another value an `ArgumentError` before anything is sent; `network_policy` a
+[`ContainerNetworkPolicy`](@ref), its outbound access; `skills` the
+[`SkillReference`](@ref)s of skills made with OpenAI's Skills API. Returns `ContainerSuccess`,
+`ContainerFailure`, or `ContainerCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_container(; name::String, file_ids::Union{Vector{String},Nothing}=nothing,
-    expires_after::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing,
+    expires_after::Union{AbstractDict,Nothing}=nothing, memory_limit::Union{String,Nothing}=nothing,
+    network_policy::Union{ContainerNetworkPolicy,Nothing}=nothing, skills::Union{Vector{SkillReference},Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
+    _check_memory_limit("create_container", memory_limit)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:name => name)
         !isnothing(file_ids) && (d[:file_ids] = file_ids)
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
+        !isnothing(memory_limit) && (d[:memory_limit] = memory_limit)
+        !isnothing(network_policy) && (d[:network_policy] = network_policy)
+        !isnothing(skills) && (d[:skills] = skills)
         _cont_resp(_http("POST", _api_base_url(service) * CONTAINERS_PATH, auth_header(service),
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e

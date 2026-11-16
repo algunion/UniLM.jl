@@ -334,4 +334,30 @@ end
     @test listed isa ModelListSuccess && length(listed.raw) == 1   # one page of up to 1000 models
 end
 
+@testset "Message Batches — two requests: create, retrieve, list, cancel; once ended, results and delete" begin
+    # Two 16-token claude-haiku-5-5 requests, cancelled at once: a request canceled before it runs is not billed,
+    # and one already sent costs its tokens at the Batch rates. A cancelled batch ended within a minute in the
+    # runs of 2026-11-16; the poll gives it five, and the gate does not wait for a batch to run its requests.
+    q() = _live_claude("Reply with exactly: ok"; max_tokens=16)
+    created = create_batch(["one" => q(), "two" => q()])
+    @test created isa BatchSuccess
+    if created isa BatchSuccess
+        id = created.response.id
+        @test created.response.status == "in_progress" && created.response.request_counts["processing"] == 2
+        @test retrieve_batch(id; service=ANTHROPICServiceEndpoint) isa BatchSuccess
+        page = list_batches(; limit=20, service=ANTHROPICServiceEndpoint)
+        @test page isa BatchListSuccess && any(b -> b.id == id, page.response.data)
+        stopped = cancel_batch(id; service=ANTHROPICServiceEndpoint)
+        @test stopped isa BatchSuccess && stopped.response.status in ("canceling", "ended")
+        ended = poll_batch(id; service=ANTHROPICServiceEndpoint, interval=5.0, timeout=300.0)
+        @test ended isa BatchSuccess && ended.response.status == "ended"
+        r = batch_results(id; service=ANTHROPICServiceEndpoint)
+        @test r isa BatchResultsSuccess && sort(first.(r.results)) == ["one", "two"]
+        r isa BatchResultsSuccess && @info "Anthropic batch results" id kinds = [typeof(x.second) for x in r.results] cost = sum(
+            (estimated_cost(x.second) for x in r.results if x.second isa LLMSuccess); init=0.0)
+        d = delete_batch(id; service=ANTHROPICServiceEndpoint)
+        @test d isa BatchDeleteSuccess && d.id == id
+    end
+end
+
 end  # if ANTHROPIC_API_KEY

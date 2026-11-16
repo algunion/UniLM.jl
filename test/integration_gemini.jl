@@ -295,4 +295,30 @@ end
     @test listed isa ModelListSuccess && length(listed.raw) == 1   # one page of up to 1000 models
 end
 
+@testset "Gemini batches — two requests: create, retrieve, list, update, cancel, results and delete" begin
+    # Two gemini-3.8-flash requests at thinking "low", cancelled at once (a cancelled batch was CANCELLED on the
+    # next read in the runs of 2026-11-16, and ended without results); the gate does not wait for a batch to run.
+    q() = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+               messages=[Message(Val(:user), "Reply with exactly: ok")])
+    created = create_batch(["one" => q(), "two" => q()])
+    @test created isa BatchSuccess
+    if created isa BatchSuccess
+        id = created.response.id
+        @test created.response.status in ("BATCH_STATE_PENDING", "BATCH_STATE_RUNNING")
+        @test created.response.request_counts["requestCount"] == "2"
+        @test retrieve_batch(id; service=GEMINIServiceEndpoint) isa BatchSuccess
+        page = list_batches(; limit=10, service=GEMINIServiceEndpoint)
+        @test page isa BatchListSuccess && any(b -> b.id == id, page.response.data)
+        up = update_batch(id; priority=5, service=GEMINIServiceEndpoint)
+        @test up isa BatchSuccess && up.response.raw["priority"] == "5"
+        stopped = cancel_batch(id; service=GEMINIServiceEndpoint)
+        @test stopped isa BatchSuccess && stopped.response.status == "BATCH_STATE_CANCELLED"
+        r = batch_results(id; service=GEMINIServiceEndpoint)
+        @test r isa BatchCallError && occursin("ended without results", r.error)
+        d = delete_batch(id; service=GEMINIServiceEndpoint)
+        @test d isa BatchDeleteSuccess && d.id == id
+        @test retrieve_batch(id; service=GEMINIServiceEndpoint) isa BatchFailure     # gone: HTTP 404
+    end
+end
+
 end  # if GEMINI_API_KEY

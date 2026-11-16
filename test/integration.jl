@@ -884,4 +884,26 @@ end
     end
 end
 
+@testset "Batch API — a batch of two Chats: create, retrieve, list and cancel" begin
+    # Two 16-token gpt-6-luna requests at effort "none", cancelled before they run: OpenAI bills the tokens of the
+    # requests a batch completed, so the run costs at most those two requests at the Batch rates. The gate does
+    # not wait for results (OpenAI's 24-hour window); test/batch.jl reads them from fixtures.
+    luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16, messages=[Message(Val(:user), "Reply with exactly: ok")])
+    created = create_batch(["one" => luna(), "two" => luna()]; metadata=Dict("suite" => "unilm-live"),
+                           output_expires_after=3600)
+    @test created isa BatchSuccess
+    if created isa BatchSuccess
+        id = created.response.id
+        @test created.response.endpoint == "/v1/chat/completions" && created.response.raw["metadata"] == Dict("suite" => "unilm-live")
+        seen = retrieve_batch(id)
+        @test seen isa BatchSuccess && seen.response.id == id
+        page = list_batches(; limit=10)
+        @test page isa BatchListSuccess && any(b -> b.id == id, page.response.data)
+        stopped = cancel_batch(id)
+        @test stopped isa BatchSuccess && stopped.response.status in ("cancelling", "cancelled")
+        @info "OpenAI batch" id status = stopped.response.status input = created.response.input_file_id
+        @test delete_file(created.response.input_file_id) isa FileDeleteSuccess
+    end
+end
+
 end  # if OPENAI_API_KEY

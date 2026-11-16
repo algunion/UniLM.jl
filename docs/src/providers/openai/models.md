@@ -242,7 +242,13 @@ the factors that apply:
 
 - the billed tier's multiple, for the tier the result reports as its `service_tier`: `"flex"`, `"fast"`
   or `"priority"` (Fast mode's former name, which OpenAI reports for Fast on GPT-5.6 and earlier), and
-  `"ultrafast"`;
+  `"ultrafast"`; and `"batch"`, the tier of a result [`batch_results`](@ref) reads, at the pricing page's
+  Batch rates, half of the standard ones, long-context and cache-write rates included, on the models its
+  Batch table lists ([Batches](@ref openai_batch)). Where that table gives no cached-input price
+  (`gpt-4.1`, `gpt-4.1-mini`, `o3`) a cache read bills as batch input; a model it does not list —
+  `gpt-6-rosalind`, `gpt-6-cyber`, `gpt-6-astra-law`, `chat-latest`, `gpt-5-search-api`, `gpt-audio-1.5` —
+  and a `gpt-5.5-pro` prompt over the short-context limit are estimated at the standard rates, with one
+  warning per model;
 - for a prompt over the short-context limit, the long-context multiples, on the whole request.
 
 ```@eval

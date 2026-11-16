@@ -39,7 +39,9 @@ links each provider's rules.
 `chatrequest!`, `respond`, `embeddingrequest!`, the image verbs, `fim_complete`, `prefix_complete` and
 `ask` — zero-filled for their failures and call errors; [`estimated_cost`](@ref) returns a `Float64` in
 USD. Both throw `ArgumentError` for results of APIs that report no token usage (files, batches, audio,
-moderations, vector stores, …), where a zero would be indistinguishable from a free call.
+moderations, vector stores, …), where a zero would be indistinguishable from a free call. A batch's
+requests are Chat results: [`batch_results`](@ref) returns each as an `LLMSuccess` whose usage names the
+tier `"batch"`, and `estimated_cost` bills it at the provider's Batch rates ([Batch API](@ref batch_api)).
 A real result comes back from `chatrequest!` / `respond` / `embeddingrequest!`, but the
 accessors are pure, so we build one here to keep the example deterministic and offline:
 

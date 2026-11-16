@@ -88,6 +88,8 @@ include("conversations.jl")
 include("moderations.jl")
 include("audio.jl")
 include("batch.jl")
+include("anthropic_batch.jl")
+include("gemini_batch.jl")
 include("fine_tuning.jl")
 include("graders.jl")
 include("webhooks.jl")
@@ -504,13 +506,18 @@ export
     BatchList,
     BatchSuccess,
     BatchListSuccess,
+    BatchResultsSuccess,
+    BatchDeleteSuccess,
     BatchFailure,
     BatchCallError,
     create_batch,
     retrieve_batch,
     cancel_batch,
     list_batches,
-    poll_batch
+    poll_batch,
+    batch_results,
+    delete_batch,
+    update_batch
 
 # ─── Fine-tuning API ──────────────────────────────────────────────────────────
 export

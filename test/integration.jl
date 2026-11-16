@@ -907,7 +907,8 @@ end
 @testset "Batch API — a batch of two Chats: create, retrieve, list and cancel" begin
     # Two 16-token gpt-6-luna requests at effort "none", cancelled before they run: OpenAI bills the tokens of the
     # requests a batch completed, so the run costs at most those two requests at the Batch rates. The gate does
-    # not wait for results (OpenAI's 24-hour window); test/batch.jl reads them from fixtures.
+    # not wait for this batch's results (OpenAI's 24-hour window): the next testset reads those of a batch an
+    # earlier run left, and test/batch.jl reads every result shape from fixtures.
     luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16, messages=[Message(Val(:user), "Reply with exactly: ok")])
     created = create_batch(["one" => luna(), "two" => luna()]; metadata=Dict("suite" => "unilm-live"),
                            output_expires_after=3600)
@@ -923,6 +924,33 @@ end
         @test stopped isa BatchSuccess && stopped.response.status in ("cancelling", "cancelled")
         @info "OpenAI batch" id status = stopped.response.status input = created.response.input_file_id
         @test delete_file(created.response.input_file_id) isa FileDeleteSuccess
+    end
+end
+
+# OpenAI's queue held a batch for over an hour on 2026-11-16, so the gate waits for none: each run leaves one tagged
+# 1-request batch behind, never cancelled, and reads the newest completed one an earlier run left. A run that finds
+# none fails: the gate's claim to read OpenAI batch results rests on it. A run bills its one request (USD ~2e-6).
+@testset "Batch API — the results of a batch an earlier run left; one left for the next run" begin
+    tag = "unilm_gate" => "results"
+    luna = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,
+                messages=[Message(Val(:user), "Reply with exactly: ok")])
+    left = create_batch(["gate" => luna]; metadata=Dict(tag), output_expires_after=2_592_000)
+    @test left isa BatchSuccess && left.response.raw["metadata"] == Dict(tag)
+    mine = left isa BatchSuccess ? left.response.id : nothing
+    page = list_batches(; limit=100)
+    @test page isa BatchListSuccess
+    tagged(b) = b.id != mine && b.status == "completed" &&
+                get(something(get(b.raw, "metadata", nothing), Dict()), first(tag), nothing) == last(tag)
+    earlier = page isa BatchListSuccess ?
+        sort(filter(tagged, page.response.data); by=b -> b.raw["created_at"], rev=true) : BatchObject[]
+    @test !isempty(earlier)
+    if !isempty(earlier)
+        b = first(earlier)
+        r = batch_results(b.id)
+        @test r isa BatchResultsSuccess && first.(r.results) == ["gate"]
+        x = r isa BatchResultsSuccess ? only(r.results).second : nothing
+        @test x isa LLMSuccess && x.usage.service_tier == "batch" && estimated_cost(x) > 0
+        @info "OpenAI gate batch" read = b.id left = mine cost = x isa LLMSuccess ? estimated_cost(x) : 0.0
     end
 end
 

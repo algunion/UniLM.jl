@@ -40,7 +40,8 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIOpenAIServiceEndpoint` | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
 | [know what a call cost](@ref gemini_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
-| [list the models my key can use](@ref gemini_models) | `list_models(service=GEMINIServiceEndpoint)` | each model's token limits and generation methods |
+| [list the models my key can use](@ref gemini_models) | `list_models(service=GEMINIServiceEndpoint)`, `retrieve_model(id; service)` | each model's token limits and generation methods |
+| [count a request's input tokens](@ref gemini_token_counts) | `count_tokens(chat)` | the input tokens the request would bill, without running it |
 | [handle a failure](@ref gemini_failures) | the result's type | the status or the exception, never an empty success |
 
 ## [Setup](@id gemini_setup)
@@ -250,6 +251,12 @@ speech models serve verbs that `estimated_cost` does not price
 ([Images, speech, embeddings & the compatible endpoint](@ref gemini_media_page)); the others would be
 estimated at `0.0`.
 
+[`retrieve_model`](@ref) with `service=GEMINIServiceEndpoint` looks up one model by id
+(`GET /v1beta/models/{model}`) and returns a `ModelSuccess` whose `model` is the `ProviderModel` the
+listing would hold for it; an unknown id is a `ModelListFailure` with status 404
+([One model by id](@ref models_lookup)). The listing asks for 1000 models a page, the most the API
+serves, so the 64 models Google listed for UniLM's key on 16 November 2026 came in one page.
+
 ## [Files](@id gemini_files)
 
 The endpoint's `files` capability: the [Files API](@ref files_api) verbs reach Gemini's Files API, which
@@ -318,7 +325,8 @@ names meets only the other rules.
 | a `Respond` field with no Interactions counterpart: `parallel_tool_calls`, `truncation`, `metadata`, `user`, `include`, `max_tool_calls`, `top_logprobs`, `prompt_cache_key`, `prompt_cache_retention`, `conversation`, `context_management`, `stream_options`, `moderation`, `image_context_compression` | `Gemini Interactions does not support the Respond field(s)` | remove it |
 | `background=true` with `store=false` | `background=true requires a stored response`: the API answers it with HTTP 400 | leave `store` unset |
 | `list_input_items` on `GEMINIServiceEndpoint` | `list_input_items is not supported by GEMINIServiceEndpoint`: the Interactions API lists no input items | keep the `input` you sent ([Background requests](@ref gemini_background)) |
-| `compact_response` or `count_input_tokens` on `GEMINIServiceEndpoint` | `compact_response is not supported by GEMINIServiceEndpoint`, `count_input_tokens is not supported by GEMINIServiceEndpoint`: routes of the Responses API that the Interactions API does not have | an endpoint that serves the Responses API; on Gemini, a reply's `usage` gives its token counts |
+| `compact_response` or `count_input_tokens` on `GEMINIServiceEndpoint` | `compact_response is not supported by GEMINIServiceEndpoint`, `count_input_tokens is not supported by GEMINIServiceEndpoint`: routes of the Responses API that the Interactions API does not have | an endpoint that serves the Responses API; on Gemini, `count_tokens` of a `Chat` counts its input ([Token counts](@ref gemini_token_counts)), and a reply's `usage` gives its token counts |
+| `count_tokens` of a `Respond` on `GEMINIServiceEndpoint` | `count_tokens of a Respond is not supported by GEMINIServiceEndpoint`: the Interactions API counts no request | `count_tokens` of a `Chat` |
 | a `Reasoning` with `context` or `mode`, or with a `summary` other than `"auto"` | `does not support reasoning context or mode`, `supports only Reasoning(summary="auto")` | `Reasoning(effort=…, summary="auto")` |
 | a `text` format with `verbosity`, or whose type is not `text`, `json_object` or `json_schema` with a schema | `does not support text verbosity`, `supports text formats text, json_object, or json_schema` | a JSON Schema `text` format |
 | a tool that is neither a `FunctionTool` nor a `Dict`, such as `web_search()` or `file_search(…)` | `supports only FunctionTool/Dict tools` | a function tool, a hosted Gemini tool ([Hosted tools](@ref gemini_hosted_tools)) or a `Dict` in the API's shape |

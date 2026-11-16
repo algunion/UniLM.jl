@@ -59,7 +59,7 @@ end
     page = _ml_page("anthropic.json")
     r, seen = _ml_list(_ML_ANTHROPIC, _ml_serving(_ml_fixture("anthropic.json")))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?limit=1000")]
     @test r.raw == [page]
     @test [m.id for m in r.models] == [e["id"] for e in page["data"]] && length(r.models) == 13
     h = r.models[1]
@@ -121,7 +121,7 @@ end
     page = _ml_page("gemini.json")
     r, seen = _ml_list(_ML_GEMINI, _ml_serving(_ml_fixture("gemini.json")))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?pageSize=1000")]
     @test r.raw == [page]
     @test [m.id for m in r.models] == [chopprefix(e["name"], "models/") for e in page["models"]]
     @test length(r.models) == 63
@@ -138,8 +138,11 @@ end
     @test sprint(show, f) == "ProviderModel(\"gemini-3.8-flash\", \"Gemini 3.8 Flash\")"
 end
 
+# Every page asks for the largest page the API serves: Anthropic's `limit` "Ranges from `1` to `1000`"
+# (1001 was HTTP 400 on 2026-11-16), and Gemini returns "at most 1000 models per page", with "all other
+# parameters" of a paged call matching the call that gave the page token.
 # Refuted if: a page after the first is skipped, fetched from the wrong cursor or with its cursor
-# unescaped, or the pages' models are merged out of order.
+# unescaped, a page asks for another page size, or the pages' models are merged out of order.
 @testset "pagination: every page is fetched, from the cursor the page before names" begin
     data = _ml_page("anthropic.json")["data"]
     p1 = Dict{String,Any}("data" => data[1:7], "has_more" => true, "first_id" => data[1]["id"], "last_id" => data[7]["id"])
@@ -147,7 +150,7 @@ end
                           "last_id" => data[end]["id"])
     r, seen = _ml_list(_ML_ANTHROPIC, (n, _) -> _json(200, JSON.json(n == 1 ? p1 : p2)))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models"), ("GET", "/v1/models?after_id=claude-fable-5")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?limit=1000"), ("GET", "/v1/models?limit=1000&after_id=claude-fable-5")]
     @test [m.id for m in r.models] == [e["id"] for e in data]
     @test r.raw == [p1, p2]
 
@@ -156,7 +159,8 @@ end
     q2 = Dict{String,Any}("models" => models[51:end])
     r, seen = _ml_list(_ML_GEMINI, (n, _) -> _json(200, JSON.json(n == 1 ? q1 : q2)))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models"), ("GET", "/v1/models?pageToken=Cg9tb2RlbHMvYXFh%2B%2F%3D")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?pageSize=1000"),
+                                ("GET", "/v1/models?pageSize=1000&pageToken=Cg9tb2RlbHMvYXFh%2B%2F%3D")]
     @test [m.id for m in r.models] == [chopprefix(e["name"], "models/") for e in models]
     @test r.raw == [q1, q2]
     # An empty Gemini listing leaves `models` out: proto3 JSON omits an empty list.
@@ -308,6 +312,122 @@ UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint
         @test Dict(UniLM.auth_header(every))["anthropic-beta"] == "fast-mode-2026-02-01,compact-2026-09-04"
         @test Dict(UniLM.auth_header(every))["anthropic-user-profile-id"] == "uprof_011CZkZCu8hGbp5mYRQgUmz9"
     end
+end
+
+# ─── One model by id (retrieve_model), and a fine-tuned model's deletion ─────
+
+# The entries the APIs returned for one model on 2026-11-16: GET /v1/models/{model} on OpenAI and
+# Anthropic (an alias resolves to the dated id), GET /v1beta/models/{model} on Gemini.
+const _ML_ONE = Dict(
+    UniLM._OpenAIModels => """{"id":"gpt-6-luna","object":"model","created":1789406102,"owned_by":"system","shutdown_date":null}""",
+    UniLM._AnthropicModels => """{"type":"model","id":"claude-opus-4-5-20251101","display_name":"Claude Opus 4.5","created_at":"2025-11-24T00:00:00Z","max_input_tokens":200000,"max_tokens":64000,"capabilities":{"batch":{"supported":true}}}""",
+    UniLM._GeminiModels => """{"name":"models/gemini-3.8-flash","version":"3.0","displayName":"Gemini 3.8 Flash","inputTokenLimit":1048576,"outputTokenLimit":65536,"supportedGenerationMethods":["generateContent","countTokens"],"thinking":true}""")
+UniLM.provider_capabilities(::Type{<:ListingProbe}) = Set([:models, :fine_tuning])
+_ml_get(service, id, respond::Function; config=_ML_CFG, cancel=nothing) =
+    _with_scripted(() -> retrieve_model(id; service, config, cancel), respond)
+
+# Refuted if: a lookup goes to another URL or decodes otherwise than the same model in a listing, an id
+# is sent unescaped, or the model the provider resolved an alias to is replaced by the id asked for.
+@testset "retrieve_model: one model, decoded as its listing entry, at the listing's URL and the id" begin
+    for (wire, body) in _ML_ONE
+        service = ListingProbe{wire}
+        r, seen = _ml_get(service, "gpt-6-luna", _ml_serving(body))
+        @test r isa ModelSuccess && issuccess(r)
+        @test _ml_targets(seen) == [("GET", "/v1/models/gpt-6-luna")]
+        entry = JSON.parse(body; dicttype=Dict{String,Any})
+        @test r.model.raw == entry
+        want = UniLM._provider_model(wire(), entry)
+        @test [getfield(r.model, f) for f in fieldnames(ProviderModel)] == [getfield(want, f) for f in fieldnames(ProviderModel)]
+    end
+    r, _ = _ml_get(_ML_ANTHROPIC, "claude-opus-4-5", _ml_serving(_ML_ONE[UniLM._AnthropicModels]))
+    @test (r.model.id, r.model.display_name, r.model.input_token_limit) == ("claude-opus-4-5-20251101", "Claude Opus 4.5", 200000)
+    r, _ = _ml_get(_ML_GEMINI, "gemini-3.8-flash", _ml_serving(_ML_ONE[UniLM._GeminiModels]))
+    @test (r.model.id, r.model.capabilities["thinking"]) == ("gemini-3.8-flash", true)
+    @test sprint(show, r) == "ModelSuccess(ProviderModel(\"gemini-3.8-flash\", \"Gemini 3.8 Flash\"))"
+    _, seen = _ml_get(_ML_OPENAI, _HOSTILE_ID, _ml_serving(_ML_ONE[UniLM._OpenAIModels]))
+    @test _ml_targets(seen) == [("GET", "/v1/models/" * _HOSTILE_ENC)]
+    for (service, url) in ((OPENAIServiceEndpoint, "https://api.openai.com/v1/models/gpt-6-luna"),
+                           (ANTHROPICServiceEndpoint(), "https://api.anthropic.com/v1/models/gpt-6-luna"),
+                           (GEMINIServiceEndpoint, "https://generativelanguage.googleapis.com/v1beta/models/gpt-6-luna"))
+        @test UniLM._model_url(service, "gpt-6-luna") == url
+    end
+end
+
+# Refuted if: a 404 or another error status reads as a model or loses its body, status or request id; a
+# reply that is not the documented model reads as one; a missing key, a cancel or the deadline sends anything.
+@testset "retrieve_model: failures, malformed models, a missing key, a cancel and the deadline" begin
+    body = """{"type":"error","error":{"type":"not_found_error","message":"model: claude-3-opus-20240229"}}"""
+    r, seen = _ml_get(_ML_ANTHROPIC, "claude-3-opus-20240229", (_, _) -> _json(404, body; headers=["request-id" => "req_011"]))
+    @test r isa ModelListFailure && !issuccess(r) && (r.status, r.response, r.request_id) == (404, body, "req_011")
+    @test length(seen) == 1
+    for (service, reply, says) in ((_ML_OPENAI, "[]", "not a JSON object"), (_ML_OPENAI, """{"object":"model"}""", "\"id\""),
+                                   (_ML_ANTHROPIC, """{"id":"claude-haiku-5-5","max_tokens":"1"}""", "\"max_tokens\""),
+                                   (_ML_GEMINI, """{"name":"gemini-3.8-flash"}""", "models/{model}"), (_ML_GEMINI, "nope", ""))
+        r, seen = _ml_get(service, "m", _ml_serving(reply))
+        @test r isa ModelListCallError && occursin(says, r.error) && length(seen) == 1
+    end
+    tok = CancelToken(); cancel!(tok)
+    r, seen = _ml_get(_ML_GEMINI, "m", _ml_serving("{}"); cancel=tok)
+    @test r isa ModelListCallError && r.cause isa UniLMCancelled && isempty(seen)
+    r, seen = _ml_get(_ML_OPENAI, "m", _ml_serving("{}"); config=_TINY_DEADLINE)
+    @test _seam_timeout(r, ModelListCallError) && isempty(seen)
+    for (service, key) in ((OPENAIServiceEndpoint, "OPENAI_API_KEY"), (ANTHROPICServiceEndpoint, "ANTHROPIC_API_KEY"),
+                           (GEMINIServiceEndpoint, "GEMINI_API_KEY"))
+        r = withenv(() -> retrieve_model("m"; service, config=_ML_CFG), key => nothing)
+        @test r isa ModelListCallError && r.cause isa KeyError && occursin(key, r.error)
+    end
+end
+
+# Refuted if: an empty id, an endpoint with no lookup or one without the capability is sent anything, or
+# is refused in words that name another provider's lookup.
+@testset "retrieve_model: refused before any request where there is no lookup" begin
+    e = try retrieve_model(""; service=_ML_OPENAI); nothing catch x; x end
+    @test e isa ArgumentError && occursin("retrieve_model", e.msg)
+    for (service, says) in ((TYPESAFEServiceEndpoint, "Model lookup is not supported by TYPESAFEServiceEndpoint"),
+                            (OllamaEndpoint(), "Model lookup is not supported by OllamaEndpoint"),
+                            (AZUREServiceEndpoint, "Model lookup is not supported by AZUREServiceEndpoint"),
+                            (GEMINIOpenAIServiceEndpoint, "Model lookup is not supported by GEMINIOpenAIServiceEndpoint"),
+                            (DeepSeekEndpoint(api_key="k"), "Model lookup is not supported by DeepSeekEndpoint"),
+                            (_MLUndeclared, "Model lookup is not supported by _MLUndeclared"))
+        e = try retrieve_model("m"; service); nothing catch x; x end
+        @test e isa ArgumentError && startswith(e.msg, says)
+    end
+    e = try retrieve_model("m"; service=OllamaEndpoint()); nothing catch x; x end
+    @test occursin("model_info", e.msg)
+end
+
+# DeleteModelResponse (OpenAI's OpenAPI spec) requires id, object and deleted; OpenAI answered the delete
+# of a made-up fine-tuned model with HTTP 404 model_not_found on 2026-11-16.
+# Refuted if: the delete goes to another URL or method, a reply without its id or its confirmation reads as
+# a deletion, the requested id stands in for the reply's, or an endpoint without fine-tuning is sent anything.
+@testset "a fine-tuned model's deletion on OpenAI: DELETE /v1/models/{model}, confirmed by the reply" begin
+    del(id, respond::Function; config=_ML_CFG, cancel=nothing, service=_ML_OPENAI) =
+        _with_scripted(() -> UniLM._delete_model(service, id, config, cancel), respond)
+    id = "ft:gpt-4o-mini:org:suffix:abc123"
+    r, seen = del(id, _ml_serving("""{"id":"$id","object":"model","deleted":true}"""))
+    @test r isa ModelDeleteSuccess && issuccess(r) && (r.id, r.deleted) == (id, true)
+    @test _ml_targets(seen) == [("DELETE", "/v1/models/ft%3Agpt-4o-mini%3Aorg%3Asuffix%3Aabc123")]
+    for reply in ("""{"object":"model","deleted":true}""", """{"id":"","object":"model","deleted":true}""",
+                  """{"id":"$id","object":"model"}""", """{"id":"$id","object":"model","deleted":false}""", "[]")
+        r, seen = del(id, _ml_serving(reply))
+        @test r isa ModelListCallError && length(seen) == 1
+    end
+    body = """{"error":{"message":"The model '$id' does not exist","code":"model_not_found"}}"""
+    r, _ = del(id, (_, _) -> _json(404, body; headers=["x-request-id" => "req_1"]))
+    @test r isa ModelListFailure && (r.status, r.response, r.request_id) == (404, body, "req_1")
+    r, seen = del(id, _ml_serving("{}"); config=_TINY_DEADLINE)
+    @test _seam_timeout(r, ModelListCallError) && isempty(seen)
+    r = withenv(() -> UniLM._delete_model(OPENAIServiceEndpoint, id, _ML_CFG, nothing), "OPENAI_API_KEY" => nothing)
+    @test r isa ModelListCallError && r.cause isa KeyError
+    for (service, says) in ((ANTHROPICServiceEndpoint, "Model deletion is not supported by ANTHROPICServiceEndpoint"),
+                            (GEMINIServiceEndpoint, "Model deletion is not supported by GEMINIServiceEndpoint"),
+                            (SeamProbe, "Model deletion is not supported by SeamProbe"),
+                            (_MLUndeclared, "Model deletion is not supported by _MLUndeclared"))
+        e = try UniLM._delete_model(service, id, nothing, nothing); nothing catch x; x end
+        @test e isa ArgumentError && startswith(e.msg, says)
+    end
+    e = try UniLM._delete_model(_ML_OPENAI, "", nothing, nothing); nothing catch x; x end
+    @test e isa ArgumentError
 end
 
 # ─── The drift checks (provider_drift_checks.jl) ─────────────────────────────

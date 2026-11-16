@@ -2609,7 +2609,18 @@ Useful for estimating costs or checking whether input fits within the context wi
 which has no such route, the call throws `ArgumentError` before any request; so does an endpoint of
 your own that has no base URL, one that is not an OpenAI-wire endpoint.
 
-Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
+The keywords are the fields of OpenAI's token count body, each sent only when set:
+`instructions`, `tools` (a Chat [`Tool`](@ref) is sent as the equivalent `FunctionTool`, as
+[`Respond`](@ref) sends it), `tool_choice`, `parallel_tool_calls`, `previous_response_id`,
+`conversation` (a conversation id or object; it cannot be combined with
+`previous_response_id`), `reasoning` ([`Reasoning`](@ref)), `text` ([`TextConfig`](@ref)),
+`truncation` (`"auto"` or `"disabled"`), and `personality`, "a model-owned style preset" of at most
+64 characters (`"friendly"`, `"pragmatic"`, …), which only the count takes. A value outside those
+limits throws `ArgumentError` before any request. [`count_tokens`](@ref) counts a whole
+[`Respond`](@ref) on this route and returns a typed result.
+
+Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys; a 200 reply
+without an integer `"input_tokens"` is a `ResponseCallError`.
 Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
 one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording
 cannot be written throws [`RecordingWriteError`](@ref), instead of returning a
@@ -2630,11 +2641,26 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,
+    tool_choice::Union{String,AbstractDict,Nothing}=nothing,
+    parallel_tool_calls::Union{Bool,Nothing}=nothing,
+    previous_response_id::Union{String,Nothing}=nothing,
+    conversation::Union{String,AbstractDict,Nothing}=nothing,
+    reasoning::Union{Reasoning,Nothing}=nothing,
+    text::Union{TextConfig,Nothing}=nothing,
+    truncation::Union{String,Nothing}=nothing,
+    personality::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "count_input_tokens", RESPONSES_PATH * "/input_tokens")
+    isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
+        "count_input_tokens: conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
+    isnothing(truncation) || truncation in ("auto", "disabled") || throw(ArgumentError(
+        "count_input_tokens: truncation takes \"auto\" or \"disabled\" (got $(repr(truncation)))"))
+    isnothing(personality) || length(personality) <= 64 || throw(ArgumentError(
+        "count_input_tokens: personality takes at most 64 characters (got $(length(personality)))"))
+    tools = _respond_tools(tools)
     url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
@@ -2642,10 +2668,15 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         d = Dict{Symbol,Any}(:model => model, :input => input)
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)
+        for (k, v) in (:tool_choice => tool_choice, :parallel_tool_calls => parallel_tool_calls,
+                       :previous_response_id => previous_response_id, :conversation => conversation,
+                       :reasoning => reasoning, :text => text, :truncation => truncation, :personality => personality)
+            isnothing(v) || (d[k] = v)
+        end
         body = JSON.json(d)
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
-            return JSON.parse(resp.body; dicttype=Dict{String,Any})
+            return _input_token_count(resp)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -2653,4 +2684,13 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
+end
+
+# The token count (TokenCountsResource requires `object` and `input_tokens`). A 200 without an
+# integer count is no count, and the call fails as for any reply that is not the documented one.
+function _input_token_count(resp::HTTP.Response)::Dict{String,Any}
+    d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    d isa Dict{String,Any} && get(d, "input_tokens", nothing) isa Int ||
+        throw(ArgumentError("the input token count has no integer \"input_tokens\""))
+    d
 end

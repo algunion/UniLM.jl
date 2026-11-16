@@ -218,9 +218,18 @@ delete_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)   #
 `list_models(; service)` on `OPENAIServiceEndpoint`, `ANTHROPICServiceEndpoint` (the bare type or an
 instance) or `GEMINIServiceEndpoint` lists every model the provider serves the key (`GET /v1/models`
 on OpenAI and Anthropic, `GET /v1beta/models` on Gemini), every page of a paged listing (Anthropic's
-`after_id`, Gemini's `pageToken`; a repeated cursor is a `ModelListCallError`); all three declare
-`:models`. It rides the shared retry seam (`max_attempts`; `total_deadline` bounds the whole listing)
-and is not recorded by `with_recorded_answers`.
+`after_id`, Gemini's `pageToken`; a repeated cursor is a `ModelListCallError`), each page asking for
+1000 models (Anthropic's `limit`, Gemini's `pageSize`); all three declare `:models`. It rides the
+shared retry seam (`max_attempts`; `total_deadline` bounds the whole listing) and is not recorded by
+`with_recorded_answers`.
+
+```julia
+retrieve_model(id; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing)
+    # -> ModelSuccess | ModelListFailure (404: a model the key cannot use, a retired one) | ModelListCallError
+    # GET /v1/models/{model} (OpenAI, Anthropic: an alias returns its dated id), GET /v1beta/models/{model} (Gemini);
+    # rides the retry seam, not recorded; an empty id, TypeSafe, Ollama (model_info) and an endpoint without
+    # :models → ArgumentError before any request
+```
 
 ```julia
 struct ProviderModel
@@ -240,6 +249,13 @@ struct ModelListSuccess <: LLMRequestResponse
     models::Vector{ProviderModel}               # every page's models, in the order listed
     raw::Vector{Dict{String,Any}}               # the parsed body of each page, in the order fetched
 end
+struct ModelSuccess <: LLMRequestResponse      # retrieve_model
+    model::ProviderModel                        # decoded as its listing entry; model.raw is the reply
+end
+@kwdef struct ModelDeleteSuccess <: LLMRequestResponse   # a fine-tuned model's deletion on OpenAI
+    id::String                                  # the id the reply names (never the requested one in its place)
+    deleted::Bool                               # true: the reply confirmed it
+end
 @kwdef struct ModelListFailure <: LLMRequestResponse   # an error status on any page
     response::String
     status::Int
@@ -252,12 +268,42 @@ end
 end
 ```
 
-The Anthropic listing sends the key, `anthropic-version` and the endpoint's `anthropic-workspace-id`, the
+The Anthropic listing and lookup send the key, `anthropic-version` and the endpoint's `anthropic-workspace-id`, the
 headers Anthropic's Models API reference names for `GET /v1/models` — not the endpoint's user profile, nor its
-betas (the reference names no `anthropic-beta` header there). OpenAI keeps listing
+betas (the reference names no `anthropic-beta` header there), nor a `lifecycle` filter (the default is the
+active and deprecated models). OpenAI keeps listing
 a model after its `shutdown_date`, so a listed model is not always one that still answers: compare
 `retires` with today's date. Anthropic lists active and deprecated models, not retired ones, and may
 revise a `retires_at` it lists. A listing is the provider's view for the key that asks.
+
+#### Token counting
+
+```julia
+count_tokens(request::Union{Chat,Respond}; config=nothing, cancel=nothing)
+    # -> TokenCountSuccess | TokenCountFailure | TokenCountCallError; :token_count (OpenAI, Anthropic, Gemini)
+    # Chat on ANTHROPICServiceEndpoint: POST /v1/messages/count_tokens, the Messages body without max_tokens,
+    #   stop_sequences, stream, metadata, service_tier, inference_geo; endpoint betas → anthropic-beta: betas…,token-counting-2024-11-01
+    # Chat on GEMINIServiceEndpoint: POST /v1beta/models/{model}:countTokens, {"generateContentRequest": body + "model"}
+    # Respond on OPENAIServiceEndpoint: POST /v1/responses/input_tokens, respond's body without the output, storage,
+    #   tier, caching, end-user and moderation fields; context_management or image_context_compression → ArgumentError
+    # a Chat on OpenAI, a Respond on Gemini, an endpoint without :token_count → ArgumentError before any request;
+    # rides the retry seam, not recorded; a missing key or a reply without its count → TokenCountCallError
+
+struct TokenCountSuccess <: LLMRequestResponse
+    input_tokens::Int                           # OpenAI/Anthropic input_tokens, Gemini totalTokens
+    raw::Dict{String,Any}                       # the reply (Gemini's promptTokensDetails stays here)
+end
+@kwdef struct TokenCountFailure <: LLMRequestResponse   # an error status
+    response::String
+    status::Int
+    request_id::Union{String,Nothing} = nothing
+end
+@kwdef struct TokenCountCallError <: LLMRequestResponse # no count: a missing key (named), no connection, a timeout,
+    error::String                                       #   a cancel, or a reply without its integer count
+    status::Union{Int,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
+end
+```
 
 ---
 
@@ -958,7 +1004,12 @@ cancel_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cance
 compact_response(; model=nothing, input, image_context_compression=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
     # model nothing → "gpt-6-sol" (OpenAI's default), except on an OllamaEndpoint (no default model: ArgumentError before I/O);
     # image_context_compression as on a Respond (sent as image.context_compression; ArgumentError on an OllamaEndpoint)
-count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
+count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothing, tool_choice=nothing, parallel_tool_calls=nothing,
+                   previous_response_id=nothing, conversation=nothing, reasoning=nothing, text=nothing, truncation=nothing,
+                   personality=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
+    # each field sent when set; a Chat Tool goes as the Responses FunctionTool; conversation with previous_response_id,
+    # truncation other than "auto"/"disabled", personality over 64 characters → ArgumentError before I/O;
+    # a 200 without an integer "input_tokens" → ResponseCallError
 ```
 
 Each makes a single bounded attempt (no retries) and takes `cancel` (default: the ambient
@@ -2988,7 +3039,8 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerFileListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
-├─ Model listings     ModelListSuccess · ModelListFailure · ModelListCallError
+├─ Model listings     ModelListSuccess · ModelSuccess · ModelDeleteSuccess · ModelListFailure · ModelListCallError
+├─ Token counts       TokenCountSuccess · TokenCountFailure · TokenCountCallError
 ├─ Ollama models      OllamaSuccess · OllamaFailure · OllamaCallError
 └─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```
@@ -3196,7 +3248,9 @@ Every exported symbol (433), grouped by area:
 
 **Service Endpoints**: `ServiceEndpoint`, `OpenAIWireEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `OllamaOptions`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
 
-**Provider model listings**: `ProviderModel`, `ModelListSuccess`, `ModelListFailure`, `ModelListCallError` (and `list_models` with `service=OPENAIServiceEndpoint`, `ANTHROPICServiceEndpoint` or `GEMINIServiceEndpoint`)
+**Provider model listings**: `ProviderModel`, `ModelListSuccess`, `ModelSuccess`, `ModelDeleteSuccess`, `ModelListFailure`, `ModelListCallError`, `retrieve_model` (and `list_models` with `service=OPENAIServiceEndpoint`, `ANTHROPICServiceEndpoint` or `GEMINIServiceEndpoint`)
+
+**Token counting**: `count_tokens`, `TokenCountSuccess`, `TokenCountFailure`, `TokenCountCallError`
 
 **Ollama model management**: `OllamaModel`, `OllamaModelInfo`, `OllamaRunningModel`, `OllamaPullProgress`, `OllamaSuccess`, `OllamaFailure`, `OllamaCallError`, `model_info`, `pull_model`, `running_models`, `load_model`, `unload_model`, `delete_model` (and `list_models` with `service=OllamaEndpoint()`)
 

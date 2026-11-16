@@ -439,6 +439,46 @@ end
     @test result["input_tokens"] > 0
 end
 
+# The token count body's fields, all at once, and a Chat Tool sent as the Responses function tool (the
+# Chat shape is HTTP 400 "Missing required parameter: 'tools[0].name'"). A count reports no usage, and
+# OpenAI publishes no price for it; the lookups and the made-up delete bill nothing.
+@testset "Responses API — count_input_tokens sends every field of the token count body" begin
+    sig = FunctionSignature(name="lookup", description="Look something up",
+                            parameters=Dict("type" => "object", "properties" => Dict("q" => Dict("type" => "string"))))
+    plain = count_input_tokens(model="gpt-6-luna", input="Tell me a joke")
+    every = count_input_tokens(model="gpt-6-luna", input="Tell me a joke", instructions="Be brief.",
+                               tools=[Tool(func=sig)], tool_choice="auto", parallel_tool_calls=false,
+                               reasoning=Reasoning(effort="none"), text=TextConfig(verbosity="low"), truncation="auto",
+                               personality="friendly")
+    @test plain isa Dict && every isa Dict
+    @test every["input_tokens"] > plain["input_tokens"] > 0
+end
+
+@testset "count_tokens — a Respond's input tokens, as count_input_tokens counts them" begin
+    sig = FunctionSignature(name="lookup", description="Look something up", parameters=Dict("type" => "object"))
+    r = Respond(model="gpt-6-luna", input="Tell me a joke", instructions="Be brief.", tools=[Tool(func=sig)],
+                reasoning=Reasoning(effort="none"), max_output_tokens=16, store=false)
+    c = count_tokens(r)
+    @test c isa TokenCountSuccess
+    @test c.input_tokens == count_input_tokens(model="gpt-6-luna", input="Tell me a joke", instructions="Be brief.",
+                                               tools=[Tool(func=sig)], reasoning=Reasoning(effort="none"))["input_tokens"]
+    @test c.raw["object"] == "response.input_tokens"
+end
+
+@testset "retrieve_model — one OpenAI model; an unknown one is a 404" begin
+    r = retrieve_model("gpt-6-luna")
+    @test r isa ModelSuccess && r.model.id == "gpt-6-luna" && r.model.raw["object"] == "model"
+    @test !isnothing(r.model.created)
+    r = retrieve_model("gpt-made-up-0")
+    @test r isa ModelListFailure && r.status == 404
+end
+
+# Never a real model: the delete of a made-up fine-tuned model is OpenAI's free witness, a 404.
+@testset "delete a fine-tuned model — a made-up id is a 404" begin
+    r = UniLM._delete_model(OPENAIServiceEndpoint, "ft:gpt-4o-mini:unilm:made-up:abc123", nothing, nothing)
+    @test r isa ModelListFailure && r.status == 404 && occursin("model_not_found", r.response)
+end
+
 # ── Responses API: compact_response ──────────────────────────────────────────
 
 @testset "Responses API — compact_response" begin

@@ -1788,6 +1788,71 @@ struct _UndeclaredResponses <: UniLM.ServiceEndpoint end
     end
 end
 
+# `count_input_tokens` against a local server answering every request with `reply`: (result, requests).
+_count_at(reply::AbstractString; kw...) = _with_scripted((_, _) -> _json(200, reply)) do
+    count_input_tokens(; input="hi", service=GenericOpenAIEndpoint(_url_probe_base[], ""), kw...)
+end
+_count_sent(seen) = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+const _COUNTED = """{"object":"response.input_tokens","input_tokens":7}"""
+
+# The Responses API rejects a function tool in the Chat shape (name nested under `function`): it answered
+# that count with HTTP 400 "Missing required parameter: 'tools[0].name'" on 2026-11-16.
+# Refuted if: a Chat `Tool` is sent in the Chat shape, or one with no Responses equivalent is sent at all.
+@testset "count_input_tokens sends a Chat Tool as the Responses function tool respond sends" begin
+    sig = FunctionSignature(name="lookup", description="Look something up",
+                            parameters=Dict("type" => "object", "properties" => Dict()), strict=true)
+    r, seen = _count_at(_COUNTED; tools=[Tool(func=sig)])
+    @test r isa Dict && r["input_tokens"] == 7
+    @test _count_sent(seen)["tools"] == [Dict{String,Any}("type" => "function", "name" => "lookup",
+        "description" => "Look something up", "parameters" => Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}()),
+        "strict" => true)]
+    @test _count_sent(seen)["tools"] == JSON.parse(JSON.json(Respond(input="hi", tools=[Tool(func=sig)]).tools))
+    e = try _count_at(_COUNTED; tools=[Tool(type="custom", func=sig)]); nothing catch x; x end
+    @test e isa ArgumentError && occursin("has no Responses equivalent", e.msg)
+end
+
+# The token count body (TokenCountsBody in OpenAI's OpenAPI spec): model, input, instructions, tools,
+# tool_choice, parallel_tool_calls, previous_response_id, conversation, reasoning, text, truncation and
+# personality, "a model-owned style preset" of "at most 64 characters". The count answered each one, and
+# all of them together, on 2026-11-16.
+# Refuted if: a field is dropped or renamed, one is sent while unset, or a value the API refuses is sent.
+@testset "count_input_tokens sends every field of the token count body" begin
+    r, seen = _count_at(_COUNTED; instructions="Be brief.", tool_choice="auto", parallel_tool_calls=false,
+                        previous_response_id="resp_1", reasoning=Reasoning(effort="none"),
+                        text=TextConfig(verbosity="low"), truncation="auto", personality="friendly")
+    @test r isa Dict && r["input_tokens"] == 7
+    @test _count_sent(seen) == Dict{String,Any}("model" => "gpt-6-sol", "input" => "hi", "instructions" => "Be brief.",
+        "tool_choice" => "auto", "parallel_tool_calls" => false, "previous_response_id" => "resp_1",
+        "reasoning" => Dict{String,Any}("effort" => "none"), "text" => JSON.parse(JSON.json(TextConfig(verbosity="low"))),
+        "truncation" => "auto", "personality" => "friendly")
+    _, seen = _count_at(_COUNTED; conversation="conv_1", tool_choice=Dict("type" => "function", "name" => "lookup"))
+    @test _count_sent(seen) == Dict{String,Any}("model" => "gpt-6-sol", "input" => "hi", "conversation" => "conv_1",
+        "tool_choice" => Dict{String,Any}("type" => "function", "name" => "lookup"))
+    _, seen = _count_at(_COUNTED)
+    @test _count_sent(seen) == Dict{String,Any}("model" => "gpt-6-sol", "input" => "hi")
+    # Refused before any request: the reference's own limits.
+    for (kw, says) in (((conversation="conv_1", previous_response_id="resp_1"), "cannot be combined"),
+                       ((truncation="none",), "\"auto\" or \"disabled\""),
+                       ((personality=repeat("x", 65),), "64 characters"))
+        e = try count_input_tokens(; input="hi", service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), kw...); nothing catch x; x end
+        @test e isa ArgumentError && occursin(says, e.msg) && occursin("count_input_tokens", e.msg)
+    end
+    @test count_input_tokens(; input="hi", personality=repeat("é", 64),
+                             service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""),
+                             config=_TINY_DEADLINE) isa ResponseCallError
+end
+
+# TokenCountsResource requires `object` and `input_tokens`.
+# Refuted if: a 200 whose body is not the documented count returns as a count.
+@testset "count_input_tokens: a 200 that is not a token count is a call error" begin
+    for reply in ("{}", """{"object":"response.input_tokens"}""", """{"input_tokens":"7"}""", "[7]")
+        r, seen = _count_at(reply)
+        @test r isa ResponseCallError && occursin("input_tokens", r.error) && length(seen) == 1
+    end
+    r, _ = _count_at(_COUNTED)
+    @test r == Dict{String,Any}("object" => "response.input_tokens", "input_tokens" => 7)
+end
+
 # ─── Expanded coverage: _parse_response_stream_chunk edge cases ──────────────
 
 @testset "_parse_response_stream_chunk edge cases" begin

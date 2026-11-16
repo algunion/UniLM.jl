@@ -272,4 +272,27 @@ end
     @test reg isa FileFailure && reg.status in (400, 403, 404)
 end
 
+# countTokens and the Models API's lookup and listing bill no tokens.
+@testset "Gemini count_tokens — a Chat's generateContent request, system instruction and tools counted" begin
+    sig = FunctionSignature(name="get_weather", description="Weather", parameters=Dict("type" => "object",
+                            "properties" => Dict("city" => Dict("type" => "string"))))
+    plain = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", messages=[Message(Val(:user), "Hello")])
+    full = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=16,
+                tools=[Tool(func=sig)], messages=[Message(Val(:system), "Be brief."), Message(Val(:user), "Hello")])
+    p, f = count_tokens(plain), count_tokens(full)
+    @test p isa TokenCountSuccess && f isa TokenCountSuccess
+    @test f.input_tokens > p.input_tokens > 0
+    @test f.raw["promptTokensDetails"][1]["modality"] == "TEXT"
+end
+
+@testset "Gemini retrieve_model — one model; an unknown one is a 404; the listing is one page" begin
+    r = retrieve_model("gemini-3.8-flash"; service=GEMINIServiceEndpoint)
+    @test r isa ModelSuccess && r.model.id == "gemini-3.8-flash" && r.model.input_token_limit > 0
+    @test "countTokens" in r.model.capabilities["supportedGenerationMethods"]
+    r = retrieve_model("gemini-made-up-0"; service=GEMINIServiceEndpoint)
+    @test r isa ModelListFailure && r.status == 404
+    listed = list_models(; service=GEMINIServiceEndpoint)
+    @test listed isa ModelListSuccess && length(listed.raw) == 1   # one page of up to 1000 models
+end
+
 end  # if GEMINI_API_KEY

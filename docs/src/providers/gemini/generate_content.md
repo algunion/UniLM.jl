@@ -526,5 +526,26 @@ table gives each change beside the shipped price. Check Google's page before rel
 Main.ProviderFacts.price_table(:gemini)
 ```
 
+## [Token counts](@id gemini_token_counts)
+
+[`count_tokens`](@ref) asks Gemini how many input tokens a `Chat` would bill (`models.countTokens`),
+without generating: the whole `generateContent` body `chatrequest!` sends — system instruction, tools,
+tool config and generation config included, the thinking level among it — goes as the count's
+`generateContentRequest`, with its `model`, which the count requires. The total is the reply's
+`totalTokens`; its `promptTokensDetails`, the tokens per modality, stay in `raw`. Google publishes no price
+for the count. A `Respond` on `GEMINIServiceEndpoint` (the Interactions API) has no count, and
+`count_tokens` throws `ArgumentError` for one before any request
+([Token Counting](@ref token_counting_api)):
+
+```julia
+chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", messages=[Message(Val(:user), "Hello")])
+r = count_tokens(chat)
+r isa TokenCountSuccess && (r.input_tokens, r.raw["promptTokensDetails"])
+```
+
+`countTextTokens`, the PaLM-era text count, is not wrapped: Google's API discovery document marks it
+deprecated and its request is the PaLM `TextPrompt`; it answered `gemini-embedding-001`, a model whose
+listing names the method, with HTTP 404 on 16 November 2026.
+
 Recorded on 16 November 2026 on `gemini-4-hydrogen` with UniLM's development branch after 0.32.0 and the Gemini
 API at `v1beta`.

@@ -42,7 +42,8 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [hold a Realtime session](@ref timeout_realtime) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
 | [answer from my own files](@ref retrieval_guide) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
 | [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |
-| [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)` | each model's id, creation time and shutdown date |
+| [list the models my key can use](@ref openai_models) | `list_models(service=OPENAIServiceEndpoint)`, `retrieve_model(id)` | each model's id, creation time and shutdown date |
+| [count a request's input tokens](@ref openai_stored_responses) | `count_tokens(respond)`, `count_input_tokens(; input, …)` | the input tokens the request would bill, without running it |
 | [handle a failure](@ref openai_failures) | the result's type | the status or the exception, never an empty success |
 
 ## [Setup](@id openai_setup)

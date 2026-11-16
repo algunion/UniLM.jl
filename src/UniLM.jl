@@ -82,6 +82,7 @@ include("semantic.jl")
 include("files.jl")
 include("ollama_models.jl")
 include("model_listing.jl")
+include("token_count.jl")
 include("vector_stores.jl")
 include("conversations.jl")
 include("moderations.jl")
@@ -452,8 +453,18 @@ export
 export
     ProviderModel,
     ModelListSuccess,
+    ModelSuccess,
+    ModelDeleteSuccess,
     ModelListFailure,
-    ModelListCallError
+    ModelListCallError,
+    retrieve_model
+
+# ─── Token counting ───
+export
+    TokenCountSuccess,
+    TokenCountFailure,
+    TokenCountCallError,
+    count_tokens
 
 # ─── Ollama model management ───
 export

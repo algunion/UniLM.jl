@@ -162,3 +162,68 @@ end
     end
     @test err isa ArgumentError && occursin("list_containers", err.msg) && isempty(seen)
 end
+
+# A container file as OpenAI's reference shows one.
+const _CONTAINER_FILE_JSON = """{"id": "cfile_1", "object": "container.file", "created_at": 1747848842, "bytes": 880,
+    "container_id": "cntr_1", "path": "/mnt/data/a.txt", "source": "user"}"""
+
+@testset "container files: list, retrieve, delete, and download" begin
+    page = """{"object": "list", "data": [$_CONTAINER_FILE_JSON], "first_id": "cfile_1", "last_id": "cfile_1", "has_more": false}"""
+    l, seen = _with_scripted((_, _) -> _json(200, page)) do
+        list_container_files("cntr_1"; limit=10, order="asc", after="cfile_0", service=URLProbe)
+    end
+    @test l isa ContainerFileListSuccess && l.response isa ContainerFileList && !l.response.has_more
+    f = only(l.response.data)
+    @test f isa UniLM.ContainerFileObject && (f.id, f.container_id, f.path, f.bytes) == ("cfile_1", "cntr_1", "/mnt/data/a.txt", 880)
+    @test (only(seen).method, only(seen).target) == ("GET", "/v1/containers/cntr_1/files?limit=10&order=asc&after=cfile_0")
+    @test _answered(() -> list_container_files("cntr_1"; service=URLProbe), 200; body="{}") isa ContainerCallError
+    @test_throws ArgumentError list_container_files("cntr_1"; order="up", service=URLProbe)
+
+    g = _answered(() -> retrieve_container_file("cntr_1", "cfile_1"; service=URLProbe), 200; body=_CONTAINER_FILE_JSON)
+    @test g isa ContainerSuccess && g.response isa UniLM.ContainerFileObject && g.response.id == "cfile_1"
+
+    del(body) = _answered(() -> delete_container_file("cntr_1", "cfile_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "cfile_1", "object": "container.file.deleted", "deleted": true}""") ==
+          ContainerDeleteSuccess(id="cfile_1", deleted=true)
+    @test del("""{"id": "cfile_1", "object": "container.deleted", "deleted": true}""") isa ContainerCallError
+    @test del("""{"object": "container.file.deleted", "deleted": true}""") isa ContainerCallError
+    @test del("""{"id": "cfile_1", "object": "container.file.deleted", "deleted": false}""") isa ContainerCallError
+
+    bytes = UInt8[0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]
+    c, seen = _with_scripted((_, _) -> HTTP.Response(200, ["Content-Type" => "application/octet-stream"], bytes)) do
+        container_file_content("cntr_1", "cfile_1"; service=URLProbe)
+    end
+    @test c isa FileContentSuccess && c.content == bytes
+    @test (only(seen).method, only(seen).target) == ("GET", "/v1/containers/cntr_1/files/cfile_1/content")
+    # Saved as a Files download is.
+    path = tempname()
+    try
+        @test save_file_content(c, path) == path && read(path) == bytes
+    finally
+        rm(path; force=true)
+    end
+    @test _answered(() -> container_file_content("cntr_1", "cfile_x"; service=URLProbe), 404) isa ContainerFailure
+end
+
+@testset "container files: methods, ids as single path segments, the config seam, the capability" begin
+    E = _HOSTILE_ENC
+    sent = [(r.method, r.target) for r in last(_with_scripted((_, _) -> _json(200, "{}")) do
+        list_container_files(_HOSTILE_ID; service=URLProbe)
+        retrieve_container_file(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+        delete_container_file(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+        container_file_content(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+    end)]
+    @test sent == [("GET", "/v1/containers/$E/files"), ("GET", "/v1/containers/$E/files/$E"),
+                   ("DELETE", "/v1/containers/$E/files/$E"), ("GET", "/v1/containers/$E/files/$E/content")]
+    for call in (cfg -> list_container_files("cntr_x"; service=SeamProbe, config=cfg),
+                 cfg -> retrieve_container_file("cntr_x", "f"; service=SeamProbe, config=cfg),
+                 cfg -> delete_container_file("cntr_x", "f"; service=SeamProbe, config=cfg),
+                 cfg -> container_file_content("cntr_x", "f"; service=SeamProbe, config=cfg))
+        @test _seam_timeout(call(_TINY_DEADLINE), ContainerCallError)
+    end
+    ds = DeepSeekEndpoint("k")
+    @test_throws ArgumentError list_container_files("c"; service=ds)
+    @test_throws ArgumentError retrieve_container_file("c", "f"; service=ds)
+    @test_throws ArgumentError delete_container_file("c", "f"; service=ds)
+    @test_throws ArgumentError container_file_content("c", "f"; service=ds)
+end

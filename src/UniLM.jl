@@ -523,6 +523,7 @@ export
 export
     ContainerObject,
     ContainerList,
+    ContainerFileList,
     ContainerNetworkPolicy,
     ContainerNetworkDisabled,
     ContainerNetworkAllowlist,
@@ -530,6 +531,7 @@ export
     SkillReference,
     ContainerSuccess,
     ContainerListSuccess,
+    ContainerFileListSuccess,
     ContainerDeleteSuccess,
     ContainerFailure,
     ContainerCallError,
@@ -537,7 +539,11 @@ export
     retrieve_container,
     list_containers,
     delete_container,
-    add_container_file
+    add_container_file,
+    list_container_files,
+    retrieve_container_file,
+    container_file_content,
+    delete_container_file
 
 # ─── Uploads API ──────────────────────────────────────────────────────────────
 export

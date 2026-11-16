@@ -489,3 +489,152 @@ _an_message(text; usage=Dict("input_tokens" => 18, "output_tokens" => 4, "servic
     @test nf isa BatchFailure && nf.status == 404
     @test _answered(() -> batch_results("msgbatch_1"; service=_ANB), 200; body="{\"result\":{}}\n") isa BatchCallError
 end
+
+# ── Gemini batches ── the replies are the shapes the API returned on 2026-11-16.
+@testset "Gemini batches: the native endpoint serves the Batch API" begin
+    @test has_capability(GEMINIServiceEndpoint, :batch)
+    @test UniLM._batch_root(GEMINIServiceEndpoint) == "https://generativelanguage.googleapis.com"
+end
+
+const _GMB = _batch_probe(UniLM._GeminiBatches, GEMINIServiceEndpoint)
+_gm_batch(; state="BATCH_STATE_PENDING", more...) = Dict{String,Any}(
+    "@type" => "type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch",
+    "model" => "models/gemini-3.8-flash", "createTime" => "2026-11-16T20:15:28.712760500Z",
+    "batchStats" => Dict{String,Any}("requestCount" => "2", "pendingRequestCount" => "2"), "state" => state,
+    "name" => "batches/abc123", (string(k) => v for (k, v) in more)...)
+_gm_op(; done=nothing, response=nothing, error=nothing, kw...) = let op = Dict{String,Any}("name" => "batches/abc123",
+        "metadata" => _gm_batch(; kw...))
+    isnothing(done) || (op["done"] = done); isnothing(response) || (op["response"] = response)
+    isnothing(error) || (op["error"] = error)
+    op
+end
+
+@testset "create_batch(requests) on Gemini: inline generateContent requests, each keyed by its custom id" begin
+    flash(q; kw...) = Chat(; service=_GMB, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+                           messages=[Message(Val(:user), q)], kw...)
+    reqs = ["a" => flash("one"), "b" => flash("two"; stop="x")]
+    reply = _gm_op()
+    r, seen = _with_scripted((_, _) -> _json(200, JSON.json(reply))) do
+        create_batch(reqs)
+    end
+    @test r isa BatchSuccess && r.response.id == "abc123" && r.response.status == "BATCH_STATE_PENDING"
+    @test r.response.request_counts == reply["metadata"]["batchStats"] && r.response.raw == reply
+    @test _batch_targets(seen) == [("POST", "/v1beta/models/gemini-3.8-flash:batchGenerateContent")]
+    @test JSON.parse(only(seen).body) == Dict("batch" => Dict("inputConfig" => Dict("requests" => Dict("requests" => [
+        Dict("request" => JSON.parse(UniLM.encode_request(GEMINIServiceEndpoint, c)), "metadata" => Dict("key" => id))
+        for (id, c) in reqs]))))
+    # One model per batch; no stream, no serviceTier (HTTP 400 in a batched request), no OpenAI option or file form.
+    for call in (() -> create_batch(["a" => flash("q"), "b" => Chat(service=_GMB, model="gemini-4-hydrogen")]),
+                 () -> create_batch(["a" => flash("q"; stream=true)]),
+                 () -> create_batch(["a" => flash("q"; service_tier="flex")]),
+                 () -> create_batch(["a" => flash("q")]; metadata=Dict("k" => "v")),
+                 () -> create_batch("files/in", "gemini-3.8-flash"; service=_GMB))
+        @test _batch_refused(call) isa ArgumentError
+    end
+    @test occursin("gemini-4-hydrogen", _batch_refused(() -> create_batch(["a" => flash("q"),
+                                                 "b" => Chat(service=_GMB, model="gemini-4-hydrogen")])).msg)
+end
+
+@testset "Gemini batches: retrieve, list, cancel, update, delete and poll" begin
+    running = _gm_op(state="BATCH_STATE_RUNNING")
+    for id in ("abc123", "batches/abc123")                       # the id, or the batch's resource name
+        r, seen = _with_scripted((_, _) -> _json(200, JSON.json(running))) do
+            retrieve_batch(id; service=_GMB)
+        end
+        @test r isa BatchSuccess && r.response.id == "abc123" && r.response.status == "BATCH_STATE_RUNNING"
+        @test _batch_targets(seen) == [("GET", "/v1beta/batches/abc123")]
+    end
+    fileb = _gm_op(state="BATCH_STATE_SUCCEEDED", inputConfig=Dict("fileName" => "files/in1"),
+                   output=Dict("responsesFile" => "files/out1"))
+    f = _answered(() -> retrieve_batch("abc123"; service=_GMB), 200; body=JSON.json(fileb))
+    @test (f.response.input_file_id, f.response.output_file_id) == ("files/in1", "files/out1")
+    for bad in (Dict("name" => "batches/abc123"), _gm_op(state=nothing), Dict("metadata" => _gm_batch(name="abc123")))
+        @test _answered(() -> retrieve_batch("abc123"; service=_GMB), 200; body=JSON.json(bad)) isa BatchCallError
+    end
+    page = Dict("operations" => [running], "nextPageToken" => "tok2")
+    l, lseen = _with_scripted((_, _) -> _json(200, JSON.json(page))) do
+        list_batches(; limit=2, after="tok1", service=_GMB)
+    end
+    @test l isa BatchListSuccess && only(l.response.data).id == "abc123" && l.response.has_more && l.response.raw == page
+    @test _batch_targets(lseen) == [("GET", "/v1beta/batches?pageSize=2&pageToken=tok1")]
+    final = _answered(() -> list_batches(; service=_GMB), 200; body="{}")   # proto3 JSON omits an empty list
+    @test final isa BatchListSuccess && isempty(final.response.data) && !final.response.has_more
+    @test _answered(() -> list_batches(; service=_GMB), 200; body="{\"operations\":{}}") isa BatchCallError
+    # The cancel answers with an empty message; the result is the batch as a GET then returns it.
+    cancelled = _gm_op(state="BATCH_STATE_CANCELLED", done=true,
+                       error=Dict("code" => 13, "message" => "Batch abc123 failed without error."))
+    c, cseen = _with_scripted((n, _) -> _json(200, n == 1 ? "{}" : JSON.json(cancelled))) do
+        cancel_batch("abc123"; service=_GMB)
+    end
+    @test c isa BatchSuccess && c.response.status == "BATCH_STATE_CANCELLED"
+    @test _batch_targets(cseen) == [("POST", "/v1beta/batches/abc123:cancel"), ("GET", "/v1beta/batches/abc123")]
+    u, useen = _with_scripted((_, _) -> _json(200, JSON.json(_gm_batch(state="BATCH_STATE_RUNNING", priority="5")))) do
+        update_batch("abc123"; priority=5, service=_GMB)
+    end
+    @test u isa BatchSuccess && u.response.raw["priority"] == "5" && u.response.status == "BATCH_STATE_RUNNING"
+    @test _batch_targets(useen) == [("PATCH", "/v1beta/batches/abc123:updateGenerateContentBatch?updateMask=priority")]
+    @test JSON.parse(only(useen).body) == Dict("priority" => "5")
+    d, dseen = _with_scripted((_, _) -> _json(200, "{}")) do
+        delete_batch("batches/abc123"; service=_GMB)
+    end
+    @test d isa BatchDeleteSuccess && d.id == "abc123" && d.deleted && _batch_targets(dseen) == [("DELETE", "/v1beta/batches/abc123")]
+    states = ["BATCH_STATE_PENDING", "BATCH_STATE_RUNNING", "BATCH_STATE_SUCCEEDED"]
+    p, pseen = _with_scripted((n, _) -> _json(200, JSON.json(_gm_op(state=states[n])))) do
+        poll_batch("abc123"; interval=0.01, timeout=30.0, service=_GMB)
+    end
+    @test p isa BatchSuccess && p.response.status == "BATCH_STATE_SUCCEEDED" && length(pseen) == 3
+    for s in ("BATCH_STATE_FAILED", "BATCH_STATE_CANCELLED", "BATCH_STATE_EXPIRED")
+        @test _answered(() -> poll_batch("abc123"; interval=0.01, timeout=30.0, service=_GMB), 200;
+                        body=JSON.json(_gm_op(state=s))).response.status == s
+    end
+end
+
+_gm_reply(text) = Dict("candidates" => [Dict("content" => Dict("parts" => [Dict("text" => text)], "role" => "model"),
+    "finishReason" => "STOP", "index" => 0)], "modelVersion" => "gemini-3.8-flash", "responseId" => "r1",
+    "usageMetadata" => Dict("promptTokenCount" => 6, "candidatesTokenCount" => 1, "totalTokenCount" => 7,
+                            "serviceTier" => "standard"))
+
+@testset "batch_results on Gemini: the inlined responses, or the responses file, each by its key" begin
+    inlined = Dict("@type" => "type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput",
+        "inlinedResponses" => Dict("inlinedResponses" => [
+            Dict("response" => _gm_reply("ok"), "metadata" => Dict("key" => "b")),
+            Dict("error" => Dict("code" => 3, "message" => "Request contains an invalid argument."), "metadata" => Dict("key" => "a")),
+            Dict("response" => Dict("promptFeedback" => Dict("blockReason" => "SAFETY")), "metadata" => Dict("key" => "c"))]))
+    done = _gm_op(state="BATCH_STATE_SUCCEEDED", done=true, response=inlined)
+    r, seen = _with_scripted((_, _) -> _json(200, JSON.json(done))) do
+        batch_results("abc123"; service=_GMB)
+    end
+    @test r isa BatchResultsSuccess && _batch_targets(seen) == [("GET", "/v1beta/batches/abc123")]
+    @test first.(r.results) == ["b", "a", "c"]
+    b = r.results[1].second
+    @test b isa LLMSuccess && b.message.content == "ok" && b.model == "gemini-3.8-flash" && b.self.service === _GMB
+    # The batched reply names serviceTier "standard"; it is billed at the Batch rates.
+    @test (b.usage.prompt_tokens, b.usage.completion_tokens, b.usage.service_tier) == (6, 1, "batch")
+    a = r.results[2].second
+    @test a isa LLMCallError && occursin("invalid argument", a.error) && a.self.model == "gemini-3.8-flash"
+    @test r.results[3].second isa LLMCallError && occursin("no candidates", r.results[3].second.error)
+    # A batch of an input file: its responses file, one {"key", "response" | "error"} line per request.
+    out = _batch_jsonl(Dict("key" => "f1", "response" => _gm_reply("one")),
+                 Dict("key" => "f2", "error" => Dict("code" => 3, "message" => "bad")))
+    filed = _gm_op(state="BATCH_STATE_SUCCEEDED", done=true, output=Dict("responsesFile" => "files/out1"),
+                   response=Dict("@type" => "x", "responsesFile" => "files/out1"))
+    fr, fseen = _with_scripted((n, _) -> _json(200, n == 1 ? JSON.json(filed) : out)) do
+        batch_results("abc123"; service=_GMB)
+    end
+    @test _batch_targets(fseen) == [("GET", "/v1beta/batches/abc123"), ("GET", "/download/v1beta/files/out1:download?alt=media")]
+    @test first.(fr.results) == ["f1", "f2"] && fr.results[1].second.message.content == "one"
+    @test fr.results[2].second isa LLMCallError
+    # No results yet, a batch that ended without any, an inlined response without its key: call errors.
+    for (op, why) in ((_gm_op(state="BATCH_STATE_RUNNING"), "BATCH_STATE_RUNNING"),
+                      (_gm_op(state="BATCH_STATE_CANCELLED", done=true, error=Dict("code" => 13, "message" => "failed without error")),
+                       "failed without error"),
+                      (_gm_op(state="BATCH_STATE_SUCCEEDED", done=true, response=Dict("inlinedResponses" => Dict(
+                           "inlinedResponses" => [Dict("response" => _gm_reply("ok"))]))), "key"))
+        e = _answered(() -> batch_results("abc123"; service=_GMB), 200; body=JSON.json(op))
+        @test e isa BatchCallError && e.cause isa ArgumentError && occursin(why, e.error)
+    end
+    gone, _ = _with_scripted((n, _) -> n == 1 ? _json(200, JSON.json(filed)) : _json(404, "{}")) do
+        batch_results("abc123"; service=_GMB)
+    end
+    @test gone isa BatchFailure && gone.status == 404
+end

@@ -754,11 +754,12 @@ end
 end
 
 # The container OpenAI's tool requires: the auto container by default, a Dict sent as given,
-# or a container id String; file_ids are sent inside the auto container (with a container id,
-# or beside a container Dict that names file_ids, an ArgumentError).
+# or a container id String; file_ids and memory_limit are sent inside the auto container (with a
+# container id, or beside a container Dict that names the same key, an ArgumentError).
 @kwdef struct CodeInterpreterTool <: ResponseTool
     container::Union{String, AbstractDict} = Dict("type" => "auto")
     file_ids::Union{Vector{String}, Nothing} = nothing
+    memory_limit::Union{String, Nothing} = nothing         # "1g","4g","16g","64g"
 end
 ```
 
@@ -774,7 +775,7 @@ file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
 mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
          connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
 image_generation_tool(; kwargs...)
-code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing)
+code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing, memory_limit=nothing)
 ```
 
 ### Text Format / Structured Output
@@ -2978,13 +2979,13 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Image Generation   ImageSuccess · ImageFailure · ImageCallError
 ├─ FIM Completion     FIMSuccess · FIMFailure · FIMCallError
 ├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
-├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
+├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreFileListSuccess · VectorStoreContentSuccess · VectorStoreSearchSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
 ├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
-├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerFileListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ├─ Model listings     ModelListSuccess · ModelListFailure · ModelListCallError
@@ -3174,7 +3175,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (405), grouped by area:
+Every exported symbol (433), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3213,7 +3214,7 @@ Every exported symbol (405), grouped by area:
 
 **Files**: `FileUpload`, `FileObject`, `FileList`, `FileSuccess`, `FileListSuccess`, `FileContentSuccess`, `FileDeleteSuccess`, `FileFailure`, `FileCallError`, `upload_file`, `list_files`, `retrieve_file`, `delete_file`, `file_content`, `save_file_content`
 
-**Vector Stores**: `VectorStoreObject`, `VectorStoreFileObject`, `VectorStoreFileBatch`, `VectorStoreList`, `VectorStoreSuccess`, `VectorStoreListSuccess`, `VectorStoreFileSuccess`, `VectorStoreBatchSuccess`, `VectorStoreDeleteSuccess`, `VectorStoreFailure`, `VectorStoreCallError`, `create_vector_store`, `retrieve_vector_store`, `list_vector_stores`, `delete_vector_store`, `add_vector_store_file`, `create_file_batch`, `retrieve_file_batch`, `poll_file_batch`, `vector_store_id`
+**Vector Stores**: `VectorStoreObject`, `VectorStoreFileObject`, `VectorStoreFileBatch`, `VectorStoreList`, `VectorStoreFileList`, `VectorStoreFileContent`, `VectorStoreSearchPage`, `VectorStoreSearchResult`, `VectorStoreFileEntry`, `VectorStoreSuccess`, `VectorStoreListSuccess`, `VectorStoreFileSuccess`, `VectorStoreFileListSuccess`, `VectorStoreContentSuccess`, `VectorStoreSearchSuccess`, `VectorStoreBatchSuccess`, `VectorStoreDeleteSuccess`, `VectorStoreFailure`, `VectorStoreCallError`, `create_vector_store`, `retrieve_vector_store`, `update_vector_store`, `list_vector_stores`, `delete_vector_store`, `search_vector_store`, `add_vector_store_file`, `list_vector_store_files`, `retrieve_vector_store_file`, `update_vector_store_file`, `delete_vector_store_file`, `vector_store_file_content`, `create_file_batch`, `retrieve_file_batch`, `poll_file_batch`, `cancel_file_batch`, `list_file_batch_files`, `vector_store_id`
 
 **Conversations**: `ConversationObject`, `ConversationItem`, `ConversationItemList`, `ConversationSuccess`, `ConversationItemSuccess`, `ConversationItemListSuccess`, `ConversationDeleteSuccess`, `ConversationFailure`, `ConversationCallError`, `create_conversation`, `retrieve_conversation`, `update_conversation`, `delete_conversation`, `add_conversation_items`, `list_conversation_items`, `retrieve_conversation_item`, `delete_conversation_item`, `conversation_id`
 
@@ -3229,7 +3230,7 @@ Every exported symbol (405), grouped by area:
 
 **Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningFailure`, `FineTuningCallError`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`
 
-**Containers**: `ContainerObject`, `ContainerList`, `ContainerSuccess`, `ContainerListSuccess`, `ContainerDeleteSuccess`, `ContainerFailure`, `ContainerCallError`, `create_container`, `retrieve_container`, `list_containers`, `delete_container`, `add_container_file`
+**Containers**: `ContainerObject`, `ContainerList`, `ContainerFileList`, `ContainerNetworkPolicy`, `ContainerNetworkDisabled`, `ContainerNetworkAllowlist`, `ContainerDomainSecret`, `SkillReference`, `ContainerSuccess`, `ContainerListSuccess`, `ContainerFileListSuccess`, `ContainerDeleteSuccess`, `ContainerFailure`, `ContainerCallError`, `create_container`, `retrieve_container`, `list_containers`, `delete_container`, `add_container_file`, `list_container_files`, `retrieve_container_file`, `container_file_content`, `delete_container_file`
 
 **Uploads**: `UploadObject`, `UploadPartObject`, `UploadSuccess`, `UploadPartSuccess`, `UploadFailure`, `UploadCallError`, `create_upload`, `add_upload_part`, `complete_upload`, `cancel_upload`
 

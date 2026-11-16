@@ -81,11 +81,19 @@ check `file_counts` for a file that failed.
 - **Expiry.** `expires_after` with the anchor `"last_active_at"` and a number of `days`: "Once a
   vector store expires, all associated `vector_store.file` objects will be deleted and you'll no
   longer be charged for them" ([retrieval](https://developers.openai.com/api/docs/guides/retrieval#expiration-policies)).
-  `name` and `metadata` are sent as given.
-
-UniLM sets no file `attributes`, the values a search's `filters` compare
-([Ask with file search](@ref openai_retrieval_ask)): neither `add_vector_store_file` nor
-`create_file_batch` takes them, and no verb updates them.
+  `name`, `description` — what the store is for — and `metadata` are sent as given;
+  [`update_vector_store`](@ref)`(vs_id; name, expires_after, metadata)` changes them later.
+- **Attributes.** A file's `attributes` are the values a search's `filters` compare
+  ([Ask with file search](@ref openai_retrieval_ask)): "Set of 16 key-value pairs", "Keys are strings
+  with a maximum length of 64 characters. Values are strings with a maximum length of 512
+  characters, booleans, or numbers"
+  ([Create vector store file](https://developers.openai.com/api/reference/resources/vector_stores/subresources/files/methods/create)),
+  which UniLM checks before sending. `add_vector_store_file(vs_id, file_id; attributes)` sets them
+  on one file and `create_file_batch(vs_id, file_ids; attributes)` on each file of a batch; a batch
+  of [`VectorStoreFileEntry`](@ref)`(; file_id, attributes, chunking_strategy)`s gives each file its
+  own, and OpenAI then ignores a batch-wide value, which that form does not take.
+  [`update_vector_store_file`](@ref)`(vs_id, file_id, attributes)` replaces them, `nothing` clearing
+  them.
 
 ## [Ask with file search](@id openai_retrieval_ask)
 
@@ -173,9 +181,12 @@ Deleting a file is also to "remove it from all vector stores"
 vector store is eventually consistent, and search results may still include content from a
 removed file for a short period" ([retrieval](https://developers.openai.com/api/docs/guides/retrieval#vector-store-operations)).
 A delete is confirmed by the `deleted: true` of OpenAI's reply ([Platform APIs](@ref openai_platform_shared)).
-Of OpenAI's vector-store endpoints, UniLM does not wrap the store's search, update and the files it
-holds — listing, reading, updating or removing one — nor a batch's cancel or its file list
-([Vector stores](https://developers.openai.com/api/reference/resources/vector_stores)); every
-verb it has is in the [Vector Stores API](@ref vector_stores_api) reference.
+A store's files have verbs of their own: [`list_vector_store_files`](@ref)`(vs_id; limit, order,
+after, before, filter)` pages through them, `filter` keeping one status, [`retrieve_vector_store_file`](@ref)
+reads one's record, [`vector_store_file_content`](@ref) the text OpenAI parsed from it, and
+[`delete_vector_store_file`](@ref) detaches it from the store, leaving the uploaded file in place.
+[`cancel_file_batch`](@ref) stops a batch and [`list_file_batch_files`](@ref) lists the files in
+one; [`list_vector_stores`](@ref)`(; limit, order, after, before)` pages through the stores. Every
+verb is in the [Vector Stores API](@ref vector_stores_api) reference.
 
 Recorded on 25 October 2026 on `gpt-6-sol` with UniLM's development branch after 0.26.0.

@@ -47,7 +47,15 @@ These calls are not recorded, so their output on this page is quoted from dated 
   [pricing page](https://developers.openai.com/api/docs/pricing).
 - **Deletes.** A delete that OpenAI answers with a deletion record — of a file, a vector store, a
   container or a conversation — counts only when the record says `"deleted": true`: a reply without
-  it, or with `false`, is the call error, the object being in place as far as UniLM can tell.
+  it, or with `false`, is the call error, the object being in place as far as UniLM can tell. The
+  record of a vector store, a container or a file in either must also carry the `id` it deleted
+  (the requested one is not put in its place) and name what it deleted as its `object` —
+  `"vector_store.deleted"`, `"vector_store.file.deleted"`, `"container.deleted"` or
+  `"container.file.deleted"`; one without them, or naming another kind, is the call error.
+- **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
+  carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it and a
+  container their `status`, as OpenAI's reference requires: a reply without them is the call error,
+  never an empty last page or a status read as unknown.
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
@@ -215,23 +223,24 @@ code in" ([Code Interpreter](https://developers.openai.com/api/docs/guides/tools
 creates a new container, or reuses an active container that was used by a previous
 `code_interpreter_call` item in the model's context"; `container` takes OpenAI's other forms:
 
-- **a `Dict`**, sent as given: an auto container with a `memory_limit`, `"1g"` (the default),
-  `"4g"`, `"16g"` or `"64g"`, which "applies for the entire life of that container";
+- **a `Dict`**, sent as given: an auto container with its own settings;
 - **a `String`**, the id of a container made with [`create_container`](@ref), sent as
   `"container": "cntr_…"`.
 
-`file_ids`, the ids of uploaded files, go inside the container `Dict`, the auto one unless you give
-another. With a container id, or beside a `Dict` that names `file_ids` itself, they are refused
-([Limits and refusals](@ref openai_platform_limits)): a container made beforehand takes its files
-through `create_container(; file_ids)` and [`add_container_file`](@ref).
+`file_ids`, the ids of uploaded files, and `memory_limit`, the container's memory — `"1g"` (the
+default), `"4g"`, `"16g"` or `"64g"`, which "applies for the entire life of that container" — go
+inside the container `Dict`, the auto one unless you give another. With a container id, or beside
+a `Dict` that names the same key itself, they are refused, as is a memory limit not among those
+four ([Limits and refusals](@ref openai_platform_limits)): a container made beforehand has the
+memory it was made with, and takes its files through `create_container(; file_ids)` and
+[`add_container_file`](@ref).
 
 [`UniLM.encode_agentic`](@ref) shows the tool each form sends, with no key and no request:
 
 ```@example openai
 sent(tool) = UniLM.encode_agentic(OPENAIServiceEndpoint, Respond(input="Total the prices.", tools=[tool]))
 println(sent(code_interpreter()))
-println(sent(code_interpreter(container=Dict("type" => "auto", "memory_limit" => "4g"),
-                              file_ids=["file-abc123"])))
+println(sent(code_interpreter(memory_limit="4g", file_ids=["file-abc123"])))
 println(sent(code_interpreter(container="cntr_abc123")))
 ```
 
@@ -289,13 +298,24 @@ sent them, each with the `code` the model ran, the `container_id` it ran in and,
 using the container in `v1/responses` will fail", and its data is discarded: "You should download
 any files you may need from the container while it is active"
 ([Code Interpreter](https://developers.openai.com/api/docs/guides/tools-code-interpreter#expiration)).
-[`create_container`](@ref)`(; name, file_ids, expires_after)` sends no `memory_limit`, so a
-container it makes has OpenAI's default, `"1g"`; [`retrieve_container`](@ref),
-[`list_containers`](@ref) and [`delete_container`](@ref) read, list and delete containers, and
-[`add_container_file`](@ref)`(id, path)` uploads a file into one, returning a `ContainerSuccess`
-whose `response` is the file's record, its `path` where the code sees it; a path that is no file is
-refused before anything is sent ([Limits and refusals](@ref openai_platform_limits)). It does not
-wrap the endpoints that list, read or delete the files in a container. A container bills "1 GB
+[`create_container`](@ref)`(; name, file_ids, expires_after, memory_limit, network_policy, skills)`
+makes a container: `memory_limit` as above, OpenAI's default `"1g"` when not given;
+`network_policy`, its outbound access, [`ContainerNetworkDisabled`](@ref)`()` or
+[`ContainerNetworkAllowlist`](@ref)`(domains; domain_secrets)`, whose
+[`ContainerDomainSecret`](@ref)`(domain, name, value)`s OpenAI injects for an allowlisted domain
+(UniLM never prints a secret's value); and `skills`, [`SkillReference`](@ref)`(skill_id; version)`s
+to skills made with OpenAI's Skills API, which UniLM does not wrap, `version` a positive integer or
+`"latest"`, the skill's default version when not given. [`retrieve_container`](@ref),
+[`list_containers`](@ref)`(; limit, order, after, name)` — `name` keeps the containers of that
+name — and [`delete_container`](@ref) read, list and delete containers.
+[`add_container_file`](@ref)`(id, path)` uploads a file into one, and `add_container_file(id;
+file_id)` copies one uploaded through the Files API, either returning a `ContainerSuccess` whose
+`response` is the file's record, its `path` where the code sees it; a path that is no file is
+refused before anything is sent ([Limits and refusals](@ref openai_platform_limits)).
+[`list_container_files`](@ref), [`retrieve_container_file`](@ref) and
+[`delete_container_file`](@ref) list, read and delete the files in a container — those the code
+wrote too, whose `source` is `"assistant"` — and [`container_file_content`](@ref) downloads one as
+a [`FileContentSuccess`](@ref), which [`save_file_content`](@ref) writes to disk. A container bills "1 GB
 \$0.03, 4 GB \$0.12, 16 GB \$0.48, 64 GB \$1.92 per 20-minute session per container", and
 "Eligible container sessions will be billed by the minute, with a 5-minute minimum per session"
 ([pricing](https://developers.openai.com/api/docs/pricing#built-in-tools)), which
@@ -608,6 +628,13 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | a poll `timeout` that is `NaN`, not above 0, or finite and above 10⁹ seconds | `timeout must not be NaN`, `timeout must be > 0 seconds`, `timeout must be at most`: `Inf` is the way to wait without bound | a number of seconds, or `Inf` |
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |
+| a `memory_limit` other than `"1g"`, `"4g"`, `"16g"` and `"64g"`, on `code_interpreter` or `create_container` | `memory_limit is "1g", "4g", "16g" or "64g"`: the sizes OpenAI's reference lists | one of them |
+| `code_interpreter` `memory_limit` with a container id | `code_interpreter memory_limit goes inside an auto container`: a container made beforehand has the memory it was made with | `create_container(; memory_limit)` |
+| `code_interpreter` `memory_limit` beside a container `Dict` that names `memory_limit` | `code_interpreter memory_limit given twice` | one of the two |
+| a `ContainerNetworkAllowlist` without domains, or a `ContainerDomainSecret` with an empty domain, name or value | `allowed_domains is empty`, `is empty`: OpenAI's reference requires at least one domain and a non-empty secret | the domains, or `ContainerNetworkDisabled()` |
+| a `SkillReference` whose `skill_id` is empty or longer than 64 characters, or whose `version` is not a positive integer or `"latest"` | `skill_id has 1 to 64 characters`, `version is a positive integer or "latest"` | the skill's id and version |
+| an `order` other than `"asc"` and `"desc"`, or a file `filter` other than `"in_progress"`, `"completed"`, `"failed"` and `"cancelled"`, on a vector-store or container list | `order is "asc" or "desc"`, `filter is` | one of them |
+| vector store file `attributes` of more than 16 pairs, with a key longer than 64 characters, or with a value that is not a string of at most 512 characters, a number or a boolean | `attributes take at most 16 key-value pairs`, `an attribute key has at most 64 characters`, `must be a string, a number or a boolean`, `is a string of at most 512 characters` | attributes within those bounds |
 | `verify_webhook` with a negative or `NaN` `tolerance_seconds` | `tolerance_seconds must be nonnegative`: only `Inf` turns the replay check off | a number of seconds, or `Inf` |
 | `verify_webhook` with an empty secret (`""`, whitespace, or `whsec_` alone), whatever the delivery | `webhook signing secret is empty`: anyone can sign with an empty key | the signing secret OpenAI gave the endpoint |
 | `verify_webhook`, for a delivery with its three headers and a fresh timestamp, with a secret that is not base64 after its `whsec_` prefix: a character other than `A-Z`, `a-z`, `0-9`, `+` and `/`, such as `whsec_***` or a space inside it (whitespace around it is ignored), or `=` padding that is misplaced or more than its last group lacks, such as `whsec_YQ=` | `webhook signing secret is not valid base64`: a misconfigured secret, which a `false` would hide | the signing secret OpenAI gave the endpoint, as it is |

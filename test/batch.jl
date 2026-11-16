@@ -236,3 +236,128 @@ end
     d1 = _batch_priced(GEMINIServiceEndpoint, "gemini-decision-1"; prompt_tokens=1000)
     @test (@test_logs (:warn, r"Batch API rates") on(nov, d1)) ≈ 1000 * 0.10 / 1e6
 end
+
+# ── A batch endpoint speaking provider wire W, served by `_with_scripted` ──
+# Its Chats encode and its replies decode as the provider's do; its batch paths hang from the scripted server.
+struct BatchProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._batch_wire(::Type{BatchProbe{W}}) where {W} = W()
+UniLM._batch_root(::Type{<:BatchProbe}) = _url_probe_base[]
+UniLM._resolve_base_url(::Type{<:BatchProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{<:BatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:BatchProbe}) = Set([:chat, :batch, :files])
+UniLM.default_model(::Type{<:BatchProbe}) = "probe-default"
+_batch_probe(W, E) = (@eval UniLM.encode_request(::Type{BatchProbe{$W}}, c::Chat) = UniLM.encode_request($E, c);
+                      @eval UniLM.decode_response(::Type{BatchProbe{$W}}, r::HTTP.Response) = UniLM.decode_response($E, r);
+                      BatchProbe{W})
+const _OAB = _batch_probe(UniLM._OpenAIBatches, OPENAIServiceEndpoint)
+_batch_refused(f) = try f(); nothing catch e; e end
+_batch_targets(seen) = [(s.method, s.target) for s in seen]
+
+@testset "create_batch(requests) on OpenAI: Chat Completions bodies in a JSONL uploaded for purpose batch, then the batch" begin
+    @test has_capability(OPENAIServiceEndpoint, :batch) && !has_capability(GEMINIOpenAIServiceEndpoint, :batch)
+    luna(q; kw...) = Chat(; service=_OAB, model="gpt-6-luna", reasoning_effort="none", max_tokens=16,
+                          messages=[Message(Val(:user), q)], kw...)
+    reqs = ["b-2" => luna("two"), "a-1" => luna("one"; stop="x")]
+    file = Dict("id" => "file-in", "object" => "file", "bytes" => 10, "created_at" => 1,
+                "filename" => "unilm-batch-input.jsonl", "purpose" => "batch")
+    batch = Dict("id" => "batch_1", "object" => "batch", "status" => "validating", "input_file_id" => "file-in",
+                 "endpoint" => "/v1/chat/completions", "request_counts" => Dict("total" => 0, "completed" => 0, "failed" => 0))
+    replies = [_json(200, JSON.json(file)), _json(200, JSON.json(batch))]
+    r, seen = _with_scripted((n, _) -> replies[n]) do
+        create_batch(reqs; metadata=Dict("job" => "nightly"), output_expires_after=3600)
+    end
+    @test r isa BatchSuccess && r.response.id == "batch_1" && r.response.input_file_id == "file-in"
+    @test r.response.raw == batch && r.response.request_counts == batch["request_counts"]
+    @test _batch_targets(seen) == [("POST", "/v1/files"), ("POST", "/v1/batches")]
+    upload = seen[1].body
+    @test occursin(r"name=\"purpose\"\r\n\r\nbatch\r\n", upload) && occursin("filename=\"unilm-batch-input.jsonl\"", upload)
+    lines = [JSON.parse(l) for l in split(upload, r"\r?\n") if startswith(l, "{\"")]
+    @test [l["custom_id"] for l in lines] == ["b-2", "a-1"]
+    @test all(l -> l["method"] == "POST" && l["url"] == "/v1/chat/completions", lines)
+    @test [l["body"] for l in lines] == [JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, c)) for (_, c) in reqs]
+    @test JSON.parse(seen[2].body) == Dict("input_file_id" => "file-in", "endpoint" => "/v1/chat/completions",
+        "completion_window" => "24h", "metadata" => Dict("job" => "nightly"),
+        "output_expires_after" => Dict("anchor" => "created_at", "seconds" => 3600))
+    # A refused upload is the batch's failure, and no batch is created.
+    f, fseen = _with_scripted((_, _) -> _json(400, "{\"error\":{\"message\":\"bad file\"}}"; headers=["x-request-id" => "req_up"])) do
+        create_batch(reqs)
+    end
+    @test f isa BatchFailure && f.status == 400 && f.request_id == "req_up" && length(fseen) == 1
+end
+
+@testset "create_batch(requests): refused before any request" begin
+    c(; kw...) = Chat(; service=_OAB, model="gpt-6-luna", messages=[Message(Val(:user), "q")], kw...)
+    elsewhere = Chat(service=OPENAIServiceEndpoint, model="gpt-6-luna", messages=[Message(Val(:user), "q")])
+    for call in (() -> create_batch(Pair{String,Chat}[]; service=_OAB),                     # no request
+                 () -> create_batch(["" => c()]),                                            # an empty custom id
+                 () -> create_batch(["a" => c(), "b" => c(), "a" => c()]),                   # a repeated custom id
+                 () -> create_batch(["a" => c(stream=true)]),                                # a streamed request
+                 () -> create_batch(["a" => c(), "b" => elsewhere]),                         # two endpoints
+                 () -> create_batch(["a" => c()]; service=OPENAIServiceEndpoint),            # not the service's Chat
+                 () -> create_batch(["a" => c()]; output_expires_after=60),                  # an expiry out of range
+                 () -> create_batch(["a" => c(temperature=0.5, reasoning_effort="low")]),    # a Chat its encoder refuses
+                 () -> create_batch(["a" => Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash")]),
+                 () -> delete_batch("batch_1"; service=_OAB),                                # OpenAI deletes no batch
+                 () -> update_batch("batch_1"; priority=1, service=_OAB))                    # nor updates one
+        @test _batch_refused(call) isa ArgumentError
+    end
+    msg = _batch_refused(() -> create_batch(["a" => c(), "b" => c(), "a" => c()])).msg
+    @test occursin("\"a\"", msg) && occursin("unique", msg)
+    @test occursin("delete_file", _batch_refused(() -> delete_batch("batch_1"; service=_OAB)).msg)
+end
+
+_batch_oa_reply(text; model="gpt-6-luna-2026-09-14") = Dict("id" => "chatcmpl-1", "object" => "chat.completion",
+    "model" => model, "service_tier" => "default",
+    "choices" => [Dict("index" => 0, "message" => Dict("role" => "assistant", "content" => text), "finish_reason" => "stop")],
+    "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 2, "total_tokens" => 12))
+_batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
+
+@testset "batch_results on OpenAI: the output file's lines, then the error file's, each a Chat result by custom id" begin
+    out = _batch_jsonl(Dict("id" => "batch_req_1", "custom_id" => "b", "error" => nothing,
+                      "response" => Dict("status_code" => 200, "request_id" => "req_b", "body" => _batch_oa_reply("two"))),
+                 Dict("id" => "batch_req_2", "custom_id" => "a", "error" => nothing,
+                      "response" => Dict("status_code" => 400, "request_id" => "req_a",
+                                         "body" => Dict("error" => Dict("message" => "bad", "type" => "invalid_request_error")))),
+                 Dict("id" => "batch_req_4", "custom_id" => "d", "error" => nothing,
+                      "response" => Dict("status_code" => 200, "request_id" => "req_d", "body" => Dict("choices" => []))))
+    err = _batch_jsonl(Dict("id" => "batch_req_3", "custom_id" => "c", "response" => nothing,
+                      "error" => Dict("code" => "batch_expired", "message" => "This request could not be executed before the completion window expired.")))
+    batch = Dict("id" => "batch_1", "status" => "completed", "model" => "gpt-6-luna",
+                 "output_file_id" => "file-out", "error_file_id" => "file-err")
+    served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out,
+                  "/v1/files/file-err/content" => err)
+    r, seen = _with_scripted((_, req) -> _json(200, served[String(req.target)])) do
+        batch_results("batch_1"; service=_OAB)
+    end
+    @test r isa BatchResultsSuccess
+    @test _batch_targets(seen) == [("GET", "/v1/batches/batch_1"), ("GET", "/v1/files/file-out/content"),
+                             ("GET", "/v1/files/file-err/content")]
+    @test first.(r.results) == ["b", "a", "d", "c"]
+    b = r.results[1].second
+    @test b isa LLMSuccess && b.message.content == "two" && b.model == "gpt-6-luna-2026-09-14"
+    @test b.usage.service_tier == "batch" && (b.usage.prompt_tokens, b.usage.completion_tokens) == (10, 2)
+    @test b.self.service === _OAB && b.self.model == "gpt-6-luna-2026-09-14" && isempty(b.self.messages)
+    a = r.results[2].second
+    @test a isa LLMFailure && a.status == 400 && a.request_id == "req_a"
+    @test JSON.parse(a.response)["error"]["message"] == "bad" && a.self.model == "gpt-6-luna"
+    d = r.results[3].second                                     # a 200 the Chat decoder cannot read
+    @test d isa LLMCallError && isnothing(d.status) && occursin("empty choices", d.error)
+    c = r.results[4].second
+    @test c isa LLMCallError && isnothing(c.status) && occursin("batch_expired", c.error)
+    # Before the batch has an output or error file there are no results: a call error naming its status.
+    pending = _answered(() -> batch_results("batch_1"; service=_OAB), 200;
+                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\"}")
+    @test pending isa BatchCallError && pending.cause isa ArgumentError && occursin("in_progress", pending.error)
+    # A file the Files API does not serve is the results' failure.
+    gone, _ = _with_scripted((n, _) -> n == 1 ? _json(200, JSON.json(batch)) : _json(404, "{\"error\":{}}")) do
+        batch_results("batch_1"; service=_OAB)
+    end
+    @test gone isa BatchFailure && gone.status == 404
+    # A line without its custom id cannot be paired with a request: the reply is malformed.
+    torn = Dict("/v1/batches/batch_1" => JSON.json(Dict("id" => "batch_1", "status" => "completed", "output_file_id" => "f")),
+                "/v1/files/f/content" => _batch_jsonl(Dict("response" => Dict("status_code" => 200, "body" => _batch_oa_reply("x")))))
+    t = first(_with_scripted((_, req) -> _json(200, torn[String(req.target)])) do
+        batch_results("batch_1"; service=_OAB)
+    end)
+    @test t isa BatchCallError && occursin("custom_id", t.error)
+end

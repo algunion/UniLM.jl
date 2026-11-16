@@ -472,13 +472,18 @@ export
     BatchList,
     BatchSuccess,
     BatchListSuccess,
+    BatchResultsSuccess,
+    BatchDeleteSuccess,
     BatchFailure,
     BatchCallError,
     create_batch,
     retrieve_batch,
     cancel_batch,
     list_batches,
-    poll_batch
+    poll_batch,
+    batch_results,
+    delete_batch,
+    update_batch
 
 # ─── Fine-tuning API ──────────────────────────────────────────────────────────
 export

@@ -89,7 +89,9 @@ include("moderations.jl")
 include("audio.jl")
 include("batch.jl")
 include("fine_tuning.jl")
+include("graders.jl")
 include("webhooks.jl")
+include("safety.jl")
 include("containers.jl")
 include("uploads.jl")
 include("realtime.jl")
@@ -516,21 +518,70 @@ export
     FineTuningList,
     FineTuningSuccess,
     FineTuningListSuccess,
+    FineTuningDeleteSuccess,
     FineTuningFailure,
     FineTuningCallError,
+    WandbIntegration,
     create_fine_tuning_job,
     retrieve_fine_tuning_job,
     cancel_fine_tuning_job,
+    pause_fine_tuning_job,
+    resume_fine_tuning_job,
     list_fine_tuning_jobs,
     list_fine_tuning_events,
-    list_fine_tuning_checkpoints
+    list_fine_tuning_checkpoints,
+    create_fine_tuning_checkpoint_permission,
+    list_fine_tuning_checkpoint_permissions,
+    delete_fine_tuning_checkpoint_permission,
+    Grader,
+    StringCheckGrader,
+    TextSimilarityGrader,
+    PythonGrader,
+    GraderRun,
+    GraderRunSuccess,
+    GraderValidateSuccess,
+    run_grader,
+    validate_grader
 
 # ─── Webhooks ─────────────────────────────────────────────────────────────────
 export
     WebhookEvent,
     WEBHOOK_EVENTS,
     verify_webhook,
-    parse_webhook
+    parse_webhook,
+    WebhookEndpoint,
+    WebhookEndpointList,
+    WebhookEndpointTest,
+    WebhookEndpointSuccess,
+    WebhookEndpointListSuccess,
+    WebhookEndpointDeleteSuccess,
+    WebhookTestSuccess,
+    WebhookEventTypesSuccess,
+    WebhookEndpointFailure,
+    WebhookEndpointCallError,
+    create_webhook_endpoint,
+    list_webhook_endpoints,
+    retrieve_webhook_endpoint,
+    update_webhook_endpoint,
+    delete_webhook_endpoint,
+    rotate_webhook_endpoint_secret,
+    test_webhook_endpoint,
+    list_webhook_event_types
+
+# ─── Safety & content provenance ──────────────────────────────────────────────
+export
+    SafetyCase,
+    SafetyAlert,
+    ProvenanceResult,
+    ProvenanceCheck,
+    SafetyCaseSuccess,
+    SafetyAlertSuccess,
+    ProvenanceCheckSuccess,
+    SafetyFailure,
+    SafetyCallError,
+    retrieve_safety_case,
+    retrieve_safety_alert,
+    check_content_provenance
 
 # ─── Containers API ───────────────────────────────────────────────────────────
 export

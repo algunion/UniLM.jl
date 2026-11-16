@@ -128,15 +128,140 @@ end
         "batch.completed", "batch.cancelled", "batch.expired", "batch.failed",
         "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
         "realtime.call.incoming", "live.call.incoming", "live.transport.incoming", "live.transport.connected",
-        "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created")
+        "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created",
+        "agent.environment.ready", "agent.environment.failed", "agent.environment.suspended", "agent.environment.expired",
+        "agent.session.created", "agent.session.action_required", "agent.session.in_progress", "agent.session.idle",
+        "agent.session.failed")
     # The Evals API shuts down on 2026-11-30, and its run events are not listed; the docstring says
     # so, since a filter on the list drops the events OpenAI still sends until then.
     @test !any(e -> startswith(e, "eval."), WEBHOOK_EVENTS)
-    @test WEBHOOK_EVENTS isa NTuple{19,String}
+    @test WEBHOOK_EVENTS isa NTuple{28,String}
     doc = string(@doc WEBHOOK_EVENTS)
     # The reference: live.transport.connected is "Sent when a direct Live WebRTC session is created or an Instant
     # Connect session activates".
     @test occursin("`live.transport.connected`", doc) && occursin("Instant Connect", doc)
     @test occursin("also lists `eval.run.succeeded`, `eval.run.failed` and", doc) &&
           occursin("`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026", doc)
+    @test occursin("agent sessions", doc) && occursin("environments", doc)
+end
+
+@testset "parse_webhook reads each event family's envelope" begin
+    # One delivery per family, with the data OpenAI's reference shows for it: `id`, `type` and `created_at`
+    # typed, the payload as `data`, the envelope's `object` in `raw`.
+    sip = [Dict("name" => "From", "value" => "<sip:alice@example.com>;tag=abc123"),
+           Dict("name" => "To", "value" => "<sip:recipient@example.com>")]
+    fixtures = [
+        ("agent.environment.ready", 1719168000, Dict("id" => "ccarenv_123")),
+        ("agent.session.created", 1719168001, Dict("id" => "sess_123", "environment_id" => "ccarenv_123",
+            "environment_type" => "self_hosted", "connect" => Dict("remote_url" => "https://api.openai.com/v1/agents/api/connect/example"))),
+        ("batch.completed", 1719168002, Dict("id" => "batch_abc123")),
+        ("fine_tuning.job.succeeded", 1719168003, Dict("id" => "ftjob_abc123")),
+        ("live.transport.incoming", 1719168004, Dict("type" => "sip", "session_id" => "live_u0_479a2756",
+            "sip_media_security" => "srtp", "sip_headers" => sip)),
+        ("live.transport.connected", 1793815201, Dict("session_id" => "live_u0_abc123", "type" => "webrtc")),
+        ("realtime.call.incoming", 1719168005, Dict("call_id" => "rtc_u0_479a2756", "sip_headers" => sip)),
+        ("response.completed", 1719168006, Dict("id" => "resp_abc123")),
+        ("safety.alert.created", 1787659200, Dict("id" => "alert_0123456789abcdef0123456789abcdef")),
+        ("safety.warning_issued", 1787659201, Dict("id" => "C-abc123"))]
+    for (type, created, data) in fixtures
+        ev = parse_webhook(JSON.json(Dict("id" => "evt_123", "object" => "event", "created_at" => created,
+                                          "type" => type, "data" => data)))
+        @test (ev.id, ev.type, ev.created_at, ev.data) == ("evt_123", type, created, data)
+        @test ev.created_at isa Int && ev.raw["object"] == "event" && ev.type in WEBHOOK_EVENTS
+    end
+end
+
+# Webhook endpoint management at the scripted endpoint: an endpoint that declares `:webhooks`.
+struct _WebhookProbe <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::Type{_WebhookProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{_WebhookProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{_WebhookProbe}) = Set([:webhooks])
+
+@testset "Webhook endpoints — create, list, retrieve, update, rotate, test, delete, event types" begin
+    s = _WebhookProbe
+    ep = Dict{String,Any}("id" => "we_1", "object" => "webhook_endpoint", "created_at" => 1, "updated_at" => 2,
+        "name" => "ops", "url" => "https://example.com/hook", "event_types" => ["batch.completed"],
+        "signing_secret_hint" => "whsec_...abcd")
+    secret = merge(ep, Dict("signing_secret" => "whsec_c2VjcmV0"))
+    replies = [secret, Dict("object" => "list", "data" => [ep], "first_id" => "we_1", "last_id" => "we_1", "has_more" => true),
+        ep, merge(ep, Dict("name" => "ops2")), secret, secret,
+        Dict("object" => "webhook_endpoint.test", "webhook_endpoint_id" => "we_1", "event_type" => "batch.completed",
+             "status_code" => 204, "success" => true),
+        Dict("object" => "webhook_endpoint.deleted", "id" => "we_1", "deleted" => true),
+        Dict("object" => "list", "data" => ["batch.completed", "agent.session.created"])]
+    rs, seen = _with_scripted((n, _) -> _json(200, JSON.json(replies[n]))) do
+        [create_webhook_endpoint(; name="ops", url="https://example.com/hook", event_types=["batch.completed"], service=s),
+         list_webhook_endpoints(; limit=2, after=_HOSTILE_ID, service=s),
+         retrieve_webhook_endpoint(_HOSTILE_ID; service=s),
+         update_webhook_endpoint(_HOSTILE_ID; name="ops2", event_types=["batch.completed", "batch.failed"], service=s),
+         rotate_webhook_endpoint_secret(_HOSTILE_ID; keep_old_secret_active_for_24_hours=true, service=s),
+         rotate_webhook_endpoint_secret("we_1"; service=s),
+         test_webhook_endpoint(_HOSTILE_ID, "batch.completed"; service=s),
+         delete_webhook_endpoint(_HOSTILE_ID; service=s),
+         list_webhook_event_types(; service=s)]
+    end
+    E = "/v1/webhook_endpoints"
+    @test [(r.method, r.target) for r in seen] == [("POST", E), ("GET", "$E?limit=2&after=$_HOSTILE_ENC"),
+        ("GET", "$E/$_HOSTILE_ENC"), ("POST", "$E/$_HOSTILE_ENC"), ("POST", "$E/$_HOSTILE_ENC/rotate_secret"),
+        ("POST", "$E/we_1/rotate_secret"), ("POST", "$E/$_HOSTILE_ENC/test"), ("DELETE", "$E/$_HOSTILE_ENC"),
+        ("GET", "/v1/webhook_event_types")]
+    body(i) = JSON.parse(seen[i].body; dicttype=Dict{String,Any})
+    @test body(1) == Dict("name" => "ops", "url" => "https://example.com/hook", "event_types" => ["batch.completed"])
+    @test body(4) == Dict("name" => "ops2", "event_types" => ["batch.completed", "batch.failed"])
+    @test body(5) == Dict("keep_old_secret_active_for_24_hours" => true) && body(6) == Dict()
+    @test body(7) == Dict("event_type" => "batch.completed")
+    c = rs[1]
+    @test c isa WebhookEndpointSuccess && c.response.id == "we_1" && c.response.signing_secret == "whsec_c2VjcmV0"
+    @test (c.response.name, c.response.url, c.response.event_types, c.response.created_at, c.response.updated_at,
+           c.response.signing_secret_hint) == ("ops", "https://example.com/hook", ["batch.completed"], 1, 2, "whsec_...abcd")
+    @test rs[2] isa WebhookEndpointListSuccess && rs[2].response.has_more && only(rs[2].response.data).id == "we_1"
+    @test rs[3] isa WebhookEndpointSuccess && isnothing(rs[3].response.signing_secret)
+    @test rs[4] isa WebhookEndpointSuccess && rs[4].response.name == "ops2"
+    @test rs[5] isa WebhookEndpointSuccess && rs[5].response.signing_secret == "whsec_c2VjcmV0"
+    @test rs[7] isa WebhookTestSuccess && (rs[7].response.webhook_endpoint_id, rs[7].response.event_type,
+                                           rs[7].response.status_code) == ("we_1", "batch.completed", 204)
+    @test rs[8] isa WebhookEndpointDeleteSuccess && rs[8].id == "we_1" && rs[8].deleted
+    @test rs[9] isa WebhookEventTypesSuccess && rs[9].event_types == ["batch.completed", "agent.session.created"]
+end
+
+@testset "Webhook endpoints — malformed replies, failures, refusals, seams" begin
+    s = _WebhookProbe
+    ep = Dict{String,Any}("id" => "we_1", "object" => "webhook_endpoint", "created_at" => 1, "name" => "ops",
+        "url" => "https://example.com/hook", "event_types" => ["batch.completed"], "signing_secret_hint" => nothing)
+    answer(call, reply) = _answered(call, 200; body=JSON.json(reply))
+    create = () -> create_webhook_endpoint(; name="ops", url="https://example.com/hook", event_types=["batch.completed"], service=s)
+    # A create or a rotation that returns no signing secret leaves the endpoint unverifiable.
+    @test answer(create, ep) isa WebhookEndpointCallError
+    @test answer(() -> rotate_webhook_endpoint_secret("we_1"; service=s), ep) isa WebhookEndpointCallError
+    for key in ("id", "name", "url", "event_types", "created_at")
+        @test answer(() -> retrieve_webhook_endpoint("we_1"; service=s), delete!(copy(ep), key)) isa WebhookEndpointCallError
+    end
+    @test answer(() -> retrieve_webhook_endpoint("we_1"; service=s), ep) isa WebhookEndpointSuccess
+    for page in (Dict(), Dict("data" => [ep]), Dict("has_more" => false))
+        @test answer(() -> list_webhook_endpoints(; service=s), page) isa WebhookEndpointCallError
+    end
+    for rec in (Dict("deleted" => true), Dict("id" => "we_1", "deleted" => false), Dict("id" => "we_1"))
+        @test answer(() -> delete_webhook_endpoint("we_1"; service=s), rec) isa WebhookEndpointCallError
+    end
+    @test answer(() -> test_webhook_endpoint("we_1", "batch.completed"; service=s),
+                 Dict("webhook_endpoint_id" => "we_1", "event_type" => "batch.completed")) isa WebhookEndpointCallError
+    @test answer(() -> list_webhook_event_types(; service=s), Dict("object" => "list")) isa WebhookEndpointCallError
+    r = _answered(() -> retrieve_webhook_endpoint("we_x"; service=s), 404; body="""{"error":{"message":"not found"}}""",
+                  headers=["x-request-id" => "req_we"])
+    @test r isa WebhookEndpointFailure && r.status == 404 && r.request_id == "req_we"
+    calls = (kw -> create_webhook_endpoint(; name="n", url="https://example.com", event_types=["batch.completed"], kw...),
+             kw -> list_webhook_endpoints(; kw...), kw -> retrieve_webhook_endpoint("we_1"; kw...),
+             kw -> update_webhook_endpoint("we_1"; name="n", kw...), kw -> delete_webhook_endpoint("we_1"; kw...),
+             kw -> rotate_webhook_endpoint_secret("we_1"; kw...),
+             kw -> test_webhook_endpoint("we_1", "batch.completed"; kw...), kw -> list_webhook_event_types(; kw...))
+    for call in calls
+        @test _seam_timeout(call((; service=s, config=_TINY_DEADLINE)), WebhookEndpointCallError)
+        # An endpoint without `:webhooks` is refused before anything is sent.
+        err = try call((; service=SeamProbe)); nothing catch e; e end
+        @test err isa ArgumentError && occursin("Webhook endpoints API is not supported by", err.msg)
+        tok = CancelToken(); cancel!(tok)
+        r, seen = _with_scripted(() -> call((; service=s, cancel=tok)), (_, _) -> _json(200, "{}"))
+        @test isempty(seen) && r isa WebhookEndpointCallError && r.cause isa UniLMCancelled
+    end
+    @test has_capability(OPENAIServiceEndpoint, :webhooks)
 end

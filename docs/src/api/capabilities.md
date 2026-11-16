@@ -76,6 +76,9 @@ has_capability
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI and native Gemini (their Decisions APIs) and Ollama |
 | `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama; a model by id ([`retrieve_model`](@ref)) on OpenAI, Anthropic and Gemini |
 | `:token_count` | Token counting ([`count_tokens`](@ref)): a `Respond` on OpenAI, a `Chat` on Anthropic and native Gemini |
+| `:webhooks` | Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): OpenAI |
+| `:safety` | Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): OpenAI |
+| `:content_provenance` | Content provenance checks ([`check_content_provenance`](@ref)): OpenAI |
 
 ## Capabilities by Provider
 

@@ -119,7 +119,9 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
-├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · GraderRunSuccess · GraderValidateSuccess · FineTuningFailure · FineTuningCallError
+├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
+├─ Safety             SafetyCaseSuccess · SafetyAlertSuccess · ProvenanceCheckSuccess · SafetyFailure · SafetyCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError

@@ -246,12 +246,18 @@ end
     @testset "fine_tuning" begin
         include("fine_tuning.jl")
     end
+    @testset "graders" begin
+        include("graders.jl")
+    end
     @testset "cancel= on the platform, lifecycle and audio verbs" begin
         include("cancel_everywhere.jl")
     end
 
     @testset "webhooks" begin
         include("webhooks.jl")
+    end
+    @testset "safety" begin
+        include("safety.jl")
     end
 
     @testset "mock server" begin
@@ -260,6 +266,10 @@ end
 
     @testset "integration" begin
         include("integration.jl")
+    end
+
+    @testset "integration — OpenAI platform" begin
+        include("integration_openai_platform.jl")
     end
 
     @testset "integration — deepseek" begin

@@ -113,6 +113,7 @@
             "Containers" => "api/containers.md",
             "Uploads" => "api/uploads.md",
             "Webhooks" => "api/webhooks.md",
+            "Safety & Provenance" => "api/safety.md",
             "Realtime" => "api/realtime.md",
         ],
         "API: decisions" => [

@@ -68,11 +68,19 @@ since OpenAI's Evals "become read-only" on
 "Individual files can be up to 512 MB, and each project can store up to 2.5 TB of files in total";
 the Batch API "only supports `.jsonl` files up to 200 MB in size", and fine-tuning `.jsonl` files
 ([Upload file](https://developers.openai.com/api/reference/resources/files/methods/create)).
+`expires_after` sets the seconds from the upload until the file expires, 3600 (one hour) to 2592000
+(30 days), sent as OpenAI's `expires_after` with the anchor `created_at`; outside that range it is
+refused before the request, as OpenAI answers HTTP 400. Without it "files with `purpose=batch` expire
+after 30 days and all other files are persisted until they are manually deleted"; the time a file
+expires is its record's `expires_at`, in `raw`.
 [`list_files`](@ref) takes a `purpose`, a `limit` — "between 1 and 10,000, and the default is
-10,000" — and `after`, the id of the last file of the page before (its `has_more` says whether one
-follows); [`retrieve_file`](@ref) reads one file's record, [`file_content`](@ref) its bytes, and
-[`delete_file`](@ref) removes it, which also is to "remove it from all vector stores"
-([Files](https://developers.openai.com/api/reference/resources/files)).
+10,000" —, `after`, the id of the last file of the page before (its `has_more` says whether one
+follows), and an `order` by creation time, `"asc"` or `"desc"`; a page without `data` or `has_more`
+is a `FileCallError`. [`retrieve_file`](@ref) reads one file's record, [`file_content`](@ref) its bytes,
+and [`delete_file`](@ref) removes it, which also is to "remove it from all vector stores"
+([Files](https://developers.openai.com/api/reference/resources/files)); its result names the id and the
+`object` of OpenAI's reply. The same verbs reach Anthropic's and Gemini's Files APIs
+([Files API](@ref files_api)).
 
 ```julia
 write("questions.jsonl", """{"custom_id": "q1", "method": "POST", "url": "/v1/responses", "body": {"model": "gpt-6-sol", "input": "Name a prime number."}}\n""")
@@ -94,7 +102,7 @@ save_file_content(content, "questions_copy.jsonl")
 # "questions_copy.jsonl"
 
 delete_file(f.id)
-# FileDeleteSuccess("file-UYtK7VGBUPApXVa8Uz7epn", true)
+# FileDeleteSuccess("file-UYtK7VGBUPApXVa8Uz7epn", true, "file")
 ```
 
 !!! details "Evidence"
@@ -115,7 +123,9 @@ expires after an hour after you create it", "Each Part can be at most 64 MB", an
 bytes uploaded upon completion must match the number of bytes initially specified when creating
 the Upload object" ([Uploads](https://developers.openai.com/api/reference/resources/uploads)).
 [`create_upload`](@ref) takes the Files purposes, `"evals"` refused as above
-([Limits and refusals](@ref openai_platform_limits));
+([Limits and refusals](@ref openai_platform_limits)) — `"user_data"` too, which the Uploads reference does
+not list and the API accepted on 16 November 2026 —, and the `expires_after` of `upload_file`, for the file
+the completed upload makes;
 [`add_upload_part`](@ref) sends one part, the bytes you give it; [`complete_upload`](@ref) joins the
 parts in the order the list gives their ids, checking an `md5` of the whole file when given one, and
 returns the upload with its `file`; [`cancel_upload`](@ref) ends one. UniLM does not split a file: a file
@@ -604,7 +614,10 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `upload_file` or `add_container_file` with a path that is no file | `file not found:` | the path of the file |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
-| a `poll_batch` or `poll_file_batch` `interval` that is not a finite number above 0 | `interval must be a finite number of seconds > 0` | a pause in seconds |
+| `upload_file` without a purpose | `OpenAI's Files API requires a purpose` | one of the purposes above |
+| an `expires_after` outside 3600–2592000 seconds, on `upload_file` or `create_upload` | `OpenAI's Files API takes expires_after from 3600 to 2592000 seconds`: OpenAI answers HTTP 400 outside it | a number of seconds in the range |
+| a `list_files` `order` other than `"asc"` and `"desc"` | `order is "asc" or "desc"`: OpenAI answers HTTP 400 to another | one of them |
+| a `poll_batch`, `poll_file_batch` or `poll_file` `interval` that is not a finite number above 0 | `interval must be a finite number of seconds > 0` | a pause in seconds |
 | a poll `timeout` that is `NaN`, not above 0, or finite and above 10⁹ seconds | `timeout must not be NaN`, `timeout must be > 0 seconds`, `timeout must be at most`: `Inf` is the way to wait without bound | a number of seconds, or `Inf` |
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |

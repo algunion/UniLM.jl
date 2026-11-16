@@ -1,9 +1,9 @@
 @testset "ImageGeneration" begin
     @testset "minimal creation" begin
         ig = ImageGeneration(prompt="A cute robot")
-        @test ig.model == ""  # resolved to "gpt-image-2.5-sunburst" during serialization
-        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2.5-sunburst"
-        @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.5-sunburst"
+        @test ig.model == ""  # resolved to "gpt-image-2.6-sunburst" during serialization
+        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2.6-sunburst"
+        @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.6-sunburst"
         @test ig.prompt == "A cute robot"
         @test ig.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(ig.n)
@@ -41,7 +41,7 @@
     @testset "JSON serialization" begin
         ig = ImageGeneration(prompt="test", quality="high", size="1024x1024")
         lowered = JSON.lower(ig)
-        @test lowered[:model] == "gpt-image-2.5-sunburst"
+        @test lowered[:model] == "gpt-image-2.6-sunburst"
         @test lowered[:prompt] == "test"
         @test lowered[:quality] == "high"
         @test lowered[:size] == "1024x1024"
@@ -59,7 +59,7 @@
         ig = ImageGeneration(prompt="A sunset", n=2, size="1536x1024", background="opaque")
         json_str = JSON.json(ig)
         parsed = JSON.parse(json_str)
-        @test parsed["model"] == "gpt-image-2.5-sunburst"
+        @test parsed["model"] == "gpt-image-2.6-sunburst"
         @test parsed["prompt"] == "A sunset"
         @test parsed["n"] == 2
         @test parsed["size"] == "1536x1024"
@@ -534,7 +534,7 @@ _refusal(f) = try f(); nothing catch e; e end
 
 @testset "OpenAI images — safety_identifier replaces the deprecated user field" begin
     @test _image_json(ImageGeneration(prompt="p", safety_identifier="u1")) ==
-          Dict{String,Any}("model" => "gpt-image-2.5-sunburst", "prompt" => "p", "safety_identifier" => "u1")
+          Dict{String,Any}("model" => "gpt-image-2.6-sunburst", "prompt" => "p", "safety_identifier" => "u1")
     @test !hasfield(ImageGeneration, :user) && !hasfield(ImageEdit, :user)
     @test_throws MethodError ImageGeneration(prompt="p", user="u1")
     # OpenAI's safety guide: at most 128 characters, counted as characters, not bytes.
@@ -577,7 +577,7 @@ end
     end
 end
 
-@testset "OpenAI image edits — safety_identifier is a form field; the default model is gpt-image-2.5-sunburst" begin
+@testset "OpenAI image edits — safety_identifier is a form field; the default model is gpt-image-2.6-sunburst" begin
     path = tempname() * ".png"
     write(path, UInt8[0x89, 0x50, 0x4e, 0x47])
     ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
@@ -592,7 +592,7 @@ end
         url, _, body = withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, ImageEdit(image=path, prompt="p")),
                                "OPENAI_API_KEY" => "sk-test")
         @test url == "https://api.openai.com/v1/images/edits"
-        @test occursin("name=\"model\"\r\n\r\ngpt-image-2.5-sunburst\r\n", String(read(body.build())))
+        @test occursin("name=\"model\"\r\n\r\ngpt-image-2.6-sunburst\r\n", String(read(body.build())))
     finally
         rm(path; force=true)
     end
@@ -893,4 +893,205 @@ end
     e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", markup="markup.png")
     err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
     @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take markup,")
+end
+
+# ── OpenAI GPT-Image-2.6 controls (the Images reference and the image generation guide) ─────────────────
+
+# The multipart fields an OpenAI edit sends, with no key and no request.
+_edit_form(e::ImageEdit) = String(read(last(withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, e),
+                                                    "OPENAI_API_KEY" => "sk-test")).build()))
+
+@testset "OpenAI images — complexity is low, medium or high, on generations and edits; Gemini takes none" begin
+    # The Images reference: `complexity: optional "low" or "medium" or "high"`, "Computation spent planning the image,
+    # independently of rendering quality"; the API answers another value with HTTP 400 (witnessed 2026-11-16).
+    for c in ("low", "medium", "high")
+        @test _image_json(ImageGeneration(prompt="p", complexity=c))["complexity"] == c
+    end
+    @test !haskey(_image_json(ImageGeneration(prompt="p")), "complexity")
+    for bad in ("max", "", "Low"), make in (() -> ImageGeneration(prompt="p", complexity=bad),
+                                             () -> ImageEdit(image="never-read.png", prompt="p", complexity=bad))
+        err = _refusal(make)
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("complexity", "\"low\"", "\"medium\"", "\"high\""))
+    end
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        @test occursin("name=\"complexity\"\r\n\r\nmedium\r\n", _edit_form(ImageEdit(image=path, prompt="p", complexity="medium")))
+        @test !occursin("name=\"complexity\"", _edit_form(ImageEdit(image=path, prompt="p")))
+    finally
+        rm(path; force=true)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", complexity="low")))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take complexity,")
+    e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", complexity="low")
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take complexity,")
+end
+
+@testset "OpenAI images — a GIF takes frame_count 2 to 16 and frame_duration_ms of at least 20, with output_format \"gif\" only" begin
+    # The Images reference: frame_count "Accepts integers from 2 through 16", frame_duration_ms `minimum: 20` and no
+    # maximum ("caps the encoded delay at 655,350 ms per frame"); both "Only supported with output_format=gif".
+    gif = _image_json(ImageGeneration(prompt="p", output_format="gif", frame_count=2, frame_duration_ms=20))
+    @test (gif["output_format"], gif["frame_count"], gif["frame_duration_ms"]) == ("gif", 2, 20)
+    @test _image_json(ImageGeneration(prompt="p", output_format="gif", frame_count=16,
+                                      frame_duration_ms=655_350))["frame_duration_ms"] == 655_350
+    @test !any(k -> haskey(_image_json(ImageGeneration(prompt="p", output_format="gif")), k), ("frame_count", "frame_duration_ms"))
+    for (kw, words) in ((; frame_count=1) => ("frame_count", "2", "16"), (; frame_count=17) => ("frame_count", "2", "16"),
+                        (; frame_duration_ms=19) => ("frame_duration_ms", "20"))
+        for make in (() -> ImageGeneration(; prompt="p", output_format="gif", kw...),
+                     () -> ImageEdit(; image="never-read.png", prompt="p", output_format="gif", kw...))
+            err = _refusal(make)
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        end
+    end
+    # Without output_format "gif" a frame field has no animation to shape: refused when serialized, before any request.
+    for fmt in (nothing, "png", "webp"), kw in ((; frame_count=4), (; frame_duration_ms=100))
+        field = string(only(keys(kw)))
+        err = _refusal(() -> JSON.json(ImageGeneration(; prompt="p", output_format=fmt, kw...)))
+        @test err isa ArgumentError && occursin(field, err.msg) && occursin("output_format=\"gif\"", err.msg)
+        e = ImageEdit(; image="never-read.png", prompt="p", output_format=fmt, kw...)
+        err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, e))
+        @test err isa ArgumentError && occursin(field, err.msg) && occursin("output_format=\"gif\"", err.msg)
+    end
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="gif", frame_count=3, frame_duration_ms=40))
+        @test occursin("name=\"frame_count\"\r\n\r\n3\r\n", form) && occursin("name=\"frame_duration_ms\"\r\n\r\n40\r\n", form)
+        r, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, frame_count=3))
+        end
+        @test r isa ArgumentError && isempty(seen)
+    finally
+        rm(path; force=true)
+    end
+    for (field, value) in (:frame_count => 4, :frame_duration_ms => 100)
+        err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take $field,")
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
+    end
+end
+
+@testset "OpenAI images — GIF output takes no output_compression, and a GIF edit no mask" begin
+    # The Images reference: "GIF output does not support streaming, partial images, masks, or custom output
+    # compression"; on 2026-11-16 the API answered both with HTTP 400 ("'output_compression' is not supported for GIF
+    # output.", "'mask' is not supported for GIF output."). Other formats keep them.
+    err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", output_format="gif", output_compression=50)))
+    @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("output_compression", "GIF", "OpenAI"))
+    @test _image_json(ImageGeneration(prompt="p", output_format="webp", output_compression=50))["output_compression"] == 50
+    thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        _refusal(() -> generate_image("p"; model="m", service=URLProbe, output_format="gif", output_compression=50))
+    end
+    @test thrown isa ArgumentError && isempty(seen)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        e = ImageEdit(image=path, prompt="p", mask=path, output_format="gif")
+        err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, e))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("mask", "GIF", "OpenAI"))
+        thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, mask=path, output_format="gif"))
+        end
+        @test thrown isa ArgumentError && isempty(seen)
+        @test occursin("name=\"mask\"", _edit_form(ImageEdit(image=path, prompt="p", mask=path, output_format="png")))
+    finally
+        rm(path; force=true)
+    end
+end
+
+@testset "OpenAI images — SvgOptions names the SVG author; SVG output takes n=1 and no output_compression" begin
+    # The Images reference: `svg: optional object { model, reasoning }`, model `minLength: 1`, reasoning.effort one of
+    # none, minimal, low, medium, high, xhigh, max; "Requires output_format=svg"; "SVG generation requires n=1 and
+    # does not support streaming, partial images, prompt_rewriter, or output_compression".
+    @test _image_json(SvgOptions()) == Dict{String,Any}()
+    @test _image_json(SvgOptions(model="gpt-6-luna", effort="low")) ==
+          Dict{String,Any}("model" => "gpt-6-luna", "reasoning" => Dict{String,Any}("effort" => "low"))
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        @test _image_json(SvgOptions(; effort)) == Dict{String,Any}("reasoning" => Dict{String,Any}("effort" => effort))
+    end
+    for (kw, word) in ((; effort="auto") => "effort", (; effort="") => "effort", (; model="") => "model")
+        err = _refusal(() -> SvgOptions(; kw...))
+        @test err isa ArgumentError && occursin("SvgOptions", err.msg) && occursin(word, err.msg)
+    end
+    body = _image_json(ImageGeneration(prompt="p", output_format="svg", n=1, svg=SvgOptions(model="gpt-6-luna")))
+    @test body["output_format"] == "svg" && body["svg"] == Dict{String,Any}("model" => "gpt-6-luna") && body["n"] == 1
+    @test !haskey(_image_json(ImageGeneration(prompt="p", output_format="svg")), "svg")    # no SVG model selection
+    for (kw, words) in ((; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                        (; output_format="png", svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                        (; output_format="svg", n=2) => ("n=1", "SVG"),
+                        (; output_format="svg", output_compression=50) => ("output_compression", "SVG"))
+        err = _refusal(() -> JSON.json(ImageGeneration(; prompt="p", kw...)))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _refusal(() -> generate_image(ImageGeneration(; prompt="p", model="m", service=URLProbe, kw...)))
+        end
+        @test thrown isa ArgumentError && isempty(seen)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", svg=SvgOptions(model="m"))))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take svg,")
+end
+
+@testset "OpenAI image edits — svg names the SVG author as multipart fields; SVG output takes n=1" begin
+    # On 2026-11-16 the API answered a multipart edit with output_format=svg and svg[model]=gpt-6-luna with HTTP 200,
+    # an SVG and its svg_usage; the edit reference: "Use multipart fields such as `svg[model]`".
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    svg = Dict{String,Any}("input_tokens" => 2279, "model" => "gpt-6-luna", "output_tokens" => 2555,
+                           "reasoning_tokens" => 794, "total_tokens" => 4834)
+    ok = JSON.json(Dict("created" => 1, "output_format" => "svg", "data" => [Dict("b64_json" => "PHN2Zz4=")],
+                        "usage" => Dict("input_tokens" => 89, "output_tokens" => 962, "total_tokens" => 1051), "svg_usage" => svg))
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low")))
+        @test occursin("name=\"output_format\"\r\n\r\nsvg\r\n", form) &&
+              occursin("name=\"svg[model]\"\r\n\r\ngpt-6-luna\r\n", form) &&
+              occursin("name=\"svg[reasoning][effort]\"\r\n\r\nlow\r\n", form)
+        model_only = _edit_form(ImageEdit(image=path, prompt="p", output_format="svg", svg=SvgOptions(model="gpt-6-luna")))
+        @test occursin("name=\"svg[model]\"", model_only) && !occursin("svg[reasoning]", model_only)
+        @test !occursin("name=\"svg[", _edit_form(ImageEdit(image=path, prompt="p", output_format="svg")))
+        # A mask beside svg is no rule OpenAI's answer showed: it is sent as given.
+        @test occursin("name=\"mask\"", _edit_form(ImageEdit(image=path, prompt="p", mask=path, output_format="svg",
+                                                               svg=SvgOptions(model="gpt-6-luna"))))
+        # Refused before anything is sent: svg without output_format="svg", and SVG output with n other than 1.
+        for (kw, words) in ((; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                            (; output_format="png", svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                            (; output_format="svg", n=2) => ("n=1", "SVG"))
+            thrown, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, kw...))
+            end
+            @test thrown isa ArgumentError && all(w -> occursin(w, thrown.msg), words) && isempty(seen)
+        end
+        # The reply's svg_usage is the result's, and an estimate leaves it out with the warning a generation's gets.
+        r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            edit_image(path, "p"; model="m", service=URLProbe, output_format="svg", svg=SvgOptions(model="gpt-6-luna"),
+                       config=UniLM.RequestConfig(max_attempts=1))
+        end
+        @test r isa ImageSuccess && r.response.svg_usage == svg && length(seen) == 1
+        @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(r; model="edit-model",
+            pricing=Dict("edit-model" => UniLM._price(5.0, 1.25, 30.0)))) ≈ (89 * 5.0 + 962 * 30.0) / 1e6
+    finally
+        rm(path; force=true)
+    end
+    e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", svg=SvgOptions(model="m"))
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take svg,")
+end
+
+@testset "OpenAI images — svg_usage is decoded beside usage, and an estimate says it leaves those tokens out" begin
+    # ImagesResponse: "svg_usage: optional object { input_tokens, model, output_tokens, 2 more }", "Token usage for SVG
+    # authoring, separate from image rendering usage"; OpenAI's pricing page states no SVG rate.
+    svg = Dict{String,Any}("input_tokens" => 1200, "model" => "gpt-6-luna", "output_tokens" => 900,
+                           "reasoning_tokens" => 300, "total_tokens" => 2100)
+    usage = Dict{String,Any}("input_tokens" => 10, "output_tokens" => 400, "total_tokens" => 410)
+    reply(extra...) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "PHN2Zz4=")],
+                                                                           "usage" => usage, extra...))))
+    ir = UniLM.parse_image_response(reply("svg_usage" => svg, "output_format" => "svg"))
+    @test ir.svg_usage == svg && ir.usage == usage
+    @test isnothing(UniLM.parse_image_response(reply()).svg_usage)
+    rows = Dict("img" => UniLM._price(5.0, 1.25, 30.0))
+    with_svg, plain = ImageSuccess(response=ir), ImageSuccess(response=UniLM.parse_image_response(reply()))
+    priced = (10 * 5.0 + 400 * 30.0) / 1e6
+    @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(with_svg; model="img", pricing=rows)) ≈ priced
+    @test (@test_logs estimated_cost(plain; model="img", pricing=rows)) ≈ priced
 end

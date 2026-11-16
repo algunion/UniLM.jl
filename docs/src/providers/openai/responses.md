@@ -142,6 +142,15 @@ reports the web searches and the image tokens in its `tool_usage`, which [`tool_
 a [`ToolUsage`](@ref) and [`estimated_cost`](@ref) bills; file search and containers it leaves out
 ([Cost and usage](@ref openai_cost)).
 
+The image generation tool runs `gpt-image-2.6-sunburst` unless its `model` names another, and takes the
+controls of the GPT-Image-2.6 models ([Image generation](@ref openai_images)): `complexity` (`"low"`,
+`"medium"` or `"high"`), which "Overrides the outer response's `reasoning.effort` for image generation";
+`frame_count` (2 to 16) and `frame_duration_ms` (at least 20; the tool's reference gives 2000 as its
+largest) with `output_format="gif"`; and `svg`, an [`SvgOptions`](@ref) naming the SVG author, with
+`output_format="svg"`. `ImageGenerationTool` throws `ArgumentError` for a value outside these and for a
+frame or SVG field without its format. On 16 November 2026 the API answered an invalid value of each of
+the four with HTTP 400 naming it, and a tool with `complexity="low"` on `gpt-6-luna` with an image.
+
 ## [Structured output on Responses](@id openai_responses_structured_output)
 
 `text` holds the output format: [`json_schema_format`](@ref)`(name, description, schema; strict)` for a
@@ -288,8 +297,9 @@ end
   reports is `token_usage(result).service_tier`, which [Cost and usage](@ref openai_cost) prices.
 - **`max_output_tokens`, `truncation`.** `max_output_tokens` bounds the visible output and the
   reasoning together. With `truncation="auto"`, an input over the context window loses items from the
-  beginning of the conversation; with `"disabled"`, the API's default, the request "will fail with a 400
-  error".
+  beginning of the conversation — "On some models, trimming can begin earlier because the API subtracts
+  the model's maximum output allowance from its input limit, even if you set a lower
+  `max_output_tokens`"; with `"disabled"`, the API's default, the request "will fail with a 400 error".
 - **`include`.** Extra output data, such as `"web_search_call.action.sources"`, `"file_search_call.results"`
   or `"message.output_text.logprobs"`, the last at the efforts the model's row takes log probabilities.
 - **`max_tool_calls`.** "The maximum number of total calls to built-in tools that can be processed in a
@@ -302,13 +312,23 @@ end
   on their own are classified by [`moderate`](@ref) ([Moderation](@ref openai_moderation)).
 - **`context_management`, `stream_options`.** Sent as given: compaction settings, and the stream's
   `include_obfuscation`.
+- **`image_context_compression`.** `"auto"`, `"enabled"` or `"disabled"`, sent as
+  `image.context_compression`, which "Controls image context optimization. Defaults to `auto`, which
+  uses the model, transport, and input to select a policy. Use `enabled` to require compression
+  support or `disabled` to turn it off"; another value throws `ArgumentError` when the `Respond` is
+  built. The policy the response resolved is `result.response.image_context_compression`, and
+  [`compact_response`](@ref) takes the same keyword. Gemini Interactions and an
+  [`OllamaEndpoint`](@ref), whose APIs have no such field, refuse it before any request.
 
 The quoted fields are from OpenAI's
 [Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create)
 and [Retrieve a model response](https://developers.openai.com/api/reference/resources/responses/methods/retrieve).
 [`refusals`](@ref) and [`reasoning_items`](@ref) read a response's output items as the hosted tools'
 accessors do, and [`incomplete_details`](@ref) and [`usage_details`](@ref) its `incomplete_details` and
-`usage`. [`UniLM.encode_agentic`](@ref) shows the body:
+`usage`. [`input_transformations`](@ref) reads the response's `input_transformations`, "Reasoning inputs
+withheld from the model, in input order": an [`InputTransformation`](@ref) for each replayed reasoning
+item the model did not see — its `id`, `action` `"removed"` and the `reason`, such as `:model_mismatch`
+or `:prefix_mismatch` — and an empty list when the response withheld none. [`UniLM.encode_agentic`](@ref) shows the body:
 
 ```@example openai
 r = Respond(service=OPENAIServiceEndpoint, input="Count to five.", service_tier="flex", max_output_tokens=200,

@@ -453,13 +453,13 @@ end
                       prompt_cache_options=PromptCacheOptions(mode="implicit"),
                       moderation=ModerationConfig(model="omni-moderation-latest"))
         vals = Any[getfield(ref, f) for f in fieldnames(Respond)]
-        @test length(vals) == 32
+        @test length(vals) == 33
         r = Respond(vals...)
         @test (r.model, r.input, r.instructions, r.safety_identifier) == ("gpt-5.4-mini", "hi", "be brief", "u1")
         @test r.prompt_cache_options == ref.prompt_cache_options && r.moderation == ref.moderation
-        # The positional form takes exactly the 32 fields; fewer is a MethodError.
+        # The positional form takes exactly the 33 fields; fewer is a MethodError.
+        @test_throws MethodError Respond(vals[1:32]...)
         @test_throws MethodError Respond(vals[1:31]...)
-        @test_throws MethodError Respond(vals[1:30]...)
     end
 
     @testset "no prompt field: OpenAI shuts reusable prompts down on 2026-11-30" begin
@@ -3210,4 +3210,122 @@ end
     c = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="gpt-5.5",
              messages=[Message(Val(:user), "hi")], prompt_cache_retention="in_memory")
     @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "in_memory"
+end
+
+@testset "ImageGenerationTool — complexity, GIF frames and the SVG author, checked at construction" begin
+    # The image generation tool's reference: complexity low, medium or high, which "Overrides the outer response's
+    # `reasoning.effort` for image generation"; frame_count 2-16 and frame_duration_ms at least 20, each "Requires
+    # `output_format` to be `gif`"; svg, the SVG author settings, "Requires `output_format` to be `svg`". On 2026-11-16
+    # the API answered an invalid value of each with HTTP 400 naming tools[0].<field>: it knows every one.
+    @test JSON.lower(ImageGenerationTool(complexity="low", quality="low"))[:complexity] == "low"
+    gif = JSON.lower(ImageGenerationTool(output_format="gif", frame_count=3, frame_duration_ms=40))
+    @test (gif[:output_format], gif[:frame_count], gif[:frame_duration_ms]) == ("gif", 3, 40)
+    svg = JSON.parse(JSON.json(ImageGenerationTool(output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"))))
+    @test svg["svg"] == Dict("model" => "gpt-6-luna", "reasoning" => Dict("effort" => "low"))
+    @test !any(k -> haskey(JSON.lower(image_generation_tool()), k), (:complexity, :frame_count, :frame_duration_ms, :svg))
+    for (kw, words) in ((; complexity="max") => ("complexity", "\"low\"", "\"medium\"", "\"high\""),
+                        (; output_format="gif", frame_count=1) => ("frame_count", "2", "16"),
+                        (; output_format="gif", frame_count=17) => ("frame_count", "2", "16"),
+                        (; output_format="gif", frame_duration_ms=19) => ("frame_duration_ms", "20"),
+                        (; frame_count=4) => ("frame_count", "output_format=\"gif\""),
+                        (; output_format="png", frame_duration_ms=100) => ("frame_duration_ms", "output_format=\"gif\""),
+                        (; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""))
+        err = try ImageGenerationTool(; kw...); nothing catch e; e end
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+end
+
+@testset "input_transformations: the reasoning inputs a Responses reply says it withheld, typed" begin
+    # The Responses reference, Response.input_transformations: "Reasoning inputs withheld from the model, in input
+    # order", each {type: "reasoning", id: "The original reasoning item ID", action: "removed", reason}, the reason
+    # one of organization_mismatch, end_user_mismatch, model_mismatch, prefix_mismatch and turn_boundary; all four
+    # are required.
+    item(id, reason) = Dict{String,Any}("type" => "reasoning", "id" => id, "action" => "removed", "reason" => reason)
+    reply(extra...) = Dict{String,Any}("id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                                       "output" => Any[], extra...)
+    parsed(d) = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(d))))
+    items = Any[item("rs_1", "model_mismatch"), item("rs_2", "turn_boundary")]
+    want = [InputTransformation("reasoning", "rs_1", "removed", :model_mismatch),
+            InputTransformation("reasoning", "rs_2", "removed", :turn_boundary)]
+    @test input_transformations(parsed(reply("input_transformations" => items))) == want
+    @test (@inferred input_transformations(parsed(reply("input_transformations" => Any[])))) == InputTransformation[]
+    @test input_transformations(parsed(reply())) == InputTransformation[]          # absent: another provider's reply
+    # A reason this release does not list is kept, as the symbol of its wire string.
+    @test only(input_transformations(parsed(reply("input_transformations" => Any[item("rs_3", "organization_binding_mismatch")])))).reason ===
+          :organization_binding_mismatch
+    # An item without its four strings is no transformation: reading it fails loud, naming the item.
+    for bad in (Dict{String,Any}("type" => "reasoning", "id" => "rs_1", "action" => "removed"), "rs_1",
+                Dict{String,Any}("type" => "reasoning", "id" => 1, "action" => "removed", "reason" => "model_mismatch"))
+        @test_throws r"input_transformations" input_transformations(parsed(reply("input_transformations" => Any[bad])))
+    end
+    @test input_transformations(ResponseFailure(response="{}", status=500)) == InputTransformation[]
+    @test input_transformations(ResponseCallError(error="e")) == InputTransformation[]
+    # Unstreamed and from a stream's response.completed alike.
+    cfg = RequestConfig(max_attempts=1)
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi"; kw...); config=cfg)
+    full = reply("input_transformations" => items)
+    plain, _ = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(full)))
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => full)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && input_transformations(r) == want && input_transformations(r.response) == want
+    end
+end
+
+@testset "image_context_compression is the Responses API's image.context_compression, on a Respond and a compaction" begin
+    # The Responses reference: `image.context_compression` "Controls image context optimization. Defaults to `auto`,
+    # which uses the model, transport, and input to select a policy. Use `enabled` to require compression support or
+    # `disabled` to turn it off"; a response's `image.context_compression` is the policy it resolved. On 2026-11-16 the
+    # API answered "disabled" and "enabled" on /v1/responses, and "disabled" on /v1/responses/compact, with HTTP 200
+    # and the value echoed.
+    for v in ("auto", "enabled", "disabled")
+        r = Respond(model="gpt-6-luna", input="hi", image_context_compression=v)
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["image"] == Dict("context_compression" => v)
+    end
+    @test !haskey(JSON.parse(UniLM.encode_agentic(OPENAIServiceEndpoint, Respond(model="gpt-6-luna", input="hi"))), "image")
+    for bad in ("Auto", "", "on")
+        err = try Respond(model="m", input="hi", image_context_compression=bad); nothing catch e; e end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg) && occursin("\"auto\"", err.msg)
+    end
+    g = Respond(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="m", input="hi", image_context_compression="disabled")
+    @test JSON.parse(UniLM.encode_agentic(g.service, g))["image"] == Dict("context_compression" => "disabled")
+    # Gemini Interactions and Ollama have no such field: refused before any request, naming it.
+    for service in (GEMINIServiceEndpoint, OllamaEndpoint())
+        r = Respond(; service, model="m", input="hi", image_context_compression="disabled")
+        err = try UniLM.encode_agentic(r.service, r); nothing catch e; e end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg)
+    end
+    # The policy the reply resolved, unstreamed and streamed; `nothing` when the reply names none.
+    cfg = RequestConfig(max_attempts=1)
+    reply = Dict("id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna", "output" => Any[],
+                 "image" => Dict("context_compression" => "enabled"))
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi", image_context_compression="enabled";
+                                   kw...); config=cfg)
+    plain, seen = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(reply)))
+    @test JSON.parse(only(seen).body)["image"] == Dict("context_compression" => "enabled")
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => reply)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && r.response.image_context_compression == "enabled"
+    end
+    @test UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(delete!(copy(reply), "image"))))).image_context_compression === nothing
+    # A ResponseObject built from its eight earlier fields reads the policy from `raw`.
+    ro = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
+    @test ResponseObject(ro.id, ro.status, ro.model, ro.output, ro.usage, ro.error, ro.metadata, ro.raw).image_context_compression == "enabled"
+    # A compaction sends it as a Respond does, and refuses another value, or Ollama, before any request.
+    compacted = Dict("id" => "c", "object" => "response.compaction", "output" => Any[], "image" => Dict("context_compression" => "disabled"))
+    c, seen = _with_scripted(() -> compact_response(model="m", input="hi", image_context_compression="disabled",
+                                                    service=_ToolUsageProbe, config=cfg),
+                             (_, _) -> _json(200, JSON.json(compacted)))
+    @test JSON.parse(only(seen).body)["image"] == Dict("context_compression" => "disabled") && c["image"] == compacted["image"]
+    @test !haskey(JSON.parse(only(last(_with_scripted(() -> compact_response(model="m", input="hi", service=_ToolUsageProbe,
+        config=cfg), (_, _) -> _json(200, JSON.json(compacted))))).body), "image")
+    for (service, v, word) in ((_ToolUsageProbe, "on", "\"auto\""), (OllamaEndpoint(), "disabled", "Ollama"))
+        err, seen = _with_scripted((_, _) -> _json(200, JSON.json(compacted))) do
+            try compact_response(; model="m", input="hi", image_context_compression=v, service, config=cfg); nothing catch e; e end
+        end
+        @test err isa ArgumentError && occursin("image_context_compression", err.msg) && occursin(word, err.msg) && isempty(seen)
+    end
 end

@@ -299,10 +299,49 @@ function JSON.lower(t::MCPTool)
 end
 
 """
+    SvgOptions(; model=nothing, effort=nothing)
+
+The author of an SVG that an OpenAI image model draws: the `svg` object of an
+[`ImageGeneration`](@ref) (and of the [`ImageGenerationTool`](@ref)), sent with
+`output_format="svg"` only. OpenAI "creates a reference image and uses it to produce the SVG"
+([image generation](https://developers.openai.com/api/docs/guides/image-generation#generate-svg-output)).
+
+- `model`: the model that authors the SVG, sent as `svg.model`; "When model selection is enabled,
+  supply svg.model. When model selection is disabled, omit this object". An empty name throws
+  `ArgumentError`.
+- `effort`: the author's reasoning effort, sent as `svg.reasoning.effort`: `"none"`, `"minimal"`,
+  `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, of which "Supported efforts depend on the
+  selected author model"; another value throws `ArgumentError`. Unset, "uses the author model's default".
+
+The reply reports the author's tokens apart from the image's, as `svg_usage`
+([`ImageResponse`](@ref)).
+"""
+@kwdef struct SvgOptions
+    model::Union{String,Nothing} = nothing
+    effort::Union{String,Nothing} = nothing
+    function SvgOptions(model, effort)
+        isnothing(model) || !isempty(model) || throw(ArgumentError(
+            "SvgOptions model names the SVG author and cannot be empty; unset it to use the default author"))
+        isnothing(effort) || effort in _SVG_EFFORTS || throw(ArgumentError(
+            "SvgOptions effort must be one of $(join(repr.(_SVG_EFFORTS), ", ")) (got $(repr(effort)))"))
+        new(model, effort)
+    end
+end
+const _SVG_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+function JSON.lower(s::SvgOptions)
+    d = Dict{Symbol,Any}()
+    isnothing(s.model) || (d[:model] = s.model)
+    isnothing(s.effort) || (d[:reasoning] = Dict{Symbol,Any}(:effort => s.effort))
+    d
+end
+
+"""
     ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing,
                         quality=nothing, size=nothing, model=nothing, action=nothing,
                         moderation=nothing, partial_images=nothing, input_fidelity=nothing,
-                        input_image_mask=nothing)
+                        input_image_mask=nothing, complexity=nothing, frame_count=nothing,
+                        frame_duration_ms=nothing, svg=nothing)
 
 An image generation tool for the Responses API. Allows the model to generate
 images inline during a response.
@@ -315,9 +354,17 @@ images inline during a response.
   (omit it for `gpt-image-2`, which always uses high fidelity)
 - `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
 - `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
+- `complexity`: `"low"`, `"medium"` or `"high"`, which "Overrides the outer response's
+  `reasoning.effort` for image generation" (the tool's reference)
+- `frame_count`, `frame_duration_ms`: a GIF's frames, 2 to 16, and each frame's milliseconds, at
+  least 20 (the tool's reference gives 2000 as the largest, which UniLM does not check), with
+  `output_format="gif"` only
+- `svg`: the SVG author ([`SvgOptions`](@ref)), with `output_format="svg"` only; omitted, "uses the
+  outer response model" where SVG model selection is enabled
 
-`action`, `moderation`, `partial_images`, and `input_fidelity` are validated at
-construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
+Unset, `model` is the tool's default, `"gpt-image-2.6-sunburst"`. `action`, `moderation`,
+`partial_images`, `input_fidelity`, `complexity`, `frame_count`, `frame_duration_ms` and `svg`
+are validated at construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
 through unchecked (the accepted `quality` values depend on the model). Unset fields are
 omitted from the request.
 """
@@ -333,9 +380,14 @@ omitted from the request.
     partial_images::Union{Int, Nothing} = nothing
     input_fidelity::Union{String, Nothing} = nothing
     input_image_mask::Union{AbstractDict, Nothing} = nothing
+    complexity::Union{String, Nothing} = nothing
+    frame_count::Union{Int, Nothing} = nothing
+    frame_duration_ms::Union{Int, Nothing} = nothing
+    svg::Union{SvgOptions, Nothing} = nothing
     function ImageGenerationTool(background, output_format, output_compression, quality, size,
             model=nothing, action=nothing, moderation=nothing, partial_images=nothing,
-            input_fidelity=nothing, input_image_mask=nothing)
+            input_fidelity=nothing, input_image_mask=nothing, complexity=nothing, frame_count=nothing,
+            frame_duration_ms=nothing, svg=nothing)
         isnothing(action) || action in ("generate", "edit", "auto") ||
             throw(ArgumentError("image_generation action must be generate, edit, or auto"))
         isnothing(moderation) || moderation in ("auto", "low") ||
@@ -344,8 +396,12 @@ omitted from the request.
             throw(ArgumentError("image_generation partial_images must be in [0, 3]"))
         isnothing(input_fidelity) || input_fidelity in ("high", "low") ||
             throw(ArgumentError("image_generation input_fidelity must be high or low"))
+        # The Images API's GPT-Image-2.6 controls (images.jl), with the tool's own name.
+        _check_image_controls("image_generation", complexity, frame_count, frame_duration_ms)
+        _check_image_format("image_generation", output_format, frame_count, frame_duration_ms, svg)
         new(background, output_format, output_compression, quality, size,
-            model, action, moderation, partial_images, input_fidelity, input_image_mask)
+            model, action, moderation, partial_images, input_fidelity, input_image_mask, complexity,
+            frame_count, frame_duration_ms, svg)
     end
 end
 
@@ -906,6 +962,17 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   `OPENAIServiceEndpoint` and the other endpoints on the OpenAI Responses wire (Azure,
   `GEMINIOpenAIServiceEndpoint`) throw `ArgumentError` for it before any request, as does
   [`OllamaEndpoint`](@ref), whose Responses API reads no seed
+- `image_context_compression::String`: `"auto"`, `"enabled"` or `"disabled"`, sent as the Responses
+  API's `image.context_compression`, which "Controls image context optimization. Defaults to `auto`,
+  which uses the model, transport, and input to select a policy. Use `enabled` to require compression
+  support or `disabled` to turn it off"
+  ([reference](https://developers.openai.com/api/reference/resources/responses/methods/create));
+  another value throws `ArgumentError` when the `Respond` is built. The policy the response resolved
+  is its [`ResponseObject`](@ref)'s `image_context_compression`. `OPENAIServiceEndpoint` and a
+  [`GenericOpenAIEndpoint`](@ref) send it; [`OllamaEndpoint`](@ref) and Gemini Interactions
+  (`GEMINIServiceEndpoint`), whose APIs have no such field, throw `ArgumentError` before any request,
+  as for `prompt_cache_retention`; the endpoints without a Responses API (Azure,
+  `GEMINIOpenAIServiceEndpoint`, DeepSeek) refuse `respond` itself
 
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
 efforts, sampling controls, `prompt_cache_retention`) to those GPT-6 and GPT-5.6 models, by
@@ -913,7 +980,7 @@ exact id or a dated snapshot, before any request; other models are checked by th
 Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone, so `"ultrafast"` throws
 `ArgumentError` on every other model, an unknown one included. See
 [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
-Build a `Respond` with keywords: the positional form takes all 32 fields in declaration
+Build a `Respond` with keywords: the positional form takes all 33 fields in declaration
 order.
 
 # Examples
@@ -970,7 +1037,8 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing               # Gemini Interactions and generic endpoints
-    # The positional form takes all 32 fields in declaration order; keyword construction,
+    image_context_compression::Union{String,Nothing} = nothing  # "auto", "enabled", "disabled": image.context_compression
+    # The positional form takes all 33 fields in declaration order; keyword construction,
     # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
@@ -978,7 +1046,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         previous_response_id, user, background, include, max_tool_calls,
         service_tier, top_logprobs, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options, prompt_cache_options, moderation, seed)
+        context_management, stream_options, prompt_cache_options, moderation, seed, image_context_compression)
         model = _resolve_model(service, model)
         tools = _respond_tools(tools)
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
@@ -987,14 +1055,37 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
             "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
+        _check_image_context_compression(image_context_compression)
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
             previous_response_id, user, background, include, max_tool_calls,
             service_tier, top_logprobs, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
-            context_management, stream_options, prompt_cache_options, moderation, seed)
+            context_management, stream_options, prompt_cache_options, moderation, seed, image_context_compression)
     end
+end
+
+# The image context policies of the Responses API's `image.context_compression`
+# (https://developers.openai.com/api/reference/resources/responses/methods/create), and the object a
+# request and a compaction carry one in.
+const _IMAGE_CONTEXT_COMPRESSION = ("auto", "enabled", "disabled")
+
+function _check_image_context_compression(v::Union{AbstractString,Nothing})::Nothing
+    isnothing(v) || v in _IMAGE_CONTEXT_COMPRESSION || throw(ArgumentError(
+        "image_context_compression takes \"auto\", \"enabled\" or \"disabled\", the Responses API's " *
+        "image.context_compression policies (got $(repr(v)))"))
+    nothing
+end
+
+_image_options(v::AbstractString) = Dict{Symbol,Any}(:context_compression => v)
+
+# The policy a response or a compaction resolved, `image.context_compression` ("enabled" or "disabled"),
+# when it names one.
+function _resolved_image_compression(d::AbstractDict)::Union{String,Nothing}
+    image = get(d, "image", nothing)
+    v = image isa AbstractDict ? get(image, "context_compression", nothing) : nothing
+    v isa String ? v : nothing
 end
 
 # OpenAI's Responses API has no seed (its Chat Completions API has one), so no request on that
@@ -1022,6 +1113,7 @@ function JSON.lower(r::Respond)
         v = getfield(r, f)
         !isnothing(v) && (d[f] = v)
     end
+    isnothing(r.image_context_compression) || (d[:image] = _image_options(r.image_context_compression))
     return d
 end
 
@@ -1040,6 +1132,10 @@ Parsed response from the Responses API.
   model whose reply drops its tag keeps the requested name; the server's stays in `r.raw`)
 - `r.output` — full output array (raw dicts)
 - `r.usage` — token usage info
+- `r.image_context_compression` — the image context policy the response resolved, its
+  `image.context_compression` (`"enabled"` or `"disabled"`), read from an unstreamed reply and from a
+  stream's `response.completed`; `nothing` when the reply names none (Gemini Interactions and Ollama
+  never do)
 - `r.raw` — the complete raw JSON dict
 """
 @kwdef struct ResponseObject
@@ -1050,8 +1146,13 @@ Parsed response from the Responses API.
     usage::Union{Dict{String,Any},Nothing} = nothing
     error::Union{Dict{String,Any}, String, Nothing} = nothing
     metadata::Union{Dict{String,Any},Nothing} = nothing
+    image_context_compression::Union{String,Nothing} = nothing
     raw::Dict{String,Any}
 end
+# The positional form without the image policy, the struct's fields before it gained one, reads the policy
+# from `raw`, as the reply's decoder does.
+ResponseObject(id, status, model, output, usage, error, metadata, raw::AbstractDict) =
+    ResponseObject(id, status, model, output, usage, error, metadata, _resolved_image_compression(raw), raw)
 
 
 # ─── Result Types ─────────────────────────────────────────────────────────────
@@ -1357,6 +1458,55 @@ function _tool_usage(u::AbstractDict)::ToolUsage
 end
 
 
+# ─── Withheld reasoning inputs ───────────────────────────────────────────────
+
+"""
+    InputTransformation(type, id, action, reason)
+
+A reasoning input a Responses reply says it withheld from the model: an item of the response's
+`input_transformations`, "Reasoning inputs withheld from the model, in input order" (the
+Responses reference), as [`input_transformations`](@ref) reads it.
+
+- `type::String`: `"reasoning"`.
+- `id::String`: "The original reasoning item ID", the replayed reasoning item the model did not see.
+- `action::String`: `"removed"`.
+- `reason::Symbol`: why, the reply's string as a `Symbol`: `:organization_mismatch`,
+  `:end_user_mismatch`, `:model_mismatch` (a reasoning item another model produced),
+  `:prefix_mismatch` or `:turn_boundary`, the reasons the reference lists; another string the reply
+  sends is kept as its `Symbol`.
+"""
+struct InputTransformation
+    type::String
+    id::String
+    action::String
+    reason::Symbol
+end
+
+"""
+    input_transformations(r) -> Vector{InputTransformation}
+
+The reasoning inputs a Responses reply withheld from the model, in input order, read from its
+`input_transformations`, unstreamed or in a stream's `response.completed`: one
+[`InputTransformation`](@ref) for each replayed reasoning item the model did not see, such as one
+another model produced (`reason` `:model_mismatch`). Empty when the reply withheld none or carries
+no such list (another provider's reply), and for a [`ResponseFailure`](@ref) or
+[`ResponseCallError`](@ref). An item without its four strings (`type`, `id`, `action`, `reason`)
+throws: it is no transformation the reference describes.
+"""
+input_transformations(r::ResponseObject)::Vector{InputTransformation} =
+    InputTransformation[_input_transformation(x) for x in _as_iter(get(r.raw, "input_transformations", nothing))]
+input_transformations(r::ResponseSuccess) = input_transformations(r.response)
+input_transformations(::Union{ResponseFailure,ResponseCallError}) = InputTransformation[]
+
+function _input_transformation(x)::InputTransformation
+    str(k) = (v = x isa AbstractDict ? get(x, k, nothing) : nothing; v isa AbstractString ? String(v) : nothing)
+    type, id, action, reason = str("type"), str("id"), str("action"), str("reason")
+    any(isnothing, (type, id, action, reason)) && error(
+        "an item of the reply's input_transformations is not {type, id, action, reason} strings: ", JSON.json(x))
+    InputTransformation(type, id, action, Symbol(reason))
+end
+
+
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
 function parse_response(resp::HTTP.Response)::ResponseObject
@@ -1369,6 +1519,7 @@ function parse_response(resp::HTTP.Response)::ResponseObject
         usage=get(data, "usage", nothing),
         error=get(data, "error", nothing),
         metadata=get(data, "metadata", nothing),
+        image_context_compression=_resolved_image_compression(data),
         raw=data
     )
 end
@@ -1579,6 +1730,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                         usage=get(rdata, "usage", nothing),
                         error=get(rdata, "error", nothing),
                         metadata=get(rdata, "metadata", nothing),
+                        image_context_compression=_resolved_image_compression(rdata),
                         raw=rdata
                     ))
                     done[] = true
@@ -2313,6 +2465,10 @@ that can be passed as input to subsequent requests, reducing token usage in long
   which has no default model and needs one named: a call to it without one throws
   `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
+- `image_context_compression::Union{String,Nothing}`: `"auto"`, `"enabled"` or `"disabled"`, sent as
+  `image.context_compression`, as on a [`Respond`](@ref); another value, or any on an
+  [`OllamaEndpoint`](@ref), whose API has no such field, throws `ArgumentError` before any request.
+  The reply's `"image"` holds the policy the compaction resolved
 
 The compaction is the Responses API's `/v1/responses/compact`: on an endpoint that declares its
 capabilities without `:responses` (native Gemini, Anthropic, Azure, DeepSeek, TypeSafe, Google's
@@ -2341,17 +2497,21 @@ compacted = compact_response(model="gpt-5.6-sol", input=[
 """
 function compact_response(; model::Union{String,Nothing}=nothing,
     input::Any,
+    image_context_compression::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
 
     _check_responses_route(service, "compact_response", RESPONSES_PATH * "/compact")
+    _check_compaction_image(service, image_context_compression)
     model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
     url = _api_base_url(service) * RESPONSES_PATH * "/compact"
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
+        d = Dict{Symbol,Any}(:model => model, :input => input)
+        isnothing(image_context_compression) || (d[:image] = _image_options(image_context_compression))
+        body = JSON.json(d)
         resp = _lifecycle_request(service, "POST", url, cfg, t0; body, cancel)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -2367,6 +2527,14 @@ end
 
 # The model a compaction that names none is sent with: OpenAI's default.
 _compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
+
+# A compaction's image policy, checked as a Respond's is; Ollama's Responses API has no image options, so
+# an Ollama compaction refuses one, as its `respond` does.
+_check_compaction_image(_, v::Union{String,Nothing})::Nothing = _check_image_context_compression(v)
+_check_compaction_image(::OllamaEndpoint, ::Nothing)::Nothing = nothing
+_check_compaction_image(s::OllamaEndpoint, ::String)::Nothing = throw(ArgumentError(
+    "Ollama's /v1/responses/compact has no image options: $(_service_name(s)) takes no image_context_compression " *
+    "(OpenAI's image.context_compression); unset it"))
 
 # `compact_response` and `count_input_tokens` call a route of the Responses API. An endpoint that
 # declares its capabilities without `:responses` has none: it is refused by name before any request,

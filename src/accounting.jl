@@ -29,7 +29,8 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
-`gpt-6-astra-law` on 2026-11-02, Gemini's `gemini-4-carbon` and `gemini-4-hydrogen` on
+`gpt-6-astra-law` on 2026-11-02, `gpt-6-cyber` on 2026-11-16; Anthropic's `claude-fable-5-2` and
+`claude-mythos-5-2` on 2026-11-16; Gemini's `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-decision-1` on
 2026-11-16), TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
@@ -84,7 +85,8 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
     "gpt-6-rosalind"  => _price(15.0, 1.50, 75.0),  # life sciences, trusted access; the page of 2026-11-02
     "gpt-6-astra-law" => _price(10.0, 1.0,  50.0),  # promotional, at least through 2026-12-31; no later price yet
-    "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, at least through 2026-11-21
+    "gpt-6-cyber"     => _price(20.0, 2.0,  100.0), # Daybreak Red trusted access, Standard only; the page of 2026-11-16
+    "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, "available until November 30, 2026"; no later price yet
     "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
     "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),
     "gpt-5.5"       => _price(5.0,  0.50, 30.0),
@@ -102,11 +104,13 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-4.1-mini"  => _price(0.4,  0.10, 1.6),    # shuts down 2027-01-14
     "o3"            => _price(2.0,  0.50, 8.0),    # its snapshot o3-2025-04-16 shuts down 2026-12-11
     # Anthropic Claude (https://platform.claude.com/docs/en/about-claude/pricing.md,
-    # 2026-10-22). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
-    # and 0.05x on Opus 5.5 and Sonnet 5.5; Haiku 5.5's row is its rate for prompts up to
-    # 100,000 tokens. Cache writes, fast mode, US-only inference and Haiku 5.5's longer
+    # 2026-10-22; the Fable 5.2 and Mythos 5.2 rows 2026-11-16). Cache reads are 0.1x input,
+    # except 0.025x on Fable 5.2, Mythos 5.2, Fable 5.1 and Mythos 5.1 and 0.05x on Opus 5.5 and
+    # Sonnet 5.5; Haiku 5.5's row is its rate for prompts up to 100,000 tokens. Cache writes, fast mode, US-only inference and Haiku 5.5's longer
     # prompts are billed by the Anthropic `_billed_cost`. Dated snapshot ids (-YYYYMMDD)
     # resolve to these rows.
+    "claude-fable-5-2"  => _price(8.0,  0.20, 40.0),
+    "claude-mythos-5-2" => _price(8.0,  0.20, 40.0),
     "claude-fable-5-1"  => _price(10.0, 0.25, 50.0),
     "claude-mythos-5-1" => _price(10.0, 0.25, 50.0),
     "claude-fable-5"    => _price(10.0, 1.0,  50.0),
@@ -266,7 +270,9 @@ rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
-not model, and a price this function cannot compute is not a zero it can report.
+not model, and a price this function cannot compute is not a zero it can report. An
+`ImageSuccess` whose reply reports `svg_usage`, the tokens of an SVG's author, is estimated from
+its `usage` alone, with one warning per model that the author's tokens are left out.
 `pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix
@@ -291,8 +297,9 @@ A Responses result from `OPENAIServiceEndpoint` also bills what its hosted tools
 reply's [`tool_usage`](@ref) reports it ([pricing](https://developers.openai.com/api/docs/pricing)):
 each billable web search at USD 10 per 1,000 calls — USD 25 for the legacy `web_search_preview` tool on
 `gpt-4.1` and `gpt-4.1-mini`, the non-reasoning models UniLM prices — and the image generation
-tool's tokens at the Standard rates of its image model, the one the request's
-[`image_generation_tool`](@ref) names, else the tool's default, `gpt-image-2`; neither is scaled
+tool's tokens at the Standard rates of its image model, the one the reply's copy of the tool names — the
+request's [`image_generation_tool`](@ref) model, or the one the tool ran — else the tool's default,
+`gpt-image-2.6-sunburst`; neither is scaled
 by the billed tier, nor changed by `pricing`, whose rows price the model's own tokens. Image tokens of a model UniLM has no image rates for leave the estimate at
 `0.0`, with one warning per model. File search, containers and Gemini's grounding (its free daily
 quota makes a per-call price wrong) are not billed.
@@ -318,8 +325,17 @@ end
 
 # A reply that reported no usage leaves nothing to price, and a silent 0.0 would read as a free
 # call, so an embeddings reply without usage says so once per model (Gemini's OpenAI-compatible
-# endpoint returns embeddings without `usage`).
+# endpoint returns embeddings without `usage`). An SVG's author bills its own tokens, the reply's
+# `svg_usage`, at "the authoring model's rate" (OpenAI's image generation guide), which the pricing
+# page lists for no SVG: the estimate holds the image's usage alone, and says so once per model.
 _unreported_usage(::LLMRequestResponse, ::String)::Nothing = nothing
+function _unreported_usage(r::ImageSuccess, model::String)::Nothing
+    svg = r.response.svg_usage
+    isnothing(svg) || @warn "SVG authoring tokens (the reply's svg_usage) are not in the estimate: " *
+        "OpenAI bills them at the authoring model's rates" model author = get(svg, "model", nothing) _id = Symbol(
+        "unilm_svg_usage_", model) maxlog = 1
+    nothing
+end
 function _unreported_usage(r::EmbeddingSuccess, model::String)::Nothing
     isnothing(r.usage) && @warn "the embeddings reply reported no token usage; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unreported_usage_", model) maxlog = 1
@@ -362,8 +378,8 @@ end
 
 # ─── OpenAI hosted tools ─────────────────────────────────────────────────────
 # What OpenAI's hosted tools bill beyond the model's tokens, as a Responses reply reports them in its
-# `tool_usage` (https://developers.openai.com/api/docs/pricing, 2026-11-02, "Tools" and "Image generation
-# models"). Neither is scaled by the billed tier or a long prompt: the page gives a web search one price,
+# `tool_usage` (https://developers.openai.com/api/docs/pricing, 2026-11-02, the GPT-Image-2.6 rows 2026-11-16,
+# "Tools" and "Image generation models"). Neither is scaled by the billed tier or a long prompt: the page gives a web search one price,
 # and the image models Standard and Batch rates alone, of which a Responses call bills the Standard ones.
 
 # USD per billable web search: "$10.00 / 1k calls" for web search on every model and for the legacy web
@@ -376,21 +392,24 @@ const _OPENAI_NON_REASONING = Dict("gpt-4.1" => true, "gpt-4.1-mini" => true)
 
 # The image generation tool's rates, USD per token, of each image model the pricing page lists (Standard):
 # text and image input, cached text and image input, image output, and text output where the page gives
-# one ("-" elsewhere: those models write no text). The tool runs `gpt-image-2` unless the request names
-# another model ("Default: `gpt-image-2`", the image generation tool's reference).
+# one ("-" elsewhere: those models write no text). The tool runs `gpt-image-2.6-sunburst` unless the request
+# names another model ("Default: `gpt-image-2.6-sunburst`", the image generation tool's reference); the
+# reply repeats the tool with the model it ran, which prices it (`_image_tool_model`).
 const _OpenAIImageRates = @NamedTuple{text_input::Float64, text_cached::Float64, image_input::Float64,
                                       image_cached::Float64, image_output::Float64, text_output::Float64}
 _image_rates(text_input, text_cached, image_input, image_cached, image_output, text_output=0.0)::_OpenAIImageRates =
     (text_input=text_input / 1e6, text_cached=text_cached / 1e6, image_input=image_input / 1e6,
      image_cached=image_cached / 1e6, image_output=image_output / 1e6, text_output=text_output / 1e6)
 const _OPENAI_IMAGE_TOOL_RATES = Dict{String,_OpenAIImageRates}(
+    "gpt-image-2.6-sunburst" => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
+    "gpt-image-2.6-flare"    => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2.5-sunburst" => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2.5-flare"    => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2"            => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-1.5"          => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0),
     "gpt-image-1-mini"       => _image_rates(2.0, 0.20, 2.5, 0.25, 8.0),
     "chatgpt-image-latest"   => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0))
-const _OPENAI_IMAGE_TOOL_DEFAULT = "gpt-image-2"
+const _OPENAI_IMAGE_TOOL_DEFAULT = "gpt-image-2.6-sunburst"
 
 # What a result's hosted tools bill beyond its tokens: only an OpenAI Responses reply reports their usage.
 # Gemini's grounding is not billed here: its free daily quota makes a per-call price wrong. `nothing`: the

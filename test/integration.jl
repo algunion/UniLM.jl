@@ -612,4 +612,36 @@ end
     @test !isempty(result.message.content)
 end
 
+# ── Responses API: what a reply says about its inputs, and the GPT-Image-2.6 tool controls ──────────────
+
+@testset "Responses API — input_transformations: a reasoning item replayed on another model is withheld" begin
+    # On 2026-11-16 gpt-5.6-luna withheld gpt-6-luna's reasoning item: [{"action":"removed","id":"rs_…",
+    # "reason":"model_mismatch","type":"reasoning"}]. A first turn that makes no reasoning item has none to withhold.
+    q1 = InputMessage(role="user", content="How many primes are there below 200? Answer with the number only.")
+    ask(model, input) = respond(Respond(; model, input, reasoning=Reasoning(effort="medium"), store=false,
+                                        include=["reasoning.encrypted_content"], max_output_tokens=3000))
+    r1 = ask("gpt-6-luna", [q1])
+    @test r1 isa ResponseSuccess && input_transformations(r1) == InputTransformation[]
+    @test haskey(r1.response.raw, "input_transformations")          # the reply carries the list, empty
+    ids = [item["id"] for item in reasoning_items(r1)]
+    r2 = ask("gpt-5.6-luna", Any[q1, r1.response.output...,
+                                 InputMessage(role="user", content="And below 300? Answer with the number only.")])
+    @test r2 isa ResponseSuccess
+    withheld = input_transformations(r2)
+    @info "input_transformations live" ids withheld cost = estimated_cost(r1) + estimated_cost(r2)
+    @test [t.id for t in withheld] == ids
+    @test all(t -> (t.type, t.action, t.reason) == ("reasoning", "removed", :model_mismatch), withheld)
+end
+
+@testset "Responses API — image_context_compression is sent and the reply's resolved policy is read" begin
+    r = respond(Respond(model="gpt-6-luna", input="Reply with the single word: ok", reasoning=Reasoning(effort="none"),
+                        max_output_tokens=16, store=false, image_context_compression="disabled"))
+    @test r isa ResponseSuccess && r.response.image_context_compression == "disabled"
+    c = compact_response(model="gpt-6-luna", image_context_compression="disabled",
+                         input=[Dict("role" => "user", "content" => "Hello."),
+                                Dict("type" => "message", "role" => "assistant", "status" => "completed",
+                                     "content" => [Dict("type" => "output_text", "text" => "Hi.")])])
+    @test c isa AbstractDict && c["image"] == Dict("context_compression" => "disabled")
+end
+
 end  # if OPENAI_API_KEY

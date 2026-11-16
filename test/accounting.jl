@@ -535,6 +535,23 @@ end
     @test (@test_logs (:warn, r"no price row") cost("claude-haiku-4-5-2025100")) == 0.0   # seven digits are not a date suffix
 end
 
+@testset "Claude Fable 5.2 and Mythos 5.2: \$8 / \$0.20 / \$40, writes \$10 and \$16, fast \$16 / \$80, US 1.1×" begin
+    # https://platform.claude.com/docs/en/about-claude/pricing.md (2026-11-16): base input $8, 5m writes $10, 1h writes
+    # $16, cache hits $0.20 (0.025x), output $40; fast mode $16 / $80; no long-context tier.
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    cost(model, u) = estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=u))
+    usage(; tier=nothing, geo=nothing) = TokenUsage(1_000_000, 1_000_000, 2_000_000, 200_000, 0, 300_000, 100_000, tier, geo)
+    # 500K fresh, 200K reads, 200K 5-minute and 100K 1-hour writes, 1M out.
+    standard = 0.5 * 8 + 0.2 * 0.20 + 0.2 * 10 + 0.1 * 16 + 1.0 * 40
+    for model in ("claude-fable-5-2", "claude-mythos-5-2", "claude-fable-5-2-20261109")
+        @test get(DEFAULT_PRICING, replace(model, "-20261109" => ""), nothing) == UniLM._price(8.0, 0.20, 40.0)
+        @test isapprox(cost(model, usage()), standard; rtol=1e-12)
+        @test isapprox(cost(model, usage(tier="fast")), 2 * standard; rtol=1e-12)
+        @test isapprox(cost(model, usage(geo="us")), 1.1 * standard; rtol=1e-12)
+        @test isapprox(cost(model, TokenUsage(prompt_tokens=900_000, completion_tokens=0)), 0.9 * 8; rtol=1e-12)
+    end
+end
+
 @testset "Anthropic billed cost: cache writes by retention, fast mode, US inference, Haiku 5.5 long prompts" begin
     # https://platform.claude.com/docs/en/about-claude/pricing.md: cache writes bill the input rate
     # × 1.25 (5-minute) or × 2 (1-hour); fast mode bills every rate × 2 (Opus 5.5: $8/$40 for
@@ -1136,7 +1153,7 @@ end
     gen(model) = Any[Dict("type" => "image_generation", "model" => model)]
     tokens(image_out, text_out) = (300 * 5.0 + 100 * 1.25 + 400 * 8.0 + 200 * 2.0 + 4_800 * image_out + 200 * text_out) / 1e6
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=Any[Dict("type" => "image_generation")])),
-                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2, the default
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2.6-sunburst, the default
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-2.5-sunburst-2026-09-08"))),
                    without + tokens(30.0, 0.0); rtol=1e-12)                            # a dated snapshot
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-1.5"))),
@@ -1146,6 +1163,53 @@ end
     # Only OpenAI's Responses API reports them: a result built by hand, priced by its model's name, adds no fee.
     @test estimated_cost(result("gpt-6-luna", searches(2); service=nothing)) ==
           estimated_cost(result("gpt-6-luna", nothing; service=nothing))
+end
+
+@testset "the image generation tool defaults to gpt-image-2.6-sunburst; both 2.6 models have image rates" begin
+    # The image generation tool's reference: "Default: `gpt-image-2.6-sunburst`". OpenAI's pricing page (2026-11-16),
+    # Image generation models, Standard: "| gpt-image-2.6-sunburst | Image | $8.00 | $30.00 | $2.00 |", "| Text | $5.00
+    # | - | $1.25 |", the same for gpt-image-2.6-flare. On 2026-11-16 a reply repeated the tool with the model it ran,
+    # "model":"gpt-image-2.6-sunburst", for a request that named none: the reply's model prices the tool.
+    @test UniLM._OPENAI_IMAGE_TOOL_DEFAULT == "gpt-image-2.6-sunburst"
+    @test UniLM._image_tool_model(Any[Dict("type" => "image_generation")]) == "gpt-image-2.6-sunburst"
+    @test UniLM._image_tool_model(Any[Dict("type" => "image_generation", "model" => "gpt-image-2")]) == "gpt-image-2"
+    used = Dict("web_search" => Dict("num_requests" => 0),
+                "image_gen" => Dict("input_tokens" => 41, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 41),
+                                    "output_tokens" => 824, "output_tokens_details" => Dict("image_tokens" => 824, "text_tokens" => 0),
+                                    "total_tokens" => 865))
+    result(tools) = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model="gpt-6-luna", output=Any[],
+        usage=Dict{String,Any}("input_tokens" => 100, "output_tokens" => 10, "total_tokens" => 110),
+        raw=Dict{String,Any}("tools" => tools, "tool_usage" => used)), service=OPENAIServiceEndpoint)
+    luna = (100 * 0.10 + 10 * 0.50) / 1e6
+    for model in ("gpt-image-2.6-sunburst", "gpt-image-2.6-flare")
+        @test get(UniLM._OPENAI_IMAGE_TOOL_RATES, model, nothing) == UniLM._image_rates(5.0, 1.25, 8.0, 2.0, 30.0)
+        @test isapprox((@test_logs estimated_cost(result(Any[Dict("type" => "image_generation", "model" => model)]))),
+                       luna + (41 * 5.0 + 824 * 30.0) / 1e6; rtol=1e-12)
+    end
+end
+
+@testset "gpt-6-cyber has its price row" begin
+    # OpenAI's pricing page (2026-11-16), Cyber — Trusted Access: "| gpt-6-cyber (short context) | $20.00 | $100.00 |
+    # $2.00 | $25.00 | $50.00 |" (input, output, cached input, 30m and 12h writes).
+    @test get(DEFAULT_PRICING, "gpt-6-cyber", nothing) == UniLM._price(20.0, 2.0, 100.0)
+    u = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, completion_tokens=100, total_tokens=10_100)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-6-cyber", u))), (9_000 * 20.0 + 1_000 * 2.0 + 100 * 100.0) / 1e6;
+                   rtol=1e-12)
+    # Its cache writes: "Short-context cache writes cost $25 per 1M tokens for 30 minutes or $50 per 1M tokens for 12
+    # hours" (the model page); over 272K input tokens "$40 for input, $4 for cached input, and $150 for output", and
+    # the page's "-" for a long prompt's writes, which bill at the long-context input rate, never an inferred one.
+    @test UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, "gpt-6-cyber") isa UniLM._OpenAIPriceTerms
+    short = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, cache_write_tokens=4_000, cache_write_extended_tokens=1_000,
+                       completion_tokens=100, total_tokens=10_100)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-cyber", short)),
+                   (5_000 * 20.0 + 1_000 * 2.0 + 3_000 * 25.0 + 1_000 * 50.0 + 100 * 100.0) / 1e6; rtol=1e-12)
+    long = TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000, cache_write_extended_tokens=10_000,
+                      completion_tokens=1_000, total_tokens=301_000)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-cyber", long)),
+                   (150_000 * 40.0 + 100_000 * 4.0 + 50_000 * 40.0 + 1_000 * 150.0) / 1e6; rtol=1e-12)
+    # A model whose page prices a long prompt's writes keeps the write multiples there (GPT-6 Rosalind: $37.50, $75).
+    @test isapprox(estimated_cost(_oa_result("gpt-6-rosalind", long)),
+                   (150_000 * 30.0 + 100_000 * 3.0 + 40_000 * 37.50 + 10_000 * 75.0 + 1_000 * 112.50) / 1e6; rtol=1e-12)
 end
 
 @testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin

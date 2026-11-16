@@ -503,7 +503,8 @@ event.type, event.data["id"], event.type in WEBHOOK_EVENTS
 ```
 
 [`WEBHOOK_EVENTS`](@ref) lists the event types: responses, batches and fine-tuning jobs that end,
-incoming calls of the Realtime and Live APIs, and safety notices. It leaves out the `eval.run.*`
+incoming calls of the Realtime and Live APIs, a Live session that connects (`live.transport.connected`),
+and safety notices. It leaves out the `eval.run.*`
 events, which OpenAI sends until the Evals API shuts down on 30 November 2026, so a filter on it
 drops them. On a server, the payload is the request's body as it arrived, before any JSON parsing,
 here in an `HTTP.serve` handler, with `handle_batch` your own function:

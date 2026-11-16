@@ -37,7 +37,7 @@ UniLM.jl wraps these surfaces:
 
 1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, Gemini (native), Anthropic (native), DeepSeek, Ollama, Mistral, and any OpenAI-compatible provider.
 2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning controls (`Reasoning`), structured output. OpenAI Responses by default; the unified `respond` verb also targets Google's Gemini Interactions via `service=GEMINIServiceEndpoint` ([Agentic respond](@ref agentic_guide)).
-3. **Image Generation** (`ImageGeneration` + `generate_image`, `ImageEdit` + `edit_image`) — text-to-image and edits with OpenAI's `gpt-image-2.5-sunburst`, or Gemini's Nano Banana (`gemini-nano-banana-2.1`) with `service=GEMINIServiceEndpoint`.
+3. **Image Generation** (`ImageGeneration` + `generate_image`, `ImageEdit` + `edit_image`) — text-to-image and edits with OpenAI's `gpt-image-2.6-sunburst`, or Gemini's Nano Banana (`gemini-nano-banana-2.1`) with `service=GEMINIServiceEndpoint`.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter; the task prompts of EmbeddingGemma and `gemini-embedding-2` via `task`; images and audio (`EmbeddingInput`) through Ollama.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
 6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
@@ -605,6 +605,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing                    # Gemini Interactions (generation_config.seed) and generic endpoints
+    image_context_compression::Union{String,Nothing} = nothing  # "auto","enabled","disabled": image.context_compression (OpenAI and generic endpoints)
 end
 ```
 
@@ -615,8 +616,11 @@ Responses API has none, so `OPENAIServiceEndpoint`, the other OpenAI-wire endpoi
 request. On `GEMINIServiceEndpoint`, a `Respond`'s `service_tier` is `"standard"`, `"flex"` or
 `"priority"`, the tiers Google's Interactions API reference lists; `"deferred"` throws `ArgumentError`
 before any request, since the API answered it with HTTP 400 on 2026-10-26
-([Request options](@ref gemini_interactions_options)). The
-positional constructor takes all 32 fields in declaration order;
+([Request options](@ref gemini_interactions_options)). `image_context_compression` is sent as
+`image.context_compression` by `OPENAIServiceEndpoint` and a `GenericOpenAIEndpoint`; another value than
+the three throws `ArgumentError` when the `Respond` is built, and Gemini Interactions and `OllamaEndpoint`
+throw `ArgumentError` for it before any request. The
+positional constructor takes all 33 fields in declaration order;
 build a `Respond` with keywords, which name each field.
 
 !!! warning "Gemini Interactions rejects unmappable fields"
@@ -726,9 +730,10 @@ end
     tunnel_id::Union{String, Nothing} = nothing
 end
 
-# action, moderation, partial_images, and input_fidelity are validated at construction
-# (ArgumentError); quality, background, and output_format pass through unchecked
-# (the accepted quality values depend on the model).
+# action, moderation, partial_images, input_fidelity, complexity, frame_count, frame_duration_ms
+# and svg are validated at construction (ArgumentError; the frame fields only with output_format
+# "gif", svg only with "svg"); quality, background, and output_format pass through unchecked
+# (the accepted quality values depend on the model). Unset, the tool runs gpt-image-2.6-sunburst.
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
     output_format::Union{String, Nothing} = nothing
@@ -741,6 +746,10 @@ end
     partial_images::Union{Int, Nothing} = nothing           # 0–3
     input_fidelity::Union{String, Nothing} = nothing        # "high","low"
     input_image_mask::Union{AbstractDict, Nothing} = nothing  # "file_id" or "image_url"
+    complexity::Union{String, Nothing} = nothing            # "low","medium","high"; overrides the response's reasoning.effort for the image
+    frame_count::Union{Int, Nothing} = nothing              # 2–16, with output_format "gif"
+    frame_duration_ms::Union{Int, Nothing} = nothing        # ≥ 20 (the tool's reference: ≤ 2000), with output_format "gif"
+    svg::Union{SvgOptions, Nothing} = nothing               # the SVG author, with output_format "svg"
 end
 
 # The container OpenAI's tool requires: the auto container by default, a Dict sent as given,
@@ -909,6 +918,20 @@ function_calls(result::ResponseSuccess)::Vector{Dict{String,Any}}   # empty on a
 tool_usage(result::ResponseSuccess)::Union{ToolUsage,Nothing}   # OpenAI's hosted tools' usage (the reply's tool_usage),
                                                                 #   unstreamed or from response.completed; nothing when the
                                                                 #   reply has none, and on a failure result
+input_transformations(result::ResponseSuccess)::Vector{InputTransformation}   # the replayed reasoning items OpenAI withheld
+                                                                #   (the reply's input_transformations), in input order; empty
+                                                                #   when it withheld none or names none, and on a failure result;
+                                                                #   an item without its four strings throws
+```
+
+```julia
+struct InputTransformation                  # one reasoning input withheld from the model
+    type::String                            # "reasoning"
+    id::String                              # the replayed reasoning item's id
+    action::String                          # "removed"
+    reason::Symbol                          # the wire string as a Symbol: :organization_mismatch, :end_user_mismatch,
+                                            #   :model_mismatch, :prefix_mismatch, :turn_boundary; another kept as given
+end
 ```
 
 ```julia
@@ -930,8 +953,9 @@ get_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=n
 delete_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ResponseFailure | ResponseCallError
 list_input_items(id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
 cancel_response(id::String; service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> ResponseSuccess | ...
-compact_response(; model=nothing, input, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
-    # model nothing → "gpt-6-sol" (OpenAI's default), except on an OllamaEndpoint (no default model: ArgumentError before I/O)
+compact_response(; model=nothing, input, image_context_compression=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
+    # model nothing → "gpt-6-sol" (OpenAI's default), except on an OllamaEndpoint (no default model: ArgumentError before I/O);
+    # image_context_compression as on a Respond (sent as image.context_compression; ArgumentError on an OllamaEndpoint)
 count_input_tokens(; model="gpt-6-sol", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> Dict | ...
 ```
 
@@ -954,8 +978,10 @@ Google's OpenAI-compatible endpoint) they throw `ArgumentError` before any reque
     usage::Union{Dict{String,Any},Nothing} = nothing
     error::Union{Dict{String,Any}, String, Nothing} = nothing   # provider error object, or a plain message (Gemini Interactions: the first of its errors, all in raw)
     metadata::Union{Dict{String,Any},Nothing} = nothing
+    image_context_compression::Union{String,Nothing} = nothing  # the policy the reply resolved (image.context_compression), or nothing
     raw::Dict{String,Any}
 end
+# ResponseObject(id, status, model, output, usage, error, metadata, raw) reads image_context_compression from raw.
 
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject
@@ -1066,23 +1092,32 @@ println(tokens["input_tokens"])
     size::Union{String,Nothing} = nothing                   # OpenAI: "1024x1024","1536x1024","1024x1536","auto"; gpt-image-2+: any WIDTHxHEIGHT, multiples of 16, up to 3840x2160
     quality::Union{String,Nothing} = nothing                # OpenAI: "low","medium","high","auto"; gpt-image-2.5-flare/-sunburst add "xhigh","max"
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
-    output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg"
-    output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only)
+    output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg","gif","svg"
+    output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only; not with "svg" or "gif")
     safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 lowercase letters, numerals, _ or -, any script)
     moderation::Union{String,Nothing} = nothing             # OpenAI: "auto","low"
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini: "1:1","1:4","4:1","1:8","8:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
     resolution::Union{String,Nothing} = nothing             # Gemini: "512","1K","2K","4K"; gemini-nano-banana-2.1 renders 1K, 2K or 4K
+    complexity::Union{String,Nothing} = nothing             # OpenAI: "low","medium","high" (ArgumentError otherwise, at construction)
+    frame_count::Union{Int,Nothing} = nothing               # OpenAI: 2–16, with output_format "gif"
+    frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI: ≥ 20 (no largest), with output_format "gif"
+    svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: the SVG author, with output_format "svg" (and n 1, no output_compression)
+end
+
+@kwdef struct SvgOptions                                    # the Images API's and the image tool's `svg` object
+    model::Union{String,Nothing} = nothing                  # the author model; non-empty ("When model selection is enabled, supply svg.model")
+    effort::Union{String,Nothing} = nothing                 # sent as reasoning.effort: "none","minimal","low","medium","high","xhigh","max"
 end
 
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
-    mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
+    mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit; not with output_format "gif"
     markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
                                                             #   image to guide the edit; not with mask (ArgumentError); OpenAI
-                                                            #   states "Supports GPT Image 2.5" and judges the model (on
-                                                            #   2026-11-02 it answered HTTP 400 "Unknown parameter: 'markup'.")
+                                                            #   states "Supports GPT Image 2.5 and 2.6" and judges the model (on
+                                                            #   2026-11-16 it took one on gpt-image-2.6-flare)
     model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI
@@ -1093,6 +1128,11 @@ end
     safety_identifier::Union{String,Nothing} = nothing      # both, as on ImageGeneration (an OpenAI form field)
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini; unset, the edit keeps the input's ratio
     resolution::Union{String,Nothing} = nothing             # Gemini
+    complexity::Union{String,Nothing} = nothing             # OpenAI, as on ImageGeneration
+    frame_count::Union{Int,Nothing} = nothing               # OpenAI, as on ImageGeneration
+    frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI, as on ImageGeneration
+    svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: as on ImageGeneration, sent as svg[model] and svg[reasoning][effort]
+                                                            #   (n 1 with "svg"; a mask beside it is sent as given)
 end
 ```
 
@@ -1103,11 +1143,17 @@ OpenAI), `n` other than 1 on Gemini, a Gemini `aspect_ratio` or `resolution` out
 list, and a `safety_identifier` outside its provider's rule (empty or over 128 characters on
 OpenAI) throw `ArgumentError` naming the provider and the field — when the request is
 serialized, and in `generate_image` / `edit_image` before any request; other OpenAI values
-are sent as given, for OpenAI to judge.
+are sent as given, for OpenAI to judge. The GPT-Image-2.6 controls are checked: `complexity`,
+`frame_count` and `frame_duration_ms` values at construction, the frame fields only with
+`output_format="gif"`, `svg` only with `output_format="svg"`, SVG output only with `n` 1 and no
+`output_compression`, and GIF output with no `output_compression` (a generation) or `mask` (an edit)
+(`ArgumentError` when serialized and before any request). A reply's `svg_usage`
+(the SVG author's tokens) is not priced: `estimated_cost(result; model=…)` of an image result that
+carries one bills its `usage` alone and warns once per model that it leaves those tokens out.
 
 Unlike `Chat` and `Respond`, `ImageGeneration` does **not** resolve its model at
 construction: the field stays `""` and resolves at serialization time, to
-`"gpt-image-2.5-sunburst"` for OpenAI or `"gemini-nano-banana-2.1"` for Gemini. So
+`"gpt-image-2.6-sunburst"` for OpenAI or `"gemini-nano-banana-2.1"` for Gemini. So
 `ImageGeneration(prompt="…").model` reads back as the empty string — pass `model=`
 explicitly if you need to read it, or inspect `JSON.json(ig)` to see what will go on the
 wire (Gemini names the model in the URL instead). A service with no default image model
@@ -1139,6 +1185,7 @@ end
     created::Int64
     data::Vector{ImageObject}
     usage::Union{Dict{String,Any},Nothing} = nothing
+    svg_usage::Union{Dict{String,Any},Nothing} = nothing   # OpenAI SVG output: the author's tokens (input/output/reasoning/total, model)
     raw::Dict{String,Any}
 end
 ```
@@ -1358,7 +1405,8 @@ UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's 
 included. Of hosted-tool fees, OpenAI's are billed from the `tool_usage` a Responses result reports
 (`tool_usage`): each billable web search at \$10 per 1,000 calls (\$25 for `web_search_preview` on
 `gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates of its image
-model (the request's `image_generation_tool` model, else `gpt-image-2`; a model UniLM has no image rates
+model (the model the reply's copy of the tool names — the request's `image_generation_tool` model, or the one
+the tool ran — else `gpt-image-2.6-sunburst`; a model UniLM has no image rates
 for leaves the estimate at `0.0`, with one warning per model), neither scaled by the billed tier; file
 search, containers and Gemini's grounding (its free daily quota makes a per-call price wrong) are not
 included. A billed tier the provider's pricing page lists no price for
@@ -3127,9 +3175,9 @@ Every exported symbol (405), grouped by area:
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
 - *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`
 - *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
-- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`
+- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`, `input_transformations`, `InputTransformation`
 
-**Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
+**Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `SvgOptions`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
 
 **Embeddings**: `Embeddings`, `EmbeddingInput`, `embeddingrequest!`, `embedding_vectors`, `EmbeddingSuccess`, `EmbeddingFailure`, `EmbeddingCallError`
 

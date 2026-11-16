@@ -241,4 +241,24 @@ end
     end
 end
 
+@testset "Anthropic Chat — claude-fable-5-2 at effort low is priced at its row; a forced tool choice is refused locally" begin
+    # Claude Fable 5.2: $8 input, $0.20 cache hit, $40 output per 1M tokens (2026-11-16), adaptive thinking always on;
+    # forced tool use is an HTTP 400 ("tool_choice: type \"tool\" and \"any\" are not supported for this model.",
+    # 2026-11-16), which UniLM refuses before the request.
+    chat = Chat(service=ANTHROPICServiceEndpoint(inference_geo="global"), model="claude-fable-5-2", max_tokens=128,
+                reasoning_effort="low", messages=[Message(Val(:user), "Reply with the single word: ok")])
+    r = chatrequest!(chat)
+    @test r isa LLMSuccess
+    r isa LLMSuccess && @info "billed" r.model r.usage.prompt_tokens r.usage.completion_tokens cost = estimated_cost(r)
+    @test startswith(something(r.model, ""), "claude-fable-5-2")
+    u = r.usage
+    @test u.prompt_tokens > 0 && u.completion_tokens > 0 && u.inference_geo == "global"
+    @test (u.cached_tokens, u.cache_write_tokens) == (0, 0)
+    @test isapprox(estimated_cost(r), (u.prompt_tokens * 8.0 + u.completion_tokens * 40.0) / 1e6; rtol=1e-12)
+    tool = Tool(func=FunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict())))
+    forced = Chat(service=ANTHROPICServiceEndpoint, model="claude-fable-5-2", tools=[tool], tool_choice="required",
+                  messages=[Message(Val(:user), "Call f.")])
+    @test_throws ArgumentError chatrequest!(forced)
+end
+
 end  # if ANTHROPIC_API_KEY

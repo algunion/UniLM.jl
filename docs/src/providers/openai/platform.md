@@ -607,7 +607,10 @@ incoming calls of the Realtime and Live APIs, a Live session that connects (`liv
 safety notices, whose records [Safety and provenance](@ref openai_safety) reads, and the sessions
 of OpenAI's Agents API and their environments (`agent.session.*`, `agent.environment.*`). It leaves
 out the `eval.run.*`
-events, which OpenAI sends until the Evals API shuts down on 30 November 2026, so a filter on it
+events, which OpenAI sends until the Evals API shuts down on 30 November 2026, and `video.completed`
+and `video.failed`, the events of the Videos API, which shut down on 24 September 2026
+([deprecations](https://developers.openai.com/api/docs/deprecations)) though
+[`list_webhook_event_types`](@ref) still returned them on 16 November 2026, so a filter on it
 drops them. On a server, the payload is the request's body as it arrived, before any JSON parsing,
 here in an `HTTP.serve` handler, with `handle_batch` your own function:
 

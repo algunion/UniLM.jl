@@ -17,8 +17,10 @@ API specification lists).
 `live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
 existing subscriptions. The reference also lists `eval.run.succeeded`, `eval.run.failed` and
 `eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026
-([deprecations](https://developers.openai.com/api/docs/deprecations)): they are left out, so a
-filter on this list drops them.
+([deprecations](https://developers.openai.com/api/docs/deprecations)), and OpenAI's list of event
+types ([`list_webhook_event_types`](@ref), November 16, 2026) still names `video.completed` and
+`video.failed`, the events of its Videos API, which shut down on September 24, 2026: they are all
+left out, so a filter on this list drops them.
 """
 const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",

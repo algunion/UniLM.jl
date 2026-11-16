@@ -53,7 +53,7 @@ WebhookEndpointCallError
 # Verify an inbound webhook, then parse it into a typed event
 if verify_webhook(payload, headers, ENV["OPENAI_WEBHOOK_SECRET"])
     event = parse_webhook(payload)
-    event.type in WEBHOOK_EVENTS && println("Event: ", event.type, " (", event.id, ")")
+    event.type in WEBHOOK_EVENTS && println("Event: ", event.type, " (", event.id, ")")   # no eval.run.* or video.*
 end
 
 # Make an endpoint, keep its signing secret, send it a sample event, then delete it
@@ -66,5 +66,8 @@ delete_webhook_endpoint(made.response.id)
 ```
 
 `WEBHOOK_EVENTS` leaves out the `eval.run.*` events, which OpenAI sends until its Evals API
-shuts down on November 30, 2026: the filter above drops them, so match `event.type` yourself if
-you still run evals.
+shuts down on November 30, 2026, and `video.completed` and `video.failed`, the events of its Videos
+API, which shut down on September 24, 2026
+([deprecations](https://developers.openai.com/api/docs/deprecations)), though
+[`list_webhook_event_types`](@ref) still returned them on November 16, 2026: the filter above
+drops them, so match `event.type` yourself if you still run evals or receive video events.

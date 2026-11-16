@@ -143,6 +143,10 @@ end
     @test occursin("also lists `eval.run.succeeded`, `eval.run.failed` and", doc) &&
           occursin("`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026", doc)
     @test occursin("agent sessions", doc) && occursin("environments", doc)
+    # The Videos API shut down on 2026-09-24, yet OpenAI's event-type list still names its two events: left out, and said.
+    @test !any(e -> startswith(e, "video."), WEBHOOK_EVENTS)
+    @test occursin("still names `video.completed` and", doc) &&
+          occursin("`video.failed`, the events of its Videos API, which shut down on September 24, 2026", doc)
 end
 
 @testset "parse_webhook reads each event family's envelope" begin

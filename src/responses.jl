@@ -306,9 +306,10 @@ The author of an SVG that an OpenAI image model draws: the `svg` object of an
 `output_format="svg"` only. OpenAI "creates a reference image and uses it to produce the SVG"
 ([image generation](https://developers.openai.com/api/docs/guides/image-generation#generate-svg-output)).
 
-- `model`: the model that authors the SVG, sent as `svg.model`; "When model selection is enabled,
-  supply svg.model. When model selection is disabled, omit this object". An empty name throws
-  `ArgumentError`.
+- `model`: the model that authors the SVG, sent as `svg.model`; required, and not empty (`ArgumentError`
+  otherwise): "When model selection is enabled, supply svg.model. When model selection is disabled,
+  omit this object", and on 2026-11-16 the API answered an SVG without one with HTTP 400, "SVG
+  generation requires 'svg.model'.". Where model selection is disabled, set no `svg` at all.
 - `effort`: the author's reasoning effort, sent as `svg.reasoning.effort`: `"none"`, `"minimal"`,
   `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, of which "Supported efforts depend on the
   selected author model"; another value throws `ArgumentError`. Unset, "uses the author model's default".
@@ -316,22 +317,26 @@ The author of an SVG that an OpenAI image model draws: the `svg` object of an
 The reply reports the author's tokens apart from the image's, as `svg_usage`
 ([`ImageResponse`](@ref)).
 """
-@kwdef struct SvgOptions
-    model::Union{String,Nothing} = nothing
-    effort::Union{String,Nothing} = nothing
-    function SvgOptions(model, effort)
-        isnothing(model) || !isempty(model) || throw(ArgumentError(
-            "SvgOptions model names the SVG author and cannot be empty; unset it to use the default author"))
+struct SvgOptions
+    model::String
+    effort::Union{String,Nothing}
+    function SvgOptions(model::AbstractString, effort::Union{AbstractString,Nothing}=nothing)
+        isempty(model) && throw(ArgumentError("SvgOptions model names the SVG author and cannot be empty"))
         isnothing(effort) || effort in _SVG_EFFORTS || throw(ArgumentError(
             "SvgOptions effort must be one of $(join(repr.(_SVG_EFFORTS), ", ")) (got $(repr(effort)))"))
         new(model, effort)
     end
 end
+# An SVG without its author is no request OpenAI takes: "When model selection is enabled, supply svg.model.
+# When model selection is disabled, omit this object".
+SvgOptions(; model::Union{AbstractString,Nothing}=nothing, effort::Union{AbstractString,Nothing}=nothing) =
+    isnothing(model) ? throw(ArgumentError("SvgOptions needs its model, the SVG author: the API answers an SVG " *
+        "without one with HTTP 400 (\"SVG generation requires 'svg.model'.\") where model selection is enabled; " *
+        "where it is disabled, omit the object: set no svg")) : SvgOptions(model, effort)
 const _SVG_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 function JSON.lower(s::SvgOptions)
-    d = Dict{Symbol,Any}()
-    isnothing(s.model) || (d[:model] = s.model)
+    d = Dict{Symbol,Any}(:model => s.model)
     isnothing(s.effort) || (d[:reasoning] = Dict{Symbol,Any}(:effort => s.effort))
     d
 end

@@ -1005,16 +1005,25 @@ end
     # The Images reference: `svg: optional object { model, reasoning }`, model `minLength: 1`, reasoning.effort one of
     # none, minimal, low, medium, high, xhigh, max; "Requires output_format=svg"; "SVG generation requires n=1 and
     # does not support streaming, partial images, prompt_rewriter, or output_compression".
-    @test _image_json(SvgOptions()) == Dict{String,Any}()
+    @test _image_json(SvgOptions(model="gpt-6-luna")) == Dict{String,Any}("model" => "gpt-6-luna")
     @test _image_json(SvgOptions(model="gpt-6-luna", effort="low")) ==
           Dict{String,Any}("model" => "gpt-6-luna", "reasoning" => Dict{String,Any}("effort" => "low"))
     for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-        @test _image_json(SvgOptions(; effort)) == Dict{String,Any}("reasoning" => Dict{String,Any}("effort" => effort))
+        @test _image_json(SvgOptions(; model="m", effort)) ==
+              Dict{String,Any}("model" => "m", "reasoning" => Dict{String,Any}("effort" => effort))
     end
-    for (kw, word) in ((; effort="auto") => "effort", (; effort="") => "effort", (; model="") => "model")
+    for (kw, word) in ((; model="m", effort="auto") => "effort", (; model="m", effort="") => "effort", (; model="") => "model")
         err = _refusal(() -> SvgOptions(; kw...))
         @test err isa ArgumentError && occursin("SvgOptions", err.msg) && occursin(word, err.msg)
     end
+    # Without an author the object is no request OpenAI takes: "When model selection is enabled, supply svg.model.
+    # When model selection is disabled, omit this object", and on 2026-11-16 an SVG without svg.model was HTTP 400,
+    # "SVG generation requires 'svg.model'.". So SvgOptions needs its model, and the fix is in the message.
+    for kw in ((;), (; effort="low"))
+        err = _refusal(() -> SvgOptions(; kw...))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("SvgOptions", "model", "requires 'svg.model'", "omit"))
+    end
+    @test fieldtype(SvgOptions, :model) === String
     body = _image_json(ImageGeneration(prompt="p", output_format="svg", n=1, svg=SvgOptions(model="gpt-6-luna")))
     @test body["output_format"] == "svg" && body["svg"] == Dict{String,Any}("model" => "gpt-6-luna") && body["n"] == 1
     @test !haskey(_image_json(ImageGeneration(prompt="p", output_format="svg")), "svg")    # no SVG model selection

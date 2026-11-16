@@ -98,6 +98,16 @@ _parse_vs_file(d::AbstractDict) = VectorStoreFileObject(id=d["id"], status=d["st
 # last page.
 _vs_page(d::AbstractDict) = (d["data"]::AbstractVector, d["has_more"]::Bool)
 
+# A deletion record (`T` the family's delete result; containers.jl shares it): OpenAI's reference
+# requires its `id` — never the one requested put in its place — and its `object`, which names
+# what was deleted (`"vector_store.deleted"`, `"container.file.deleted"`, …); `_confirm_deleted`
+# reads its `deleted`. The throws become the verb's *CallError.
+function _vs_deletion(::Type{T}, d::AbstractDict, object::String) where {T<:LLMRequestResponse}
+    d["object"] == object || throw(ArgumentError(
+        "the delete reply is a $(repr(d["object"])) record, not the $(repr(object)) this delete answers with"))
+    T(id=d["id"], deleted=_confirm_deleted(d))
+end
+
 # Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
 # rethrows for the caller's catch). status_exception=false is imposed by _http.
 function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
@@ -211,8 +221,7 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
     try
         resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
-            d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
+            _vs_deletion(VectorStoreDeleteSuccess, JSON.parse(resp.body; dicttype=Dict{String,Any}), "vector_store.deleted")
         else
             _failure(VectorStoreFailure, resp)
         end

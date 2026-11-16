@@ -51,13 +51,6 @@ end
     @test r.last_observed isa UniLM.VectorStoreFileBatch && r.last_observed.status == "in_progress"
 end
 
-@testset "delete_vector_store reports success only when the service confirms the delete" begin
-    del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
-    @test del("""{"id": "vs_1", "deleted": true}""") == UniLM.VectorStoreDeleteSuccess(id="vs_1", deleted=true)
-    @test del("""{"id": "vs_1"}""") isa UniLM.VectorStoreCallError
-    @test del("""{"id": "vs_1", "deleted": false}""") isa UniLM.VectorStoreCallError
-end
-
 @testset "Vector Stores API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_vector_store("vs_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_vs"])
@@ -108,4 +101,22 @@ end
         poll_file_batch("vs_1", "vsfb_1"; interval=0.05, timeout=5.0, service=URLProbe)
     end
     @test r isa VectorStoreCallError && !(r.cause isa UniLMTimeout) && length(seen) == 1
+end
+
+@testset "delete_vector_store reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "vs_1", "object": "vector_store.deleted", "deleted": true}""") ==
+          UniLM.VectorStoreDeleteSuccess(id="vs_1", deleted=true)
+    @test del("""{"id": "vs_1", "object": "vector_store.deleted"}""") isa UniLM.VectorStoreCallError
+    @test del("""{"id": "vs_1", "object": "vector_store.deleted", "deleted": false}""") isa UniLM.VectorStoreCallError
+end
+
+@testset "delete_vector_store: the record's id and object are required, never filled in" begin
+    del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
+    # No id: the requested one is not put in its place.
+    @test del("""{"object": "vector_store.deleted", "deleted": true}""") isa VectorStoreCallError
+    # The record names what it deleted: no name, or another kind's, does not confirm this delete.
+    @test del("""{"id": "vs_1", "deleted": true}""") isa VectorStoreCallError
+    @test del("""{"id": "vs_1", "object": "vector_store.file.deleted", "deleted": true}""") isa VectorStoreCallError
+    @test del("""{"id": "vs_2", "object": "vector_store.deleted", "deleted": true}""").id == "vs_2"
 end

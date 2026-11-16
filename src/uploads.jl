@@ -69,7 +69,7 @@ function create_upload(; filename::String, purpose::String, bytes::Int, mime_typ
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     _check_file_purpose(purpose)
-    _check_file_expiry("create_upload", expires_after)
+    _check_file_expiry("create_upload", _OpenAIFiles(), expires_after)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)

@@ -340,3 +340,196 @@ end
     e = try list_files(; order="sideways", service=SeamProbe); nothing catch x; x end
     @test e isa ArgumentError && e.msg == "list_files: order is \"asc\" or \"desc\" (got \"sideways\")"
 end
+
+# ── Anthropic's Files API ────────────────────────────────────────────────────
+# Its replies here are those Anthropic sent on 2026-11-16 for a 5-byte text file.
+const _ANTHROPIC_FILE = """{"type":"file","id":"file_01YLNcm6NoeziqXvw8FX4zaY","size_bytes":5,""" *
+    """"created_at":"2026-11-16T20:10:09.427661Z","expires_at":"2026-11-16T21:10:09.427661Z","filename":"w.txt",""" *
+    """"mime_type":"text/plain","downloadable":false}"""
+
+# Refuted if: an Anthropic endpoint, the type or an instance, refuses the Files verbs, or sends them
+# anywhere but api.anthropic.com/v1/files.
+@testset "Anthropic: the Files verbs are served, at api.anthropic.com/v1/files" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for s in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint())
+                @test has_capability(s, :files)
+                @test _seam_timeout(upload_file(path; service=s, config=_TINY_DEADLINE), FileCallError)
+                @test _seam_timeout(list_files(; service=s, config=_TINY_DEADLINE), FileCallError)
+                @test _seam_timeout(retrieve_file("file_1"; service=s, config=_TINY_DEADLINE), FileCallError)
+                @test _seam_timeout(delete_file("file_1"; service=s, config=_TINY_DEADLINE), FileCallError)
+                @test _seam_timeout(file_content("file_1"; service=s, config=_TINY_DEADLINE), FileCallError)
+            end
+        end
+        @test UniLM._files_url(ANTHROPICServiceEndpoint) == UniLM._files_url(ANTHROPICServiceEndpoint()) ==
+              "https://api.anthropic.com/v1/files"
+    finally
+        rm(path; force=true)
+    end
+end
+
+# An endpoint that speaks Files wire `W`, served by `_with_scripted`.
+struct FilesProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._files_wire(::Type{FilesProbe{W}}) where {W} = W()
+UniLM._files_url(::Type{<:FilesProbe}) = _url_probe_base[] * "/v1/files"
+UniLM.auth_header(::Type{<:FilesProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:FilesProbe}) = Set([:files])
+const _AF = FilesProbe{UniLM._AnthropicFiles}
+
+# Anthropic's upload: a form with the file and `expires_in_seconds` (3600 to 7776000), no purpose; its
+# FileMetadata: `size_bytes`, an RFC 3339 `created_at`, no purpose or status.
+# Refuted if: a purpose is sent or accepted, the expiry goes under another name or outside its range, or
+# a field is read from the wrong key, to the wrong type or a shifted time.
+@testset "Anthropic upload_file: the file and expires_in_seconds, and the FileMetadata it answers" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    try
+        r, seen = _with_scripted(() -> upload_file(path; service=_AF, expires_after=3600), (_, _) -> _json(200, _ANTHROPIC_FILE))
+        req = only(seen)
+        @test (req.method, req.target) == ("POST", "/v1/files")
+        @test occursin("name=\"expires_in_seconds\"\r\n\r\n3600\r\n", req.body)
+        @test occursin("name=\"file\"; filename=\"$(basename(path))\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n", req.body)
+        @test !occursin("purpose", req.body) && !occursin("expires_after", req.body)
+        f = r.response
+        @test r isa FileSuccess
+        @test (f.id, f.bytes, f.filename, f.purpose, f.status) == ("file_01YLNcm6NoeziqXvw8FX4zaY", 5, "w.txt", nothing, nothing)
+        @test f.created_at == 1794859809   # 2026-11-16T20:10:09Z
+        @test (f.raw["mime_type"], f.raw["downloadable"], f.raw["expires_at"]) ==
+              ("text/plain", false, "2026-11-16T21:10:09.427661Z")
+        _, seen = _with_scripted(() -> upload_file(FileUpload(service=_AF, file=path)), (_, _) -> _json(200, _ANTHROPIC_FILE))
+        @test !occursin("expires_in_seconds", only(seen).body)
+        # Refused before any request.
+        e = try upload_file(path, "user_data"; service=_AF); nothing catch x; x end
+        @test e isa ArgumentError && e.msg ==
+              "upload_file: Anthropic's Files API takes no purpose (got \"user_data\"); call upload_file(path; service)"
+        for s in (3599, 7776001)
+            e = try upload_file(path; service=_AF, expires_after=s); nothing catch x; x end
+            @test e isa ArgumentError &&
+                  e.msg == "upload_file: Anthropic's Files API takes expires_after from 3600 to 7776000 seconds (got $s)"
+        end
+        @test FileUpload(service=_AF, file=path, expires_after=7776000).expires_after == 7776000
+        # OpenAI's wire still requires a purpose.
+        e = try upload_file(path; service=SeamProbe); nothing catch x; x end
+        @test e isa ArgumentError && e.msg ==
+              "upload_file: OpenAI's Files API requires a purpose: \"assistants\", \"batch\", \"fine-tune\", \"vision\" or \"user_data\""
+    finally
+        rm(path; force=true)
+    end
+end
+
+# A FileMetadata without a field Anthropic's reference requires, or with one of another type or an
+# `created_at` that is no RFC 3339 time, is no file.
+# Refuted if: such a reply decodes as a FileSuccess.
+@testset "Anthropic: a FileMetadata without id, size_bytes, created_at or filename is a FileCallError" begin
+    full = JSON.parse(_ANTHROPIC_FILE)
+    get1(body) = _answered(() -> retrieve_file("file_1"; service=_AF), 200; body)
+    @test get1(JSON.json(full)) isa FileSuccess
+    for key in ("id", "size_bytes", "created_at", "filename")
+        r = get1(JSON.json(delete!(copy(full), key)))
+        @test r isa FileCallError && occursin(key, r.error)
+    end
+    @test get1(JSON.json(merge(full, Dict("size_bytes" => "5")))) isa FileCallError
+    r = get1(JSON.json(merge(full, Dict("created_at" => "yesterday"))))
+    @test r isa FileCallError && occursin("RFC 3339", r.error)
+end
+
+# Anthropic's list: `limit` and the `page` cursor; `data` and `next_page`, null on the last page.
+# Refuted if: `after` goes as anything but `page`, OpenAI's purpose or order are sent, a page without
+# `data` decodes, or has_more does not follow `next_page`.
+@testset "Anthropic list_files: limit and page, data and next_page" begin
+    page(next) = """{"data":[$_ANTHROPIC_FILE],"next_page":$(next)}"""
+    r, seen = _with_scripted(() -> list_files(; limit=2, after=_HOSTILE_ID, service=_AF), (_, _) -> _json(200, page("\"page_2\"")))
+    @test only(seen).target == "/v1/files?limit=2&page=$_HOSTILE_ENC"
+    @test r isa FileListSuccess && r.response.has_more && r.response.raw["next_page"] == "page_2"
+    @test only(r.response.data).id == "file_01YLNcm6NoeziqXvw8FX4zaY"
+    last = _answered(() -> list_files(; service=_AF), 200; body=page("null"))
+    @test last isa FileListSuccess && !last.response.has_more
+    @test _answered(() -> list_files(; service=_AF), 200; body="""{"next_page":null}""") isa FileCallError
+    @test _answered(() -> list_files(; service=_AF), 200; body="""{"data":[{"id":"f"}],"next_page":null}""") isa FileCallError
+    for (kw, name) in ((; purpose="batch") => "purpose", (; order="asc") => "order")
+        e = try list_files(; service=_AF, kw...); nothing catch x; x end
+        @test e isa ArgumentError && e.msg ==
+              "list_files: Anthropic's Files API takes no $name, which only OpenAI's takes; unset $name"
+    end
+    e = try list_files(; service=_AF, purpose="batch", order="asc"); nothing catch x; x end
+    @test e isa ArgumentError && occursin("takes no purpose or order", e.msg)
+end
+
+# Anthropic's retrieve_metadata, download and delete: GET /v1/files/{id}, GET …/content, DELETE; the
+# DeletedFile names the id, and a `type` "file_deleted" when present.
+# Refuted if: an id leaves its path segment, a download of a file Anthropic does not serve is anything
+# but its HTTP 400, or a delete reply without the id, or with another type, reports a delete.
+@testset "Anthropic retrieve_file, file_content and delete_file" begin
+    t = _recorded_targets() do
+        retrieve_file(_HOSTILE_ID; service=_AF)
+        file_content(_HOSTILE_ID; service=_AF)
+        delete_file(_HOSTILE_ID; service=_AF)
+    end
+    @test t == ["/v1/files/$_HOSTILE_ENC", "/v1/files/$_HOSTILE_ENC/content", "/v1/files/$_HOSTILE_ENC"]
+    got = first(_with_scripted(() -> file_content("file_1"; service=_AF),
+                               (_, _) -> HTTP.Response(200, ["Content-Type" => "application/octet-stream"], UInt8[0x00, 0xff])))
+    @test got isa FileContentSuccess && got.content == UInt8[0x00, 0xff]
+    # The reply Anthropic sent on 2026-11-16 for the bytes of an uploaded file.
+    refused = """{"type":"error","error":{"type":"invalid_request_error","message":"File `file_1` is not downloadable. """ *
+        """Only files generated by a tool (for example, the code execution tool) can be downloaded.",""" *
+        """"details":{"error_code":"file_not_downloadable"}},"request_id":"req_011Ch7DNiTgCSxzi4zaGWbJk"}"""
+    r = _answered(() -> file_content("file_1"; service=_AF), 400; body=refused, headers=["request-id" => "req_011Ch7DNiTgCSxzi4zaGWbJk"])
+    @test r isa FileFailure && r.status == 400 && r.request_id == "req_011Ch7DNiTgCSxzi4zaGWbJk"
+    @test occursin("file_not_downloadable", r.response)
+    del(body) = _answered(() -> delete_file("file_1"; service=_AF), 200; body)
+    @test del("""{"id":"file_01YLNcm6NoeziqXvw8FX4zaY","type":"file_deleted"}""") ==
+          FileDeleteSuccess(id="file_01YLNcm6NoeziqXvw8FX4zaY", deleted=true, object="file_deleted")
+    @test del("""{"id":"file_1"}""") == FileDeleteSuccess(id="file_1", deleted=true, object=nothing)
+    r = del("""{"type":"file_deleted"}""")
+    @test r isa FileCallError && occursin("\"id\"", r.error)
+    @test del("""{"id":"file_1","type":"file"}""") isa FileCallError
+end
+
+# An Anthropic endpoint whose Files requests `_with_scripted` serves, with the headers that endpoint sends.
+struct _AnthropicFilesAt <: UniLM.ServiceEndpoint
+    endpoint::UniLM._AnthropicEndpoint
+end
+UniLM._files_wire(::_AnthropicFilesAt) = UniLM._AnthropicFiles()
+UniLM._files_url(::_AnthropicFilesAt) = _url_probe_base[] * "/v1/files"
+UniLM._files_headers(s::_AnthropicFilesAt) = UniLM._files_headers(s.endpoint)
+UniLM._files_upload_headers(s::_AnthropicFilesAt) = UniLM._files_upload_headers(s.endpoint)
+UniLM.provider_capabilities(::_AnthropicFilesAt) = Set([:files])
+
+# https://platform.claude.com/docs/en/api/files/upload (Headers) names `anthropic-version` and
+# `anthropic-workspace-id`, and no `anthropic-beta` or user-profile header; the SDK (v2.9.0) sends no
+# beta for files.
+# Refuted if: an Anthropic Files request sends the endpoint's betas or its user profile, or leaves out
+# its key, its API version or its workspace — from the type or from an instance.
+@testset "an Anthropic Files request sends the key, the version and the workspace, never the user profile or the betas" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            base = ["Authorization" => "Bearer sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
+            every = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"], user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
+                                             workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy")
+            for (service, want) in ((ANTHROPICServiceEndpoint, base), (ANTHROPICServiceEndpoint(), base),
+                                    (every, [base; "anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]))
+                @test (@inferred UniLM._files_headers(service)) == want
+                @test UniLM._files_upload_headers(service) == want
+                # On the wire, beside the headers HTTP.jl adds: exactly these authorization and anthropic-
+                # headers, and a Content-Type only on the upload, the form's own.
+                sent = Dict{String,String}[]
+                _with_scripted((_, req) -> (push!(sent, Dict(lowercase(String(k)) => String(v) for (k, v) in req.headers));
+                                            _json(200, _ANTHROPIC_FILE))) do
+                    upload_file(path; service=_AnthropicFilesAt(service))
+                    retrieve_file("file_1"; service=_AnthropicFilesAt(service))
+                end
+                for (i, h) in enumerate(sent)
+                    @test Dict(k => v for (k, v) in h if k == "authorization" || startswith(k, "anthropic-")) ==
+                          Dict(lowercase(k) => v for (k, v) in want)
+                    @test i == 1 ? startswith(h["content-type"], "multipart/form-data; boundary=") : !haskey(h, "content-type")
+                end
+            end
+        end
+    finally
+        rm(path; force=true)
+    end
+end

@@ -2,8 +2,10 @@
 
 Create, retrieve, cancel, list and delete asynchronous batch jobs, poll them to completion, and read
 their results, on OpenAI, Anthropic and Gemini. A batch runs its requests within 24 hours at the
-provider's Batch rates — half its standard ones on every model each page lists — and
-[`estimated_cost`](@ref) prices a batch result at them.
+provider's Batch rates — half its standard ones on every model each page lists, but for a cache hit on
+the six Gemini models whose Batch tab keeps the standard cache-hit price (`gemini-3.1-pro-preview`,
+`gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`
+and `gemini-2.5-flash-lite`) — and [`estimated_cost`](@ref) prices a batch result at them.
 
 - [`create_batch`](@ref)`(requests; service)` takes the requests as `custom_id => Chat` pairs and
   sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests to one

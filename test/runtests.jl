@@ -252,6 +252,9 @@ end
     @testset "webhooks" begin
         include("webhooks.jl")
     end
+    @testset "safety" begin
+        include("safety.jl")
+    end
 
     @testset "mock server" begin
         include("mock_server.jl")

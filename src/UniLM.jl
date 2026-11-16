@@ -90,6 +90,7 @@ include("batch.jl")
 include("fine_tuning.jl")
 include("graders.jl")
 include("webhooks.jl")
+include("safety.jl")
 include("containers.jl")
 include("uploads.jl")
 include("realtime.jl")
@@ -536,6 +537,17 @@ export
     rotate_webhook_endpoint_secret,
     test_webhook_endpoint,
     list_webhook_event_types
+
+# ─── Safety ───────────────────────────────────────────────────────────────────
+export
+    SafetyCase,
+    SafetyAlert,
+    SafetyCaseSuccess,
+    SafetyAlertSuccess,
+    SafetyFailure,
+    SafetyCallError,
+    retrieve_safety_case,
+    retrieve_safety_alert
 
 # ─── Containers API ───────────────────────────────────────────────────────────
 export

@@ -364,7 +364,8 @@ images inline during a response.
 
 Unset, `model` is the tool's default, `"gpt-image-2.6-sunburst"`. `action`, `moderation`,
 `partial_images`, `input_fidelity`, `complexity`, `frame_count`, `frame_duration_ms` and `svg`
-are validated at construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
+are validated at construction (`ArgumentError`), as is an `output_compression` with GIF or SVG output,
+which the API answers with HTTP 400. `quality`, `background`, and `output_format` are passed
 through unchecked (the accepted `quality` values depend on the model). Unset fields are
 omitted from the request.
 """
@@ -399,10 +400,23 @@ omitted from the request.
         # The Images API's GPT-Image-2.6 controls (images.jl), with the tool's own name.
         _check_image_controls("image_generation", complexity, frame_count, frame_duration_ms)
         _check_image_format("image_generation", output_format, frame_count, frame_duration_ms, svg)
+        _check_tool_compression(output_format, output_compression)
         new(background, output_format, output_compression, quality, size,
             model, action, moderation, partial_images, input_fidelity, input_image_mask, complexity,
             frame_count, frame_duration_ms, svg)
     end
+end
+
+# GIF output "does not support streaming, partial images, masks, or custom output compression", and SVG generation
+# "does not support streaming, partial images, prompt_rewriter, or output_compression" (the Images reference); the
+# API answers the tool with either pair with HTTP 400 (2026-11-16).
+const _TOOL_NO_COMPRESSION = Dict("gif" => "\"'output_compression' is not supported for GIF output.\"",
+                                  "svg" => "\"SVG output does not support output_compression.\"")
+function _check_tool_compression(output_format, output_compression)::Nothing
+    isnothing(output_compression) || isnothing(output_format) || !haskey(_TOOL_NO_COMPRESSION, output_format) ||
+        throw(ArgumentError("image_generation $(uppercase(output_format)) output takes no output_compression: the API " *
+            "answers it with HTTP 400, $(_TOOL_NO_COMPRESSION[output_format]); unset output_compression"))
+    nothing
 end
 
 function JSON.lower(t::ImageGenerationTool)

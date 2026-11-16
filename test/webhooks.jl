@@ -144,3 +144,29 @@ end
           occursin("`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026", doc)
     @test occursin("agent sessions", doc) && occursin("environments", doc)
 end
+
+@testset "parse_webhook reads each event family's envelope" begin
+    # One delivery per family, with the data OpenAI's reference shows for it: `id`, `type` and `created_at`
+    # typed, the payload as `data`, the envelope's `object` in `raw`.
+    sip = [Dict("name" => "From", "value" => "<sip:alice@example.com>;tag=abc123"),
+           Dict("name" => "To", "value" => "<sip:recipient@example.com>")]
+    fixtures = [
+        ("agent.environment.ready", 1719168000, Dict("id" => "ccarenv_123")),
+        ("agent.session.created", 1719168001, Dict("id" => "sess_123", "environment_id" => "ccarenv_123",
+            "environment_type" => "self_hosted", "connect" => Dict("remote_url" => "https://api.openai.com/v1/agents/api/connect/example"))),
+        ("batch.completed", 1719168002, Dict("id" => "batch_abc123")),
+        ("fine_tuning.job.succeeded", 1719168003, Dict("id" => "ftjob_abc123")),
+        ("live.transport.incoming", 1719168004, Dict("type" => "sip", "session_id" => "live_u0_479a2756",
+            "sip_media_security" => "srtp", "sip_headers" => sip)),
+        ("live.transport.connected", 1793815201, Dict("session_id" => "live_u0_abc123", "type" => "webrtc")),
+        ("realtime.call.incoming", 1719168005, Dict("call_id" => "rtc_u0_479a2756", "sip_headers" => sip)),
+        ("response.completed", 1719168006, Dict("id" => "resp_abc123")),
+        ("safety.alert.created", 1787659200, Dict("id" => "alert_0123456789abcdef0123456789abcdef")),
+        ("safety.warning_issued", 1787659201, Dict("id" => "C-abc123"))]
+    for (type, created, data) in fixtures
+        ev = parse_webhook(JSON.json(Dict("id" => "evt_123", "object" => "event", "created_at" => created,
+                                          "type" => type, "data" => data)))
+        @test (ev.id, ev.type, ev.created_at, ev.data) == ("evt_123", type, created, data)
+        @test ev.created_at isa Int && ev.raw["object"] == "event" && ev.type in WEBHOOK_EVENTS
+    end
+end

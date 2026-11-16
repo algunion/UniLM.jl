@@ -32,7 +32,11 @@ auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
 provider_capabilities(::Type{GEMINIServiceEndpoint}) =
     Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech, :system_one])
 
-default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.8-flash"
+# Google names Gemini 4 Hydrogen the successor to 3.8 Flash ("Change your model string from
+# `gemini-3.8-flash` to `gemini-4-hydrogen`",
+# https://ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen). It thinks at "high" unless a
+# level is set, and refuses "minimal" (`_GEMINI_THINKING_LEVELS`).
+default_model(::Type{GEMINIServiceEndpoint}) = "gemini-4-hydrogen"
 
 # The models released before Gemini 3.6 Flash (2026-07-21) and still served, by exact id: the text
 # and image models of the 2026-10-22 model listing. From Gemini 3.6 Flash and 3.5 Flash-Lite on, for
@@ -180,18 +184,23 @@ function _gemini_user_parts(m::Message)::Vector{Dict{Symbol,Any}}
 end
 
 # Thinking levels per model, by exact id, transcribed from the "Controlling thinking" table
-# (https://ai.google.dev/gemini-api/docs/thinking, 2026-10-22). Google's ids carry no dated
+# (https://ai.google.dev/gemini-api/docs/thinking, 2026-11-16). Google's ids carry no dated
 # snapshots, and distinct models share prefixes (gemini-3.8-flash-tts, gemini-3.8-live), so a
 # row never extends to a longer id: an unlisted id gets the generic check and the server's
 # answer. The -latest aliases carry the levels of the models that served them on 2026-10-22;
 # gemini-3.7-flash and gemini-3.5-flash, deprecated on 2026-10-08, those of the models Google
-# routes them to.
+# routes them to. Only Gemini 4 Hydrogen's row lists "xhigh": Hydrogen took it on generateContent
+# and the Interactions API, while Carbon and 3.8 Flash answered it with HTTP 400 "Thinking level
+# XHIGH is not supported for this model", as Hydrogen answered "minimal" (observed 2026-11-16).
 const _GEMINI_THINKING_LEVELS = Dict{String,Vector{String}}(
+    "gemini-4-carbon"              => ["low", "medium", "high"],
     "gemini-4-argon"               => ["low", "medium", "high"],
+    "gemini-4-hydrogen"            => ["low", "medium", "high", "xhigh"],
     "gemini-3.8-flash"             => ["low", "medium", "high"],
     "gemini-3.6-flash"             => ["minimal", "low", "medium", "high"],
     "gemini-3.5-flash-lite"        => ["minimal", "low", "medium", "high"],
     "gemini-3.1-pro-preview"       => ["low", "medium", "high"],
+    "gemini-3.1-flash-lite"        => ["minimal", "low", "medium", "high"],
     "gemini-3.1-flash-lite-image"  => ["minimal", "high"],
     "gemini-3-flash-preview"       => ["minimal", "low", "medium", "high"],
     "gemini-2.5-pro"               => ["low", "medium", "high"],
@@ -207,12 +216,21 @@ const _GEMINI_THINKING_LEVELS = Dict{String,Vector{String}}(
 _gemini_thinking_levels(model::AbstractString)::Union{Vector{String},Nothing} =
     get(_GEMINI_THINKING_LEVELS, model, nothing)
 
+# The levels an id no row names may take: the API's but "xhigh", which only a row that lists it takes.
+const _GEMINI_GENERIC_LEVELS = ("minimal", "low", "medium", "high")
+
 function _gemini_thinking_level(model::String, effort::String; native::Bool=false)::String
-    effort in ("minimal", "low", "medium", "high") || throw(ArgumentError(
-        "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))"))
     levels = _gemini_thinking_levels(model)
-    isnothing(levels) || effort in levels || throw(ArgumentError(
-        "$model supports $(join(levels, ", ", length(levels) == 2 ? " or " : ", or ")) thinking effort"))
+    if isnothing(levels)
+        effort in _GEMINI_GENERIC_LEVELS || throw(ArgumentError(
+            "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))" *
+            (effort == "xhigh" ? "; only " * join(sort!([m for (m, l) in _GEMINI_THINKING_LEVELS if "xhigh" in l]), ", ") *
+                                 " takes \"xhigh\"" : "")))
+    else
+        effort in levels || throw(ArgumentError(
+            "$model supports $(join(levels, ", ", length(levels) == 2 ? " or " : ", or ")) thinking effort " *
+            "(got $(repr(effort)))"))
+    end
     native && startswith(model, "gemini-2.5-") && throw(ArgumentError(
         "Gemini 2.5 generateContent uses thinkingBudget; use Respond with Reasoning for thinking levels"))
     effort
@@ -303,18 +321,33 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     JSON.json(body)
 end
 
+# A reasoning_effort on the compatible endpoint meets the model's row of the thinking table, with the
+# refusal generateContent gives: the endpoint answered an effort the row lacks with HTTP 400 —
+# "Thinking level MINIMAL is not supported for this model" on gemini-4-hydrogen, -carbon and -argon
+# and on gemini-3.8-flash, XHIGH likewise on Carbon and 3.8 Flash, "Invalid reasoning_effort: max" on
+# Hydrogen — or took "none" on 3.8 Flash and thought anyway (82 thinking tokens), observed 2026-11-16,
+# though Google's compatibility page maps "minimal" to "low" on Gemini 4. A gemini-2.5- model takes a
+# thinking budget on this wire, which "none" turns off (gemini-2.5-flash answered "none", "minimal" and
+# "xhigh" with HTTP 200), and an id without a row is the server's to check: both go as set.
+function _gemini_compat_effort(model::String, effort::Union{String,Nothing})::Nothing
+    isnothing(effort) || startswith(model, "gemini-2.5-") || isnothing(_gemini_thinking_levels(model)) ||
+        _gemini_thinking_level(model, effort)
+    nothing
+end
+
 # GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, so the same models take
 # the sampling parameters: Google's page on Gemini 3.6 says the models ignore them, without
 # naming an endpoint, and that they are ignored on this wire too is inferred from that page,
 # not measured on it. It takes the service tiers Google's compatibility page names —
 # `service_tier="priority"` or `"flex"`, and `"standard"`, which `service_tier` "defaults to"
 # (https://ai.google.dev/gemini-api/docs/openai#flex-and-priority-inference) — and no other
-# OpenAI tier. Its other refusals are the server's: it answers HTTP 400 to
-# `prompt_cache_options` ("Unknown name") and to a request ending with an assistant turn
-# ("Requests ending with a model turn are not supported."), observed on gemini-3.8-flash on
-# 2026-10-22.
+# OpenAI tier. A reasoning_effort meets the model's row of the thinking table (`_gemini_compat_effort`).
+# Its other refusals are the server's: it answers HTTP 400 to `prompt_cache_options` ("Unknown name")
+# and to a request ending with an assistant turn ("Requests ending with a model turn are not
+# supported."), observed on gemini-3.8-flash on 2026-10-22.
 function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
+    _gemini_compat_effort(chat.model, chat.reasoning_effort)
     _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini's OpenAI-compatible endpoint")
     _compat_audio_estimate(chat)
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
@@ -750,12 +783,32 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
     merge(d, (; usage))
 end
 
+# This endpoint counts a reply's thinking only in total_tokens: gemini-4-hydrogen at reasoning_effort
+# "xhigh" reported prompt_tokens 38, completion_tokens 5 and total_tokens 124, with no
+# completion_tokens_details (observed 2026-11-16), where generateContent counts the thinking in
+# thoughtsTokenCount and bills it as output. So the tokens a total holds beyond the prompt and the
+# completion are thinking: they join completion_tokens, billed at the output rate as the native
+# reply's thoughts are, and reasoning_tokens, unless the reply named its reasoning tokens, whose
+# count it keeps. A total below the prompt and the completion is kept as reported, with a warning.
+function _compat_thinking(u::TokenUsage)::TokenUsage
+    thinking = u.total_tokens - u.prompt_tokens - u.completion_tokens
+    thinking < 0 && @warn("Gemini's OpenAI-compatible endpoint reported total_tokens below prompt_tokens + " *
+        "completion_tokens; the usage is kept as reported, and thinking it left out is not in the estimate",
+        u.prompt_tokens, u.completion_tokens, u.total_tokens, _id = :unilm_gemini_compat_total, maxlog = 1)
+    thinking > 0 || return u
+    TokenUsage(; _usage_fields(u)..., completion_tokens=u.completion_tokens + thinking,
+               reasoning_tokens=u.reasoning_tokens > 0 ? u.reasoning_tokens : thinking)
+end
+
 # A reply that names no tier was billed at the one its request asked for, so the result records
 # that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,
 # since Google bills a downgraded Priority request at Standard and this endpoint does not report
-# the downgrade. A tier the reply names is kept.
-_result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, u::TokenUsage)::TokenUsage =
+# the downgrade. A tier the reply names is kept. Every Chat result of this endpoint, streamed or
+# not, and the usage of a turn that ends uncommitted, is read here.
+function _result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, usage::TokenUsage)::TokenUsage
+    u = _compat_thinking(usage)
     isnothing(u.service_tier) ? TokenUsage(; _usage_fields(u)..., service_tier=chat.service_tier) : u
+end
 
 # ─── Long decode: one turn in several requests ───────────────────────────────
 # Gemini 4 Argon generates past one request's output cap in hops: a reply that reaches the cap
@@ -863,18 +916,20 @@ function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTu
     (prices.multiple, get(prices.cache, model, prices.multiple))
 end
 
-# The audio input rate of each model on https://ai.google.dev/gemini-api/docs/pricing (2026-10-22),
-# scaled on Flex and Priority as the table scales its text rates. The page spells input modalities
-# out wherever their rates differ ("$0.25 (text / image / video) $0.50 (audio)" on 3.1 Flash-Lite)
-# and where audio is excluded (an image model's "(text/image/video)"), so an input price that names
-# no modality, or names audio among the others, is every modality's. A model with an audio price of
-# its own maps to it, in USD per token at the standard tier; a model with its one input price maps
-# to `nothing`: audio bills at the price row's input rate, so a `pricing=` row, or a price change
-# such as Robotics-ER 2 Preview's on 2027-01-01, moves both. Audio on a model without an entry — an
-# image model, an id the page does not list — leaves the call unpriced, as a model without a price
-# row is.
+# The audio input rate of each model on https://ai.google.dev/gemini-api/docs/pricing (2026-10-22;
+# Gemini 4 Carbon and Hydrogen 2026-11-16), scaled on Flex and Priority as the table scales its text
+# rates. The page spells input modalities out wherever their rates differ ("$0.25 (text / image /
+# video) $0.50 (audio)" on 3.1 Flash-Lite) and where audio is excluded (an image model's
+# "(text/image/video)"), so an input price that names no modality, or names audio among the others,
+# is every modality's. A model with an audio price of its own maps to it, in USD per token at the
+# standard tier; a model with its one input price maps to `nothing`: audio bills at the price row's
+# input rate, so a `pricing=` row, or a price change such as Robotics-ER 2 Preview's on 2027-01-01,
+# moves both. Audio on a model without an entry — an image model, an id the page does not list —
+# leaves the call unpriced, as a model without a price row is.
 const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Union{Float64,Nothing}}(
-    "gemini-4-argon"                     => nothing,      # its one input price, naming no modality
+    "gemini-4-carbon"                    => nothing,      # its one input price, naming no modality
+    "gemini-4-argon"                     => nothing,      # likewise
+    "gemini-4-hydrogen"                  => nothing,      # likewise
     "gemini-3.8-flash"                   => nothing,      # likewise
     "gemini-3.7-flash"                   => nothing,      # routed to and priced as gemini-3.8-flash
     "gemini-3.6-flash"                   => nothing,      # its one input price, naming no modality

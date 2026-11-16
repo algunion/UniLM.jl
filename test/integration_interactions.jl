@@ -174,4 +174,28 @@ end
                                      u.completion_tokens * row.output)
 end
 
+@testset "Interactions — the default model is gemini-4-hydrogen; it takes xhigh, and the call is priced at its row" begin
+    # A Respond with no model, at the level only Hydrogen's row lists (observed HTTP 200 on 2026-11-16).
+    r = respond(Respond(service=GEMINIServiceEndpoint, input="Reply with the single word OK.",
+                        reasoning=Reasoning(effort="xhigh"), max_output_tokens=1024))
+    @test r isa ResponseSuccess
+    u = token_usage(r)
+    @info "Interactions gemini-4-hydrogen xhigh" usage = u cost = estimated_cost(r)
+    @test r.response.status == "completed" && r.response.model == "gemini-4-hydrogen"
+    row = UniLM._price_row(DEFAULT_PRICING, "gemini-4-hydrogen")
+    @test estimated_cost(r) > 0
+    @test estimated_cost(r) ≈ (u.prompt_tokens - u.cached_tokens) * row.input + u.cached_tokens * row.cached_input +
+                              u.completion_tokens * row.output
+end
+
+@testset "Interactions — a max_output_tokens above 65,536 is sent without background, and answered" begin
+    # Gemini 4 Argon answered this with HTTP 400 on 2026-10-22 and with HTTP 200 on 2026-11-16; Google's long-decode
+    # page now gives a foreground request above the cap hops to continue, not an error.
+    r = respond(Respond(service=GEMINIServiceEndpoint, model="gemini-4-argon", input="Reply with the single word OK.",
+                        reasoning=Reasoning(effort="low"), max_output_tokens=70_000))
+    @test r isa ResponseSuccess
+    @info "Interactions gemini-4-argon max_output_tokens=70000" status = (r isa ResponseSuccess ? r.response.status : r) cost = estimated_cost(r)
+    r isa ResponseSuccess && @test r.response.status == "completed" && !isempty(output_text(r))
+end
+
 end  # if GEMINI_API_KEY

@@ -29,7 +29,8 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
-`gpt-6-astra-law` on 2026-11-02), TypeSafe rows on 2026-10-25,
+`gpt-6-astra-law` on 2026-11-02, Gemini's `gemini-4-carbon` and `gemini-4-hydrogen` on
+2026-11-16), TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
 The table holds the rows shipped with this release. Where a provider has scheduled a new price for
@@ -130,12 +131,15 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "deepseek-v4-flash-vision-exp" => _price(0.30, 0.006, 1.20),
     "deepseek-v4-pro"              => _price(1.32, 0.044, 3.96),
     # Google Gemini, native and OpenAI-compatible (https://ai.google.dev/gemini-api/docs/pricing,
-    # 2026-10-22): standard tier, output includes thinking; the Gemini `_billed_cost` prices Flex
-    # and Priority from these rows, with the page's own cache-hit prices. Gemini 4 Argon, 3.8 and 3.6
-    # Flash and Robotics-ER 2 Preview carry their introductory rates, which double on the dates
-    # `_PRICE_CHANGES` gives. Google routes the deprecated gemini-3.7-flash to gemini-3.8-flash and
-    # gemini-3.5-flash to gemini-3.6-flash, so those ids carry the served model's rates.
+    # 2026-10-22; Gemini 4 Carbon and Hydrogen 2026-11-16): standard tier, output includes thinking;
+    # the Gemini `_billed_cost` prices Flex and Priority from these rows, with the page's own cache-hit
+    # prices. Gemini 4 Carbon and Argon, 3.8 and 3.6 Flash and Robotics-ER 2 Preview carry their
+    # introductory rates, which double on the dates `_PRICE_CHANGES` gives. Google routes the
+    # deprecated gemini-3.7-flash to gemini-3.8-flash and gemini-3.5-flash to gemini-3.6-flash, so
+    # those ids carry the served model's rates.
+    "gemini-4-carbon"       => _price(2.0,  0.10,  10.0),
     "gemini-4-argon"        => _price(2.0,  0.10,  10.0),
+    "gemini-4-hydrogen"     => _price(1.50, 0.075, 7.50),
     "gemini-3.8-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.6-flash"      => _price(0.75, 0.075, 3.75),
@@ -173,10 +177,11 @@ const _SHIPPED_PRICES = Dict{String,PriceRow}(DEFAULT_PRICING)
 
 # The price changes providers have scheduled for shipped rows, each model's in date order: from 00:00 UTC
 # on `from`, `row` bills in place of the shipped row. Google's pricing page
-# (https://ai.google.dev/gemini-api/docs/pricing, 2026-11-02) gives each introductory price "through" the
-# day before and the new one "starting" on the date, in no time zone, hence UTC; the ids Google routes to
-# 3.8 and 3.6 Flash change with them.
+# (https://ai.google.dev/gemini-api/docs/pricing, 2026-11-02; Gemini 4 Carbon's 2026-11-16) gives each
+# introductory price "through" the day before and the new one "starting" on the date, in no time zone,
+# hence UTC; the ids Google routes to 3.8 and 3.6 Flash change with them.
 const _PRICE_CHANGES = Dict{String,Vector{@NamedTuple{from::Date, row::PriceRow}}}(
+    "gemini-4-carbon"              => [(from=Date(2026, 12, 1), row=_price(4.0,  0.20, 20.0))],
     "gemini-4-argon"               => [(from=Date(2026, 12, 1), row=_price(4.0,  0.20, 20.0))],
     "gemini-3.8-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],
     "gemini-3.7-flash"             => [(from=Date(2027, 1, 1),  row=_price(1.50, 0.15, 7.50))],

@@ -1048,23 +1048,20 @@ end
     @test !haskey(UniLM._interaction_response_dict(Dict("id" => "v1_y", "status" => "completed")), "error")
 end
 
-@testset "Interactions encode — Gemini 4 Argon takes more than 65,536 output tokens only in the background" begin
-    # ai.google.dev/gemini-api/docs/long-decode: with background=false, a max_output_tokens above
-    # 65,536 is a 400 "max_output_tokens greater than 65536 is not yet supported with
-    # background=false. Please use background=true." (observed 2026-10-22).
-    argon(; kw...) = UniLM.encode_agentic(GEMINIServiceEndpoint,
-        Respond(; service=GEMINIServiceEndpoint, model="gemini-4-argon", input="x", kw...))
-    for kw in ((max_output_tokens=70_000,), (max_output_tokens=65_537, background=false))
-        err = try argon(; kw...); nothing catch e; e end
-        @test err isa ArgumentError && occursin("gemini-4-argon", err.msg) && occursin("background=true", err.msg)
+@testset "Interactions encode — a max_output_tokens above 65,536 goes as given without background on every model" begin
+    # ai.google.dev/gemini-api/docs/long-decode (2026-11-16): with background false, a max_output_tokens above 65,536
+    # over REST stops at "65,536 tokens per streaming hop (or non-streaming hop on `gemini-4-hydrogen`), or 32,768 per
+    # non-streaming hop on `gemini-4-carbon` and `gemini-4-argon`. Loop with `continuation_token`", which an
+    # unstreamed respond does. Gemini 4 Argon, Carbon and Hydrogen took max_output_tokens=70000 with background unset,
+    # Argon streamed too (HTTP 200, observed 2026-11-16), where Argon had answered HTTP 400 on 2026-10-22.
+    encode(model; kw...) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(; service=GEMINIServiceEndpoint, model, input="x", kw...)))
+    for model in ("gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-3.8-flash"),
+        kw in ((max_output_tokens=70_000,), (max_output_tokens=70_000, background=false), (max_output_tokens=70_000, stream=true))
+        @test encode(model; kw...)["generation_config"] == Dict("max_output_tokens" => 70_000)
     end
-    b = JSON.parse(argon(max_output_tokens=70_000, background=true))
+    b = encode("gemini-4-argon"; max_output_tokens=70_000, background=true)
     @test b["generation_config"] == Dict("max_output_tokens" => 70_000) && b["background"] == true
-    @test JSON.parse(argon(max_output_tokens=65_536))["generation_config"] == Dict("max_output_tokens" => 65_536)
-    # The limit is that model's: another model's cap goes as given, and the server's answer is the check.
-    @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(service=GEMINIServiceEndpoint,
-        model="gemini-3.8-flash", input="x", max_output_tokens=70_000)))["generation_config"] ==
-          Dict("max_output_tokens" => 70_000)
 end
 
 @testset "Interactions — the model that answered prices the interaction" begin

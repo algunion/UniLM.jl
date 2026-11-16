@@ -59,7 +59,10 @@ generateContent requests go to
 `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, a streamed one
 to `:streamGenerateContent?alt=sse`, and Interactions requests to
 `https://generativelanguage.googleapis.com/v1beta/interactions`, each with the key in
-`x-goog-api-key`.
+`x-goog-api-key`. UniLM stays on `v1beta`, though Google's SDKs "call `v1` unless you set a version"
+since their November 2026 releases ([API versions](https://ai.google.dev/gemini-api/docs/api-versions)):
+`v1` has no request `labels` field and no speech configuration, which UniLM sends for
+`safety_identifier` and `speak` (Google's discovery documents of both versions, 16 November 2026).
 
 A `Chat` sends its `max_completion_tokens`, else its `max_tokens`, as `maxOutputTokens`, and a
 `Chat` that sets neither sends none: the model's own output limit applies. The limit counts the
@@ -268,8 +271,8 @@ names meets only the other rules.
 | a `Respond` input that ends with an assistant message, on a model other than those earlier ones | `answers HTTP 400 to an input that ends with an assistant message` | end with a user message; shape the answer with `instructions` or `text` |
 | `moderation`, or a `Chat` field native Gemini does not map: `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `stream_options`, `verbosity`, `metadata`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `prompt_cache_retention` | `Native Gemini Chat does not support field(s)`: UniLM sends none of them to generateContent, though some have a counterpart there: `GenerationConfig`'s `presencePenalty`, `frequencyPenalty`, `responseLogprobs`, `logprobs`, `responseModalities` and `speechConfig`, the request's `labels` for `metadata` and `user`, and the `googleSearch` tool for `web_search_options` | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
 | `prompt_cache_options`, on a `Chat` or a `Respond` | `Gemini takes no prompt_cache_options`: Gemini caches repeated prefixes on its own, and UniLM does not wrap its explicit caching | remove it ([Prompt caching](@ref gemini_caching)) |
-| `reasoning_effort` `"none"`, `"xhigh"` or `"max"`, on a `Chat` or in a `Reasoning` | `Gemini thinking effort must be minimal, low, medium, or high` | one of those four |
-| a level the model's row of the thinking table does not list | `supports`, then the levels it takes, then `thinking effort` | one of them |
+| `reasoning_effort` `"none"`, `"xhigh"` or `"max"`, on a `Chat` or in a `Reasoning`, for an id no row of the thinking table names | `Gemini thinking effort must be minimal, low, medium, or high`, and for `"xhigh"` the models whose row lists it | one of those four, or a model that takes `"xhigh"` |
+| an effort the model's row of the thinking table does not list (`"minimal"` on `gemini-4-hydrogen`, `"xhigh"` on every row but its), on either endpoint (`GEMINIOpenAIServiceEndpoint` sends a `gemini-2.5-` model's effort as set) | `supports`, then the levels it takes, then `thinking effort` | one of them |
 | any `reasoning_effort` on a `Chat` for a `gemini-2.5-` model | `Gemini 2.5 generateContent uses thinkingBudget` | leave it unset, or send a `Respond` with `Reasoning` |
 | a `service_tier` other than `"standard"`, `"flex"` and `"priority"`, on a `Chat` or a `Respond`; `"deferred"` among them, which the API answers with HTTP 400 | `Gemini generateContent takes service_tier`, `Gemini's OpenAI-compatible endpoint takes service_tier`, `Gemini Interactions takes service_tier` | one of them |
 | a `seed` outside the int32 range, on a `Chat` or a `Respond` | `Gemini takes a seed from`: `seed` is an int32 | a seed from -2,147,483,648 to 2,147,483,647 |
@@ -281,7 +284,6 @@ names meets only the other rules.
 | an `input_image` on a `Respond` whose `detail` is not `"auto"`, `"low"`, `"high"` or `"original"` | `an image's detail level on Gemini is` | `"low"`, `"high"` or `"auto"` |
 | an image `detail` level on `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-image`, `gemma-4-31b-it` or `gemma-4-26b-a4b-it` | `takes no per-image media resolution` | the image without `detail` |
 | a `Respond` field with no Interactions counterpart: `parallel_tool_calls`, `truncation`, `metadata`, `user`, `include`, `max_tool_calls`, `top_logprobs`, `prompt_cache_key`, `prompt_cache_retention`, `conversation`, `context_management`, `stream_options`, `moderation` | `Gemini Interactions does not support the Respond field(s)` | remove it |
-| `max_output_tokens` above 65,536 on a `gemini-4-argon` `Respond` without `background=true` | `takes max_output_tokens above 65536 only in the background` | `background=true` ([Background requests](@ref gemini_background)), or a lower `max_output_tokens` |
 | `background=true` with `store=false` | `background=true requires a stored response`: the API answers it with HTTP 400 | leave `store` unset |
 | `list_input_items` on `GEMINIServiceEndpoint` | `list_input_items is not supported by GEMINIServiceEndpoint`: the Interactions API lists no input items | keep the `input` you sent ([Background requests](@ref gemini_background)) |
 | `compact_response` or `count_input_tokens` on `GEMINIServiceEndpoint` | `compact_response is not supported by GEMINIServiceEndpoint`, `count_input_tokens is not supported by GEMINIServiceEndpoint`: routes of the Responses API that the Interactions API does not have | an endpoint that serves the Responses API; on Gemini, a reply's `usage` gives its token counts |

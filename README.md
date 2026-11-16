@@ -45,7 +45,7 @@ failures —, which its name opens:
 | :--- | :--- | :--- | :--- |
 | [OpenAI](https://algunion.github.io/UniLM.jl/dev/providers/openai/) | `OPENAIServiceEndpoint` | `OPENAI_API_KEY` | `gpt-6-sol` |
 | [Anthropic](https://algunion.github.io/UniLM.jl/dev/providers/anthropic/) | `ANTHROPICServiceEndpoint` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` |
-| [Google Gemini](https://algunion.github.io/UniLM.jl/dev/providers/gemini/) | `GEMINIServiceEndpoint` | `GEMINI_API_KEY` | `gemini-3.8-flash` |
+| [Google Gemini](https://algunion.github.io/UniLM.jl/dev/providers/gemini/) | `GEMINIServiceEndpoint` | `GEMINI_API_KEY` | `gemini-4-hydrogen` |
 | [Ollama](https://algunion.github.io/UniLM.jl/dev/providers/ollama/) | `OllamaEndpoint()` | `OLLAMA_HOST`, `OLLAMA_API_KEY` | none: a call names one |
 | [vLLM, LM Studio & llama.cpp](https://algunion.github.io/UniLM.jl/dev/providers/local_servers/) | `GenericOpenAIEndpoint("http://localhost:8000", "")` | no variable | none: a call names one |
 | [Azure OpenAI](https://algunion.github.io/UniLM.jl/dev/providers/azure/) | `AZUREServiceEndpoint` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` | `gpt-5.2` |

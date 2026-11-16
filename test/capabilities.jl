@@ -169,7 +169,9 @@ end
     @test Chat().model == Respond(input="hi").model == "gpt-6-sol"
     @test haskey(UniLM.DEFAULT_PRICING, UniLM.default_model(OPENAIServiceEndpoint))
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
-    @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.8-flash"
+    # Gemini 4 Hydrogen answered a chat and a stream on the OpenAI-compatible endpoint (observed 2026-11-16).
+    @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-4-hydrogen"
+    @test haskey(UniLM.DEFAULT_PRICING, UniLM.default_model(GEMINIOpenAIServiceEndpoint))
     @test UniLM.default_model(ds) == "deepseek-flash"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)

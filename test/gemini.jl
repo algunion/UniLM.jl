@@ -42,7 +42,14 @@ end
     @test UniLM.provider_capabilities(GEMINIServiceEndpoint) ==
           Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech])
     @test has_capability(GEMINIServiceEndpoint, :json_output)
-    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.8-flash"
+    # Gemini 4 Hydrogen, Google's named successor to 3.8 Flash ("Change your model string from
+    # `gemini-3.8-flash` to `gemini-4-hydrogen`", ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen),
+    # on both APIs: a Chat and a Respond with no model, and priced, so default spend is never a silent 0.0.
+    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-4-hydrogen"
+    @test Chat(service=GEMINIServiceEndpoint).model == Respond(service=GEMINIServiceEndpoint, input="hi").model ==
+          "gemini-4-hydrogen"
+    @test UniLM.get_url(Chat(service=GEMINIServiceEndpoint)) == "$(GEMINI_NATIVE_BASE)/models/gemini-4-hydrogen:generateContent"
+    @test haskey(DEFAULT_PRICING, UniLM.default_model(GEMINIServiceEndpoint))
     @test_throws ArgumentError UniLM._api_base_url(GEMINIServiceEndpoint)
 end
 
@@ -697,28 +704,31 @@ end
 end
 
 @testset "thinking levels — every level of every model of the provider table, on both wires" begin
-    # (model, its levels, the refusal of a level it lacks), transcribed from the "Controlling thinking" table
-    # (ai.google.dev/gemini-api/docs/thinking, 2026-10-22). The -latest aliases take the levels of the model
+    # (model, its levels, the refusal of every other effort), transcribed from the "Controlling thinking" table
+    # (ai.google.dev/gemini-api/docs/thinking, 2026-11-16). The -latest aliases take the levels of the model
     # that served each on 2026-10-22, and gemini-3.7-flash and gemini-3.5-flash those of the models Google
-    # routes them to. A model with all four levels refuses only a non-level.
-    three, four = "supports low, medium, or high thinking effort", "must be minimal, low, medium, or high"
+    # routes them to. Only a row that lists "xhigh" takes it; a refusal names the model and its levels.
+    three, four = "supports low, medium, or high thinking effort", "supports minimal, low, medium, or high thinking effort"
     L3, L4 = ["low", "medium", "high"], ["minimal", "low", "medium", "high"]
-    rows = (("gemini-4-argon",               L3, three),
+    rows = (("gemini-4-carbon",              L3, three),
+            ("gemini-4-argon",               L3, three),
+            ("gemini-4-hydrogen",            ["low", "medium", "high", "xhigh"], "supports low, medium, high, or xhigh thinking effort"),
             ("gemini-3.8-flash",             L3, three),
-            ("gemini-3.6-flash",             L4, nothing),
-            ("gemini-3.5-flash-lite",        L4, nothing),
+            ("gemini-3.6-flash",             L4, four),
+            ("gemini-3.5-flash-lite",        L4, four),
             ("gemini-3.1-pro-preview",       L3, three),
+            ("gemini-3.1-flash-lite",        L4, four),
             ("gemini-3.1-flash-lite-image",  ["minimal", "high"], "supports minimal or high thinking effort"),
-            ("gemini-3-flash-preview",       L4, nothing),
+            ("gemini-3-flash-preview",       L4, four),
             ("gemini-2.5-pro",               L3, three),
             ("gemini-2.5-flash",             L3, three),
             ("gemini-2.5-flash-lite",        L3, three),
-            ("gemini-robotics-er-2-preview", L4, nothing),
+            ("gemini-robotics-er-2-preview", L4, four),
             ("gemini-pro-latest",            L3, three),     # served by gemini-3.1-pro-preview
             ("gemini-flash-latest",          L3, three),     # served by gemini-3.8-flash
-            ("gemini-flash-lite-latest",     L4, nothing),   # served by gemini-3.5-flash-lite
+            ("gemini-flash-lite-latest",     L4, four),      # served by gemini-3.5-flash-lite
             ("gemini-3.7-flash",             L3, three),     # routed to gemini-3.8-flash
-            ("gemini-3.5-flash",             L4, nothing))   # routed to gemini-3.6-flash
+            ("gemini-3.5-flash",             L4, four))      # routed to gemini-3.6-flash
     @test Set(first.(rows)) == Set(keys(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
     @test !haskey(UniLM._GEMINI_THINKING_LEVELS, "gemini-3-pro-preview")  # shut down on 2026-03-09
     level(model, effort) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(
@@ -734,20 +744,26 @@ end
                 @test native(model, effort) == uppercase(effort)
             end
         end
-        for (effort, fragment) in [[e => refusal for e in setdiff(L4, levels)]; ["xhigh" => four, "none" => four]]
-            err = try level(model, effort); nothing catch e; e end   # each it lacks, and two that are no level
-            @test err isa ArgumentError && occursin(fragment, err.msg)
-            @test_throws ArgumentError native(model, effort)
+        for effort in setdiff(["minimal", "low", "medium", "high", "xhigh", "none", "max"], levels)  # each it lacks
+            for encode in (level, native)
+                err = try encode(model, effort); nothing catch e; e end
+                @test err isa ArgumentError && occursin(model, err.msg) && occursin(refusal, err.msg) &&
+                      occursin(repr(effort), err.msg)
+            end
         end
     end
     # Gemini 4 Argon and the aliases answer MINIMAL with HTTP 400 "Thinking level MINIMAL is not
-    # supported for this model" (observed 2026-10-22): the request is refused before it is sent.
-    for model in ("gemini-4-argon", "gemini-pro-latest", "gemini-flash-latest")
+    # supported for this model" (observed 2026-10-22), and so does Gemini 4 Hydrogen, on generateContent
+    # and the Interactions API ("THINKING_LEVEL_MINIMAL", observed 2026-11-16), and Gemini 4 Carbon and
+    # 3.8 Flash answer XHIGH so: each request is refused before it is sent.
+    for (model, effort) in (("gemini-4-argon", "minimal"), ("gemini-pro-latest", "minimal"), ("gemini-flash-latest", "minimal"),
+                            ("gemini-4-hydrogen", "minimal"), ("gemini-4-carbon", "xhigh"), ("gemini-3.8-flash", "xhigh"))
         for encode in (level, native)
-            err = try encode(model, "minimal"); nothing catch e; e end
-            @test err isa ArgumentError && occursin(model, err.msg) && occursin(three, err.msg)
+            @test_throws ArgumentError encode(model, effort)
         end
     end
+    # Gemini 4 Hydrogen took XHIGH on both APIs (HTTP 200, observed 2026-11-16).
+    @test level("gemini-4-hydrogen", "xhigh") == "xhigh" && native("gemini-4-hydrogen", "xhigh") == "XHIGH"
 end
 
 @testset "thinking — a Chat that sets reasoning_effort asks for the thought summaries reasoning_text reads" begin
@@ -784,7 +800,11 @@ end
                "gemini-3.8-flash-2026-10-01", "gemini-3.5-flash-lite-preview", "gemini-5-x")
         @test isnothing(UniLM._gemini_thinking_levels(id))
         @test UniLM._gemini_thinking_level(id, "minimal") == "minimal"      # the server's answer is the check
-        @test_throws ArgumentError UniLM._gemini_thinking_level(id, "xhigh") # no Gemini level at all
+        # "xhigh" only where a row lists it: the refusal names the generic levels and the models that take it.
+        err = try UniLM._gemini_thinking_level(id, "xhigh"); nothing catch e; e end
+        @test err isa ArgumentError && occursin("must be minimal, low, medium, or high", err.msg) &&
+              occursin("gemini-4-hydrogen", err.msg)
+        @test_throws ArgumentError UniLM._gemini_thinking_level(id, "none")
     end
     @test UniLM._gemini_thinking_levels("gemini-4-argon") == ["low", "medium", "high"]
     @test (@inferred UniLM._gemini_thinking_level("gemini-4-argon", "high")) == "high"
@@ -1284,7 +1304,7 @@ end
         @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.8)
     end
     # A tier the reply names is kept; with no usage there is nothing to record.
-    named = TokenUsage(prompt_tokens=1, service_tier="standard")
+    named = TokenUsage(prompt_tokens=1, total_tokens=1, service_tier="standard")
     compat = Chat(service=GEMINIOpenAIServiceEndpoint, service_tier="priority")
     @test UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, named) === named
     @test isnothing(UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, nothing))
@@ -1292,6 +1312,95 @@ end
     u = TokenUsage(prompt_tokens=1)
     for service in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""))
         @test UniLM._result_usage(service, Chat(; service, model="m", service_tier="flex"), u) === u
+    end
+end
+
+@testset "compat — a reasoning_effort the model's thinking row lacks is refused before any request" begin
+    # The endpoint answered each with HTTP 400 on 2026-11-16 — "minimal" on gemini-4-hydrogen, -carbon and -argon and on
+    # gemini-3.8-flash ("Thinking level MINIMAL is not supported for this model"), "xhigh" on Carbon and 3.8 Flash, "max"
+    # on Hydrogen ("Invalid reasoning_effort: max") — but "none" on 3.8 Flash, which it took and thought anyway (82
+    # thinking tokens). The refusal is the native endpoint's, word for word.
+    chat(service, model, effort) = Chat(; service, model, reasoning_effort=effort, messages=[Message(Val(:user), "hi")])
+    encode(model, effort) = JSON.parse(encode_request(GEMINIOpenAIServiceEndpoint, chat(GEMINIOpenAIServiceEndpoint, model, effort)))
+    three, hydrogen = "supports low, medium, or high thinking effort", "supports low, medium, high, or xhigh thinking effort"
+    for (model, effort, fragment) in (("gemini-4-hydrogen", "minimal", hydrogen), ("gemini-4-hydrogen", "max", hydrogen),
+                                      ("gemini-4-carbon", "minimal", three), ("gemini-4-argon", "minimal", three),
+                                      ("gemini-4-carbon", "xhigh", three), ("gemini-3.8-flash", "minimal", three),
+                                      ("gemini-3.8-flash", "xhigh", three), ("gemini-3.8-flash", "none", three))
+        err = _gemini_caught(() -> encode(model, effort))
+        @test err isa ArgumentError && occursin(model, err.msg) && occursin(fragment, err.msg) && occursin(repr(effort), err.msg)
+        @test err.msg == _gemini_caught(() -> encode_request(GEMINIServiceEndpoint, chat(GEMINIServiceEndpoint, model, effort))).msg
+        # Refused before any request: with no key, a call that got past the refusal would be a call error.
+        @test withenv(() -> _gemini_caught(() -> chatrequest!(chat(GEMINIOpenAIServiceEndpoint, model, effort);
+                                                               config=RequestConfig(max_attempts=1))),
+                      "GEMINI_API_KEY" => nothing) isa ArgumentError
+    end
+    # A level the row lists goes as set.
+    for (model, effort) in (("gemini-4-hydrogen", "xhigh"), ("gemini-4-hydrogen", "low"), ("gemini-3.8-flash", "high"),
+                            ("gemini-3.6-flash", "minimal"))
+        @test encode(model, effort)["reasoning_effort"] == effort
+    end
+    # A gemini-2.5- model takes a thinking budget on this wire, and "none" turns it off: gemini-2.5-flash answered
+    # "none", "minimal" and "xhigh" with HTTP 200 (2026-11-16). An id without a row goes as given too.
+    for model in ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-5-x"), effort in ("none", "minimal", "xhigh")
+        @test encode(model, effort)["reasoning_effort"] == effort
+    end
+    @test encode("gemini-5-x", "max")["reasoning_effort"] == "max"
+end
+
+# Replies of Google's OpenAI-compatible endpoint on gemini-4-hydrogen, as they came (2026-11-16): an unstreamed
+# one at reasoning_effort "xhigh" (prompt_tokens 38, completion_tokens 5, total_tokens 124) and a stream at "low"
+# (its last usage 38, 5, 63). Neither names completion_tokens_details: the thinking is only inside total_tokens.
+function _with_compat_capture(f, file::String, content_type::String)
+    body = read(joinpath(@__DIR__, "fixtures", "gemini_compat", file))
+    server = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do _
+        HTTP.Response(200, ["Content-Type" => content_type], body)
+    end
+    _COMPAT_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
+    try
+        f()
+    finally
+        close(server)
+    end
+end
+
+@testset "compat — the thinking a reply counts only in total_tokens is billed as output, streamed or not" begin
+    # The native reply counts thinking in thoughtsTokenCount, inside completion_tokens and reasoning_tokens, billed
+    # at the output rate; the compatible reply's thinking is total_tokens - prompt_tokens - completion_tokens.
+    # Refuted by a result whose completion_tokens leave the thinking out, or an estimate below that bill.
+    i, _, o = _gemini_rates("gemini-4-hydrogen")
+    cfg = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+    ask(; kw...) = Chat(; service=_CompatHere, model="gemini-4-hydrogen", messages=[Message(Val(:user), "Reply with the single word OK.")], kw...)
+    counts(u) = (u.prompt_tokens, u.completion_tokens, u.reasoning_tokens, u.total_tokens)
+    _with_compat_capture("hydrogen_xhigh.json", "application/json") do
+        c = ask(reasoning_effort="xhigh")
+        r = chatrequest!(c; config=cfg)
+        @test r isa LLMSuccess && r.message.content == "OK"
+        @test counts(r.usage) == (38, 86, 81, 124)
+        @test estimated_cost(r) ≈ (38 * i + 86 * o) / 1_000_000 && cumulative_cost(c) == estimated_cost(r)
+    end
+    _with_compat_capture("hydrogen_low_stream.sse", "text/event-stream") do
+        c = ask(reasoning_effort="low", stream=true)
+        r = fetch(chatrequest!(c; config=cfg))
+        @test r isa LLMSuccess && r.message.content == "OK"
+        @test counts(r.usage) == (38, 25, 20, 63)
+        @test estimated_cost(r) ≈ (38 * i + 25 * o) / 1_000_000 && cumulative_cost(c) == estimated_cost(r)
+    end
+    usage(p, c, t; r=0) = TokenUsage(prompt_tokens=p, completion_tokens=c, total_tokens=t, reasoning_tokens=r)
+    chat = Chat(service=GEMINIOpenAIServiceEndpoint)
+    read_as(u) = UniLM._result_usage(GEMINIOpenAIServiceEndpoint, chat, u)
+    @test read_as(usage(38, 5, 43)) == usage(38, 5, 43)                     # no thinking: as reported
+    @test read_as(read_as(usage(38, 5, 124))) == usage(38, 86, 124; r=81)  # read once, whatever reads it again
+    # A reply that names its reasoning tokens keeps that count: inside completion_tokens, as on the OpenAI wire, or
+    # outside it, where the total shows them.
+    @test read_as(usage(38, 25, 63; r=20)) == usage(38, 25, 63; r=20)
+    @test read_as(usage(38, 5, 63; r=20)) == usage(38, 25, 63; r=20)
+    # A total below the prompt and the completion is kept as reported, with one warning however often it comes.
+    short = usage(38, 5, 40)
+    @test (@test_logs (:warn, r"total_tokens") (read_as(short); read_as(short))) == short
+    # Only this endpoint reads its total so: every other OpenAI-wire endpoint keeps the usage its reply reports.
+    for service in (OPENAIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""), DeepSeekEndpoint("k"))
+        @test UniLM._result_usage(service, Chat(; service, model="m"), usage(38, 5, 63)) == usage(38, 5, 63)
     end
 end
 
@@ -1406,7 +1515,8 @@ end
                                    ("gemini-3.1-pro-preview-customtools", 2.00, 12.00), ("gemini-2.5-pro", 1.25, 10.00))
         @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end
-    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash")
+    for model in ("gemini-4-carbon", "gemini-4-argon", "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.7-flash",
+                  "gemini-3.6-flash", "gemini-3.5-flash")
         input, _, output = _gemini_rates(model)
         @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end

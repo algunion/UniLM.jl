@@ -257,12 +257,12 @@ end
     twofive = filter(r -> startswith(model(r), "gemini-2.5-"), rows)
     @test !isempty(twofive) && all(r -> isempty(levels(r[3])), twofive)        # thinkingBudget, not levels
     @test any(r -> startswith(model(r), "gemini-3") && !isempty(levels(r[3])), rows)
-    # Any refusal but the Gemini 2.5 one propagates: "xhigh" is outside the efforts Gemini takes on every model.
+    # Any refusal but the Gemini 2.5 one propagates: "xhigh" is outside the levels of 3.8 Flash's row.
     @test_throws ArgumentError ProviderFacts._generate_content_cell("gemini-3.8-flash", ["xhigh"])
     # The respond column holds what respond's encoder takes: the levels its check accepts, in Gemini's order.
     takes(id, level) = try UniLM._gemini_thinking_level(id, level); true
                        catch err; err isa ArgumentError || rethrow(); false end
-    @test all(r -> levels(r[2]) == filter(l -> takes(model(r), l), ["minimal", "low", "medium", "high"]), rows)
+    @test all(r -> levels(r[2]) == filter(l -> takes(model(r), l), ["minimal", "low", "medium", "high", "xhigh"]), rows)
 end
 @testset "ProviderFacts — the Gemini model lists and rates written out in the manual are the code's" begin
     # A page's text with its line breaks and indentation made single spaces, and the passage of it from the first

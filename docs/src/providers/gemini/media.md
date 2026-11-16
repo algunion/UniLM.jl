@@ -182,10 +182,17 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   (a tier a reply names is kept): `"flex"` is priced at the Flex rates and `"priority"` at the Priority
   rates, an upper bound, since a downgraded Priority request bills at the standard rate and this wire
   did not say so.
-- **Everything else is sent as set.** No other check runs: `reasoning_effort` goes as it is, Google
-  mapping it to a thinking level, and `prompt_cache_options`, a request that ends with an assistant
-  turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach Google, which answered
-  the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.
+- **Thinking levels.** `reasoning_effort` is checked against the model's row of the
+  [thinking table](@ref gemini_reasoning), as on generateContent, and an effort the row lacks is refused
+  before the request is sent. Google's compatibility page maps `"minimal"` to `low` on Gemini 4, but the
+  endpoint answered `"minimal"` on `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon` and
+  `gemini-3.8-flash` with HTTP 400 "Thinking level MINIMAL is not supported for this model", and took
+  `"none"` on `gemini-3.8-flash` and thought anyway (16 November 2026). A `gemini-2.5-` model takes a
+  thinking budget there, which `"none"` turns off, so its effort goes as set, as does an effort for an
+  id no row names.
+- **Everything else is sent as set.** No other check runs: `prompt_cache_options`, a request that ends
+  with an assistant turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach
+  Google, which answered the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.
 - **No thinking; signatures go back.** UniLM keeps no provider content from this wire:
   `reasoning_text` gives `nothing`. A function call's thought signature, which this wire gives in the
   call's `extra_content.google.thought_signature`, stays on its `ToolCall` (`thought_signature`) and
@@ -193,7 +200,12 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   signatures in chat completion APIs"). A two-turn tool loop on `gemini-3.8-flash`, streamed and not,
   was answered on 29 October 2026; without the signature, its second request was answered HTTP 400.
 - **Usage.** A stream asks for its usage, `stream_options = {"include_usage": true}`, when the `Chat`
-  sets none, so a streamed turn is priced. The usage counted no audio apart on 23 October 2026, so a
+  sets none, so a streamed turn is priced. The endpoint counts the thinking only in `total_tokens`
+  (`gemini-4-hydrogen` at `"xhigh"`: 38 prompt, 5 completion and 124 total tokens, on 16 November 2026),
+  so the tokens a total holds beyond the prompt and the completion join `completion_tokens` and
+  `reasoning_tokens` and bill at the output rate, as generateContent's thoughts do; a reply that names
+  its reasoning tokens keeps that count, and a total below the prompt and the completion is kept as
+  reported, with a warning. The usage counted no audio apart on 23 October 2026, so a
   clip is priced at the text rate, a lower bound on the four models with an audio price of their own,
   for which such a request warns once per model.
 - **No continuation, no other verbs.** A long reply is not continued ([Long generations](@ref gemini_long_decode)),

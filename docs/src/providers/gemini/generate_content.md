@@ -30,9 +30,10 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 `reasoning_effort` sets the request's thinking level, `thinkingConfig.thinkingLevel`, and asks for the
 thought summaries, `includeThoughts: true` (below); a
 [`Reasoning`](@ref)'s `effort` sets a `Respond`'s, `thinking_level` on the Interactions API
-([Thinking on the Interactions API](@ref gemini_interactions_thinking)). A `reasoning_effort` of `"minimal"`,
-`"low"`, `"medium"` or `"high"` is checked against the table below; `"none"`, `"xhigh"` and
-`"max"` throw `ArgumentError` on every model ([Limits and refusals](@ref gemini_limits)).
+([Thinking on the Interactions API](@ref gemini_interactions_thinking)). A `reasoning_effort` is checked
+against the table below: `"minimal"`, `"low"`, `"medium"` and `"high"` where a row lists them, and `"xhigh"`
+only where a row lists it, `gemini-4-hydrogen`'s ("introduces `xhigh`", "supported on `gemini-4-hydrogen`");
+`"none"` and `"max"` throw `ArgumentError` on every model ([Limits and refusals](@ref gemini_limits)).
 
 ```@eval
 Main.ProviderFacts.gemini_thinking_table()
@@ -54,7 +55,11 @@ take the levels of the models that served them when this release was made. A req
 thinking level, Gemini will use the model's default thinking level (e.g., `"medium"` for Gemini 4
 Argon, Gemini 3.8 Flash, and Gemini 3.6 Flash)", and "You cannot disable thinking for Gemini 4
 Argon. Gemini 3 Flash and Flash-Lite also do not support full thinking-off"
-([thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)).
+([thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)). The default model,
+Gemini 4 Hydrogen, "defaults to `high` rather than `medium`, adds `xhigh`, and rejects `minimal` with an
+error" ([Gemini 4 Hydrogen](https://ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen)), so a
+`Chat` or a `Respond` without an effort thinks at `high` on it and bills those thinking tokens; set
+`reasoning_effort="low"` (a `Reasoning(effort="low")`) for the fewest.
 
 ```@example gemini
 chat = Chat(service=GEMINIServiceEndpoint, reasoning_effort="low")
@@ -432,11 +437,12 @@ Gemini 4 Argon also thinks for minutes: on a non-streaming call "The server clos
 10 minutes", on a stream "The server closes the stream after 20 minutes", and Google advises "Set your
 HTTP read timeout to 20 minutes"
 ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)). A
-`chatrequest!` or `respond` call to a model whose id starts `gemini-4-`, on either endpoint, takes
+`chatrequest!` or `respond` call to a model whose id starts `gemini-4-` (the default model among them), on
+either endpoint, takes
 `request_timeout`, `stream_idle_timeout` and `total_deadline` of 1200 seconds while no
 `RequestConfig` of yours is set in any channel; one you set replaces them as a whole
-([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer needs a background
-request ([Background requests](@ref gemini_background)).
+([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer is continued in hops,
+or runs as a background request ([Background requests](@ref gemini_background)).
 
 ## [Prompt caching](@id gemini_caching)
 
@@ -506,7 +512,8 @@ lists a higher price from a date, an estimate computed on or after that day bill
 (the page names no time zone), while [`DEFAULT_PRICING`](@ref) keeps the shipped row and a row you set
 yourself is never replaced. Per 1M input, cache-hit and output tokens
 ([pricing](https://ai.google.dev/gemini-api/docs/pricing)): Gemini 4 Argon \$2.00 / \$0.10 / \$10.00
-"through November 30, 2026", then \$4.00 / \$0.20 / \$20.00 "starting December 1, 2026"; Gemini 3.8
+"through November 30, 2026", then \$4.00 / \$0.20 / \$20.00 "starting December 1, 2026"; Gemini 4 Carbon
+(`gemini-4-carbon`) \$2.00 / \$0.10 / \$10.00, then \$4.00 / \$0.20 / \$20.00 from the same day; Gemini 3.8
 and 3.6 Flash, and `gemini-3.7-flash` and `gemini-3.5-flash`, which Google serves as them, \$0.75 /
 \$0.075 / \$3.75 "through December 31, 2026", then \$1.50 / \$0.15 / \$7.50 "starting January 1, 2027";
 Robotics-ER 2 Preview \$1.00 / \$0.10 / \$5.00, then \$2.00 / \$0.20 / \$10.00 from the same day. The

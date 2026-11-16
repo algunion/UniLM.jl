@@ -623,9 +623,10 @@ Building the endpoint refuses an argument that breaks its rule ([Options](@ref o
 The examples of First call, Tools, Structured output, Reasoning and Attachments were recorded on 21 October
 2026 on `gemma4:e4b` with UniLM's development branch after 0.24.0 and Ollama 0.40.6; those of Conversations,
 Streaming, and respond and FIM on 25 October 2026 on `gemma4:e4b` and `qwen2.5-coder:1.5b-base` with UniLM's
-development branch after 0.26.0 and Ollama 0.40.11; all on an Apple M4 Max with 64 GB. UniLM's live Ollama suites
-passed unchanged on Ollama 0.40.14 (3 November 2026): `test/integration_ollama.jl`, 106 tests, and
-`test/integration_ollama_models.jl`, 25.
+development branch after 0.26.0 and Ollama 0.40.11; all on an Apple M4 Max with 64 GB. UniLM's live suite
+`test/integration_ollama.jl` passed on Ollama 0.40.16 (16 November 2026), 110 tests with `gemma4:e4b` and 109 with
+`gemma4:e4b-it-q4_K_M` as its chat model, and `test/integration_ollama_models.jl` passed unchanged on Ollama 0.40.14
+(3 November 2026), 25 tests.
 
 See also: [`OllamaEndpoint`](@ref), [`OllamaOptions`](@ref), [`Chat`](@ref), [`chatrequest!`](@ref) and
 [`LLMSuccess`](@ref) in the API reference, and the [Ollama API reference](@ref ollama_api) page; the

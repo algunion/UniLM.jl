@@ -125,9 +125,11 @@ unchanged; their effect on `:mlx` is not verified.
     for runners: <runner>`, also while the model was loaded, and so was every runner
     but the listed one on each of the nine decision models measured. The 2,048-token
     floor of a model with vision was measured on 22 October 2026 (and on Ollama
-    0.40.7 on Linux). The live suites `test/integration_ollama.jl` (106
-    tests) and `test/integration_ollama_models.jl` (25) passed unchanged
-    on Ollama 0.40.14 (3 November 2026).
+    0.40.7 on Linux). The live suite `test/integration_ollama.jl` passed on
+    Ollama 0.40.16 (16 November 2026), 110 tests with `gemma4:e4b` (MLX) as its
+    chat model and 109 with `gemma4:e4b-it-q4_K_M` (llama.cpp);
+    `test/integration_ollama_models.jl` (25 tests) passed unchanged on Ollama
+    0.40.14 (3 November 2026).
 
 ## [Models](@id ollama_models)
 

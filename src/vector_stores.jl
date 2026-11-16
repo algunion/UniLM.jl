@@ -91,6 +91,23 @@ OpenAI documents — and `"text"`), `has_more`, and `next_page`, the token of a 
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    VectorStoreFileEntry(; file_id, attributes=nothing, chunking_strategy=nothing)
+
+One file of a [`create_file_batch`](@ref) that carries its own `attributes` and
+`chunking_strategy`, sent as an entry of the batch's `files`. Its `attributes` are bounded as
+[`add_vector_store_file`](@ref) bounds them, else `ArgumentError`.
+"""
+@kwdef struct VectorStoreFileEntry
+    file_id::String
+    attributes::Union{AbstractDict,Nothing} = nothing
+    chunking_strategy::Union{AbstractDict,Nothing} = nothing
+    VectorStoreFileEntry(file_id, attributes=nothing, chunking_strategy=nothing) =
+        new(file_id, _vs_attributes("VectorStoreFileEntry", attributes), chunking_strategy)
+end
+JSON.lower(e::VectorStoreFileEntry) =
+    _vs_body(:file_id => e.file_id, :attributes => e.attributes, :chunking_strategy => e.chunking_strategy)
+
 # ─── Result types ─────────────────────────────────────────────────────────────
 
 "Successful create/retrieve/update result wrapping a [`VectorStoreObject`](@ref)."
@@ -99,7 +116,7 @@ end
 @kwdef struct VectorStoreListSuccess <: LLMRequestResponse; response::VectorStoreList; end
 "Successful [`list_vector_store_files`](@ref) / [`list_file_batch_files`](@ref) result wrapping a [`VectorStoreFileList`](@ref)."
 @kwdef struct VectorStoreFileListSuccess <: LLMRequestResponse; response::VectorStoreFileList; end
-"Successful [`add_vector_store_file`](@ref) or [`retrieve_vector_store_file`](@ref) result wrapping a [`VectorStoreFileObject`](@ref)."
+"Successful [`add_vector_store_file`](@ref), [`retrieve_vector_store_file`](@ref) or [`update_vector_store_file`](@ref) result wrapping a [`VectorStoreFileObject`](@ref)."
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
 "Successful [`vector_store_file_content`](@ref) result wrapping a [`VectorStoreFileContent`](@ref)."
 @kwdef struct VectorStoreContentSuccess <: LLMRequestResponse; response::VectorStoreFileContent; end
@@ -155,6 +172,24 @@ function _vs_list_query(verb::String, params::Pair{String}...)::String
     isempty(parts) ? "" : "?" * join(parts, "&")
 end
 
+# File attributes, bounded as OpenAI's reference bounds them: at most 16 pairs, each key at most
+# 64 characters, each value a string of at most 512 characters, a number or a boolean.
+function _vs_attributes(verb::String, attributes::Union{AbstractDict,Nothing})
+    isnothing(attributes) && return nothing
+    length(attributes) <= 16 || throw(ArgumentError(
+        "$verb: attributes take at most 16 key-value pairs (got $(length(attributes)))"))
+    for (k, v) in attributes
+        key = string(k)
+        length(key) <= 64 || throw(ArgumentError(
+            "$verb: an attribute key has at most 64 characters (got $(length(key)): $(repr(key)))"))
+        v isa Union{AbstractString,Real} || throw(ArgumentError(
+            "$verb: attribute $(repr(key)) must be a string, a number or a boolean (got $(typeof(v)))"))
+        v isa AbstractString && length(v) > 512 && throw(ArgumentError(
+            "$verb: attribute $(repr(key)) is a string of at most 512 characters (got $(length(v)))"))
+    end
+    return attributes
+end
+
 # Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
 # rethrows for the caller's catch). status_exception=false is imposed by _http.
 function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
@@ -187,6 +222,7 @@ _vs_call(decode::Function, method::String, path::String, service, config, cancel
                   _api_base_url(service) * VECTOR_STORES_PATH * path, service, config, cancel; body)
 
 _vs_file_success(d::AbstractDict) = VectorStoreFileSuccess(response=_parse_vs_file(d))
+_vs_batch_success(d::AbstractDict) = VectorStoreBatchSuccess(response=_parse_vs_batch(d))
 function _vs_file_list(d::AbstractDict)
     page, has_more = _vs_page(d)
     VectorStoreFileListSuccess(response=VectorStoreFileList(
@@ -334,20 +370,29 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
 end
 
 """
-    add_vector_store_file(vector_store_id, file_id; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
+    add_vector_store_file(vector_store_id, file_id; chunking_strategy=nothing, attributes=nothing,
+                          service=OPENAIServiceEndpoint)
+
+Attach an uploaded file to a vector store. `attributes` are values a search's `filters` compare:
+at most 16 pairs, each key at most 64 characters, each value a string of at most 512 characters,
+a number or a boolean, as OpenAI's reference bounds them; past those bounds, an `ArgumentError`
+before anything is sent.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
+    attributes::Union{AbstractDict,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_attributes("add_vector_store_file", attributes)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_id => file_id)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
+        !isnothing(attributes) && (d[:attributes] = attributes)
         resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         if resp.status == 200
             VectorStoreFileSuccess(response=_parse_vs_file(JSON.parse(resp.body; dicttype=Dict{String,Any})))
@@ -401,6 +446,26 @@ function retrieve_vector_store_file(vs_id::String, file_id::String; service::Ser
 end
 
 """
+    update_vector_store_file(vector_store_id, file_id, attributes; service=OPENAIServiceEndpoint)
+
+Replace a vector store file's `attributes`, bounded as [`add_vector_store_file`](@ref) bounds
+them; `nothing` clears them (sent as `"attributes": null`). Returns `VectorStoreFileSuccess`
+with the updated file, `VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function update_vector_store_file(vs_id::String, file_id::String, attributes::Union{AbstractDict,Nothing};
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_attributes("update_vector_store_file", attributes)
+    _vs_call(_vs_file_success, "POST", "/" * _uripart(vs_id) * "/files/" * _uripart(file_id), service, config, cancel;
+             body=Dict(:attributes => attributes))
+end
+
+"""
     delete_vector_store_file(vector_store_id, file_id; service=OPENAIServiceEndpoint)
 
 Detach a file from a vector store; the file itself stays in the Files API ([`delete_file`](@ref)
@@ -440,20 +505,31 @@ function vector_store_file_content(vs_id::String, file_id::String; service::Serv
 end
 
 """
-    create_file_batch(vector_store_id, file_ids; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
+    create_file_batch(vector_store_id, file_ids; chunking_strategy=nothing, attributes=nothing,
+                      service=OPENAIServiceEndpoint)
+    create_file_batch(vector_store_id, files::Vector{VectorStoreFileEntry}; service=OPENAIServiceEndpoint)
+
+Attach uploaded files to a vector store as one batch: `file_ids` with the `chunking_strategy` and
+`attributes` (bounded as [`add_vector_store_file`](@ref) bounds them) of every file, or
+[`VectorStoreFileEntry`](@ref)s, each with its own. OpenAI ignores a batch's `attributes` and
+`chunking_strategy` beside entries, so that form does not take them. Returns
+`VectorStoreBatchSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
+    attributes::Union{AbstractDict,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_attributes("create_file_batch", attributes)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_ids => file_ids)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
+        !isnothing(attributes) && (d[:attributes] = attributes)
         resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d), cancel)
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(VectorStoreFailure, resp)
@@ -461,6 +537,14 @@ function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_str
         e isa InterruptException && rethrow()
         _callerr(VectorStoreCallError, e)
     end
+end
+
+function create_file_batch(vs_id::String, files::Vector{VectorStoreFileEntry};
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call(_vs_batch_success, "POST", "/" * _uripart(vs_id) * "/file_batches", service, config, cancel;
+             body=Dict(:files => files))
 end
 
 """

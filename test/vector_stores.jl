@@ -228,3 +228,57 @@ end
     @test_throws ArgumentError delete_vector_store_file("vs_1", "f"; service=ds)
     @test_throws ArgumentError vector_store_file_content("vs_1", "f"; service=ds)
 end
+
+@testset "vector store file attributes: sent on add and on batches, updated, cleared, bounded as OpenAI documents" begin
+    attrs = Dict("team" => "docs", "year" => 2026, "public" => true, "score" => 0.5)
+    ok = """{"id": "x", "status": "in_progress"}"""
+    sent(f) = JSON.parse(only(last(_with_scripted(f, (_, _) -> _json(200, ok)))).body)
+    @test sent(() -> add_vector_store_file("vs_1", "file-1"; attributes=attrs, service=URLProbe)) ==
+          Dict("file_id" => "file-1", "attributes" => attrs)
+    @test sent(() -> create_file_batch("vs_1", ["file-1", "file-2"]; attributes=attrs, service=URLProbe)) ==
+          Dict("file_ids" => ["file-1", "file-2"], "attributes" => attrs)
+    # Entries of their own go as `files`, each with its attributes and chunking.
+    static = Dict("type" => "static", "static" => Dict("max_chunk_size_tokens" => 400, "chunk_overlap_tokens" => 100))
+    entries = [VectorStoreFileEntry(file_id="file-1", attributes=Dict("team" => "a")),
+               VectorStoreFileEntry(file_id="file-2", chunking_strategy=static), VectorStoreFileEntry(file_id="file-3")]
+    @test sent(() -> create_file_batch("vs_1", entries; service=URLProbe)) ==
+          Dict("files" => [Dict("file_id" => "file-1", "attributes" => Dict("team" => "a")),
+                           Dict("file_id" => "file-2", "chunking_strategy" => static), Dict("file_id" => "file-3")])
+    # OpenAI ignores a batch's own attributes and chunking beside entries, so they cannot be given.
+    @test_throws MethodError create_file_batch("vs_1", entries; attributes=attrs, service=URLProbe)
+    @test_throws MethodError create_file_batch("vs_1", entries; chunking_strategy=static, service=URLProbe)
+
+    u, seen = _with_scripted((_, _) -> _json(200, """{"id": "file-1", "status": "completed", "attributes": {"team": "ops"}}""")) do
+        update_vector_store_file("vs_1", "file-1", Dict("team" => "ops"); service=URLProbe)
+    end
+    @test u isa VectorStoreFileSuccess && u.response.raw["attributes"] == Dict("team" => "ops")
+    @test (only(seen).method, only(seen).target, JSON.parse(only(seen).body)) ==
+          ("POST", "/v1/vector_stores/vs_1/files/file-1", Dict("attributes" => Dict("team" => "ops")))
+    # `nothing` clears them: the field OpenAI requires goes as null.
+    @test only(last(_with_scripted(() -> update_vector_store_file("vs_1", "file-1", nothing; service=URLProbe),
+                                   (_, _) -> _json(200, ok)))).body == """{"attributes":null}"""
+    @test _seam_timeout(update_vector_store_file("vs_x", "f", nothing; service=SeamProbe, config=_TINY_DEADLINE),
+                        VectorStoreCallError)
+    @test _recorded_targets(() -> update_vector_store_file(_HOSTILE_ID, _HOSTILE_ID, nothing; service=URLProbe)) ==
+          ["/v1/vector_stores/$_HOSTILE_ENC/files/$_HOSTILE_ENC"]
+    @test_throws ArgumentError update_vector_store_file("vs_1", "f", nothing; service=DeepSeekEndpoint("k"))
+
+    # 16 pairs, a 64-character key and a 512-character value are within OpenAI's limits.
+    edge = merge(Dict("k$i" => i for i in 1:14), Dict("k"^64 => 1, "v" => "v"^512))
+    @test sent(() -> add_vector_store_file("vs_1", "file-1"; attributes=edge, service=URLProbe))["attributes"] == edge
+    # Past them, the call is refused before anything is sent.
+    function refused(attrs)
+        err, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            try add_vector_store_file("vs_1", "file-1"; attributes=attrs, service=URLProbe); nothing catch e; e end
+        end
+        err isa ArgumentError && isempty(seen) ? err.msg : ""
+    end
+    @test occursin("16", refused(Dict("k$i" => i for i in 1:17)))
+    @test occursin("64", refused(Dict("k"^65 => 1)))
+    @test occursin("512", refused(Dict("k" => "v"^513)))
+    @test occursin("a string, a number or a boolean", refused(Dict("k" => [1, 2])))
+    @test occursin("add_vector_store_file", refused(Dict("k" => nothing)))
+    @test_throws ArgumentError VectorStoreFileEntry(file_id="f", attributes=Dict("k" => [1]))
+    @test_throws ArgumentError update_vector_store_file("vs_1", "f", Dict("k" => "v"^513); service=URLProbe)
+    @test_throws ArgumentError create_file_batch("vs_1", ["f"]; attributes=Dict("k"^65 => 1), service=URLProbe)
+end

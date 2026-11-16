@@ -70,8 +70,8 @@ function _ft_list_resp(resp)
         data=Vector{Dict{String,Any}}(_reply_required(data, "data", AbstractVector, "Fine-tuning API")),
         has_more=_reply_required(data, "has_more", Bool, "Fine-tuning API"), raw=data))
 end
-# The cursor query every fine-tuning list takes: `limit` page size, `after` the last id seen; then
-# the list's own query parts, each already encoded.
+# The cursor query every fine-tuning list (and `list_webhook_endpoints`) takes: `limit` page size,
+# `after` the last id seen; then the list's own query parts, each already encoded.
 function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,Nothing},
                   extra::Vector{String}=String[])::String
     params = String[]

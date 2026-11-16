@@ -517,7 +517,25 @@ export
     WebhookEvent,
     WEBHOOK_EVENTS,
     verify_webhook,
-    parse_webhook
+    parse_webhook,
+    WebhookEndpoint,
+    WebhookEndpointList,
+    WebhookEndpointTest,
+    WebhookEndpointSuccess,
+    WebhookEndpointListSuccess,
+    WebhookEndpointDeleteSuccess,
+    WebhookTestSuccess,
+    WebhookEventTypesSuccess,
+    WebhookEndpointFailure,
+    WebhookEndpointCallError,
+    create_webhook_endpoint,
+    list_webhook_endpoints,
+    retrieve_webhook_endpoint,
+    update_webhook_endpoint,
+    delete_webhook_endpoint,
+    rotate_webhook_endpoint_secret,
+    test_webhook_endpoint,
+    list_webhook_event_types
 
 # ─── Containers API ───────────────────────────────────────────────────────────
 export

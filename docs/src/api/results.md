@@ -114,15 +114,15 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Image Generation   ImageSuccess · ImageFailure · ImageCallError
 ├─ FIM Completion     FIMSuccess · FIMFailure · FIMCallError
 ├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
-├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
+├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreFileListSuccess · VectorStoreContentSuccess · VectorStoreSearchSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
 ├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
-├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
+├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · GraderRunSuccess · GraderValidateSuccess · FineTuningFailure · FineTuningCallError
 ├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
 ├─ Safety             SafetyCaseSuccess · SafetyAlertSuccess · ProvenanceCheckSuccess · SafetyFailure · SafetyCallError
-├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerFileListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ├─ Model listings     ModelListSuccess · ModelSuccess · ModelDeleteSuccess · ModelListFailure · ModelListCallError

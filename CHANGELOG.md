@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.34.0
+
+### Breaking
+- **`FileObject.filename` and `FileObject.purpose` are `Union{String,Nothing}`**, as an Anthropic or Gemini file may
+  have neither; every OpenAI file still has both. `FileUpload.purpose` defaults to `nothing`, and an OpenAI upload
+  without one throws `ArgumentError` before the request. `FileDeleteSuccess` gains `object` (its two-argument form
+  still builds, and compares unequal to a decoded OpenAI or Anthropic result).
+- **`WEBHOOK_EVENTS` has 28 entries** (it was an `NTuple{19,String}`): the nine `agent.session.*` and
+  `agent.environment.*` events OpenAI's webhook reference lists were missing.
+- **A streamed Anthropic or Gemini tool call follows the unstreamed argument rule.** A whole JSON array, string,
+  number or boolean is an `LLMCallError` (`ArgumentError("<Provider> tool-call arguments must be a JSON object, got
+  a JSON <type>")`) on any finish; on a turn cut at `max_tokens`/`MAX_TOKENS` such a call used to be dropped and the
+  turn returned as a success. Only arguments cut off before they form JSON are dropped.
+
+### Added
+- **Files on Anthropic and Gemini.** `upload_file`, `list_files`, `retrieve_file`, `delete_file` and `file_content`
+  speak Anthropic's Files API (`ANTHROPICServiceEndpoint` declares `:files`; uploads take `expires_after` from 3600 to
+  7776000 seconds, listing `limit`/`after`; downloading an uploaded file is Anthropic's HTTP 400 as a `FileFailure`)
+  and Gemini's (`GEMINIServiceEndpoint` declares `:files` and `:file_registration`; resumable uploads; `file_content`
+  throws `ArgumentError`, since Gemini serves no download of an uploaded file). `poll_file` waits out Gemini's
+  `PROCESSING` and OpenAI's `uploaded`; `register_files` is Gemini's files.register. A message cannot refer to an
+  uploaded file yet.
+- **OpenAI Files and Uploads:** `expires_after` on `upload_file`, `FileUpload` and `create_upload` (3600–2592000
+  seconds); `order` on `list_files`; `FileCallError.last_observed`.
+- **Batches on three providers.** `create_batch(requests; service)` takes `custom_id => Chat` pairs on OpenAI (a JSONL
+  of Chat Completions requests, uploaded with purpose `"batch"`), Anthropic Message Batches and native Gemini
+  batchGenerateContent, each request encoded by its provider's Chat encoder. `batch_results(id; service)` returns a
+  `BatchResultsSuccess` holding each request's `LLMSuccess`, `LLMFailure` or `LLMCallError` by custom id; a success's
+  usage names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates. `retrieve_batch`,
+  `list_batches`, `cancel_batch` and `poll_batch` work on Anthropic and Gemini (both declare `:batch`);
+  `delete_batch` (Anthropic, Gemini; `BatchDeleteSuccess`) and `update_batch(id; priority)` (Gemini) are new and
+  throw `ArgumentError` where a provider has no such operation. `batch_results(id; service, requests)` takes the
+  `custom_id => Chat` pairs that made the batch: each success's `self` is then a fork of its request's Chat with the
+  reply appended and its cost added, and each failure's `self` is that Chat, so a batched conversation continues with
+  `chatrequest!`; the Chats passed are not changed, and repeated or empty ids throw `ArgumentError` before the
+  request. On OpenAI, `create_batch(requests)` takes Chats for one model only ("each input file can only include
+  requests to a single model") and refuses others before the upload, and `batch_results` reads a
+  `/v1/chat/completions` batch only: another endpoint's batch is a `BatchCallError` naming
+  `file_content(output_file_id)`. `create_batch(input_file_id, endpoint;
+  output_expires_after)` sets when OpenAI's output and error files expire (3600–2592000 seconds).
+- **Token counting and model lookup.** `count_tokens(request)` returns the input tokens a request would bill, counted
+  by its provider without running it: a `Chat` on Anthropic (`/v1/messages/count_tokens`; an endpoint with `betas`
+  counts on the beta route) and native Gemini (`countTokens` with the whole `generateContent` request), a `Respond`
+  on OpenAI (`/v1/responses/input_tokens`); results `TokenCountSuccess`, `TokenCountFailure`, `TokenCountCallError`;
+  capability `:token_count`. `count_input_tokens` takes `tool_choice`, `parallel_tool_calls`,
+  `previous_response_id`, `conversation`, `reasoning`, `text`, `truncation` and `personality`.
+  `retrieve_model(id; service)` returns one model as a `ModelSuccess` on OpenAI, Anthropic and Gemini (an Anthropic
+  alias comes back as its dated id). `delete_model` deletes a fine-tuned model on OpenAI (`ModelDeleteSuccess`), as
+  it deletes a local model on Ollama.
+- **Vector stores, complete.** `update_vector_store`, `search_vector_store`, `list_vector_store_files`,
+  `retrieve_vector_store_file`, `update_vector_store_file`, `delete_vector_store_file`, `vector_store_file_content`,
+  `cancel_file_batch`, `list_file_batch_files`; `create_vector_store(; description)`, `list_vector_stores(; order,
+  before)`, file `attributes` on `add_vector_store_file` and `create_file_batch`, and
+  `create_file_batch(vs, ::Vector{VectorStoreFileEntry})`; result types `VectorStoreFileList`,
+  `VectorStoreFileContent`, `VectorStoreSearchPage`, `VectorStoreSearchResult`, `VectorStoreFileEntry`,
+  `VectorStoreFileListSuccess`, `VectorStoreContentSuccess`, `VectorStoreSearchSuccess`.
+- **Containers, complete.** `create_container(; memory_limit, network_policy, skills)` with `ContainerNetworkPolicy`,
+  `ContainerNetworkDisabled`, `ContainerNetworkAllowlist`, `ContainerDomainSecret` (its value is never printed) and
+  `SkillReference`; `list_containers(; order, name)`; `add_container_file(id; file_id)`, `list_container_files`,
+  `retrieve_container_file`, `container_file_content`, `delete_container_file`, `ContainerFileList`,
+  `ContainerFileListSuccess`. `code_interpreter(; memory_limit)` and `CodeInterpreterTool.memory_limit`.
+- **Fine-tuning.** `create_fine_tuning_job(; seed, integrations)` (`seed` 0–2147483647; `WandbIntegration`);
+  `pause_fine_tuning_job`, `resume_fine_tuning_job`; `list_fine_tuning_jobs(; metadata)`;
+  `create_fine_tuning_checkpoint_permission`, `list_fine_tuning_checkpoint_permissions`,
+  `delete_fine_tuning_checkpoint_permission` (`FineTuningDeleteSuccess`), which send an OpenAI admin key — `admin_key`, else
+  `OPENAI_ADMIN_KEY` — as the request's only credential and throw `ArgumentError` before any request without one.
+  Graders are not wrapped (OpenAI is deprecating them); a reinforcement `method` Dict carries its grader as given.
+- **Webhook endpoints, safety and provenance (OpenAI).** `create_webhook_endpoint`, `list_webhook_endpoints`,
+  `retrieve_webhook_endpoint`, `update_webhook_endpoint`, `delete_webhook_endpoint`,
+  `rotate_webhook_endpoint_secret`, `test_webhook_endpoint`, `list_webhook_event_types` (`WebhookEndpoint`,
+  `WebhookEndpointList`, `WebhookEndpointTest` and their results); `retrieve_safety_case`, `retrieve_safety_alert`,
+  `check_content_provenance` (`SafetyCase`, `SafetyAlert`, `ProvenanceCheck`, `ProvenanceResult` and their results).
+  `OPENAIServiceEndpoint` declares `:webhooks`, `:safety`, `:content_provenance` and `:token_count`.
+
+### Changed
+- `list_models` asks Anthropic and Gemini for 1000 models a page, the most each serves; `ModelListSuccess.raw` holds
+  one page for today's listings.
+- Refused before the request (`ArgumentError`): a container or code-interpreter `memory_limit` other than
+  1g/4g/16g/64g, or one on the tool beside a container id or a container Dict that sets one; an empty allowlist or
+  domain secret; a bad `skill_id`/`version`; an `order` or `filter` outside OpenAI's listed values; vector-store file
+  attributes past the documented bounds; `partial_images` above 0 with GIF or SVG output and `input_image_mask` with
+  GIF output on `ImageGenerationTool` (the API answers each with HTTP 400).
+- A printed or logged `WebhookEndpoint`, `WebhookEndpointList` or a result holding one shows
+  `signing_secret=<not shown>` and leaves `raw` out. `WEBHOOK_EVENTS` leaves out `video.completed` and
+  `video.failed` (OpenAI's Videos API is shut down), as it leaves out `eval.run.*`.
+- `on_tool_call`'s skip warning reads "undecodable tool call"; Ollama's refusal of non-object tool-call arguments
+  names the JSON type.
+
+### Fixed
+- A decoded tool call without a name, or without an id its provider requires (Anthropic, Interactions), is a call
+  error on Gemini, Gemini Interactions and the Anthropic stream, which read it as `""`; a Gemini `functionCall` whose
+  `id` is null, empty or not a string is a call without an id (`unilm_call_<k>`), streamed or not. Anthropic input
+  pieces joining to `null` are a call without arguments, and a `tool_use` block without `input_json_delta` takes its
+  `content_block_start` input, which blank `input_json_delta` pieces do not replace. Argument text that is not JSON
+  under a tool finish names its provider.
+- Platform replies that break OpenAI's reference are call errors, never an empty page, an unknown status or a
+  substituted id: a list reply without `data`/`has_more` (files, batches, vector stores, containers, fine-tuning); a
+  batch, vector store, file batch, store file, container or fine-tuning job without its `status` (`poll_batch` and
+  `poll_file_batch` stop at once instead of polling to their timeout); a delete record without its own `id` or the
+  expected `object` (webhook endpoints and checkpoint permissions included).
+- `count_input_tokens(tools=…)` sends a Chat `Tool` as a Responses function tool (it was sent in the Chat shape,
+  which OpenAI answers with HTTP 400), and a 200 without an integer `input_tokens` is a `ResponseCallError`.
+- An OpenAI file reply whose `filename` or `purpose` is null, and an OpenAI file delete whose `object` is not
+  `"file"`, are `FileCallError`s; an Anthropic file page whose `next_page` is `""` is the last page. An OpenAI
+  batch that ended without output or error files says so and includes the batch's `errors`. An Anthropic batch
+  custom id or a `SkillReference` version ending in a newline is refused.
+- Docs: Batch rates are half the standard ones except a cache hit on six Gemini models, whose Batch tab keeps the
+  standard price; the retry, cancellation and strict-validation lists name the new verbs.
+
 ## 0.33.0
 
 ### Breaking

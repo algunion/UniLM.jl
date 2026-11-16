@@ -35,8 +35,8 @@ verbs hold it to that declaration like any built-in.
 
 A rejection of a declared endpoint throws `ArgumentError` before any request,
 naming the feature and the endpoint and listing what it does support (for example
-`Files API is not supported by ANTHROPICServiceEndpoint. Supported: chat,
-json_output, models, streaming, tools`).
+`Vector Stores API is not supported by ANTHROPICServiceEndpoint. Supported: chat,
+files, json_output, models, streaming, tools`).
 
 ## Functions
 
@@ -60,7 +60,8 @@ has_capability
 | `:image_edits` | Image editing |
 | `:fim` | FIM (fill-in-the-middle) completion |
 | `:prefix_completion` | Prefix completion (continue a partial assistant message) |
-| `:files` | Files API |
+| `:files` | Files API ([`upload_file`](@ref) and its family): OpenAI, Anthropic and native Gemini, each its own |
+| `:file_registration` | Registering Google Cloud Storage objects as files ([`register_files`](@ref)): native Gemini |
 | `:vector_stores` | Vector Stores API |
 | `:conversations` | Conversations API |
 | `:moderation` | Moderations API |

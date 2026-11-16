@@ -40,7 +40,7 @@ end
 
 # ─── Capabilities & defaults ─────────────────────────────────────────────────
 
-provider_capabilities(::_AnthropicEndpoint) = Set([:chat, :tools, :json_output, :streaming, :models])
+provider_capabilities(::_AnthropicEndpoint) = Set([:chat, :tools, :json_output, :streaming, :models, :files])
 
 default_model(::_AnthropicEndpoint) = "claude-opus-5-5"
 

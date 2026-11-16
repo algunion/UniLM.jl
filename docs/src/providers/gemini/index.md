@@ -9,8 +9,9 @@ Google makes the Gemini models and serves them through two native APIs, both of 
 `tool_loop!`, and the Interactions API, which `respond` and the `tool_loop` that takes an input or a
 `Respond` reach. Image generation and speech go through generateContent too.
 `GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint, which UniLM uses for
-embeddings. Of Google's other APIs — the Files, Batch, Live and token-counting APIs, explicit context
-caching, managed agents such as Deep Research, music and video generation — none is available. The
+embeddings. `GEMINIServiceEndpoint` speaks Gemini's Files API too ([Files](@ref gemini_files)). Of Google's
+other APIs — the Batch, Live and token-counting APIs, explicit context caching, managed agents such as
+Deep Research, music and video generation — none is available. The
 verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
 ([Background requests](@ref gemini_background)). `speak` reads aloud through Gemini TTS, and
@@ -35,6 +36,7 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [search the web, run code or read a page](@ref gemini_hosted_tools) | `gemini_google_search()`, `gemini_code_execution()`, `gemini_url_context()` | tools Google runs, on the Interactions API |
 | [generate or edit an image](@ref gemini_images) | `generate_image`, `edit_image` with `service=GEMINIServiceEndpoint` | an `ImageSuccess` holding the image |
 | [read text aloud](@ref gemini_audio) | `speak(text; service=GEMINIServiceEndpoint)` | 24 kHz speech as WAV or PCM |
+| [store files for 48 hours](@ref gemini_files) | `upload_file(path; service=GEMINIServiceEndpoint)`, `poll_file`, `list_files`, `delete_file`, `register_files` | a `FileObject` for each file, its `uri` in `raw` |
 | [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIOpenAIServiceEndpoint` | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
 | [know what a call cost](@ref gemini_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
@@ -247,6 +249,36 @@ answered as `gemini-3.8-flash` and `gemini-pro-latest` as `gemini-3.1-pro-previe
 speech models serve verbs that `estimated_cost` does not price
 ([Images, speech, embeddings & the compatible endpoint](@ref gemini_media_page)); the others would be
 estimated at `0.0`.
+
+## [Files](@id gemini_files)
+
+The endpoint's `files` capability: the [Files API](@ref files_api) verbs reach Gemini's Files API, which
+stores a file for 48 hours, up to 2 GB a file and 20 GB a project
+([Files API](https://ai.google.dev/gemini-api/docs/files)). [`upload_file`](@ref)`(path;
+service=GEMINIServiceEndpoint)` takes no purpose and no `expires_after` (each an `ArgumentError` before the
+request), and uses the resumable upload Google's guide documents: a start request with the key, the size,
+the MIME type read from the extension, and the file's name as `displayName`, then the bytes in one request
+to the session's address, without the key. The [`FileObject`](@ref)'s `id` is the File's `name` without
+`files/` (the verbs take either), `bytes` its `sizeBytes`, `created_at` its `createTime` in Unix seconds,
+`filename` its `displayName` (`nothing` for a file uploaded without one), `status` its `state`; `uri`, the
+address a request refers to, and `mimeType`, `expirationTime`, `sha256Hash`, `source` and a failed file's
+`error` are in `raw`. A large file can come back `"PROCESSING"`: [`poll_file`](@ref) GETs it until it is
+`"ACTIVE"` or `"FAILED"`. [`list_files`](@ref) takes `limit` (`pageSize`, at most 100) and `after`, the
+`nextPageToken` in the page before's `raw`; OpenAI's `purpose` and `order` are refused. [`delete_file`](@ref)
+reports the file requested, as Gemini's reply is empty. [`file_content`](@ref) throws `ArgumentError`
+before any request: Gemini serves no download of an uploaded file. [`register_files`](@ref) registers
+`gs://` objects the key's project can read (files.register, capability `:file_registration`). A message
+cannot refer to an uploaded file through UniLM yet.
+
+```julia
+up = upload_file("notes.txt"; service=GEMINIServiceEndpoint)
+f = up.response
+f.id, f.status, f.raw["uri"]
+# ("rvbxh1rsu85u", "ACTIVE", "https://generativelanguage.googleapis.com/v1beta/files/rvbxh1rsu85u")
+# — a 5-byte text file, active at once, 16 November 2026
+delete_file(f.id; service=GEMINIServiceEndpoint)
+# FileDeleteSuccess("rvbxh1rsu85u", true, nothing)
+```
 
 ## [Limits and refusals](@id gemini_limits)
 

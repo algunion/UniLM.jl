@@ -673,4 +673,40 @@ end
     @info "image_context_compression live" streamed = s.response.image_context_compression auto = a.response.image_context_compression
 end
 
+@testset "Files API — expires_after, order, poll_file, the delete's object; an Uploads file with user_data and an expiry" begin
+    # Free: file operations bill nothing; two 22-byte files, deleted at the end, and storage for seconds.
+    path = joinpath(mktempdir(), "unilm-live.txt")
+    write(path, "UniLM live Files test\n")
+    up = upload_file(path, "user_data"; expires_after=3600)
+    @test up isa FileSuccess
+    if up isa FileSuccess
+        f = up.response
+        try
+            @test (f.filename, f.bytes, f.purpose) == ("unilm-live.txt", 22, "user_data")
+            @test f.raw["expires_at"] - f.created_at == 3600
+            listed = list_files(; purpose="user_data", order="desc", limit=20)
+            @test listed isa FileListSuccess && any(x -> x.id == f.id, listed.response.data)
+            @test poll_file(f.id; interval=1.0, timeout=60.0) isa FileSuccess
+        finally
+            del = delete_file(f.id)
+            @test del isa FileDeleteSuccess && (del.id, del.object) == (f.id, "file")
+        end
+    end
+    # The Uploads API takes `user_data`, which its reference does not list, and passes the expiry on.
+    u = create_upload(; filename="unilm-live.txt", purpose="user_data", bytes=22, mime_type="text/plain",
+                      expires_after=3600)
+    @test u isa UploadSuccess
+    if u isa UploadSuccess
+        part = add_upload_part(u.response.id, read(path))
+        @test part isa UploadPartSuccess
+        done = part isa UploadPartSuccess ? complete_upload(u.response.id, [part.response.id]) : cancel_upload(u.response.id)
+        @test done isa UploadSuccess && done.response.status == "completed"
+        if done isa UploadSuccess && !isnothing(done.response.file)
+            file = done.response.file
+            @test file.purpose == "user_data" && file.raw["expires_at"] - file.created_at == 3600
+            @test delete_file(file.id) isa FileDeleteSuccess
+        end
+    end
+end
+
 end  # if OPENAI_API_KEY

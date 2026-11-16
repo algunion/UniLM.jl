@@ -52,23 +52,28 @@ _upl_resp(resp) = resp.status == 200 ?
     _failure(UploadFailure, resp)
 
 """
-    create_upload(; filename, purpose, bytes, mime_type, service=OPENAIServiceEndpoint)
+    create_upload(; filename, purpose, bytes, mime_type, expires_after=nothing, service=OPENAIServiceEndpoint)
 
 `purpose` takes the Files API purposes (`"assistants"`, `"batch"`, `"fine-tune"`,
 `"vision"`, `"user_data"`); any other value throws `ArgumentError` before any request,
-`"evals"` naming the Evals API's shutdown on 2026-11-30.
+`"evals"` naming the Evals API's shutdown on 2026-11-30. `expires_after` is the number of
+seconds from creation until the completed upload's file expires, 3600 to 2592000, as on
+[`FileUpload`](@ref).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns an `UploadCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing)
+function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String,
+    expires_after::Union{Int,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :uploads, "Uploads API")
     _check_file_purpose(purpose)
+    _check_file_expiry("create_upload", _OpenAIFiles(), expires_after)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)
+        isnothing(expires_after) || (d[:expires_after] = Dict("anchor" => "created_at", "seconds" => expires_after))
         _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH, auth_header(service),
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e

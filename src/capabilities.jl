@@ -15,6 +15,8 @@ Standard capability symbols include:
 - Completions: `:fim`, `:prefix_completion`
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
+- Files ([`upload_file`](@ref) and its family): `:files` (OpenAI, Anthropic, Gemini); Gemini's
+  [`register_files`](@ref): `:file_registration`
 - Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
 - Translation ([`translate`](@ref)): `:realtime` (OpenAI's Realtime translation sessions); on Ollama,
   `:audio` (its translation route)

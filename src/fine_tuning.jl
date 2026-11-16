@@ -356,8 +356,8 @@ end
     delete_fine_tuning_checkpoint_permission(checkpoint, permission_id; service=OPENAIServiceEndpoint)
 
 Delete the permission `permission_id` of the fine-tuned model checkpoint `checkpoint`: a
-[`FineTuningDeleteSuccess`](@ref) when OpenAI's record names the permission and says `"deleted": true`,
-the `FineTuningCallError` otherwise. Needs an admin API key, as
+[`FineTuningDeleteSuccess`](@ref) when OpenAI's record names the permission, is a `"checkpoint.permission"`
+object and says `"deleted": true`, the `FineTuningCallError` otherwise. Needs an admin API key, as
 [`create_fine_tuning_checkpoint_permission`](@ref) does.
 """
 function delete_fine_tuning_checkpoint_permission(checkpoint::String, permission_id::String;
@@ -370,7 +370,7 @@ function delete_fine_tuning_checkpoint_permission(checkpoint::String, permission
             auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(FineTuningFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-        FineTuningDeleteSuccess(id=_reply_required(d, "id", String, "Fine-tuning API"), deleted=_confirm_deleted(d))
+        _vs_deletion(FineTuningDeleteSuccess, d, "checkpoint.permission")
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)

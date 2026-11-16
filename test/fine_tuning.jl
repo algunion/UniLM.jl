@@ -166,10 +166,14 @@ end
     @test rs[2] isa FineTuningListSuccess && rs[3] isa FineTuningListSuccess
     @test rs[4] isa FineTuningDeleteSuccess && rs[4].id == "cp_1" && rs[4].deleted
     # A delete counts when its record names what it deleted and says "deleted": true; a list needs its page.
-    for body in ("""{"deleted":true}""", """{"id":"cp_1","deleted":false}""", """{"id":"cp_1"}""", "{}")
+    for body in ("""{"deleted":true}""", """{"id":"cp_1","deleted":false}""", """{"id":"cp_1"}""", "{}",
+                 """{"id":"cp_1","deleted":true}""", """{"object":"checkpoint","id":"cp_1","deleted":true}""")
         @test _answered(() -> delete_fine_tuning_checkpoint_permission(ck, "cp_1"; service=URLProbe), 200; body) isa
               FineTuningCallError
     end
+    r = _answered(() -> delete_fine_tuning_checkpoint_permission(ck, "cp_1"; service=URLProbe), 200;
+                  body="""{"object":"checkpoint","id":"cp_1","deleted":true}""")
+    @test r isa FineTuningCallError && occursin("\"checkpoint.permission\"", r.error)
     @test _answered(() -> create_fine_tuning_checkpoint_permission(ck, ["p"]; service=URLProbe), 200; body="{}") isa
           FineTuningCallError
     # The reference asks for an admin key; a project key's refusal is the family's typed failure.

@@ -263,9 +263,12 @@ end
     for page in (Dict(), Dict("data" => [ep]), Dict("has_more" => false))
         @test answer(() -> list_webhook_endpoints(; service=s), page) isa WebhookEndpointCallError
     end
-    for rec in (Dict("deleted" => true), Dict("id" => "we_1", "deleted" => false), Dict("id" => "we_1"))
+    for rec in (Dict("deleted" => true), Dict("id" => "we_1", "deleted" => false), Dict("id" => "we_1"),
+                Dict("id" => "we_1", "deleted" => true), Dict("object" => "webhook_endpoint", "id" => "we_1", "deleted" => true))
         @test answer(() -> delete_webhook_endpoint("we_1"; service=s), rec) isa WebhookEndpointCallError
     end
+    r = answer(() -> delete_webhook_endpoint("we_1"; service=s), Dict("object" => "webhook_endpoint", "id" => "we_1", "deleted" => true))
+    @test r isa WebhookEndpointCallError && occursin("\"webhook_endpoint.deleted\"", r.error)
     @test answer(() -> test_webhook_endpoint("we_1", "batch.completed"; service=s),
                  Dict("webhook_endpoint_id" => "we_1", "event_type" => "batch.completed")) isa WebhookEndpointCallError
     @test answer(() -> list_webhook_event_types(; service=s), Dict("object" => "list")) isa WebhookEndpointCallError

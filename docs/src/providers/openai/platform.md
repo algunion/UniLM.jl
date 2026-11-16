@@ -51,11 +51,11 @@ These calls are not recorded, so their output on this page is quoted from dated 
   container, a conversation, a checkpoint permission or a webhook endpoint — counts only when the
   record says `"deleted": true`: a reply without it, or with `false`, is the call error, the object
   being in place as far as UniLM can tell. The
-  record of a vector store, a container or a file in either must also carry the `id` it deleted
-  (the requested one is not put in its place) and name what it deleted as its `object` —
-  `"vector_store.deleted"`, `"vector_store.file.deleted"`, `"container.deleted"` or
-  `"container.file.deleted"`; one without them, or naming another kind, is the call error. A checkpoint
-  permission's or a webhook endpoint's record must also name what it deleted.
+  record of a vector store, a container, a file in either, a checkpoint permission or a webhook
+  endpoint must also carry the `id` it deleted (the requested one is not put in its place) and name
+  what it deleted as its `object` — `"vector_store.deleted"`, `"vector_store.file.deleted"`,
+  `"container.deleted"`, `"container.file.deleted"`, `"checkpoint.permission"` or
+  `"webhook_endpoint.deleted"`; one without them, or naming another kind, is the call error.
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
   carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it, a

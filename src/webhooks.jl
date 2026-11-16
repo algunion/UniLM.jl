@@ -323,12 +323,13 @@ end
     delete_webhook_endpoint(id; service=OPENAIServiceEndpoint)
 
 Delete the webhook endpoint `id`: a [`WebhookEndpointDeleteSuccess`](@ref) when OpenAI's record
-names the endpoint and says `"deleted": true`, the `WebhookEndpointCallError` otherwise.
+names the endpoint, is a `"webhook_endpoint.deleted"` object and says `"deleted": true`, the
+`WebhookEndpointCallError` otherwise.
 """
 delete_webhook_endpoint(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
     _webhook_endpoints_call("DELETE", _webhook_endpoint_route(id), service, config, cancel) do d
-        WebhookEndpointDeleteSuccess(id=_reply_required(d, "id", String, _WH), deleted=_confirm_deleted(d))
+        _vs_deletion(WebhookEndpointDeleteSuccess, d, "webhook_endpoint.deleted")
     end
 
 """

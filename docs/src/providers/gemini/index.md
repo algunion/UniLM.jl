@@ -58,7 +58,10 @@ generateContent requests go to
 `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, a streamed one
 to `:streamGenerateContent?alt=sse`, and Interactions requests to
 `https://generativelanguage.googleapis.com/v1beta/interactions`, each with the key in
-`x-goog-api-key`.
+`x-goog-api-key`. UniLM stays on `v1beta`, though Google's SDKs "call `v1` unless you set a version"
+since their November 2026 releases ([API versions](https://ai.google.dev/gemini-api/docs/api-versions)):
+`v1` has no request `labels` field and no speech configuration, which UniLM sends for
+`safety_identifier` and `speak` (Google's discovery documents of both versions, 16 November 2026).
 
 A `Chat` sends its `max_completion_tokens`, else its `max_tokens`, as `maxOutputTokens`, and a
 `Chat` that sets neither sends none: the model's own output limit applies. The limit counts the

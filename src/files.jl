@@ -370,14 +370,15 @@ function _parse_file(::_GeminiFiles, d::AbstractDict)::FileObject
 end
 
 # A page: OpenAI's `data` and `has_more`, both required. Anthropic's `data`, and `next_page`, its
-# opaque cursor of the next page, null on the last. Gemini's `files` and `nextPageToken`, each left
-# out when empty (proto3 JSON omits a field at its default value), so `{}` is an empty last page.
+# opaque cursor of the next page, null on the last (an empty one ends the listing too, as Anthropic's
+# SDK reads it). Gemini's `files` and `nextPageToken`, each left out when empty (proto3 JSON omits a
+# field at its default value), so `{}` is an empty last page.
 _file_page(wire::_OpenAIFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
     has_more=_file_required(d, "has_more", Bool), raw=d)
 _file_page(wire::_AnthropicFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
-    has_more=!isnothing(_file_field(d, "next_page", String)), raw=d)
+    has_more=!isempty(something(_file_field(d, "next_page", String), "")), raw=d)
 function _file_page(wire::_GeminiFiles, d::Dict{String,Any})::FileList
     token = _file_field(d, "nextPageToken", String)
     FileList(data=FileObject[_parse_file(wire, f) for f in something(_file_field(d, "files", AbstractVector), [])],

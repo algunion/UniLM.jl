@@ -11,7 +11,7 @@ source, a Gemini `fileData` part, a Chat `file_id`) is not available yet.
 | :--- | :--- | :--- | :--- |
 | `upload_file` | `upload_file(path, purpose)`, multipart | `upload_file(path; service)`, multipart; no purpose | `upload_file(path; service)`, Gemini's resumable upload; no purpose |
 | `expires_after` (seconds) | 3600 to 2592000 (`expires_after`) | 3600 to 7776000 (`expires_in_seconds`) | refused: Gemini stores a file for 48 hours |
-| `list_files` | `purpose`, `limit`, `after` (a file id), `order` | `limit`, `after` (the `next_page` cursor); `purpose` and `order` refused | `limit` (`pageSize`), `after` (the `nextPageToken`); `purpose` and `order` refused |
+| `list_files` | `purpose`, `limit`, `after` (a file id), `order` | `limit`, `after` (the `next_page` cursor, null or empty on the last page); `purpose` and `order` refused | `limit` (`pageSize`), `after` (the `nextPageToken`); `purpose` and `order` refused |
 | `file_content` | the bytes | the bytes of a file a tool made; an uploaded file is Anthropic's HTTP 400 | refused before any request: Gemini serves no download of an uploaded file |
 | `delete_file` | `object` `"file"` | `object` `"file_deleted"` | an empty reply: `id` is the file requested |
 | `poll_file` | until the status is past `"uploaded"` | at once | until the `state` is past `"PROCESSING"` |

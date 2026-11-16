@@ -520,6 +520,14 @@ end
     @test e isa ArgumentError && occursin("takes no purpose or order", e.msg)
 end
 
+# Anthropic's SDK ends a listing on an empty `next_page` as on a null one (`if not next_page`), and the Gemini
+# branch ends on an empty `nextPageToken`.
+# Refuted if: a page whose next_page is "" reports more pages.
+@testset "Anthropic list_files: an empty next_page is the last page" begin
+    r = _answered(() -> list_files(; service=_AF), 200; body="""{"data":[$_ANTHROPIC_FILE],"next_page":""}""")
+    @test r isa FileListSuccess && !r.response.has_more
+end
+
 # Anthropic's retrieve_metadata, download and delete: GET /v1/files/{id}, GET …/content, DELETE; the
 # DeletedFile names the id, and a `type` "file_deleted" when present.
 # Refuted if: an id leaves its path segment, a download of a file Anthropic does not serve is anything

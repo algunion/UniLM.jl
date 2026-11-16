@@ -9,6 +9,7 @@ Types and functions for generating and editing images: OpenAI's Images API
 ```@docs
 ImageGeneration
 ImageEdit
+SvgOptions
 ```
 
 ### Construction
@@ -131,16 +132,20 @@ end
 
 | Parameter            | Provider | Type   | Default           | Description                        |
 | :------------------- | :------- | :----- | :---------------- | :--------------------------------- |
-| `model`              | both     | String | `""`              | Sentinel; resolves on serialization to `"gpt-image-2.5-sunburst"` (OpenAI) or `"gemini-nano-banana-2.1"` (Gemini) |
+| `model`              | both     | String | `""`              | Sentinel; resolves on serialization to `"gpt-image-2.6-sunburst"` (OpenAI) or `"gemini-nano-banana-2.1"` (Gemini) |
 | `prompt`             | both     | String | *(required)*      | Text description of the image      |
 | `n`                  | both     | Int    | `1`               | Number of images (1–10); Gemini takes only 1 |
 | `safety_identifier`  | both     | String | —                 | Stable end-user id for abuse monitoring: 1–128 characters on OpenAI; on Gemini the request label, at most 63 lowercase letters, numerals, `_` or `-`, international ones included |
 | `size`               | OpenAI   | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
 | `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` |
 | `background`         | OpenAI   | String | `"auto"`          | `"transparent"`, `"opaque"`        |
-| `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`        |
-| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg               |
+| `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"` (SVG on a generation only) |
+| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG output |
 | `moderation`         | OpenAI   | String | `"auto"`          | `"auto"`, `"low"`                  |
+| `complexity`         | OpenAI   | String | `"high"` (2.6)    | `"low"`, `"medium"`, `"high"`: planning before rendering, on the GPT-Image-2.6 models |
+| `frame_count`        | OpenAI   | Int    | `9`               | 2–16, with `output_format="gif"` only |
+| `frame_duration_ms`  | OpenAI   | Int    | `200`             | at least 20, with `output_format="gif"` only |
+| `svg`                | OpenAI   | SvgOptions | —             | The SVG author ([`SvgOptions`](@ref)), with `output_format="svg"` and `n=1`; generation only |
 | `aspect_ratio`       | Gemini   | String | `"1:1"`           | `"1:1"`, `"1:4"`, `"4:1"`, `"1:8"`, `"8:1"`, `"2:3"`, `"3:2"`, `"3:4"`, `"4:3"`, `"4:5"`, `"5:4"`, `"9:16"`, `"16:9"`, `"21:9"`; an edit keeps its input's ratio by default |
 | `resolution`         | Gemini   | String | `"1K"`            | `"512"`, `"1K"`, `"2K"`, `"4K"`; `gemini-nano-banana-2.1` renders 1K, 2K or 4K |
 

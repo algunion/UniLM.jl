@@ -54,7 +54,7 @@ run their examples, in its own words:
 | `gpt-6-astra` | "Highest intelligence", "For the most demanding reasoning, coding, and professional work" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
 | `gpt-6-luna` | "Fastest and most cost-effective", "Strong performance for focused, high-volume tasks" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
 | `gpt-5.6` | "The `gpt-5.6` alias routes requests to `gpt-5.6-sol`" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
-| `gpt-5.6-sol` | "the model for flagship capability" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)), whose "promotional pricing is available at least through November 21, 2026" ([pricing](https://developers.openai.com/api/docs/pricing)) |
+| `gpt-5.6-sol` | "the model for flagship capability" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)), whose "promotional pricing is available until November 30, 2026" ([pricing](https://developers.openai.com/api/docs/pricing)), with no later price published yet |
 | `gpt-5.6-terra` | "for a balance of intelligence and cost" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
 | `gpt-5.6-luna` | "for efficient, high-volume workloads" ([GPT-5.6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6)) |
 | `gpt-5.4-mini` | "Reasoning.effort supports: none (default), low, medium, high and xhigh" ([GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)) |
@@ -262,11 +262,13 @@ The estimate of a `Respond` result adds what its hosted tools bill, from the `to
 reports ([`tool_usage`](@ref)): each billable web search at "\$10.00 / 1k calls", or "\$25.00 / 1k
 calls" for the legacy `web_search_preview` tool on a non-reasoning model (of the models below,
 `gpt-4.1` and `gpt-4.1-mini`), and the image generation tool's tokens at the Standard rates OpenAI's
-pricing page lists for its image model: the one the request's [`image_generation_tool`](@ref) names,
-else the tool's default, `gpt-image-2`. Neither is scaled by the billed tier. UniLM has image rates
-for `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini`
-and `chatgpt-image-latest`; the tokens of another image model leave the estimate at `0.0`, with one
-warning per model.
+pricing page lists for its image model: the one the reply's copy of the tool names — the model the
+request's [`image_generation_tool`](@ref) names, or the one the tool ran, which OpenAI's reply names
+for a request that names none (observed on 16 November 2026) — else the tool's default,
+`gpt-image-2.6-sunburst`. Neither is scaled by the billed tier. UniLM has image rates for
+`gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`, `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`,
+`gpt-image-2`, `gpt-image-1.5`, `gpt-image-1-mini` and `chatgpt-image-latest`; the tokens of another
+image model leave the estimate at `0.0`, with one warning per model.
 
 [`cumulative_cost`](@ref) is a lower bound of the bill: it adds nothing for an attempt UniLM retried, a
 failure, or a stream stopped before its usage arrived ([Streaming](@ref openai_streaming)), and no
@@ -279,11 +281,14 @@ row below is estimated at `0.0`, with one warning per model id: pass `estimated_
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 
 The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October,
-`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November); prices change, so check OpenAI's
-[pricing page](https://developers.openai.com/api/docs/pricing) before relying on an estimate.
+`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November, `gpt-6-cyber`'s on 16 November); prices change,
+so check OpenAI's [pricing page](https://developers.openai.com/api/docs/pricing) before relying on an
+estimate.
 `gpt-6-astra-law`'s is a promotional price, "available at least through December 31, 2026", with no
 later price published yet. OpenAI lists `gpt-6-rosalind` at Standard rates alone, and "Access is limited
-to approved internal research through the trusted-access program".
+to approved internal research through the trusted-access program"; `gpt-6-cyber` at Standard rates alone
+too, for organizations with "Daybreak Red access and approval"
+([GPT-6 Cyber](https://developers.openai.com/api/docs/models/gpt-6-cyber)).
 
 ```@eval
 Main.ProviderFacts.price_table(:openai)

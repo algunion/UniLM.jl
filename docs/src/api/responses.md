@@ -64,6 +64,8 @@ incomplete_details
 usage_details
 tool_usage
 ToolUsage
+input_transformations
+InputTransformation
 ```
 
 ## Request Functions

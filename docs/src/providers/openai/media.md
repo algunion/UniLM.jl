@@ -9,9 +9,11 @@ using UniLM
 [`generate_image`](@ref) sends an [`ImageGeneration`](@ref) to OpenAI's Images API,
 `POST /v1/images/generations`, and [`edit_image`](@ref) an [`ImageEdit`](@ref) to
 `POST /v1/images/edits`, as `multipart/form-data` with each image, the mask and a markup as a file. Both
-take `gpt-image-2.5-sunburst` unless the request names another `model`; the request's `model`
+take `gpt-image-2.6-sunburst` unless the request names another `model` — "For new integrations, use
+GPT-Image-2.6 Sunburst or Flare", OpenAI's guide says; the request's `model`
 field stays `""` until the request is serialized, so `JSON.json(ig)` shows the model that goes.
-OpenAI's options are sent as given, for OpenAI to judge:
+OpenAI's options are sent as given, for OpenAI to judge, except the GPT-Image-2.6 controls below them,
+which UniLM checks:
 
 - **`size`**: `"1024x1024"`, `"1536x1024"`, `"1024x1536"` or `"auto"`, or a `WIDTHxHEIGHT` of
   the GPT Image 2 and 2.5 models, where "Width and height must be multiples of 16, the aspect
@@ -23,7 +25,8 @@ OpenAI's options are sent as given, for OpenAI to judge:
   ([image generation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
 - **`background`, `output_format`, `output_compression`**: `"transparent"`, `"opaque"` or
   `"auto"`, a transparent one with `"png"` or `"webp"`; the format `"png"`, the default,
-  `"jpeg"` or `"webp"`; the compression from 0 to 100 of a JPEG or WebP, which "defaults to 100".
+  `"jpeg"`, `"webp"`, `"gif"` or `"svg"` (below); the compression from 0 to 100 of a JPEG or WebP,
+  which "defaults to 100".
 - **`n`**: how many images one request makes, "between 1 and 10", which [`image_data`](@ref)
   lists in order.
 - **`moderation`**: `"auto"`, the default, or `"low"` "for less restrictive filtering": the
@@ -33,6 +36,33 @@ OpenAI's options are sent as given, for OpenAI to judge:
   OpenAI asks you to "Hash a username or email address to avoid sending identifying information";
   it takes the place of the deprecated `user`, which the image requests do not have, and UniLM
   checks that it is 1 to 128 characters ([Limits and refusals](@ref openai_media_limits)).
+
+The GPT-Image-2.6 models (`gpt-image-2.6-sunburst`, `gpt-image-2.6-flare`) "support complexity
+control, markup-guided edits, SVG output, and animated GIF output through the Image API"
+([image generation](https://developers.openai.com/api/docs/guides/image-generation#gpt-image-26)):
+
+- **`complexity`**: `"low"`, `"medium"` or `"high"`, "Computation spent planning the image,
+  independently of rendering quality"; both models "use `high`" when it is omitted, and "Adjusting
+  complexity has no separate fee" (the guide). On a generation and an edit.
+- **`frame_count`, `frame_duration_ms`**: the frames of a GIF, with `output_format="gif"` only:
+  "integers from 2 through 16", 9 when omitted, and the "delay per GIF frame, in milliseconds", at least
+  20 and 200 when omitted; the Images API sets no largest delay ("caps the encoded delay at 655,350 ms
+  per frame"), which the guide gives as 2000. GIF output "Requires access to the GIF preview for the
+  selected model". On a generation and an edit.
+- **`svg`**: an [`SvgOptions`](@ref), the model that authors an SVG and its reasoning effort, with
+  `output_format="svg"` on a generation only: "The image edit endpoint does not support SVG output"
+  (the guide). "SVG generation requires n=1 and does not support streaming, partial images,
+  prompt_rewriter, or output_compression"; "When model selection is enabled, supply svg.model. When
+  model selection is disabled, omit this object". The SVG comes back as the image's base64 data,
+  "UTF-8 XML bytes" to save with a `.svg` extension, and the tokens of its author as the reply's
+  `svg_usage`, which [`ImageResponse`](@ref) holds beside `usage`.
+
+On 16 November 2026 each answered as documented: a `complexity="low"` generation at `1024x640` on
+`gpt-image-2.6-flare` (450 output tokens), a 2-frame GIF (1,584 output tokens, `GIF89a` data), and an
+SVG with `svg=SvgOptions(model="gpt-6-luna", effort="low")`, whose `svg_usage` reported
+`{"input_tokens":1126,"model":"gpt-6-luna","output_tokens":238,"reasoning_tokens":164,"total_tokens":1364}`;
+an SVG without `svg` was refused, "SVG generation requires 'svg.model'.", for an organization with SVG
+model selection.
 
 The quoted words are from OpenAI's
 [Images reference](https://developers.openai.com/api/reference/resources/images) unless the line
@@ -80,11 +110,10 @@ size (less than 50MB in size)", and "The mask image must also contain an alpha c
 `markup` is a PNG, its path or its bytes, sent as the form part `markup`: "A transparent PNG overlaid on
 the first image to guide the edit. Must match that image's dimensions after orientation and contain
 transparent pixels", which "Cannot be combined with mask", so a `markup` beside a `mask` is refused before
-anything is sent, as are bytes that are no PNG. The edit reference states it "Supports GPT Image 2.5":
-UniLM sends it on any model, for OpenAI to judge
-([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)). On 2 November
-2026 the API did not take it yet: it answered a markup with HTTP 400, "Unknown parameter: 'markup'.", on
-`gpt-image-2.5-sunburst` and `gpt-image-2.5-flare`, in a multipart and in a JSON edit request alike.
+anything is sent, as are bytes that are no PNG. OpenAI's API specification states it "Supports GPT Image
+2.5 and 2.6": UniLM sends it on any model, for OpenAI to judge
+([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)). On 16 November
+2026 the API took a multipart markup edit on `gpt-image-2.6-flare` (HTTP 200).
 `input_fidelity` is sent as given; OpenAI's reference documents it for `gpt-image-1.5` and
 `gpt-image-1-mini` and says "For `gpt-image-2`, omit this parameter". An image, mask or markup path that
 is no file is refused before anything is sent, as `upload_file` and `transcribe` refuse one
@@ -97,7 +126,10 @@ too, as input — 640 image and 26 text tokens in the edit above, by the `input_
 it prices by a `pricing` row of your own. OpenAI bills `gpt-image-2.5-sunburst` text input at \$5,
 image input at \$8 and image output at \$30 per million tokens
 ([GPT-Image-2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst)): the
-generation above came to about \$0.0033 and the edit to about \$0.0085.
+generation above came to about \$0.0033 and the edit to about \$0.0085. The 2.6 models bill the same
+rates. An SVG's author bills its own tokens, at "the authoring model's rate" (the guide), which the
+pricing page lists for no SVG: an estimate of an `ImageSuccess` that carries `svg_usage` leaves those
+tokens out, and warns once that it does.
 
 A request is sent again after a transient status, as a `Chat` is
 ([When something fails](@ref openai_failures)), and a cancel of its `cancel` token, the ambient one
@@ -343,6 +375,10 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | `edit_image` with an empty vector of images | `an image edit needs at least one input image` | a path, or a vector of paths |
 | `edit_image` with an image, a `mask` or a `markup` path that is no file | `image not found:`, `mask not found:`, `markup not found:` | the path of the file |
 | `edit_image` with both a `mask` and a `markup`, or `markup` bytes that are no PNG | `takes a mask or a markup, not both`, `these bytes are no PNG`: the markup "Cannot be combined with mask" and is "A transparent PNG" | one of the two; a PNG |
+| a `complexity` other than `"low"`, `"medium"` and `"high"`, a `frame_count` outside 2 to 16 or a `frame_duration_ms` under 20, on an image request or an `ImageGenerationTool` (when it is built) | `complexity must be`, `frame_count must be 2 to 16`, `frame_duration_ms must be at least 20`: the reference's values | a value in the range |
+| `frame_count` or `frame_duration_ms` without `output_format="gif"`, or `svg` without `output_format="svg"`, on an image request or an `ImageGenerationTool` | `only with output_format="gif"`, `only with output_format="svg"`: each is "Only supported with output_format=gif", "Requires output_format=svg" | the format, or unset the field |
+| SVG output (`output_format="svg"`) with an `n` other than 1, or with an `output_compression` | `SVG output takes n=1`, `SVG output takes no output_compression`: "SVG generation requires n=1 and does not support [...] output_compression" | `n=1`, no compression |
+| an `SvgOptions` with an empty `model`, or an `effort` other than `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"` (when it is built) | `SvgOptions model`, `SvgOptions effort`: the reference's `minLength: 1` and its efforts | a model name; one of the efforts |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |
 | a `voice` that is not one of the ten built-in voices, a custom voice among them | `OpenAI Realtime voices are`: UniLM sends the built-in voices only | one of them |
 | a `speak` `response_format` other than `"wav"` and `"pcm"` | `response_format must be "wav"`: the session's audio is 24 kHz PCM, which UniLM returns as a WAV file or as samples | `"wav"` or `"pcm"` |

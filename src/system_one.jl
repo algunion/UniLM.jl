@@ -26,8 +26,8 @@ takes as the vector of its items, as it takes a state — or an
 [`ImageAttachment`](@ref) — an image is carried only by a backend whose wrapper
 sends images, and refused before any request by the others. Numbers and booleans
 are not entries: the model reads words, and a bare number carries none. No
-backend sends a [`DocumentAttachment`](@ref), and only OpenAI's Decisions API an
-image's detail level: a document anywhere in a request, or an image with a detail
+backend sends a [`DocumentAttachment`](@ref), and only OpenAI's and Gemini's Decisions APIs
+an image's detail level: a document anywhere in a request, or an image with a detail
 level its backend does not send, is an `ArgumentError` before any request.
 """
 const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple, ImageAttachment}
@@ -208,8 +208,8 @@ _dict_pairs(d::AbstractDict) = d
 
 A question of a kind this version has no type for, kept as the JSON object
 `fields` and sent verbatim by the backends that allow raw questions — TypeSafe,
-OpenAI's Decisions API (which adds the question's name as `"name"`) and Ollama
-all do; a backend that does not refuses it before the request is sent. `fields`
+OpenAI's Decisions API (which adds the question's name as `"name"`), Gemini's
+Decisions API and Ollama all do; a backend that does not refuses it before the request is sent. `fields`
 is copied into a `JSON.Object{String,Any}` with `String` keys — a plain `Dict`
 in sorted key order, any other dictionary in its own order — and must hold a
 non-blank String `"type"`.
@@ -432,7 +432,7 @@ What `state` may be: a string, a JSON object (a `NamedTuple` too), a JSON array
 — a vector or a tuple, which every backend takes as the vector of its items, as
 it takes a piece of guidance — or an [`ImageAttachment`](@ref) — images,
 here or nested anywhere in the content, are carried only by a backend whose
-wrapper sends them, and with a detail level only by OpenAI's Decisions API. A
+wrapper sends them, and with a detail level only by OpenAI's and Gemini's Decisions APIs. A
 [`DocumentAttachment`](@ref) is no state, and one nested in the content is an
 `ArgumentError` before any request, as is an image with a detail level its
 backend does not send. `nothing`
@@ -530,7 +530,8 @@ per question.
 - `options::NamedTuple`: provider options, checked by the backend's wrapper when
   the request is sent; keyword arguments of [`ask`](@ref) become these.
   TypeSafe accepts one, `long_context::Bool`; OpenAI's Decisions API
-  `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`; Ollama `keep_alive`.
+  `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`; Ollama `keep_alive`;
+  Gemini's Decisions API none.
 
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
 `AbstractDict`), or bare questions in a vector or tuple, which are auto-named
@@ -749,7 +750,8 @@ end
     RefusalAnswer(raw)
 
 A backend declined to answer one question — OpenAI's Decisions API does this
-per question — so there is no value to read; `raw` is the unparsed JSON answer.
+per question, and Gemini's for every question of an input its filters block — so there
+is no value to read; `raw` is the unparsed JSON answer.
 It is accepted only from a backend that documents refusals: from any other, a
 refusal makes the whole result a [`SystemOneCallError`](@ref).
 """
@@ -831,8 +833,8 @@ end
     SystemOneFailure
 
 A System One call that reached its backend and came back with a status other
-than 200 — the status TypeSafe, OpenAI's Decisions API and Ollama answer a
-success with.
+than 200 — the status TypeSafe, OpenAI's and Gemini's Decisions APIs and Ollama
+answer a success with.
 
 # Fields
 - `response::String`: the raw body, kept verbatim.
@@ -1336,8 +1338,8 @@ names none — [`ask`](@ref), [`list_models`](@ref), [`nl_dispatch`](@ref),
 model of those calls that name none, and any other keyword as
 the provider options of those calls that name none (see [`ask`](@ref)); return
 `f()`'s value. `service` must declare `:system_one`, `model` must not be blank,
-and the backend's wrapper must accept the options — TypeSafe's, OpenAI's Decisions
-API's and Ollama's refuse here what they would refuse in each request, with the
+and the backend's wrapper must accept the options — TypeSafe's, OpenAI's and Gemini's
+Decisions APIs' and Ollama's refuse here what they would refuse in each request, with the
 same message — or this is an `ArgumentError` before `f` runs. A backend UniLM
 does not wrap checks its options only when it sends a request.
 
@@ -1576,7 +1578,7 @@ these is a `SystemOneCallError` — never a success built from a malformed answe
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
 budget for this call. With none — no `config`, no [`with_request_config`](@ref)
 scope, no process default set — the backend's own default applies: on TypeSafe
-and OpenAI's Decisions API, 60 s per attempt and 150 s in all. On TypeSafe a
+and OpenAI's and Gemini's Decisions APIs, 60 s per attempt and 150 s in all. On TypeSafe a
 retry carries its number in `X-TypeSafe-Retry-Count`, as the official SDKs send
 it. The request rides the package's shared retry seam, so
 `max_attempts` applies: a retryable status (408, 429, 500, 502–504, 520–524, 529)
@@ -1733,7 +1735,10 @@ answer from OpenAI's Decisions API
 tokens alone, and no output: the uncached ones at the row's input rate, cache reads
 at its cached-input rate, and cache writes and more than 272K input tokens at the
 surcharges OpenAI lists for the model (`gpt-6-luna`: a write at 1.25 times the input
-rate, 2.5 times for a 12-hour lifetime, and every rate twice above 272K).
+rate, 2.5 times for a 12-hour lifetime, and every rate twice above 272K); one from Gemini's
+Decisions API ([`GeminiDecisionsProtocol`](@ref UniLM.GeminiDecisionsProtocol)) is priced
+by its model without one leading `models/`, so `"models/gemini-decision-1"` costs what
+`"gemini-decision-1"` costs.
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64

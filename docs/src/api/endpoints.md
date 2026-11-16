@@ -164,11 +164,13 @@ to a [`UniLM.SystemOneProtocol`](@ref UniLM.SystemOneProtocol), whose
 `record_body` a recording is keyed on — refusing before any I/O what the backend
 cannot carry — and whose
 [`UniLM.decode_system_one`](@ref UniLM.decode_system_one) turns the reply into a
-typed result. Three protocols ship:
+typed result. Four protocols ship:
 [`UniLM.TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) (TypeSafe's
 `POST /v1/systemone`),
 [`UniLM.OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol) (OpenAI's
-`POST /v1/decisions`, for `OPENAIServiceEndpoint`) and
+`POST /v1/decisions`, for `OPENAIServiceEndpoint`),
+[`UniLM.GeminiDecisionsProtocol`](@ref UniLM.GeminiDecisionsProtocol) (Gemini's
+`POST /v1beta/decisions`, for `GEMINIServiceEndpoint`) and
 [`UniLM.OllamaSystemOneProtocol`](@ref UniLM.OllamaSystemOneProtocol) (Ollama's
 `POST /v1/systemone`, for `OllamaEndpoint`). They are documented with the
 [System One API](@ref system_one_protocol_api).

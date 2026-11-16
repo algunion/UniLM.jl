@@ -1130,7 +1130,9 @@ end
     resolution::Union{String,Nothing} = nothing             # Gemini
     complexity::Union{String,Nothing} = nothing             # OpenAI, as on ImageGeneration
     frame_count::Union{Int,Nothing} = nothing               # OpenAI, as on ImageGeneration
-    frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI, as on ImageGeneration (an edit takes no svg)
+    frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI, as on ImageGeneration
+    svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: as on ImageGeneration, sent as svg[model] and svg[reasoning][effort]
+                                                            #   (n 1 with "svg"; a mask beside it is sent as given)
 end
 ```
 

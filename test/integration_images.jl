@@ -117,6 +117,21 @@ end
     @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(r; model="gpt-image-2.6-flare", pricing=rates)) > 0
 end
 
+@testset "OpenAI images — an SVG edit on gpt-image-2.6-flare, authored by gpt-6-luna, reports svg_usage" begin
+    # On 2026-11-16 a multipart edit with output_format=svg and svg[model]=gpt-6-luna answered HTTP 200 with an SVG and
+    # its svg_usage (962 image tokens at the default size, 4,834 author tokens at the author's default effort); this one
+    # asks the smallest size and effort low.
+    fixture = joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png")
+    r = edit_image(fixture, "Make the circle blue."; model="gpt-image-2.6-flare", size="1024x640", quality="low",
+                   output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"))
+    @test r isa ImageSuccess
+    @info "OpenAI image edit (SVG) live usage" usage = get(r.response.raw, "usage", nothing) svg_usage = r.response.svg_usage
+    @test r.response.raw["output_format"] == "svg"
+    @test startswith(String(base64decode(only(image_data(r)))), "<svg")
+    s = r.response.svg_usage
+    @test s isa Dict{String,Any} && startswith(s["model"], "gpt-6-luna") && s["total_tokens"] > 0
+end
+
 end
 
 if !haskey(ENV, "GEMINI_API_KEY")

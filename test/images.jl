@@ -1029,10 +1029,53 @@ end
         end
         @test thrown isa ArgumentError && isempty(seen)
     end
-    # The guide: "The image edit endpoint does not support SVG output" — an edit has no svg field.
-    @test !hasfield(ImageEdit, :svg)
     err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", svg=SvgOptions(model="m"))))
     @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take svg,")
+end
+
+@testset "OpenAI image edits — svg names the SVG author as multipart fields; SVG output takes n=1" begin
+    # On 2026-11-16 the API answered a multipart edit with output_format=svg and svg[model]=gpt-6-luna with HTTP 200,
+    # an SVG and its svg_usage; the edit reference: "Use multipart fields such as `svg[model]`".
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    svg = Dict{String,Any}("input_tokens" => 2279, "model" => "gpt-6-luna", "output_tokens" => 2555,
+                           "reasoning_tokens" => 794, "total_tokens" => 4834)
+    ok = JSON.json(Dict("created" => 1, "output_format" => "svg", "data" => [Dict("b64_json" => "PHN2Zz4=")],
+                        "usage" => Dict("input_tokens" => 89, "output_tokens" => 962, "total_tokens" => 1051), "svg_usage" => svg))
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low")))
+        @test occursin("name=\"output_format\"\r\n\r\nsvg\r\n", form) &&
+              occursin("name=\"svg[model]\"\r\n\r\ngpt-6-luna\r\n", form) &&
+              occursin("name=\"svg[reasoning][effort]\"\r\n\r\nlow\r\n", form)
+        model_only = _edit_form(ImageEdit(image=path, prompt="p", output_format="svg", svg=SvgOptions(model="gpt-6-luna")))
+        @test occursin("name=\"svg[model]\"", model_only) && !occursin("svg[reasoning]", model_only)
+        @test !occursin("name=\"svg[", _edit_form(ImageEdit(image=path, prompt="p", output_format="svg")))
+        # A mask beside svg is no rule OpenAI's answer showed: it is sent as given.
+        @test occursin("name=\"mask\"", _edit_form(ImageEdit(image=path, prompt="p", mask=path, output_format="svg",
+                                                               svg=SvgOptions(model="gpt-6-luna"))))
+        # Refused before anything is sent: svg without output_format="svg", and SVG output with n other than 1.
+        for (kw, words) in ((; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                            (; output_format="png", svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""),
+                            (; output_format="svg", n=2) => ("n=1", "SVG"))
+            thrown, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, kw...))
+            end
+            @test thrown isa ArgumentError && all(w -> occursin(w, thrown.msg), words) && isempty(seen)
+        end
+        # The reply's svg_usage is the result's, and an estimate leaves it out with the warning a generation's gets.
+        r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            edit_image(path, "p"; model="m", service=URLProbe, output_format="svg", svg=SvgOptions(model="gpt-6-luna"),
+                       config=UniLM.RequestConfig(max_attempts=1))
+        end
+        @test r isa ImageSuccess && r.response.svg_usage == svg && length(seen) == 1
+        @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(r; model="edit-model",
+            pricing=Dict("edit-model" => UniLM._price(5.0, 1.25, 30.0)))) ≈ (89 * 5.0 + 962 * 30.0) / 1e6
+    finally
+        rm(path; force=true)
+    end
+    e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", svg=SvgOptions(model="m"))
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take svg,")
 end
 
 @testset "OpenAI images — svg_usage is decoded beside usage, and an estimate says it leaves those tokens out" begin

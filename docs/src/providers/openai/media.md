@@ -54,9 +54,12 @@ control, markup-guided edits, SVG output, and animated GIF output through the Im
   is not supported for GIF output.", "'mask' is not supported for GIF output."). On a generation and an
   edit.
 - **`svg`**: an [`SvgOptions`](@ref), the model that authors an SVG and its reasoning effort, with
-  `output_format="svg"`, on a generation: an [`ImageEdit`](@ref) has no `svg`, as OpenAI's guide says
-  "The image edit endpoint does not support SVG output", though on 16 November 2026 the API answered a
-  multipart edit with `output_format=svg` and `svg[model]` with HTTP 200 and an SVG. "SVG generation requires n=1 and does not support streaming, partial images,
+  `output_format="svg"`, on a generation and an edit. OpenAI's guide says "The image edit endpoint
+  does not support SVG output", but on 16 November 2026 the API answered a multipart edit with
+  `output_format=svg` and `svg[model]` with HTTP 200, an SVG and its `svg_usage`. An edit sends `svg`
+  as the form fields `svg[model]` and `svg[reasoning][effort]` ("Use multipart fields such as
+  `svg[model]`", the edit reference), and a `mask` beside it as given, since no answer of OpenAI's
+  shows a rule for the pair. "SVG generation requires n=1 and does not support streaming, partial images,
   prompt_rewriter, or output_compression"; "When model selection is enabled, supply svg.model. When
   model selection is disabled, omit this object". The SVG comes back as the image's base64 data,
   "UTF-8 XML bytes" to save with a `.svg` extension, and the tokens of its author as the reply's

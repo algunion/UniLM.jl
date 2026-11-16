@@ -416,8 +416,11 @@ end
 # Anthropic's DeletedFile has the `id`, and a `type` that is "file_deleted" when present: its 200 is
 # the confirmation. Gemini's files.delete answers an Empty message, `{}`: its 200 is the confirmation,
 # and the file deleted is the one requested.
-_file_deleted(::_OpenAIFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess = FileDeleteSuccess(
-    id=_file_required(d, "id", String), deleted=_confirm_deleted(d), object=_file_required(d, "object", String))
+function _file_deleted(::_OpenAIFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess
+    object = _file_required(d, "object", String)
+    object == "file" || throw(ArgumentError("the delete reply's object is $(repr(object)), not \"file\""))
+    FileDeleteSuccess(id=_file_required(d, "id", String), deleted=_confirm_deleted(d), object=object)
+end
 function _file_deleted(::_AnthropicFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess
     type = _file_field(d, "type", String)
     isnothing(type) || type == "file_deleted" ||

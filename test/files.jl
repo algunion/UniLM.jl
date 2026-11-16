@@ -314,6 +314,17 @@ end
     @test FileDeleteSuccess("file-1", true) == FileDeleteSuccess(id="file-1", deleted=true, object=nothing)
 end
 
+# OpenAI's DeleteFileResponse: `object` is always "file".
+# Refuted if: a delete reply that names another object (a vector store file's delete, a batch) reports a deleted file.
+@testset "delete_file on OpenAI: a reply whose object is not \"file\" is a FileCallError" begin
+    for object in ("vector_store.file.deleted", "batch", "")
+        r = _answered(() -> delete_file("file-1"; service=URLProbe), 200;
+                      body=JSON.json(Dict("id" => "file-1", "object" => object, "deleted" => true)))
+        @test r isa FileCallError
+        r isa FileCallError && @test occursin(repr(object), r.error)
+    end
+end
+
 # OpenAI's FileExpirationAfter: `anchor` "created_at" and `seconds`, 3600 to 2592000; a form sends the
 # object as bracketed fields (the Files reference's curl: `-F expires_after[anchor]="created_at"`).
 # Refuted if: expires_after is not sent, is sent in another shape or when unset, or a value outside

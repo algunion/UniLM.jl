@@ -22,7 +22,8 @@ Anthropic Files request sends the key, `anthropic-version` and the endpoint's `w
 neither its `betas` nor its `user_profile_id`, which the Files reference does not name. A reply
 without a field the provider's reference requires is a [`FileCallError`](@ref), never a result
 with the field made up: a page without OpenAI's `data` or `has_more`, an OpenAI file whose `filename`
-or `purpose` is null, a delete reply without the deleted file's id.
+or `purpose` is null, a delete reply without the deleted file's id or, on OpenAI, whose `object` is not
+`"file"`.
 
 ## Request Type
 

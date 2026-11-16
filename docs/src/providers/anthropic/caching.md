@@ -213,6 +213,46 @@ UniLM's release gate runs the same listing, and fails when a listed Claude model
 price row, unless Anthropic publishes no price for it, or no row in the family table, or when a row's
 thinking types or effort levels differ from the listing's.
 
+[`retrieve_model`](@ref) with `service=ANTHROPICServiceEndpoint` looks up one model by id
+(`GET /v1/models/{model_id}`), with the same headers as the listing, and returns a `ModelSuccess` whose
+`model` is the `ProviderModel` the listing would hold for it. An alias comes back as the dated id it
+names, and a retired model, or one the key cannot use, is a `ModelListFailure` with status 404
+([One model by id](@ref models_lookup)):
+
+```julia
+r = retrieve_model("claude-opus-4-5"; service=ANTHROPICServiceEndpoint)
+r isa ModelSuccess && (r.model.id, r.model.output_token_limit)
+# Looked up on 16 November 2026: ("claude-opus-4-5-20251101", 64000)
+```
+
+The listing asks for 1000 models a page, the most the API serves, and sends no `lifecycle` filter and no
+`anthropic-beta` header: without a filter Anthropic lists the active and the deprecated models, and the
+listing came back the same with each of the endpoint betas tried ([Model Listings](@ref models_api)).
+
+## [Token counts](@id anthropic_token_counts)
+
+[`count_tokens`](@ref) asks Anthropic how many input tokens a `Chat` would bill (`POST
+/v1/messages/count_tokens`), without creating a message. It sends the body `chatrequest!` sends without
+`max_tokens`, `stop_sequences`, `stream`, `metadata`, `service_tier` and `inference_geo`, which the count
+answers with HTTP 400 "Extra inputs are not permitted" and which change no input token; system prompt,
+tools, tool choice, thinking, effort, output format, fast mode and `cache_control` are counted as sent.
+An endpoint with `betas` counts on the beta route, as Anthropic's SDK does: its betas and
+`token-counting-2024-11-01` in the `anthropic-beta` header; one without sends none. Anthropic calls the
+count "an estimate" that "might include tokens added automatically by Anthropic for system
+optimizations", which are not billed, and token counting "is free to use", within its own requests-per-
+minute limits
+([Token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting)):
+
+```julia
+chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", messages=[Message(Val(:user), "Hello")])
+r = count_tokens(chat)
+r isa TokenCountSuccess && r.input_tokens
+# Counted on 16 November 2026: 11
+```
+
+The result is a `TokenCountSuccess`, a `TokenCountFailure` for an error status, or a `TokenCountCallError`
+([Token Counting](@ref token_counting_api)).
+
 ## [The OpenAI-compatible endpoint](@id anthropic_compatible)
 
 Anthropic also serves the OpenAI-compatible wire, at `https://api.anthropic.com/v1/chat/completions`,

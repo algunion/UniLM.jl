@@ -100,6 +100,7 @@
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
             "Model Listings" => "api/models.md",
+            "Token Counting" => "api/token_counting.md",
             "Audio" => "api/audio.md",
         ],
         "API: OpenAI platform" => [

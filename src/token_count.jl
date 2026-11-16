@@ -144,8 +144,7 @@ what a missing key gives (it names the variable) and what a reply without its co
 inside a scope it goes to the provider, as outside one.
 
 ```julia
-chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")
-push!(chat, Message(Val(:user), "Hello"))
+chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", messages=[Message(Val(:user), "Hello")])
 r = count_tokens(chat)
 issuccess(r) && r.input_tokens   # 11
 ```

@@ -247,6 +247,21 @@ else
 end
 ```
 
+`count_input_tokens` sends every field of OpenAI's token count body that you set: `instructions`,
+`tools` (a Chat `Tool` goes as the equivalent function tool, as a `Respond` sends it), `tool_choice`,
+`parallel_tool_calls`, `previous_response_id` or `conversation` (not both), `reasoning`, `text`,
+`truncation` (`"auto"` or `"disabled"`), and `personality`, "a model-owned style preset" of at most 64
+characters, which only the count takes. A 200 without an integer `input_tokens` is a
+`ResponseCallError`. [`count_tokens`](@ref) counts a whole `Respond` instead, encoded as `respond`
+encodes it without the output, storage, tier, caching and end-user fields, which the count does not
+take, and returns a [`TokenCountSuccess`](@ref) ([Token Counting](@ref token_counting_api)):
+
+```julia
+r = Respond(model="gpt-6-luna", input="Tell me a joke", instructions="Be brief.", max_output_tokens=16)
+c = count_tokens(r)
+c isa TokenCountSuccess && c.input_tokens
+```
+
 [`compact_response`](@ref) runs a compaction pass over a conversation's items,
 `POST /v1/responses/compact`: the window it returns "includes an encrypted compaction item" that is "opaque",
 to be passed on as the next request's input without pruning

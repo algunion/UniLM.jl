@@ -73,7 +73,8 @@ has_capability
 | `:uploads` | Resumable Uploads API |
 | `:realtime` | Realtime API: [`realtime_connect`](@ref), [`translate`](@ref) and the Realtime session `speak` runs on OpenAI |
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI and native Gemini (their Decisions APIs) and Ollama |
-| `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama |
+| `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama; a model by id ([`retrieve_model`](@ref)) on OpenAI, Anthropic and Gemini |
+| `:token_count` | Token counting ([`count_tokens`](@ref)): a `Respond` on OpenAI, a `Chat` on Anthropic and native Gemini |
 
 ## Capabilities by Provider
 

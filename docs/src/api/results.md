@@ -123,7 +123,8 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
-├─ Model listings     ModelListSuccess · ModelListFailure · ModelListCallError
+├─ Model listings     ModelListSuccess · ModelSuccess · ModelDeleteSuccess · ModelListFailure · ModelListCallError
+├─ Token counts       TokenCountSuccess · TokenCountFailure · TokenCountCallError
 ├─ Ollama models      OllamaSuccess · OllamaFailure · OllamaCallError
 └─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```

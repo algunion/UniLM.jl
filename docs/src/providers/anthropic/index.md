@@ -28,7 +28,8 @@ Main.ProviderFacts.at_a_glance(:anthropic)
 | [send images and PDFs](@ref anthropic_media) | `ImageAttachment`, `DocumentAttachment` | the files placed before the message's text |
 | [cache a long prompt](@ref anthropic_caching) | `prompt_cache_options` | cache reads and writes, counted in `usage` |
 | [know what a call cost](@ref anthropic_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
-| [list the models my key can use](@ref anthropic_models) | `list_models(service=ANTHROPICServiceEndpoint)` | each model's token limits, capabilities and lifecycle dates |
+| [list the models my key can use](@ref anthropic_models) | `list_models(service=ANTHROPICServiceEndpoint)`, `retrieve_model(id; service)` | each model's token limits, capabilities and lifecycle dates |
+| [count a request's input tokens](@ref anthropic_token_counts) | `count_tokens(chat)` | the input tokens the request would bill, without running it |
 | [handle a failure](@ref anthropic_failures) | the result's type | the status or the exception, never an empty success |
 
 ## [Setup](@id anthropic_setup)
@@ -77,8 +78,10 @@ throw `ArgumentError` before anything is sent ([Limits and refusals](@ref anthro
 re-check of `betas` below. UniLM sends a
 beta's name only: it models no beta's request fields or response blocks, and reads one name itself,
 the beta `service_tier="fast"` needs on the models whose Fast mode cell in the family table names a
-beta header. [`list_models`](@ref) sends only the workspace of these options: of the headers they
-set, Anthropic's Models API reference names only `anthropic-workspace-id` for `GET /v1/models`.
+beta header. [`list_models`](@ref) and [`retrieve_model`](@ref) send only the workspace of these
+options: of the headers they set, Anthropic's Models API reference names only `anthropic-workspace-id`
+for `GET /v1/models`. [`count_tokens`](@ref) sends the three headers, `token-counting-2024-11-01` added to a
+non-empty `betas`, and not `inference_geo`, which the count does not take ([Token counts](@ref anthropic_token_counts)).
 Instances with the same options are equal (`==`, `hash`). The fields are read-only:
 to change an option, build a new endpoint. A name changed in place in the `betas` vector is checked
 again when the header is built, and one that breaks the rule fails the call before anything is sent,

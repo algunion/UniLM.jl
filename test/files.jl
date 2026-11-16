@@ -258,3 +258,17 @@ end
     end
     @test g == ["/v1/files/file-abc123", "/v1/files?purpose=user_data&after=file-abc123"]
 end
+
+# OpenAI's ListFilesResponse requires `data` and `has_more`.
+# Refuted if: a 200 without either decodes as a page — `{}` as an empty last page.
+@testset "list_files: a 200 without data or has_more is a FileCallError, never an empty page" begin
+    page(d) = _answered(() -> list_files(; service=URLProbe), 200; body=JSON.json(d))
+    r = page(Dict())
+    @test r isa FileCallError && occursin("\"data\"", r.error)
+    r = page(Dict("object" => "list", "data" => []))
+    @test r isa FileCallError && occursin("\"has_more\"", r.error)
+    @test page(Dict("object" => "list", "data" => Dict(), "has_more" => false)) isa FileCallError
+    # The reply OpenAI sent for `order=asc&limit=1` on 2026-11-16: an empty page with more after it.
+    ok = page(Dict("object" => "list", "data" => [], "has_more" => true, "first_id" => nothing, "last_id" => nothing))
+    @test ok isa FileListSuccess && isempty(ok.response.data) && ok.response.has_more
+end

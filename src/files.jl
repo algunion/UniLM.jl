@@ -207,6 +207,19 @@ that further pages are available.
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+# A field of a Files reply: absent or null where the provider's reference allows it; any other JSON type
+# than the documented one is a malformed reply, and the throw becomes the verb's call error.
+function _file_field(d::AbstractDict, key::String, ::Type{T})::Union{T,Nothing} where {T}
+    v = get(d, key, nothing)
+    isnothing(v) || v isa T || throw(ArgumentError("Files reply field $(repr(key)) holds a $(typeof(v)), not the documented $T"))
+    v
+end
+
+# A field the provider's reference requires: a 200 without it is no reply of that kind (OpenAI's list
+# requires `data` and `has_more`), never an empty page or a value made up for it.
+_file_required(d::AbstractDict, key::String, ::Type{T}) where {T} =
+    @something(_file_field(d, key, T), throw(ArgumentError("the Files reply has no $(repr(key))")))
+
 function _parse_file_object(d::AbstractDict)
     FileObject(
         id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=d["filename"], purpose=d["purpose"],
@@ -295,8 +308,8 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            files = FileObject[_parse_file_object(f) for f in get(data, "data", [])]
-            return FileListSuccess(response=FileList(data=files, has_more=get(data, "has_more", false), raw=data))
+            files = FileObject[_parse_file_object(f) for f in _file_required(data, "data", AbstractVector)]
+            return FileListSuccess(response=FileList(data=files, has_more=_file_required(data, "has_more", Bool), raw=data))
         else
             return _failure(FileFailure, resp)
         end

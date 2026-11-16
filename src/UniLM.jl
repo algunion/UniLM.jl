@@ -88,6 +88,7 @@ include("moderations.jl")
 include("audio.jl")
 include("batch.jl")
 include("fine_tuning.jl")
+include("graders.jl")
 include("webhooks.jl")
 include("containers.jl")
 include("uploads.jl")
@@ -500,7 +501,16 @@ export
     list_fine_tuning_checkpoints,
     create_fine_tuning_checkpoint_permission,
     list_fine_tuning_checkpoint_permissions,
-    delete_fine_tuning_checkpoint_permission
+    delete_fine_tuning_checkpoint_permission,
+    Grader,
+    StringCheckGrader,
+    TextSimilarityGrader,
+    PythonGrader,
+    GraderRun,
+    GraderRunSuccess,
+    GraderValidateSuccess,
+    run_grader,
+    validate_grader
 
 # ─── Webhooks ─────────────────────────────────────────────────────────────────
 export

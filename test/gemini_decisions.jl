@@ -266,6 +266,28 @@ end
     @test r.message == JSON.parse(w10["body_text"])["error"]["message"]
 end
 
+@testset "Gemini Decisions — the body nests at most 100 levels: a RawQuestion's fields, never a JSON state's text" begin
+    nested(k) = foldl((v, _) -> Any[v], 1:k; init=1)
+    raw(k) = RawQuestion(JSON.Object{String,Any}("type" => "noul", "instructions" => "Does the customer report a damaged item?",
+                                                 "x" => nested(k)))
+    # The API answers a body nested 101 levels deep with HTTP 400 (W29) and one of 100 with its next rule (W30); the
+    # body and `questions` hold a question at the third level, so a question's fields nest at most 98 more.
+    w29, w30 = _gd_fixture("W29"), _gd_fixture("W30")
+    @test w29["status"] == 400 && contains(JSON.parse(w29["body_text"])["error"]["message"], "maximum nesting depth of 100")
+    @test w30["status"] == 400 && contains(JSON.parse(w30["body_text"])["error"]["message"], "Unknown parameter 'x'")
+    @test _gd_wire(SystemOneRequest(_GD_TICKET, "q" => raw(97))).body == w30["request_bytes"]
+    e = only(_gd_refused([() -> ask(_GD_TICKET, "q" => raw(98); service=_GDMock, config=_GD_CFG)]))
+    @test contains(e.msg, "Gemini's Decisions API cannot carry the question \"q\"") && contains(e.msg, "98 levels deep") &&
+          contains(e.msg, "nesting depth of 100")
+    # A JSON state is sent as its text, a string: a state's text 101 levels deep was answered (W32), and is sent.
+    @test _gd_fixture("W32")["status"] == 200
+    deep = nested(101)
+    r, seen = _gd_serve(_gd_valid) do
+        ask(deep, "q" => noul("Is it?"); service=_GDMock, config=_GD_CFG)
+    end
+    @test r isa SystemOneSuccess && _gd_body(only(seen))["input"] == JSON.json(deep)
+end
+
 @testset "Gemini Decisions — what the wire has no form for is refused before any I/O" begin
     on(state, qs...; kw...) = () -> ask(state, qs...; service=_GDMock, config=_GD_CFG, kw...)
     q = "q" => noul("Is it?")

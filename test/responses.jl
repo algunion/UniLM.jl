@@ -233,6 +233,23 @@ end
         @test_throws ArgumentError code_interpreter(container="cntr_abc", file_ids=["f"])
     end
 
+    @testset "code_interpreter memory_limit: typed, sent inside the auto container" begin
+        @test JSON.lower(code_interpreter(memory_limit="4g"))[:container] == Dict("type" => "auto", "memory_limit" => "4g")
+        @test JSON.parse(JSON.json(code_interpreter(memory_limit="16g", file_ids=["f"])))["container"] ==
+              Dict("type" => "auto", "memory_limit" => "16g", "file_ids" => ["f"])
+        @test JSON.parse(JSON.json(code_interpreter(container=Dict(:type => "auto"), memory_limit="1g")))["container"] ==
+              Dict("type" => "auto", "memory_limit" => "1g")
+        @test CodeInterpreterTool(memory_limit="64g").memory_limit == "64g"
+        @test isnothing(code_interpreter().memory_limit)
+        # The values a container takes (create_container), else refused.
+        @test_throws ArgumentError code_interpreter(memory_limit="2g")
+        @test_throws ArgumentError code_interpreter(memory_limit="4G")
+        # A container made beforehand has its memory already; a Dict that sets one is not given a second.
+        @test_throws ArgumentError code_interpreter(container="cntr_abc", memory_limit="4g")
+        @test_throws ArgumentError code_interpreter(container=Dict("type" => "auto", "memory_limit" => "1g"), memory_limit="4g")
+        @test_throws ArgumentError code_interpreter(container=Dict(:type => "auto", :memory_limit => "1g"), memory_limit="4g")
+    end
+
     @testset "code_interpreter convenience" begin
         t = code_interpreter(file_ids=["f1"])
         @test t isa CodeInterpreterTool

@@ -446,20 +446,22 @@ function JSON.lower(t::ImageGenerationTool)
 end
 
 """
-    CodeInterpreterTool(; container=Dict("type" => "auto"), file_ids=nothing)
+    CodeInterpreterTool(; container=Dict("type" => "auto"), file_ids=nothing, memory_limit=nothing)
 
 A code interpreter tool for the Responses API. Allows the model to execute
 code in a sandboxed environment: the container OpenAI's tool requires. By default it
 is an auto container (`{"type": "auto"}`), which OpenAI creates or reuses; a `Dict` is
-sent as given (e.g. `Dict("type" => "auto", "memory_limit" => "4g")`), and a `String`
-is the id of a container created beforehand ([`create_container`](@ref)). `file_ids`
-are sent inside the auto container; with a container id, or beside a container `Dict`
-that names `file_ids` already, they are an `ArgumentError`.
+sent as given, and a `String` is the id of a container created beforehand
+([`create_container`](@ref)). `file_ids` and `memory_limit` — the auto container's memory,
+`"1g"` (OpenAI's default), `"4g"`, `"16g"` or `"64g"`, as a container takes — are sent inside
+the auto container; with a container id, or beside a container `Dict` that names the same key
+already, they are an `ArgumentError`, as is another memory limit.
 """
 @kwdef struct CodeInterpreterTool <: ResponseTool
     container::Union{String, AbstractDict} = Dict("type" => "auto")
     file_ids::Union{Vector{String}, Nothing} = nothing
-    function CodeInterpreterTool(container, file_ids=nothing)
+    memory_limit::Union{String, Nothing} = nothing
+    function CodeInterpreterTool(container, file_ids=nothing, memory_limit=nothing)
         if !isnothing(file_ids)
             container isa AbstractString && throw(ArgumentError(
                 "code_interpreter file_ids go inside an auto container; a container id ($(repr(container))) " *
@@ -467,16 +469,28 @@ that names `file_ids` already, they are an `ArgumentError`.
             any(k -> string(k) == "file_ids", keys(container)) && throw(ArgumentError(
                 "code_interpreter file_ids given twice: in the container and as file_ids"))
         end
-        new(container, file_ids)
+        if !isnothing(memory_limit)
+            _check_memory_limit("code_interpreter", memory_limit)
+            container isa AbstractString && throw(ArgumentError(
+                "code_interpreter memory_limit goes inside an auto container; a container id ($(repr(container))) " *
+                "names a container whose memory was set when it was created (create_container(; memory_limit))"))
+            any(k -> string(k) == "memory_limit", keys(container)) && throw(ArgumentError(
+                "code_interpreter memory_limit given twice: in the container and as memory_limit"))
+        end
+        new(container, file_ids, memory_limit)
     end
 end
 
-# OpenAI's auto container carries the files: `"container": {"type": "auto", "file_ids": [...]}`
+# OpenAI's auto container carries the files and the memory limit:
+# `"container": {"type": "auto", "memory_limit": "4g", "file_ids": [...]}`
 # (https://developers.openai.com/api/docs/guides/tools-code-interpreter).
 function JSON.lower(t::CodeInterpreterTool)
     c = t.container
-    container = isnothing(t.file_ids) ? c :
-        push!(Dict{String,Any}(string(k) => v for (k, v) in c), "file_ids" => t.file_ids)
+    isnothing(t.file_ids) && isnothing(t.memory_limit) &&
+        return Dict{Symbol,Any}(:type => "code_interpreter", :container => c)
+    container = Dict{String,Any}(string(k) => v for (k, v) in c)
+    isnothing(t.memory_limit) || (container["memory_limit"] = t.memory_limit)
+    isnothing(t.file_ids) || (container["file_ids"] = t.file_ids)
     Dict{Symbol,Any}(:type => "code_interpreter", :container => container)
 end
 
@@ -588,13 +602,13 @@ Shorthand constructor for [`ImageGenerationTool`](@ref).
 image_generation_tool(; kwargs...) = ImageGenerationTool(; kwargs...)
 
 """
-    code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing)
+    code_interpreter(; container=Dict("type" => "auto"), file_ids=nothing, memory_limit=nothing)
 
 Shorthand constructor for [`CodeInterpreterTool`](@ref).
 """
 code_interpreter(; container::Union{String, AbstractDict}=Dict("type" => "auto"),
-    file_ids::Union{Vector{String}, Nothing}=nothing) =
-    CodeInterpreterTool(container=container, file_ids=file_ids)
+    file_ids::Union{Vector{String}, Nothing}=nothing, memory_limit::Union{String, Nothing}=nothing) =
+    CodeInterpreterTool(container=container, file_ids=file_ids, memory_limit=memory_limit)
 
 # Convenience constructors (existing)
 

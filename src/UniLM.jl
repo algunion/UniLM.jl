@@ -332,9 +332,17 @@ export
     VectorStoreFileObject,
     VectorStoreFileBatch,
     VectorStoreList,
+    VectorStoreFileList,
+    VectorStoreFileContent,
+    VectorStoreFileEntry,
+    VectorStoreSearchResult,
+    VectorStoreSearchPage,
     VectorStoreSuccess,
     VectorStoreListSuccess,
     VectorStoreFileSuccess,
+    VectorStoreFileListSuccess,
+    VectorStoreContentSuccess,
+    VectorStoreSearchSuccess,
     VectorStoreBatchSuccess,
     VectorStoreDeleteSuccess,
     VectorStoreFailure,
@@ -342,12 +350,21 @@ export
     vector_store_id,
     create_vector_store,
     retrieve_vector_store,
+    update_vector_store,
     list_vector_stores,
     delete_vector_store,
+    search_vector_store,
     add_vector_store_file,
+    list_vector_store_files,
+    retrieve_vector_store_file,
+    update_vector_store_file,
+    delete_vector_store_file,
+    vector_store_file_content,
     create_file_batch,
     retrieve_file_batch,
-    poll_file_batch
+    poll_file_batch,
+    cancel_file_batch,
+    list_file_batch_files
 
 # ─── Conversations API ────────────────────────────────────────────────────────
 export
@@ -508,8 +525,15 @@ export
 export
     ContainerObject,
     ContainerList,
+    ContainerFileList,
+    ContainerNetworkPolicy,
+    ContainerNetworkDisabled,
+    ContainerNetworkAllowlist,
+    ContainerDomainSecret,
+    SkillReference,
     ContainerSuccess,
     ContainerListSuccess,
+    ContainerFileListSuccess,
     ContainerDeleteSuccess,
     ContainerFailure,
     ContainerCallError,
@@ -517,7 +541,11 @@ export
     retrieve_container,
     list_containers,
     delete_container,
-    add_container_file
+    add_container_file,
+    list_container_files,
+    retrieve_container_file,
+    container_file_content,
+    delete_container_file
 
 # ─── Uploads API ──────────────────────────────────────────────────────────────
 export

@@ -314,6 +314,64 @@ end
     @test only(turn().tool_calls).func.arguments == Dict{String,Any}()
 end
 
+# Refuted if: on a streamed turn cut at max_tokens, a tool_use whose input_json_delta pieces join into a
+# whole JSON value other than an object is dropped instead of failing as the unstreamed decode does, or
+# the refusal does not name Anthropic and the JSON type; pieces that are no JSON (a cut input) fail that
+# turn; pieces joining to null do not build a call without arguments; a block that streams no piece
+# does not take its start input as the arguments; or pieces after a start input do not replace it.
+@testset "stream — a tool_use input follows the unstreamed rule: any finish, null, the start's input" begin
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    function stream(start, partials...; stop="tool_use")
+        st = StreamState()
+        UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join([
+            ev(Dict("type" => "content_block_start", "index" => 0, "content_block" =>
+                merge(Dict{String,Any}("type" => "tool_use", "id" => "toolu_1", "name" => "f"), start)));
+            [ev(Dict("type" => "content_block_delta", "index" => 0,
+                     "delta" => Dict("type" => "input_json_delta", "partial_json" => p))) for p in partials];
+            ev(Dict("type" => "content_block_stop", "index" => 0));
+            ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => stop)));
+            ev(Dict("type" => "message_stop"))]), st)
+        st
+    end
+    turn(start, partials...; stop="tool_use") = _build_stream_message(stream(start, partials...; stop))
+    refusal(f) = try f(); nothing catch e; e end
+    rule(type) = "Anthropic tool-call arguments must be a JSON object, got a JSON $type"
+    empty = Dict{String,Any}("input" => Dict())
+    for stop in ("tool_use", "max_tokens"),
+        (partials, type) in ((("[", "1]"), "array"), (("\"x\"",), "string"), (("3",), "number"), (("true",), "boolean"))
+        e = refusal(() -> turn(empty, partials...; stop))
+        @test e isa ArgumentError && e.msg == rule(type)
+    end
+    # Pieces that are no JSON are a call cut at max_tokens: dropped, and the turn kept.
+    m = turn(empty, "{\"city\": \"Par"; stop="max_tokens")
+    @test isnothing(m.tool_calls) && m.finish_reason == "length"
+    # null: a call without arguments, its block kept as an unstreamed reply keeps it.
+    for stop in ("tool_use", "max_tokens")
+        m = turn(empty, "nu", "ll"; stop)
+        @test only(m.tool_calls).func.arguments == Dict{String,Any}()
+        @test only(m.provider_content.blocks)["input"] === nothing
+    end
+    # No piece: the block's start input is the call's arguments.
+    @test only(turn(Dict{String,Any}("input" => Dict("city" => "Paris"))).tool_calls).func.arguments ==
+          Dict{String,Any}("city" => "Paris")
+    for start in (Dict{String,Any}(), Dict{String,Any}("input" => nothing), empty)
+        @test only(turn(start).tool_calls).func.arguments == Dict{String,Any}()
+    end
+    e = refusal(() -> turn(Dict{String,Any}("input" => [1])))
+    @test e isa ArgumentError && e.msg == rule("array")
+    # Pieces after a start input replace it, whatever it held.
+    for start in (Dict{String,Any}("input" => Dict("city" => "Oslo")), Dict{String,Any}("input" => "x"))
+        @test only(turn(start, "{\"city\":", "\"Paris\"}").tool_calls).func.arguments == Dict{String,Any}("city" => "Paris")
+    end
+    # on_tool_call is handed the call the message carries.
+    for (start, partials, args) in ((empty, ("null",), Dict{String,Any}()),
+                                    (Dict{String,Any}("input" => Dict("city" => "Paris")), (), Dict{String,Any}("city" => "Paris")))
+        fired = ToolCall[]
+        UniLM._fire_tool_calls!(tc -> push!(fired, tc), stream(start, partials...), true)
+        @test only(fired).func.arguments == args
+    end
+end
+
 @testset "stream — provider-native blocks assembled verbatim (thinking + text + tool_use)" begin
     state = UniLM.StreamState()
     lines = [
@@ -1067,6 +1125,35 @@ end
                 @test r isa LLMCallError && r.cause isa ArgumentError
                 @test length(chat) == 1
             end
+        end
+    finally
+        close(srv.server)
+    end
+end
+
+# Refuted if: a streamed reply cut at max_tokens whose tool_use input pieces join into a JSON array
+# reads as a success at the verb, or the turn reaches the history.
+@testset "a streamed tool_use input that is a JSON array is a call error at the verb under max_tokens too" begin
+    ev(d) = "event: " * d["type"] * "\ndata: " * JSON.json(d) * "\n\n"
+    start = Dict("id" => "msg_t", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                 "content" => Any[], "stop_reason" => nothing, "usage" => Dict("input_tokens" => 5, "output_tokens" => 1))
+    sse = ev(Dict("type" => "message_start", "message" => start)) *
+          ev(Dict("type" => "content_block_start", "index" => 0, "content_block" =>
+                  Dict("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => Dict()))) *
+          ev(Dict("type" => "content_block_delta", "index" => 0,
+                  "delta" => Dict("type" => "input_json_delta", "partial_json" => "[1]"))) *
+          ev(Dict("type" => "content_block_stop", "index" => 0)) *
+          ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "max_tokens"), "usage" => Dict("output_tokens" => 8))) *
+          ev(Dict("type" => "message_stop"))
+    srv = _anthropic_capture_server(_ -> "{}", _ -> sse)
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            chat = Chat(service=_AnthropicCapture(srv.url), model="claude-haiku-5-5", stream=true,
+                        messages=[Message(Val(:user), "q")])
+            r = fetch(chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0)))
+            @test r isa LLMCallError && r.cause isa ArgumentError &&
+                  r.cause.msg == "Anthropic tool-call arguments must be a JSON object, got a JSON array"
+            @test length(chat) == 1
         end
     finally
         close(srv.server)

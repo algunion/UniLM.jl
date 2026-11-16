@@ -719,7 +719,7 @@ function _anthropic_buf!(blk::Dict{String,Any}, key::String)::IOBuffer
     v = get(blk, key, "")
     v isa IOBuffer && return v
     buf = IOBuffer()
-    v isa AbstractString && print(buf, v)   # a start snapshot's text; a tool's input object is replaced
+    v isa AbstractString && print(buf, v)   # a start snapshot's text
     blk[key] = buf
 end
 
@@ -775,9 +775,14 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
         end
         if cb isa AbstractDict && get(cb, "type", "") == "tool_use"
             _anthropic_publish_tool_args!(state)
+            # The block's own input is the call's arguments until input_json_delta pieces
+            # replace it: Anthropic starts a streamed block with `{}` and sends the input in
+            # pieces, so a block that sends none holds its whole input here.
+            input = get(cb, "input", nothing)
             state.tool_calls[ev["index"]] = Dict{String,Any}(
-                "id" => get(cb, "id", ""), "type" => "function",
-                "function" => Dict{String,Any}("name" => get(cb, "name", ""), "arguments" => ""))
+                "id" => get(cb, "id", ""), "type" => "function", "provider" => "Anthropic",
+                "function" => Dict{String,Any}("name" => get(cb, "name", ""),
+                                               "arguments" => isnothing(input) ? "" : JSON.json(input)))
         end
     elseif t == "content_block_delta"
         idx = ev["index"]
@@ -791,8 +796,13 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
             isnothing(blk) || print(_anthropic_buf!(blk, "text"), txt::AbstractString)
         elseif dt == "input_json_delta"
             # One partial-JSON buffer per block feeds both the raw block's input and
-            # the neutral tool-call arguments (published at stop).
-            isnothing(blk) || print(_anthropic_buf!(blk, "input"), get(d, "partial_json", "")::AbstractString)
+            # the neutral tool-call arguments (published at stop); the pieces replace
+            # the input the block started with, whatever it held.
+            if !isnothing(blk)
+                buf = get(blk, "input", nothing)
+                buf isa IOBuffer || (blk["input"] = buf = IOBuffer())
+                print(buf, get(d, "partial_json", "")::AbstractString)
+            end
         elseif dt == "thinking_delta"
             isnothing(blk) || print(_anthropic_buf!(blk, "thinking"), get(d, "thinking", "")::AbstractString)
         elseif dt == "signature_delta"
@@ -806,16 +816,15 @@ function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
             for key in findall(v -> v isa IOBuffer, blk)
                 blk[key] = s = takestring!(blk[key])
                 key == "input" || continue
-                # Streamed tool input arrives as partial JSON: finalize to a parsed
-                # object so the block matches the non-streaming wire shape. The
-                # arguments are published first, so an input that is no JSON object
-                # still reaches the tool call, whose own decode decides: an error
-                # under a tool_use stop, a dropped call on a turn cut at max_tokens
-                # (which ends the input mid-JSON). Such a block stays pending: the
+                # Streamed tool input arrives as partial JSON: finalize to its parsed
+                # value so the block matches the non-streaming wire shape. The arguments
+                # are published first, so the tool call's own decode decides on any value
+                # (`_call_arguments`). Text that is no JSON is an input cut short — a turn
+                # cut at max_tokens ends it mid-JSON — and such a block stays pending: the
                 # capture is incomplete, so the turn is rebuilt from its neutral fields.
                 haskey(state.tool_calls, idx) && (state.tool_calls[idx]["function"]["arguments"] = s)
-                _is_json_object(s) || return :continue
-                blk[key] = _parse_tool_arguments(s)
+                _is_json_object(s) || JSON.isvalidjson(s) || return :continue
+                blk[key] = isempty(strip(s)) ? Dict{String,Any}() : JSON.parse(s; dicttype=Dict{String,Any})
             end
             push!(state.raw_blocks, blk)
             delete!(state.raw_pending, idx)

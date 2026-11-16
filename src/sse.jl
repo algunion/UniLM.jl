@@ -172,18 +172,22 @@ function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
 end
 
 """
-    _parse_tool_arguments(args::AbstractString) -> Dict{String,Any}
+    _parse_tool_arguments(args::AbstractString, provider=nothing) -> Dict{String,Any}
 
 Parse a streamed tool call's accumulated `arguments` JSON string. A zero-arg
 tool call may stream `arguments` as `""` (Anthropic sends no
 `input_json_delta` for `{}` input) — that parses as an empty object instead
 of destroying the turn. Anything else must be a JSON object; a
-non-object payload throws a loud `ArgumentError`. Shared by
-`_build_stream_message` and the driver's `on_tool_call` firing.
+non-object payload throws a loud `ArgumentError`. A call a native decoder
+streamed names its `provider` (Anthropic, Gemini), and its value is read by
+that decoder's unstreamed rule (`_tool_call_arguments`): null is a call
+without arguments, and the refusal names the provider and the JSON type.
+Shared by `_build_stream_message` and the driver's `on_tool_call` firing.
 """
-function _parse_tool_arguments(args::AbstractString)::Dict{String,Any}
+function _parse_tool_arguments(args::AbstractString, provider::Union{String,Nothing}=nothing)::Dict{String,Any}
     isempty(strip(args)) && return Dict{String,Any}()
     parsed = JSON.parse(String(args); dicttype=Dict{String,Any})
+    isnothing(provider) || return _tool_call_arguments(provider, parsed)
     parsed isa Dict{String,Any} || throw(ArgumentError(
         "streamed tool-call arguments must be a JSON object, got $(typeof(parsed))"))
     parsed

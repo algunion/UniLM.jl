@@ -119,8 +119,8 @@ turn may hold partial calls, so do not run them. Partial calls are dropped: a ca
 cut off before its arguments formed a JSON object is removed from such a turn, which
 keeps its text, finish reason and usage. On a `"tool_calls"` turn, whose calls would
 run, arguments that do not parse as a JSON object are an `LLMCallError` instead. An
-unstreamed Anthropic or Gemini reply is one whatever its finish reason when a call's
-arguments are a JSON array, string, number or boolean: its `cause` is an `ArgumentError`
+Anthropic or Gemini reply, streamed or not, is one whatever its finish reason when a call's
+arguments are a whole JSON array, string, number or boolean: its `cause` is an `ArgumentError`
 naming the provider and the JSON type. Absent or null arguments are a call without arguments.
 
 !!! tip "Streaming tool calls"

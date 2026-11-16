@@ -739,7 +739,7 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                     raw_id = get(fc, "id", "")
                     state.tool_calls[idx] = Dict{String,Any}(
                         "id" => (isempty(raw_id) ? "unilm_call_$(idx + 1)" : raw_id),
-                        "type" => "function",
+                        "type" => "function", "provider" => "Gemini",
                         "function" => Dict{String,Any}(
                             "name" => get(fc, "name", ""),
                             # Absent or null args: a call without arguments, as unstreamed.

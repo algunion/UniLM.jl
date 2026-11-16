@@ -190,10 +190,12 @@ The blocks of a reply that is not a refusal — `thinking` blocks with their sig
 `redacted_thinking` blocks, text and tool calls — are kept in its message's `provider_content` and go
 back on the next request ([Conversations](@ref anthropic_conversations)). A streamed reply keeps them
 only when every block arrived whole: with one cut short — its stop event lost, or a tool call's input
-that is no JSON object on a turn cut at `max_tokens` or the context window, which drops that tool call —
-the message holds no `provider_content`, and the turn goes back as the text and tool calls it holds, or
-is left out when it holds neither; on a turn that stops with `tool_use`, `end_turn` or `stop_sequence`,
-such an input makes the result an `LLMCallError`, and nothing is appended. Kept blocks go back whatever
+cut off before it formed a JSON value on a turn cut at `max_tokens` or the context window, which drops
+that tool call — the message holds no `provider_content`, and the turn goes back as the text and tool
+calls it holds, or is left out when it holds neither; on a turn that stops with `tool_use`, `end_turn` or
+`stop_sequence`, such an input makes the result an `LLMCallError`, and nothing is appended. So does, on
+any turn, an input that is a whole JSON value other than an object or null, as in a reply not streamed;
+a null input is a call without arguments. Kept blocks go back whatever
 Claude model the next request names, and a turn cut at `max_tokens` that holds only thinking blocks goes
 back too, as Anthropic's guide to continuing such a turn asks. Another provider's encoder ignores them
 and sends the turn's text and tool calls alone.

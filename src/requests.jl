@@ -1092,8 +1092,23 @@ _is_json_object(args::AbstractString)::Bool =
 # dispatched, so its arguments must parse (`_parse_tool_arguments` throws otherwise).
 # Under any other finish no tool loop runs the turn's calls; a turn cut at "length"
 # can end inside a call's arguments, and that call is dropped so the turn survives.
-_call_arguments(args::AbstractString, finish::String)::Union{Nothing,Dict{String,Any}} =
-    finish == TOOL_CALLS || _is_json_object(args) ? _parse_tool_arguments(args) : nothing
+# A call a native decoder streamed names its `provider` (Anthropic, Gemini), whose
+# unstreamed decode reads the arguments as one JSON value: there only text that is no
+# JSON is a call cut short, and a whole JSON value is read by that decode's rule under
+# any finish (`_tool_call_arguments`).
+_call_arguments(args::AbstractString, finish::String,
+                provider::Union{String,Nothing}=nothing)::Union{Nothing,Dict{String,Any}} =
+    finish == TOOL_CALLS || _is_json_object(args) || !isnothing(provider) && JSON.isvalidjson(args) ?
+        _parse_tool_arguments(args, provider) : nothing
+
+# Streamed tool call `tc`, its function dict `fdict`, on a turn whose tool-call finish
+# reason is `finish`: the ToolCall, or `nothing` when `_call_arguments` drops it. A
+# native decoder tags the calls it assembles with its `provider`.
+function _stream_tool_call(tc::Dict{String,Any}, fdict::Dict{String,Any}, finish::String)::Union{Nothing,ToolCall}
+    args = _call_arguments(fdict["arguments"], finish, get(tc, "provider", nothing))
+    isnothing(args) ? nothing : ToolCall(id=tc["id"], func=GPTFunction(fdict["name"], args),
+                                         thought_signature=get(tc, "thought_signature", nothing))
+end
 
 # OpenAI-wire `tool_calls` array → the neutral ToolCall vector, less the calls
 # `_call_arguments` drops; a call keeps the thought signature Gemini gives it (`_google_signature`).
@@ -1241,11 +1256,9 @@ function _build_stream_message(state::StreamState)::Message
     finish = _tool_finish_reason(state.finish_reason)
     tcalls = ToolCall[]
     for idx in sort!(collect(keys(state.tool_calls)))
-        tc_data = state.tool_calls[idx]
-        fdict = _tool_function!(state, idx)
-        args = _call_arguments(fdict["arguments"], finish)   # "" → Dict{String,Any}() (zero-arg tool call)
-        isnothing(args) || push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                                                  thought_signature=get(tc_data, "thought_signature", nothing)))
+        # "" → Dict{String,Any}() (zero-arg tool call)
+        call = _stream_tool_call(state.tool_calls[idx], _tool_function!(state, idx), finish)
+        isnothing(call) || push!(tcalls, call)
     end
     if !isempty(tcalls)
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
@@ -1581,8 +1594,9 @@ later call started), OR (b) its entry carries `"complete" => true` (Anthropic
 done (`stream_done` — the final sweep). Fires at most once per index
 (`state.fired_tool_calls`), marked before the callback runs, so what
 `on_tool_call` throws propagates without a re-fire (the drivers pass it wrapped
-in `_user_call`). Empty accumulated arguments parse as `Dict{String,Any}()` via
-`_parse_tool_arguments`.
+in `_user_call`). A call is read as the turn's message reads it under
+`"tool_calls"` (`_stream_tool_call`): empty accumulated arguments parse as
+`Dict{String,Any}()`.
 """
 function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool)::Nothing
     (isnothing(on_tool_call) || isempty(state.tool_calls)) && return nothing
@@ -1592,8 +1606,8 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
         tc_data = state.tool_calls[idx]
         stream_done || idx < maxidx || get(tc_data, "complete", false) === true || continue
         fdict = _tool_function!(state, idx)
-        args = try
-            _parse_tool_arguments(fdict["arguments"])
+        call = try
+            _stream_tool_call(tc_data, fdict, TOOL_CALLS)::ToolCall   # under "tool_calls" no call is dropped
         catch e
             e isa InterruptException && rethrow()
             # A COMPLETE call's arguments cannot improve later: warn once, never retry.
@@ -1602,8 +1616,7 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
             continue
         end
         push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire
-        on_tool_call(ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                              thought_signature=get(tc_data, "thought_signature", nothing)))
+        on_tool_call(call)
     end
     nothing
 end

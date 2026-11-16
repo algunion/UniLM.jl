@@ -492,6 +492,25 @@ end
     end
 end
 
+# Refuted if: on a streamed turn cut at MAX_TOKENS, a functionCall whose args is a JSON value other than
+# an object is dropped instead of failing as the unstreamed decode does, or the refusal, on any finish,
+# does not name Gemini and the JSON type.
+@testset "stream — functionCall args that are no JSON object fail loud under MAX_TOKENS too, the refusal named" begin
+    function turn(fc, finish)
+        st = StreamState()
+        UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), "data: " * JSON.json(Dict("candidates" => [Dict(
+            "content" => Dict("role" => "model", "parts" => [Dict("functionCall" => merge(Dict{String,Any}("id" => "fc_1", "name" => "f"), fc))]),
+            "finishReason" => finish)])) * "\n\n", st)
+        _build_stream_message(st)
+    end
+    for finish in ("STOP", "MAX_TOKENS"), (args, type) in (([1], "array"), ("x", "string"), (3, "number"), (false, "boolean"))
+        e = try turn(Dict{String,Any}("args" => args), finish); nothing catch e; e end
+        @test e isa ArgumentError && e.msg == "Gemini tool-call arguments must be a JSON object, got a JSON $type"
+    end
+    m = turn(Dict{String,Any}("args" => Dict("q" => 1)), "MAX_TOKENS")
+    @test m.finish_reason == "length" && only(m.tool_calls).func.arguments == Dict{String,Any}("q" => 1)
+end
+
 @testset "stream — a refusal is recorded once, however many chunks follow it" begin
     blocked = """{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}"""
     state = StreamState()
@@ -1799,6 +1818,19 @@ const _HOPS_CFG = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idl
             @test r isa LLMCallError && r.cause isa ArgumentError
             @test length(chat) == 2
         end
+    end
+end
+
+# Refuted if: a streamed reply cut at MAX_TOKENS whose functionCall args is an array reads as a success
+# at the verb, or the turn reaches the history.
+@testset "streamed functionCall args that are a JSON array are a call error at the verb under MAX_TOKENS too" begin
+    u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
+    _with_hops([(200, _hop([Dict("functionCall" => Dict("name" => "lookup", "args" => [1]))], "MAX_TOKENS"; usage=u))]) do _
+        chat = _hops_chat(stream=true)
+        r = fetch(chatrequest!(chat; config=_HOPS_CFG))
+        @test r isa LLMCallError && r.cause isa ArgumentError &&
+              r.cause.msg == "Gemini tool-call arguments must be a JSON object, got a JSON array"
+        @test length(chat) == 2
     end
 end
 

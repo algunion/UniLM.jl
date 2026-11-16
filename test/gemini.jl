@@ -538,6 +538,24 @@ end
     @test startswith(only(_build_stream_message(stream(fc)).tool_calls).id, "unilm_call_")
 end
 
+# Refuted if: a functionCall whose id is null or not a string — the id is "Optional" — fails the decode,
+# or vanishes from the stream as a dropped line, instead of being the call with a synthetic id that a
+# call without an id is.
+@testset "a functionCall whose id is null or not a string is a call without an id, streamed or not" begin
+    body(fc) = JSON.json(Dict("candidates" => [Dict("content" => Dict("role" => "model",
+        "parts" => [Dict("functionCall" => fc)]), "finishReason" => "STOP")]))
+    for id in (nothing, 7, Dict("x" => 1), "")
+        fc = Dict{String,Any}("id" => id, "name" => "f", "args" => Dict("q" => 1))
+        m = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body(fc)))).message
+        st = StreamState()
+        UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), "data: " * body(fc) * "\n\n", st)
+        @test st.sse_dropped == 0
+        for call in (only(m.tool_calls), only(_build_stream_message(st).tool_calls))
+            @test call.id == "unilm_call_1" && call.func.name == "f" && call.func.arguments == Dict{String,Any}("q" => 1)
+        end
+    end
+end
+
 @testset "stream — a refusal is recorded once, however many chunks follow it" begin
     blocked = """{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}"""
     state = StreamState()

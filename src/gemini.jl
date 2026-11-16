@@ -638,8 +638,11 @@ function _gemini_refusal(cand)::String
 end
 
 # A FunctionCall's `name` is "Required"; its `id` is "Optional" (the FunctionCall schema of the
-# Gemini API's discovery document), and a call without one gets a synthetic `unilm_call_<k>`.
+# Gemini API's discovery document), and a call without one gets a synthetic `unilm_call_<k>`, the
+# call's place in the turn. An id that is null, empty or no string is none.
 const _GEMINI_CALL_FIELDS = ("name",)
+_gemini_call_id(fc::AbstractDict, k::Int)::String =
+    (id = get(fc, "id", nothing); id isa AbstractString && !isempty(id) ? String(id) : "unilm_call_$k")
 
 # The reply names the model that served it in modelVersion: a deprecated id Google routes to its
 # successor answers as that successor, which is the model priced. A reply that ends at the
@@ -669,9 +672,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
             fc = p["functionCall"]
             _check_tool_call("Gemini", fc, _GEMINI_CALL_FIELDS)
             args = _tool_call_arguments("Gemini", get(fc, "args", nothing))
-            raw_id = get(fc, "id", "")
-            id = isempty(raw_id) ? "unilm_call_$(length(tool_calls) + 1)" : raw_id
-            push!(tool_calls, ToolCall(id=id,
+            push!(tool_calls, ToolCall(id=_gemini_call_id(fc, length(tool_calls) + 1),
                 func=GPTFunction(fc["name"], args),
                 thought_signature=get(p, "thoughtSignature", nothing)))
         end
@@ -741,9 +742,8 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                     fc = p["functionCall"]
                     fc isa AbstractDict || continue
                     idx = length(state.tool_calls)
-                    raw_id = get(fc, "id", "")
                     state.tool_calls[idx] = Dict{String,Any}(
-                        "id" => (isempty(raw_id) ? "unilm_call_$(idx + 1)" : raw_id),
+                        "id" => _gemini_call_id(fc, idx + 1),
                         "type" => "function", "provider" => "Gemini",
                         # A call without its name is the turn's error when the turn is built.
                         "defect" => _tool_call_defect("Gemini", fc, _GEMINI_CALL_FIELDS),

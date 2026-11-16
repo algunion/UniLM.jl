@@ -147,8 +147,9 @@ a single turn",
 A call's `id` is the one Google sends — "Gemini 3 now always returns a unique `id` with every
 `functionCall`"
 ([function calling](https://ai.google.dev/gemini-api/docs/generate-content/function-calling)) — and
-a call that comes without one gets `unilm_call_1`, `unilm_call_2`, … by its place in the turn, so
-its result can name it; such an id is never sent, and the call and its result go back without one.
+a call that comes without one, or with one that is null, empty or not a string, gets `unilm_call_1`,
+`unilm_call_2`, … by its place in the turn, so its result can name it; such an id is never sent, and
+the call and its result go back without one.
 A call without a non-empty `name`, which Google's `FunctionCall` requires, makes the result an
 `LLMCallError`, streamed or not.
 The `unilm_call_` prefix is reserved. The `tool` messages that answer a turn become one user turn of

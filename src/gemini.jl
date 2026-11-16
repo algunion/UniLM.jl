@@ -768,12 +768,32 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
     merge(d, (; usage))
 end
 
+# This endpoint counts a reply's thinking only in total_tokens: gemini-4-hydrogen at reasoning_effort
+# "xhigh" reported prompt_tokens 38, completion_tokens 5 and total_tokens 124, with no
+# completion_tokens_details (observed 2026-11-16), where generateContent counts the thinking in
+# thoughtsTokenCount and bills it as output. So the tokens a total holds beyond the prompt and the
+# completion are thinking: they join completion_tokens, billed at the output rate as the native
+# reply's thoughts are, and reasoning_tokens, unless the reply named its reasoning tokens, whose
+# count it keeps. A total below the prompt and the completion is kept as reported, with a warning.
+function _compat_thinking(u::TokenUsage)::TokenUsage
+    thinking = u.total_tokens - u.prompt_tokens - u.completion_tokens
+    thinking < 0 && @warn("Gemini's OpenAI-compatible endpoint reported total_tokens below prompt_tokens + " *
+        "completion_tokens; the usage is kept as reported, and thinking it left out is not in the estimate",
+        u.prompt_tokens, u.completion_tokens, u.total_tokens, _id = :unilm_gemini_compat_total, maxlog = 1)
+    thinking > 0 || return u
+    TokenUsage(; _usage_fields(u)..., completion_tokens=u.completion_tokens + thinking,
+               reasoning_tokens=u.reasoning_tokens > 0 ? u.reasoning_tokens : thinking)
+end
+
 # A reply that names no tier was billed at the one its request asked for, so the result records
 # that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,
 # since Google bills a downgraded Priority request at Standard and this endpoint does not report
-# the downgrade. A tier the reply names is kept.
-_result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, u::TokenUsage)::TokenUsage =
+# the downgrade. A tier the reply names is kept. Every Chat result of this endpoint, streamed or
+# not, and the usage of a turn that ends uncommitted, is read here.
+function _result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, usage::TokenUsage)::TokenUsage
+    u = _compat_thinking(usage)
     isnothing(u.service_tier) ? TokenUsage(; _usage_fields(u)..., service_tier=chat.service_tier) : u
+end
 
 # ─── Long decode: one turn in several requests ───────────────────────────────
 # Gemini 4 Argon generates past one request's output cap in hops: a reply that reaches the cap

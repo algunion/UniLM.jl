@@ -1,0 +1,6 @@
+data: {"choices":[{"delta":{"content":"OK","role":"assistant"},"index":0}],"created":1794820756,"id":"k8r6ap7YJeWfxN8PmvjKUQ","model":"gemini-4-hydrogen","object":"chat.completion.chunk","usage":{"completion_tokens":1,"prompt_tokens":7,"total_tokens":28}}
+
+data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"EsgBCsUBAWkUfRMcAB0xz7p/FBA5bSTKf5aWjjJVltqwzBom7/zJacVaxl/jeiogKdAUC3300kIFIHAMVP/x5Vs51g0/nay9ValZHieaPYdyIfcK2I+OCMdmumBmJrABV/AVs4ZW+5yLx28rmkSrW1e5CRShkVyavhdhOWjz7cizfh71Fz85InLqKHCT6UA+usc9AjgBbfl0pEFDXfCe9o3DmtkOiNlgzFp07Adsmw6ef/9Zoc9Ydk9Vb8CF627fmZYBd15Pi3eTpMg="}},"role":"assistant"},"finish_reason":"stop","index":0}],"created":1794820756,"id":"k8r6ap7YJeWfxN8PmvjKUQ","model":"gemini-4-hydrogen","object":"chat.completion.chunk","usage":{"completion_tokens":5,"prompt_tokens":38,"total_tokens":63}}
+
+data: [DONE]
+

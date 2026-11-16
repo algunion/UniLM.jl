@@ -119,6 +119,8 @@ end
         @test r isa LLMSuccess
         @info "Gemini compat default" stream served = r.model usage = r.usage cost = estimated_cost(r)
         @test chat.model == r.model == "gemini-4-hydrogen"
+        # The reply counts its thinking only in total_tokens; the result bills all of it as output.
+        @test r.usage.completion_tokens == r.usage.total_tokens - r.usage.prompt_tokens
         @test estimated_cost(r) > 0
         @test estimated_cost(r) ≈ _gemini_cost(r.usage, UniLM._price_row(DEFAULT_PRICING, "gemini-4-hydrogen"))
     end

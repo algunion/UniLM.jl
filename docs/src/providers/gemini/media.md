@@ -193,7 +193,12 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   signatures in chat completion APIs"). A two-turn tool loop on `gemini-3.8-flash`, streamed and not,
   was answered on 29 October 2026; without the signature, its second request was answered HTTP 400.
 - **Usage.** A stream asks for its usage, `stream_options = {"include_usage": true}`, when the `Chat`
-  sets none, so a streamed turn is priced. The usage counted no audio apart on 23 October 2026, so a
+  sets none, so a streamed turn is priced. The endpoint counts the thinking only in `total_tokens`
+  (`gemini-4-hydrogen` at `"xhigh"`: 38 prompt, 5 completion and 124 total tokens, on 16 November 2026),
+  so the tokens a total holds beyond the prompt and the completion join `completion_tokens` and
+  `reasoning_tokens` and bill at the output rate, as generateContent's thoughts do; a reply that names
+  its reasoning tokens keeps that count, and a total below the prompt and the completion is kept as
+  reported, with a warning. The usage counted no audio apart on 23 October 2026, so a
   clip is priced at the text rate, a lower bound on the four models with an audio price of their own,
   for which such a request warns once per model.
 - **No continuation, no other verbs.** A long reply is not continued ([Long generations](@ref gemini_long_decode)),

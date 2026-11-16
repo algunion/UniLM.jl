@@ -1304,7 +1304,7 @@ end
         @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.8)
     end
     # A tier the reply names is kept; with no usage there is nothing to record.
-    named = TokenUsage(prompt_tokens=1, service_tier="standard")
+    named = TokenUsage(prompt_tokens=1, total_tokens=1, service_tier="standard")
     compat = Chat(service=GEMINIOpenAIServiceEndpoint, service_tier="priority")
     @test UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, named) === named
     @test isnothing(UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, nothing))
@@ -1312,6 +1312,62 @@ end
     u = TokenUsage(prompt_tokens=1)
     for service in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""))
         @test UniLM._result_usage(service, Chat(; service, model="m", service_tier="flex"), u) === u
+    end
+end
+
+# Replies of Google's OpenAI-compatible endpoint on gemini-4-hydrogen, as they came (2026-11-16): an unstreamed
+# one at reasoning_effort "xhigh" (prompt_tokens 38, completion_tokens 5, total_tokens 124) and a stream at "low"
+# (its last usage 38, 5, 63). Neither names completion_tokens_details: the thinking is only inside total_tokens.
+function _with_compat_capture(f, file::String, content_type::String)
+    body = read(joinpath(@__DIR__, "fixtures", "gemini_compat", file))
+    server = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do _
+        HTTP.Response(200, ["Content-Type" => content_type], body)
+    end
+    _COMPAT_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
+    try
+        f()
+    finally
+        close(server)
+    end
+end
+
+@testset "compat — the thinking a reply counts only in total_tokens is billed as output, streamed or not" begin
+    # The native reply counts thinking in thoughtsTokenCount, inside completion_tokens and reasoning_tokens, billed
+    # at the output rate; the compatible reply's thinking is total_tokens - prompt_tokens - completion_tokens.
+    # Refuted by a result whose completion_tokens leave the thinking out, or an estimate below that bill.
+    i, _, o = _gemini_rates("gemini-4-hydrogen")
+    cfg = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+    ask(; kw...) = Chat(; service=_CompatHere, model="gemini-4-hydrogen", messages=[Message(Val(:user), "Reply with the single word OK.")], kw...)
+    counts(u) = (u.prompt_tokens, u.completion_tokens, u.reasoning_tokens, u.total_tokens)
+    _with_compat_capture("hydrogen_xhigh.json", "application/json") do
+        c = ask(reasoning_effort="xhigh")
+        r = chatrequest!(c; config=cfg)
+        @test r isa LLMSuccess && r.message.content == "OK"
+        @test counts(r.usage) == (38, 86, 81, 124)
+        @test estimated_cost(r) ≈ (38 * i + 86 * o) / 1_000_000 && cumulative_cost(c) == estimated_cost(r)
+    end
+    _with_compat_capture("hydrogen_low_stream.sse", "text/event-stream") do
+        c = ask(reasoning_effort="low", stream=true)
+        r = fetch(chatrequest!(c; config=cfg))
+        @test r isa LLMSuccess && r.message.content == "OK"
+        @test counts(r.usage) == (38, 25, 20, 63)
+        @test estimated_cost(r) ≈ (38 * i + 25 * o) / 1_000_000 && cumulative_cost(c) == estimated_cost(r)
+    end
+    usage(p, c, t; r=0) = TokenUsage(prompt_tokens=p, completion_tokens=c, total_tokens=t, reasoning_tokens=r)
+    chat = Chat(service=GEMINIOpenAIServiceEndpoint)
+    read_as(u) = UniLM._result_usage(GEMINIOpenAIServiceEndpoint, chat, u)
+    @test read_as(usage(38, 5, 43)) == usage(38, 5, 43)                     # no thinking: as reported
+    @test read_as(read_as(usage(38, 5, 124))) == usage(38, 86, 124; r=81)  # read once, whatever reads it again
+    # A reply that names its reasoning tokens keeps that count: inside completion_tokens, as on the OpenAI wire, or
+    # outside it, where the total shows them.
+    @test read_as(usage(38, 25, 63; r=20)) == usage(38, 25, 63; r=20)
+    @test read_as(usage(38, 5, 63; r=20)) == usage(38, 25, 63; r=20)
+    # A total below the prompt and the completion is kept as reported, with one warning however often it comes.
+    short = usage(38, 5, 40)
+    @test (@test_logs (:warn, r"total_tokens") (read_as(short); read_as(short))) == short
+    # Only this endpoint reads its total so: every other OpenAI-wire endpoint keeps the usage its reply reports.
+    for service in (OPENAIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""), DeepSeekEndpoint("k"))
+        @test UniLM._result_usage(service, Chat(; service, model="m"), usage(38, 5, 63)) == usage(38, 5, 63)
     end
 end
 

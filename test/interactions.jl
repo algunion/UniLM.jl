@@ -936,6 +936,27 @@ end
     end
 end
 
+# Refuted if: a streamed interaction whose model is null or not a string ends otherwise than the
+# unstreamed decode of the same interaction, which fails loud: a ResponseCallError whose cause is the
+# conversion error (a ResponseObject's model is a String; an absent model reads as "", pinned above).
+@testset "Interactions — a model that is null or no string is the same call error, streamed or not" begin
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1)
+    for model in (nothing, 5)
+        interaction = Dict("id" => "v1_a", "status" => "completed", "model" => model)
+        srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do _
+            HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(interaction))
+        end
+        _IX_NONSTREAM_URL[] = "http://127.0.0.1:$(HTTP.port(srv))/v1beta/interactions"
+        r = try respond(Respond(service=_IxNonStreamMock, input="hi"); config=cfg) finally close(srv) end
+        server, url = _ix_sse_server("event: interaction.completed\ndata: " * JSON.json(Dict(
+            "event_type" => "interaction.completed", "interaction" => interaction)) * "\n\nevent: done\ndata: [DONE]\n\n")
+        _IX_MOCK_URL[] = url
+        res = try fetch(respond(Respond(service=_IxStreamMock, input="hi", stream=true); config=cfg)) finally close(server) end
+        @test r isa ResponseCallError && r.cause isa MethodError
+        @test res isa ResponseCallError && typeof(res.cause) == typeof(r.cause) && res.error == r.error
+    end
+end
+
 @testset "a non-streamed failed interaction is a failure, not a success" begin
     # Same contract as the OpenAI wire: `respond` decodes both wires through the one
     # decode_agentic seam, so a failed interaction must produce the ResponseFailure its

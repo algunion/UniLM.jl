@@ -257,7 +257,7 @@ end
     for call in calls
         @test _seam_timeout(call((; service=s, config=_TINY_DEADLINE)), WebhookEndpointCallError)
         # An endpoint without `:webhooks` is refused before anything is sent.
-        err = try call((; service=SeamProbe)); nothing catch e; e end
+        err = try call((; service=AZUREServiceEndpoint)); nothing catch e; e end
         @test err isa ArgumentError && occursin("Webhook endpoints API is not supported by", err.msg)
         tok = CancelToken(); cancel!(tok)
         r, seen = _with_scripted(() -> call((; service=s, cancel=tok)), (_, _) -> _json(200, "{}"))

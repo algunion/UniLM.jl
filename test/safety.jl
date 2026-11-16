@@ -43,7 +43,7 @@ UniLM.provider_capabilities(::Type{_SafetyProbe}) = Set([:safety, :content_prove
     @test r isa SafetyFailure && r.status == 404 && r.request_id == "req_sc"
     for call in (kw -> retrieve_safety_case("C-1"; kw...), kw -> retrieve_safety_alert("alert_1"; kw...))
         @test _seam_timeout(call((; service=s, config=_TINY_DEADLINE)), SafetyCallError)
-        err = try call((; service=SeamProbe)); nothing catch e; e end
+        err = try call((; service=AZUREServiceEndpoint)); nothing catch e; e end
         @test err isa ArgumentError && occursin("Safety API is not supported by", err.msg)
         tok = CancelToken(); cancel!(tok)
         r, seen = _with_scripted(() -> call((; service=s, cancel=tok)), (_, _) -> _json(200, "{}"))
@@ -89,7 +89,7 @@ end
     err = try check_content_provenance(png * ".missing"; service=s); nothing catch e; e end
     @test err isa ArgumentError && occursin("file not found", err.msg)
     @test _seam_timeout(check_content_provenance(png; service=s, config=_TINY_DEADLINE), SafetyCallError)
-    err = try check_content_provenance(png; service=SeamProbe); nothing catch e; e end
+    err = try check_content_provenance(png; service=AZUREServiceEndpoint); nothing catch e; e end
     @test err isa ArgumentError && occursin("Content provenance API is not supported by", err.msg)
     tok = CancelToken(); cancel!(tok)
     r, seen = _with_scripted(() -> check_content_provenance(png; service=s, cancel=tok), (_, _) -> _json(200, "{}"))

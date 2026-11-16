@@ -108,6 +108,22 @@ function _vs_deletion(::Type{T}, d::AbstractDict, object::String) where {T<:LLMR
     T(id=d["id"], deleted=_confirm_deleted(d))
 end
 
+# The query of a list call (containers.jl shares it): each parameter given, in the order named;
+# an `order` or a file-status `filter` OpenAI's reference does not list is refused before
+# anything is sent.
+const _VS_FILE_STATUSES = ("in_progress", "completed", "failed", "cancelled")
+function _vs_list_query(verb::String, params::Pair{String}...)::String
+    parts = String[]
+    for (k, v) in params
+        isnothing(v) && continue
+        allowed = k == "order" ? ("asc", "desc") : k == "filter" ? _VS_FILE_STATUSES : nothing
+        isnothing(allowed) || v in allowed || throw(ArgumentError(
+            "$verb: $k is $(join(repr.(allowed), ", ", " or ")) (got $(repr(v)))"))
+        push!(parts, k * "=" * _uripart(v))
+    end
+    isempty(parts) ? "" : "?" * join(parts, "&")
+end
+
 # Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
 # rethrows for the caller's catch). status_exception=false is imposed by _http.
 function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64;
@@ -121,16 +137,17 @@ end
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
 """
-    create_vector_store(; name=nothing, file_ids=nothing, expires_after=nothing,
+    create_vector_store(; name=nothing, description=nothing, file_ids=nothing, expires_after=nothing,
                         chunking_strategy=nothing, metadata=nothing, service=OPENAIServiceEndpoint)
 
-Create a vector store. Returns `VectorStoreSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
+Create a vector store; `description` says what it is for. Returns `VectorStoreSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Union{Vector{String},Nothing}=nothing,
+function create_vector_store(; name::Union{String,Nothing}=nothing, description::Union{String,Nothing}=nothing,
+    file_ids::Union{Vector{String},Nothing}=nothing,
     expires_after::Union{AbstractDict,Nothing}=nothing, chunking_strategy::Union{AbstractDict,Nothing}=nothing,
     metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing,
@@ -140,6 +157,7 @@ function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Un
     try
         d = Dict{Symbol,Any}()
         !isnothing(name) && (d[:name] = name)
+        !isnothing(description) && (d[:description] = description)
         !isnothing(file_ids) && (d[:file_ids] = file_ids)
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
@@ -175,23 +193,25 @@ function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAISe
 end
 
 """
-    list_vector_stores(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+    list_vector_stores(; limit=nothing, order=nothing, after=nothing, before=nothing, service=OPENAIServiceEndpoint)
+
+List vector stores, a page at a time: `order` is `"asc"` or `"desc"` (OpenAI's default) by
+creation time, and `after`/`before` the id that ends the page before or begins the page after.
+Another `order` is an `ArgumentError` before anything is sent.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
-function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
+function list_vector_stores(; limit::Union{Int,Nothing}=nothing, order::Union{String,Nothing}=nothing,
+    after::Union{String,Nothing}=nothing, before::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    query = _vs_list_query("list_vector_stores", "limit" => limit, "order" => order, "after" => after, "before" => before)
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        url = _api_base_url(service) * VECTOR_STORES_PATH
-        params = String[]
-        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
-        !isnothing(after) && push!(params, "after=$(_uripart(after))")
-        !isempty(params) && (url *= "?" * join(params, "&"))
+        url = _api_base_url(service) * VECTOR_STORES_PATH * query
         resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0); cancel)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})

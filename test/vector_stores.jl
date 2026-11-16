@@ -120,3 +120,21 @@ end
     @test del("""{"id": "vs_1", "object": "vector_store.file.deleted", "deleted": true}""") isa VectorStoreCallError
     @test del("""{"id": "vs_2", "object": "vector_store.deleted", "deleted": true}""").id == "vs_2"
 end
+
+@testset "create_vector_store sends a description; list_vector_stores takes order and before" begin
+    r, seen = _with_scripted((_, _) -> _json(200, """{"id": "vs_1", "name": "n", "status": "completed"}""")) do
+        create_vector_store(; name="n", description="Return policies", service=URLProbe)
+    end
+    @test r isa VectorStoreSuccess
+    @test JSON.parse(only(seen).body) == Dict("name" => "n", "description" => "Return policies")
+    t = _recorded_targets() do
+        list_vector_stores(; limit=2, order="asc", after="vs_a", before="vs_b", service=URLProbe)
+        list_vector_stores(; order="desc", service=URLProbe)
+    end
+    @test t == ["/v1/vector_stores?limit=2&order=asc&after=vs_a&before=vs_b", "/v1/vector_stores?order=desc"]
+    # An order OpenAI's reference does not list is refused before anything is sent.
+    err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        try list_vector_stores(; order="ascending", service=URLProbe); nothing catch e; e end
+    end
+    @test err isa ArgumentError && occursin("list_vector_stores", err.msg) && occursin("\"asc\"", err.msg) && isempty(seen)
+end

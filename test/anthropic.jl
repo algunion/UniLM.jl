@@ -122,6 +122,21 @@ end
     @test r.message.tool_calls[1].id == "toolu_2"
 end
 
+# Refuted if: a tool_use whose input is a JSON value other than an object decodes to a call (its
+# tool would run without the arguments the model gave), or one with no input, or a null one,
+# does not decode to a call without arguments.
+@testset "decode — a tool_use input that is no JSON object fails loud; none or null is a call without arguments" begin
+    dec(block) = decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "stop_reason" => "tool_use", "content" => [merge(Dict("type" => "tool_use", "id" => "toolu_1", "name" => "f"), block)])))))
+    for (input, type) in (([1], "array"), ("x", "string"), (3, "number"), (true, "boolean"))
+        err = try dec(Dict("input" => input)); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "Anthropic tool-call arguments must be a JSON object, got a JSON $type"
+    end
+    for block in (Dict{String,Any}(), Dict{String,Any}("input" => nothing))
+        @test only(dec(block).message.tool_calls).func.arguments == Dict{String,Any}()
+    end
+end
+
 @testset "decode — max_tokens → length" begin
     body = JSON.json(Dict("stop_reason" => "max_tokens",
         "content" => [Dict("type" => "text", "text" => "partial")],
@@ -276,6 +291,27 @@ end
     @test msg.tool_calls[1].id == "toolu_7"
     @test msg.tool_calls[1].func.name == "get_weather"
     @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
+end
+
+# Refuted if: a streamed tool_use whose input_json_delta pieces join into a whole JSON value other
+# than an object builds a call, or one that streams no input does not build a call without arguments.
+@testset "stream — a tool_use input that is no JSON object fails loud; none is a call without arguments" begin
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    function turn(partials...)
+        st = StreamState()
+        UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join([
+            ev(Dict("type" => "content_block_start", "index" => 0, "content_block" =>
+                Dict("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => Dict())));
+            [ev(Dict("type" => "content_block_delta", "index" => 0,
+                     "delta" => Dict("type" => "input_json_delta", "partial_json" => p))) for p in partials];
+            ev(Dict("type" => "content_block_stop", "index" => 0));
+            ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use")));
+            ev(Dict("type" => "message_stop"))]), st)
+        _build_stream_message(st)
+    end
+    @test_throws ArgumentError turn("[", "1]")
+    @test_throws ArgumentError turn("\"x\"")
+    @test only(turn().tool_calls).func.arguments == Dict{String,Any}()
 end
 
 @testset "stream — provider-native blocks assembled verbatim (thinking + text + tool_use)" begin
@@ -1003,6 +1039,38 @@ function _anthropic_capture_server(json, sse)
         end
     end
     (; server, url="http://127.0.0.1:$port/v1/messages", seen)
+end
+
+# Refuted if: a reply whose tool_use input is an array reads as a success at the verb, streamed or
+# not, or the turn reaches the history.
+@testset "a tool_use input that is no JSON object is a call error at the verb, streamed or not" begin
+    ev(d) = "event: " * d["type"] * "\ndata: " * JSON.json(d) * "\n\n"
+    use(input) = Dict("type" => "tool_use", "id" => "toolu_1", "name" => "f", "input" => input)
+    reply = Dict("id" => "msg_t", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                 "content" => [use([1])], "stop_reason" => "tool_use",
+                 "usage" => Dict("input_tokens" => 5, "output_tokens" => 8))
+    sse = ev(Dict("type" => "message_start", "message" => merge(reply, Dict("content" => Any[], "stop_reason" => nothing)))) *
+          ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => use(Dict()))) *
+          ev(Dict("type" => "content_block_delta", "index" => 0,
+                  "delta" => Dict("type" => "input_json_delta", "partial_json" => "[1]"))) *
+          ev(Dict("type" => "content_block_stop", "index" => 0)) *
+          ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use"), "usage" => Dict("output_tokens" => 8))) *
+          ev(Dict("type" => "message_stop"))
+    srv = _anthropic_capture_server(_ -> JSON.json(reply), _ -> sse)
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for streamed in (false, true)
+                chat = Chat(service=_AnthropicCapture(srv.url), model="claude-haiku-5-5", stream=streamed,
+                            messages=[Message(Val(:user), "q")])
+                cfg = RequestConfig(max_attempts=1, total_deadline=10.0)
+                r = streamed ? fetch(chatrequest!(chat; config=cfg)) : chatrequest!(chat; config=cfg)
+                @test r isa LLMCallError && r.cause isa ArgumentError
+                @test length(chat) == 1
+            end
+        end
+    finally
+        close(srv.server)
+    end
 end
 
 @testset "every request sends anthropic-version 2026-10-21; streamed and non-streamed calls cost the same" begin

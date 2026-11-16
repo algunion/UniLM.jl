@@ -451,7 +451,9 @@ via `dispatcher(name, args)` (a non-`String` return is sent JSON-encoded), build
 `function_call_output` input items, and chains via `previous_response_id` — or, when
 `r.conversation` is set, through the conversation alone (the API rejects the two
 together). A call whose `arguments` are not a JSON object is answered with an
-`"Error: invalid arguments: …"` output, like a dispatcher error, and the loop goes on.
+`"Error: invalid arguments: …"` output, like a dispatcher error, and the loop goes on. On
+Gemini Interactions such a call is the turn's `ResponseCallError` instead: the decode refuses
+it, and the loop stops with `completed=false`.
 
 Function calls run only on a `completed` or `requires_action` turn. Any other status
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`

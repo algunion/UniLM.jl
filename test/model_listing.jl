@@ -501,3 +501,37 @@ end
     oa = _ml_models("openai", UniLM._OpenAIModels())
     @test issubset(filter(id -> _drift_provider(id) === :openai, docs), _drift_named_models(oa, :openai).named)
 end
+
+# Refuted if: a model id that only a Julia comment names — a `#` line comment or a `#= … =#` block
+# comment, nested or not, in a docs code block or a live suite — is checked (a page prints a
+# listing's output as comments: models the reader never runs), or an id the code names is lost
+# because a string or a character literal on its line holds `#` or a quote.
+@testset "drift checks: an id only a Julia comment names is not checked; a # inside a string is code" begin
+    ids(code) = mktempdir() do dir
+        write(joinpath(dir, "page.md"), "```julia\n$code\n```\n")
+        _drift_docs_ids(dir)
+    end
+    @test isempty(ids("""ids = [m.id for m in list_models(ANTHROPICServiceEndpoint)]
+                         #  ("claude-opus-4-5-20251101", "claude-haiku-4-5-20251001")"""))
+    @test isempty(ids("""list_models()
+                         #= ["gpt-5.4",
+                             "gemini-2.5-flash"] =#"""))
+    @test isempty(ids("""x = 1 #= outer #= "gpt-5.4" =# still a comment: "gpt-5.2" =# + 2"""))
+    @test ids("""url = "https://x.org/a#b"; c = '#'; q = '"'; Chat(model="gpt-6-sol") # was "gpt-5.4" """) == ["gpt-6-sol"]
+    @test ids("s = \"\"\"\n# kept: \"gpt-6-luna\"\n\"\"\"; Chat(model=\"claude-haiku-5-5\")") == ["gpt-6-luna", "claude-haiku-5-5"]
+    # The live suites' sources are read by the same rule.
+    @test ProviderDriftChecks._drift_quoted_ids("Chat(model=\"gpt-6-sol\")  # not \"gpt-5.4\"\n#= \"gpt-5.2\" =#") == ["gpt-6-sol"]
+end
+
+# Refuted if: a model UniLM uses when a call names none — translate's Realtime model among them —
+# is left out of the drift check's defaults, or is unlisted, or past its retirement date, on the
+# listings of 2026-10-22.
+@testset "drift checks: every default model is listed on 2026-10-22, before its retirement" begin
+    for (provider, wire) in (:openai => UniLM._OpenAIModels(), :anthropic => UniLM._AnthropicModels(),
+                             :gemini => UniLM._GeminiModels())
+        n = _drift_named_models(_ml_models(String(provider), wire), provider; named=_drift_defaults())
+        @test !isempty(n.named)
+        @test (provider, n.unlisted, n.retired) == (provider, [], [])
+    end
+    @test UniLM._TRANSLATE_DEFAULT_MODEL in _drift_defaults()
+end

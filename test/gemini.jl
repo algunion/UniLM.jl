@@ -228,6 +228,22 @@ end
     @test r.message.tool_calls[1].thought_signature == "SIGX"
 end
 
+# Refuted if: a functionCall whose args is a JSON value other than an object decodes to a call (its
+# tool would run without the arguments the model gave), or one with no args, or null args, does not
+# decode to a call without arguments.
+@testset "decode — functionCall args that are no JSON object fail loud; none or null is a call without arguments" begin
+    dec(fc) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [Dict("functionCall" => merge(Dict("id" => "fc_1", "name" => "f"), fc))]),
+        "finishReason" => "STOP")])))))
+    for (args, type) in (([1], "array"), ("x", "string"), (3, "number"), (false, "boolean"))
+        err = try dec(Dict("args" => args)); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "Gemini tool-call arguments must be a JSON object, got a JSON $type"
+    end
+    for fc in (Dict{String,Any}(), Dict{String,Any}("args" => nothing))
+        @test only(dec(fc).message.tool_calls).func.arguments == Dict{String,Any}()
+    end
+end
+
 @testset "decode — MAX_TOKENS → length" begin
     body = JSON.json(Dict("candidates" => [Dict(
         "content" => Dict("role" => "model", "parts" => [Dict("text" => "partial")]),
@@ -457,6 +473,23 @@ end
     @test msg.tool_calls[1].func.name == "get_weather"
     @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
     @test msg.tool_calls[1].thought_signature == "SIG7"
+end
+
+# Refuted if: a streamed functionCall whose args is a JSON value other than an object builds a call,
+# or one with no args, or null args, does not build a call without arguments.
+@testset "stream — functionCall args that are no JSON object fail loud; none or null is a call without arguments" begin
+    function turn(fc)
+        st = StreamState()
+        UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), "data: " * JSON.json(Dict("candidates" => [Dict(
+            "content" => Dict("role" => "model", "parts" => [Dict("functionCall" => merge(Dict("id" => "fc_1", "name" => "f"), fc))]),
+            "finishReason" => "STOP")])) * "\n\n", st)
+        _build_stream_message(st)
+    end
+    @test_throws ArgumentError turn(Dict("args" => [1]))
+    @test_throws ArgumentError turn(Dict("args" => "x"))
+    for fc in (Dict{String,Any}(), Dict{String,Any}("args" => nothing))
+        @test only(turn(fc).tool_calls).func.arguments == Dict{String,Any}()
+    end
 end
 
 @testset "stream — a refusal is recorded once, however many chunks follow it" begin
@@ -1754,6 +1787,20 @@ _hop1_cost() = _argon_priority(142, 0, 32_768)
 _hops_chat(; kw...) = Chat(; service=_GeminiHops, model="gemini-4-argon", max_tokens=262_144,
                            reasoning_effort="high", messages=[Message(Val(:system), "s"), Message(Val(:user), "Prove it.")], kw...)
 const _HOPS_CFG = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+
+# Refuted if: a reply whose functionCall args is an array reads as a success at the verb, streamed
+# or not, or the turn reaches the history.
+@testset "functionCall args that are no JSON object are a call error at the verb, streamed or not" begin
+    u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
+    _with_hops([(200, _hop([Dict("functionCall" => Dict("name" => "lookup", "args" => [1]))], "STOP"; usage=u))]) do _
+        for streamed in (false, true)
+            chat = _hops_chat(stream=streamed)
+            r = streamed ? fetch(chatrequest!(chat; config=_HOPS_CFG)) : chatrequest!(chat; config=_HOPS_CFG)
+            @test r isa LLMCallError && r.cause isa ArgumentError
+            @test length(chat) == 2
+        end
+    end
+end
 
 @testset "continuation — the hops of one turn join into one assistant message, usage summed" begin
     _with_hops(_hops_two()) do seen

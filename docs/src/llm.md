@@ -1596,7 +1596,9 @@ Turns chain through `previous_response_id`, or through `conversation` alone when
 `Respond` sets it. Function calls run only on a `completed` or `requires_action` turn;
 another status stops the loop (`completed=false`, `llm_error` naming the status and the
 `incomplete_details` reason). Call `arguments` that are not a JSON object are answered
-with `"Error: invalid arguments: …"` and the loop continues. A turn requesting a
+with `"Error: invalid arguments: …"` and the loop continues; on Gemini Interactions such a
+call is the turn's `ResponseCallError` instead (the decode refuses it), and the loop stops
+with `completed=false`. A turn requesting a
 client-side action the loop cannot run (`custom_tool_call`, `apply_patch_call`,
 `computer_call`, a `shell_call` without a `shell_call_output` in the
 same output, `mcp_approval_request`) stops it with `completed=false`, naming the type,

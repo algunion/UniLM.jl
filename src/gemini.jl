@@ -663,8 +663,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
             print(text, p["text"])
         elseif haskey(p, "functionCall")
             fc = p["functionCall"]
-            args = get(fc, "args", Dict{String,Any}())
-            args isa AbstractDict || (args = Dict{String,Any}())
+            args = _tool_call_arguments("Gemini", get(fc, "args", nothing))
             raw_id = get(fc, "id", "")
             id = isempty(raw_id) ? "unilm_call_$(length(tool_calls) + 1)" : raw_id
             push!(tool_calls, ToolCall(id=id,
@@ -743,7 +742,8 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                         "type" => "function",
                         "function" => Dict{String,Any}(
                             "name" => get(fc, "name", ""),
-                            "arguments" => JSON.json(get(fc, "args", Dict{String,Any}()))),
+                            # Absent or null args: a call without arguments, as unstreamed.
+                            "arguments" => JSON.json(something(get(fc, "args", nothing), Dict{String,Any}()))),
                         "thought_signature" => get(p, "thoughtSignature", nothing),
                         "complete" => true)
                 end

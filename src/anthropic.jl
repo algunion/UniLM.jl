@@ -635,6 +635,22 @@ function _anthropic_rate_multiplier(model::String, u::TokenUsage)::Float64
     (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (us ? _ANTHROPIC_US_INFERENCE : 1.0) * long
 end
 
+# A decoded tool call's arguments (Anthropic, Gemini, Interactions): a JSON object, and a call
+# without arguments when they are absent or null. Any other JSON value names no arguments, so the
+# call fails loud, as Ollama's does, instead of running the tool without the ones the model gave.
+function _tool_call_arguments(provider::String, args)::Dict{String,Any}
+    isnothing(args) && return Dict{String,Any}()
+    args isa AbstractDict ||
+        throw(ArgumentError("$provider tool-call arguments must be a JSON object, got a JSON $(_json_type(args))"))
+    args
+end
+
+# The RFC 8259 name of a parsed JSON value's type, objects and null aside.
+_json_type(::AbstractVector) = "array"
+_json_type(::AbstractString) = "string"
+_json_type(::Bool) = "boolean"
+_json_type(::Number) = "number"
+
 function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     # A 200 that is not a Message has no turn to report: fail loud, and the verb turns
@@ -662,8 +678,7 @@ function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)
         if bt == "text"
             print(text, get(b, "text", ""))
         elseif bt == "tool_use"
-            args = get(b, "input", Dict{String,Any}())
-            args isa AbstractDict || (args = Dict{String,Any}())
+            args = _tool_call_arguments("Anthropic", get(b, "input", nothing))
             push!(tool_calls, ToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
         end
         # thinking / redacted_thinking blocks are not flattened into the neutral

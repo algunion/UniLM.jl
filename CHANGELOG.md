@@ -28,8 +28,11 @@
   characters; a Score outside 2–255 levels or with an empty level; instructions that are missing, empty or not
   text; a blank state, an empty vector state or text block, or a `Message` in the state; images outside the state,
   `detail="original"`, or more than 100 MiB of images; audio and PDF in the state; Box questions; any provider
-  option. Price row `gemini-decision-1`: $0.10 per 1M input tokens for every modality, no output charge. Recordings
-  are filed under `/gemini-decisions/v1beta/decisions`. The Decisions chapter has a Gemini Decisions API entry.
+  option; a `RawQuestion` whose fields nest objects and arrays more than 98 levels (the request body's JSON nesting
+  depth is 100, and the API answers a deeper one with HTTP 400; a JSON state is sent as its text and is not limited).
+  Price row `gemini-decision-1`: $0.10 per 1M input tokens for every modality, no output charge. Recordings are filed
+  under `/gemini-decisions/v1beta/decisions`. The Decisions chapter has a Gemini Decisions API entry, with an
+  `ask_each` `ntasks` per rate-limit tier.
 - **Claude Fable 5.2 and Claude Mythos 5.2.** Rule rows (thinking always on, no forced `tool_choice`, no prefill,
   every effort level, fast mode) and prices ($8 / $0.20 / $40 per 1M input / cache-hit / output tokens; cache writes
   $10 for 5 minutes, $16 for 1 hour; fast mode $16 / $80).

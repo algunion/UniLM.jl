@@ -59,8 +59,9 @@ These calls are not recorded, so their output on this page is quoted from dated 
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
   carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it, a
-  container and a fine-tuning job their `status`, as OpenAI's reference requires: a reply without
-  them is the call error, never an empty last page or a status read as unknown.
+  container, a fine-tuning job and a Batch API batch their `status`, as OpenAI's reference
+  requires: a reply without them is the call error, never an empty last page or a status read as
+  unknown.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
   `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
   `:fine_tuning`, `:moderation`, `:webhooks`, `:safety`, `:content_provenance`, `:transcription`

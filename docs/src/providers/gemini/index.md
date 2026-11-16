@@ -83,6 +83,9 @@ text ([Reasoning](@ref gemini_reasoning)).
 | image generation and editing | generateContent | `generate_image`, `edit_image` | `gemini-nano-banana-2.1` |
 | speech | generateContent | `speak` | `gemini-3.8-flash-tts` |
 | embeddings | OpenAI-compatible | `embeddingrequest!` with `GEMINIOpenAIServiceEndpoint` | `gemini-embedding-2` |
+| file storage | Files | `upload_file`, `poll_file`, `list_files`, `delete_file`, `register_files` | — |
+| many generateContent requests at half price | Batch (`batchGenerateContent`) | `create_batch`, `batch_results` on `Chat`s | the default at the top of this page |
+| input token counts | models (`countTokens`) | `count_tokens` on a `Chat` | the default at the top of this page |
 | the model listing | models | `list_models` | — |
 
 Google calls the Interactions API "the best way to build with Gemini models and agents" and

@@ -449,7 +449,7 @@ try
         @test r isa VectorStoreSuccess
         @test vector_store_id(r.response) == "vs-1"
 
-        response_body[] = JSON.json(Dict("data" => [Dict("id" => "vs-1", "name" => "docs")], "has_more" => false))
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "vs-1", "name" => "docs", "status" => "completed")], "has_more" => false))
         rl = list_vector_stores(service=MockServiceEndpoint)
         @test rl isa VectorStoreListSuccess && length(rl.response.data) == 1
 
@@ -462,7 +462,7 @@ try
         rp = poll_file_batch("vs-1", "batch-1"; interval=0.01, timeout=1.0, service=MockServiceEndpoint)
         @test rp isa VectorStoreBatchSuccess && rp.response.status == "completed"
 
-        response_body[] = JSON.json(Dict("id" => "vs-1", "deleted" => true))
+        response_body[] = JSON.json(Dict("id" => "vs-1", "object" => "vector_store.deleted", "deleted" => true))
         rd = delete_vector_store("vs-1"; service=MockServiceEndpoint)
         @test rd isa VectorStoreDeleteSuccess && rd.deleted
 
@@ -599,7 +599,7 @@ try
         p = tempname() * ".txt"; write(p, "x")
         @test add_container_file("cntr-1", p; service=MockServiceEndpoint) isa ContainerSuccess
         rm(p)
-        response_body[] = JSON.json(Dict("id" => "cntr-1", "deleted" => true))
+        response_body[] = JSON.json(Dict("id" => "cntr-1", "object" => "container.deleted", "deleted" => true))
         @test delete_container("cntr-1"; service=MockServiceEndpoint) isa ContainerDeleteSuccess
         set_error!(404, "no")
         @test retrieve_container("x"; service=MockServiceEndpoint) isa ContainerFailure

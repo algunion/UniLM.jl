@@ -340,7 +340,8 @@ end
     ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing,
                         quality=nothing, size=nothing, model=nothing, action=nothing,
                         moderation=nothing, partial_images=nothing, input_fidelity=nothing,
-                        input_image_mask=nothing)
+                        input_image_mask=nothing, complexity=nothing, frame_count=nothing,
+                        frame_duration_ms=nothing, svg=nothing)
 
 An image generation tool for the Responses API. Allows the model to generate
 images inline during a response.
@@ -353,9 +354,17 @@ images inline during a response.
   (omit it for `gpt-image-2`, which always uses high fidelity)
 - `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
 - `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
+- `complexity`: `"low"`, `"medium"` or `"high"`, which "Overrides the outer response's
+  `reasoning.effort` for image generation" (the tool's reference)
+- `frame_count`, `frame_duration_ms`: a GIF's frames, 2 to 16, and each frame's milliseconds, at
+  least 20 (the tool's reference gives 2000 as the largest, which UniLM does not check), with
+  `output_format="gif"` only
+- `svg`: the SVG author ([`SvgOptions`](@ref)), with `output_format="svg"` only; omitted, "uses the
+  outer response model" where SVG model selection is enabled
 
-`action`, `moderation`, `partial_images`, and `input_fidelity` are validated at
-construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
+Unset, `model` is the tool's default, `"gpt-image-2.6-sunburst"`. `action`, `moderation`,
+`partial_images`, `input_fidelity`, `complexity`, `frame_count`, `frame_duration_ms` and `svg`
+are validated at construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
 through unchecked (the accepted `quality` values depend on the model). Unset fields are
 omitted from the request.
 """
@@ -371,9 +380,14 @@ omitted from the request.
     partial_images::Union{Int, Nothing} = nothing
     input_fidelity::Union{String, Nothing} = nothing
     input_image_mask::Union{AbstractDict, Nothing} = nothing
+    complexity::Union{String, Nothing} = nothing
+    frame_count::Union{Int, Nothing} = nothing
+    frame_duration_ms::Union{Int, Nothing} = nothing
+    svg::Union{SvgOptions, Nothing} = nothing
     function ImageGenerationTool(background, output_format, output_compression, quality, size,
             model=nothing, action=nothing, moderation=nothing, partial_images=nothing,
-            input_fidelity=nothing, input_image_mask=nothing)
+            input_fidelity=nothing, input_image_mask=nothing, complexity=nothing, frame_count=nothing,
+            frame_duration_ms=nothing, svg=nothing)
         isnothing(action) || action in ("generate", "edit", "auto") ||
             throw(ArgumentError("image_generation action must be generate, edit, or auto"))
         isnothing(moderation) || moderation in ("auto", "low") ||
@@ -382,8 +396,12 @@ omitted from the request.
             throw(ArgumentError("image_generation partial_images must be in [0, 3]"))
         isnothing(input_fidelity) || input_fidelity in ("high", "low") ||
             throw(ArgumentError("image_generation input_fidelity must be high or low"))
+        # The Images API's GPT-Image-2.6 controls (images.jl), with the tool's own name.
+        _check_image_controls("image_generation", complexity, frame_count, frame_duration_ms)
+        _check_image_format("image_generation", output_format, frame_count, frame_duration_ms, svg)
         new(background, output_format, output_compression, quality, size,
-            model, action, moderation, partial_images, input_fidelity, input_image_mask)
+            model, action, moderation, partial_images, input_fidelity, input_image_mask, complexity,
+            frame_count, frame_duration_ms, svg)
     end
 end
 

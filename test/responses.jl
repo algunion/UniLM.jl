@@ -3211,3 +3211,26 @@ end
              messages=[Message(Val(:user), "hi")], prompt_cache_retention="in_memory")
     @test JSON.parse(UniLM.encode_request(c.service, c))["prompt_cache_retention"] == "in_memory"
 end
+
+@testset "ImageGenerationTool — complexity, GIF frames and the SVG author, checked at construction" begin
+    # The image generation tool's reference: complexity low, medium or high, which "Overrides the outer response's
+    # `reasoning.effort` for image generation"; frame_count 2-16 and frame_duration_ms at least 20, each "Requires
+    # `output_format` to be `gif`"; svg, the SVG author settings, "Requires `output_format` to be `svg`". On 2026-11-16
+    # the API answered an invalid value of each with HTTP 400 naming tools[0].<field>: it knows every one.
+    @test JSON.lower(ImageGenerationTool(complexity="low", quality="low"))[:complexity] == "low"
+    gif = JSON.lower(ImageGenerationTool(output_format="gif", frame_count=3, frame_duration_ms=40))
+    @test (gif[:output_format], gif[:frame_count], gif[:frame_duration_ms]) == ("gif", 3, 40)
+    svg = JSON.parse(JSON.json(ImageGenerationTool(output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"))))
+    @test svg["svg"] == Dict("model" => "gpt-6-luna", "reasoning" => Dict("effort" => "low"))
+    @test !any(k -> haskey(JSON.lower(image_generation_tool()), k), (:complexity, :frame_count, :frame_duration_ms, :svg))
+    for (kw, words) in ((; complexity="max") => ("complexity", "\"low\"", "\"medium\"", "\"high\""),
+                        (; output_format="gif", frame_count=1) => ("frame_count", "2", "16"),
+                        (; output_format="gif", frame_count=17) => ("frame_count", "2", "16"),
+                        (; output_format="gif", frame_duration_ms=19) => ("frame_duration_ms", "20"),
+                        (; frame_count=4) => ("frame_count", "output_format=\"gif\""),
+                        (; output_format="png", frame_duration_ms=100) => ("frame_duration_ms", "output_format=\"gif\""),
+                        (; svg=SvgOptions(model="m")) => ("svg", "output_format=\"svg\""))
+        err = try ImageGenerationTool(; kw...); nothing catch e; e end
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+end

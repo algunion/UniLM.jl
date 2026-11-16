@@ -258,9 +258,12 @@ function _ollama_tool_calls(raw, first_index::Int=0)::Vector{ToolCall}
     for (k, c) in enumerate(raw)
         f = c isa AbstractDict ? get(c, "function", nothing) : nothing
         f isa AbstractDict || continue
+        # An object, or its JSON text (some servers; blank text is no arguments).
         args = get(f, "arguments", Dict{String,Any}())
-        args isa AbstractString && (args = _parse_tool_arguments(args))
-        args isa AbstractDict || throw(ArgumentError("Ollama tool-call arguments must be a JSON object"))
+        args isa AbstractString &&
+            (args = isempty(strip(args)) ? Dict{String,Any}() : JSON.parse(args; dicttype=Dict{String,Any}))
+        args isa AbstractDict ||
+            throw(ArgumentError("Ollama tool-call arguments must be a JSON object, got a JSON $(_json_type(args))"))
         id = get(c, "id", nothing)
         id = id isa AbstractString && !isempty(id) ? String(id) : "unilm_call_$(first_index + k)"
         push!(calls, ToolCall(id=id, func=GPTFunction(String(f["name"]), Dict{String,Any}(args))))

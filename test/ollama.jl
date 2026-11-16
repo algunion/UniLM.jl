@@ -377,6 +377,20 @@ end
     @test isnothing(dec(JSON.json(Dict("message" => Dict("role" => "assistant", "content" => "x")))).usage)
 end
 
+# Refuted if: a call whose arguments are no JSON object — a JSON value, or JSON text holding one — is
+# not refused, or the refusal does not name Ollama and the JSON type; or blank text is not a call
+# without arguments, or object text not its arguments.
+@testset "chat reply: tool-call arguments that are no JSON object are refused, naming Ollama and the JSON type" begin
+    calls(args) = UniLM._ollama_tool_calls([Dict("function" => Dict("name" => "f", "arguments" => args))])
+    for (args, type) in (([1], "array"), ("[1]", "array"), ("\"x\"", "string"), (3, "number"), ("3", "number"),
+                         (true, "boolean"), (nothing, "null"), ("null", "null"))
+        e = try calls(args); nothing catch e; e end
+        @test e isa ArgumentError && e.msg == "Ollama tool-call arguments must be a JSON object, got a JSON $type"
+    end
+    @test only(calls("")).func.arguments == Dict{String,Any}()
+    @test only(calls("{\"a\":1}")).func.arguments == Dict{String,Any}("a" => 1)
+end
+
 @testset "NDJSON stream: reads split anywhere assemble the same turn" begin
     e = OllamaEndpoint()
     lines = join([_delta(thinking="Let me "), _delta(thinking="think."), _delta(content="Hel"), _delta(content="lo ✓"),

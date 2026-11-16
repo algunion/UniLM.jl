@@ -127,6 +127,8 @@ nl_classify(message, TEAM)                                                     #
 # :billing
 nl_classify(message, TEAM; service = OPENAIServiceEndpoint)                    # OpenAI's Decisions API
 # :billing
+nl_classify(message, TEAM; service = GEMINIServiceEndpoint)                    # Gemini's Decisions API
+# :billing
 nl_classify(message, TEAM; service = OllamaEndpoint(), model = "tev1:0.8b")    # a local decision model
 # :billing
 ```

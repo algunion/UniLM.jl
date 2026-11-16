@@ -1128,7 +1128,7 @@ end
     gen(model) = Any[Dict("type" => "image_generation", "model" => model)]
     tokens(image_out, text_out) = (300 * 5.0 + 100 * 1.25 + 400 * 8.0 + 200 * 2.0 + 4_800 * image_out + 200 * text_out) / 1e6
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=Any[Dict("type" => "image_generation")])),
-                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2, the default
+                   without + tokens(30.0, 0.0); rtol=1e-12)                            # gpt-image-2.6-sunburst, the default
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-2.5-sunburst-2026-09-08"))),
                    without + tokens(30.0, 0.0); rtol=1e-12)                            # a dated snapshot
     @test isapprox(estimated_cost(result("gpt-6-luna", image; tools=gen("gpt-image-1.5"))),
@@ -1138,6 +1138,29 @@ end
     # Only OpenAI's Responses API reports them: a result built by hand, priced by its model's name, adds no fee.
     @test estimated_cost(result("gpt-6-luna", searches(2); service=nothing)) ==
           estimated_cost(result("gpt-6-luna", nothing; service=nothing))
+end
+
+@testset "the image generation tool defaults to gpt-image-2.6-sunburst; both 2.6 models have image rates" begin
+    # The image generation tool's reference: "Default: `gpt-image-2.6-sunburst`". OpenAI's pricing page (2026-11-16),
+    # Image generation models, Standard: "| gpt-image-2.6-sunburst | Image | $8.00 | $30.00 | $2.00 |", "| Text | $5.00
+    # | - | $1.25 |", the same for gpt-image-2.6-flare. On 2026-11-16 a reply repeated the tool with the model it ran,
+    # "model":"gpt-image-2.6-sunburst", for a request that named none: the reply's model prices the tool.
+    @test UniLM._OPENAI_IMAGE_TOOL_DEFAULT == "gpt-image-2.6-sunburst"
+    @test UniLM._image_tool_model(Any[Dict("type" => "image_generation")]) == "gpt-image-2.6-sunburst"
+    @test UniLM._image_tool_model(Any[Dict("type" => "image_generation", "model" => "gpt-image-2")]) == "gpt-image-2"
+    used = Dict("web_search" => Dict("num_requests" => 0),
+                "image_gen" => Dict("input_tokens" => 41, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 41),
+                                    "output_tokens" => 824, "output_tokens_details" => Dict("image_tokens" => 824, "text_tokens" => 0),
+                                    "total_tokens" => 865))
+    result(tools) = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model="gpt-6-luna", output=Any[],
+        usage=Dict{String,Any}("input_tokens" => 100, "output_tokens" => 10, "total_tokens" => 110),
+        raw=Dict{String,Any}("tools" => tools, "tool_usage" => used)), service=OPENAIServiceEndpoint)
+    luna = (100 * 0.10 + 10 * 0.50) / 1e6
+    for model in ("gpt-image-2.6-sunburst", "gpt-image-2.6-flare")
+        @test get(UniLM._OPENAI_IMAGE_TOOL_RATES, model, nothing) == UniLM._image_rates(5.0, 1.25, 8.0, 2.0, 30.0)
+        @test isapprox((@test_logs estimated_cost(result(Any[Dict("type" => "image_generation", "model" => model)]))),
+                       luna + (41 * 5.0 + 824 * 30.0) / 1e6; rtol=1e-12)
+    end
 end
 
 @testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin

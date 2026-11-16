@@ -290,8 +290,9 @@ A Responses result from `OPENAIServiceEndpoint` also bills what its hosted tools
 reply's [`tool_usage`](@ref) reports it ([pricing](https://developers.openai.com/api/docs/pricing)):
 each billable web search at USD 10 per 1,000 calls — USD 25 for the legacy `web_search_preview` tool on
 `gpt-4.1` and `gpt-4.1-mini`, the non-reasoning models UniLM prices — and the image generation
-tool's tokens at the Standard rates of its image model, the one the request's
-[`image_generation_tool`](@ref) names, else the tool's default, `gpt-image-2`; neither is scaled
+tool's tokens at the Standard rates of its image model, the one the reply's copy of the tool names — the
+request's [`image_generation_tool`](@ref) model, or the one the tool ran — else the tool's default,
+`gpt-image-2.6-sunburst`; neither is scaled
 by the billed tier, nor changed by `pricing`, whose rows price the model's own tokens. Image tokens of a model UniLM has no image rates for leave the estimate at
 `0.0`, with one warning per model. File search, containers and Gemini's grounding (its free daily
 quota makes a per-call price wrong) are not billed.
@@ -370,8 +371,8 @@ end
 
 # ─── OpenAI hosted tools ─────────────────────────────────────────────────────
 # What OpenAI's hosted tools bill beyond the model's tokens, as a Responses reply reports them in its
-# `tool_usage` (https://developers.openai.com/api/docs/pricing, 2026-11-02, "Tools" and "Image generation
-# models"). Neither is scaled by the billed tier or a long prompt: the page gives a web search one price,
+# `tool_usage` (https://developers.openai.com/api/docs/pricing, 2026-11-02, the GPT-Image-2.6 rows 2026-11-16,
+# "Tools" and "Image generation models"). Neither is scaled by the billed tier or a long prompt: the page gives a web search one price,
 # and the image models Standard and Batch rates alone, of which a Responses call bills the Standard ones.
 
 # USD per billable web search: "$10.00 / 1k calls" for web search on every model and for the legacy web
@@ -384,21 +385,24 @@ const _OPENAI_NON_REASONING = Dict("gpt-4.1" => true, "gpt-4.1-mini" => true)
 
 # The image generation tool's rates, USD per token, of each image model the pricing page lists (Standard):
 # text and image input, cached text and image input, image output, and text output where the page gives
-# one ("-" elsewhere: those models write no text). The tool runs `gpt-image-2` unless the request names
-# another model ("Default: `gpt-image-2`", the image generation tool's reference).
+# one ("-" elsewhere: those models write no text). The tool runs `gpt-image-2.6-sunburst` unless the request
+# names another model ("Default: `gpt-image-2.6-sunburst`", the image generation tool's reference); the
+# reply repeats the tool with the model it ran, which prices it (`_image_tool_model`).
 const _OpenAIImageRates = @NamedTuple{text_input::Float64, text_cached::Float64, image_input::Float64,
                                       image_cached::Float64, image_output::Float64, text_output::Float64}
 _image_rates(text_input, text_cached, image_input, image_cached, image_output, text_output=0.0)::_OpenAIImageRates =
     (text_input=text_input / 1e6, text_cached=text_cached / 1e6, image_input=image_input / 1e6,
      image_cached=image_cached / 1e6, image_output=image_output / 1e6, text_output=text_output / 1e6)
 const _OPENAI_IMAGE_TOOL_RATES = Dict{String,_OpenAIImageRates}(
+    "gpt-image-2.6-sunburst" => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
+    "gpt-image-2.6-flare"    => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2.5-sunburst" => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2.5-flare"    => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-2"            => _image_rates(5.0, 1.25, 8.0, 2.0, 30.0),
     "gpt-image-1.5"          => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0),
     "gpt-image-1-mini"       => _image_rates(2.0, 0.20, 2.5, 0.25, 8.0),
     "chatgpt-image-latest"   => _image_rates(5.0, 1.25, 8.0, 2.0, 32.0, 10.0))
-const _OPENAI_IMAGE_TOOL_DEFAULT = "gpt-image-2"
+const _OPENAI_IMAGE_TOOL_DEFAULT = "gpt-image-2.6-sunburst"
 
 # What a result's hosted tools bill beyond its tokens: only an OpenAI Responses reply reports their usage.
 # Gemini's grounding is not billed here: its free daily quota makes a per-call price wrong. `nothing`: the

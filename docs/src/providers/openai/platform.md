@@ -38,7 +38,8 @@ These calls are not recorded, so their output on this page is quoted from dated 
   changes nothing when it is sent again, is sent again after a transient status or a transport
   failure, as a `Chat` is ([Timeouts & Retries](@ref timeouts_retries)).
 - **The key** is read when the call is made: without `OPENAI_API_KEY` the result is the family's
-  call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)).
+  call error, whose `cause` is the `KeyError` naming it ([Setup](@ref openai_setup)). The
+  checkpoint-permission verbs send an admin key instead ([Fine-tuning](@ref openai_fine_tuning)).
 - **Cancellation.** Each takes `cancel`, a [`CancelToken`](@ref): the ambient one of
   [`with_cancel`](@ref) unless given. With the key set, a token already cancelled sends nothing, and a
   cancel during the call aborts it, either way with the call error, whose `cause` is a
@@ -504,10 +505,11 @@ A checkpoint is shared with other projects of the organization by
 [`create_fine_tuning_checkpoint_permission`](@ref)`(checkpoint, project_ids)`, and its permissions
 are listed and deleted by [`list_fine_tuning_checkpoint_permissions`](@ref) and
 [`delete_fine_tuning_checkpoint_permission`](@ref). Each "requires an admin API key"
-([Fine-tuning](https://developers.openai.com/api/reference/resources/fine_tuning)): they send
-`OPENAI_API_KEY` as every verb does, so set it to an admin key for the call; a project key's
-refusal is a `FineTuningFailure` (a 401 naming the missing scope `api.fine_tuning.checkpoints.read`,
-on 16 November 2026).
+([Fine-tuning](https://developers.openai.com/api/reference/resources/fine_tuning)), which is not the
+project key `OPENAI_API_KEY` holds: they send their `admin_key` keyword, else the `OPENAI_ADMIN_KEY`
+variable, as the request's only credential, and without either throw an `ArgumentError` naming
+both before any request. A project key sent as the admin key is refused, a `FineTuningFailure` (a
+401 naming the missing scope `api.fine_tuning.checkpoints.read`, on 16 November 2026).
 
 A reinforcement job scores its samples with the grader its `method` `Dict` holds, in OpenAI's form,
 sent as given. UniLM does not wrap the endpoints that run or validate a grader without a job:
@@ -743,6 +745,7 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | `upload_file`, `add_container_file` or `check_content_provenance` with a path that is no file | `file not found:` | the path of the file |
 | `create_fine_tuning_job` with a `seed` below 0 or above 2147483647 | `create_fine_tuning_job takes a seed from 0 to 2147483647`: the reference's range | a seed in it |
 | `list_fine_tuning_checkpoint_permissions` with an `order` other than `"ascending"` and `"descending"` | `takes order "ascending" or "descending"` | one of them |
+| a checkpoint-permission verb with neither `admin_key` nor `OPENAI_ADMIN_KEY` (or an empty one) | `needs an OpenAI admin API key`: OpenAI's reference requires one, and the project key is not | an admin key, as `admin_key` or in `OPENAI_ADMIN_KEY` |
 | a purpose other than `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"` and `"user_data"`, on `upload_file` or `create_upload` | `the Files API takes`: the purposes of OpenAI's Files API | one of them |
 | the purpose `"evals"` | `purpose "evals" is for OpenAI's Evals API`: the Evals API is read-only from 31 October 2026 and shuts down on 30 November 2026 | another purpose |
 | `upload_file` without a purpose | `OpenAI's Files API requires a purpose` | one of the purposes above |

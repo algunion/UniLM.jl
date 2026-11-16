@@ -30,10 +30,12 @@ end
 end
 
 @testset "Fine-tuning API live — checkpoint permissions refuse a project key" begin
+    # These verbs send an admin key only; the project key sent as one is refused (no admin key is kept for the suite).
     ck = "ft:gpt-4.1-mini-2025-04-14:unilm-live:made-up:ckpt-step-1"
-    rs = [create_fine_tuning_checkpoint_permission(ck, ["proj_unilmlivemadeup"]),
-          list_fine_tuning_checkpoint_permissions(ck; limit=1),
-          delete_fine_tuning_checkpoint_permission(ck, "cp_unilmlivemadeup")]
+    key = ENV["OPENAI_API_KEY"]
+    rs = [create_fine_tuning_checkpoint_permission(ck, ["proj_unilmlivemadeup"]; admin_key=key),
+          list_fine_tuning_checkpoint_permissions(ck; limit=1, admin_key=key),
+          delete_fine_tuning_checkpoint_permission(ck, "cp_unilmlivemadeup"; admin_key=key)]
     @info "checkpoint permissions with the project key" statuses = [r isa FineTuningFailure ? r.status : r for r in rs] bodies = [r isa FineTuningFailure ? r.response : "" for r in rs]
     @test all(r -> r isa FineTuningFailure && r.status in (401, 403), rs)
 end

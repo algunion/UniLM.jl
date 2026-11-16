@@ -292,30 +292,43 @@ end
 
 # ─── Checkpoint permissions ───────────────────────────────────────────────────
 # Sharing a fine-tuned model checkpoint with other projects of the organization. OpenAI's reference
-# says each of these endpoints "requires an admin API key"; with a project key OpenAI refuses the
-# call, which returns that refusal as a `FineTuningFailure`.
+# says each of these endpoints "requires an admin API key", an organization's key, which the project
+# key the endpoint's other verbs send is not; with a project key OpenAI refuses the call, which
+# returns that refusal as a `FineTuningFailure`.
 
 const _FT_CHECKPOINTS_PATH = "/v1/fine_tuning/checkpoints"
 _ft_permissions_url(service, checkpoint::String) =
     _api_base_url(service) * _FT_CHECKPOINTS_PATH * "/" * _uripart(checkpoint) * "/permissions"
 
+# The headers of a checkpoint-permission request: the admin key — `admin_key`, else OPENAI_ADMIN_KEY —
+# is its only credential, never the endpoint's own key. Without one the verb refuses before any request.
+function _ft_admin_headers(verb::String, admin_key::Union{Nothing,String})::Vector{Pair{String,String}}
+    key = something(admin_key, get(ENV, "OPENAI_ADMIN_KEY", ""))
+    isempty(key) && throw(ArgumentError("$verb needs an OpenAI admin API key, which OpenAI's reference requires " *
+        "for checkpoint permissions: pass admin_key, or set OPENAI_ADMIN_KEY"))
+    ["Authorization" => "Bearer $key", "Content-Type" => "application/json"]
+end
+
 """
-    create_fine_tuning_checkpoint_permission(checkpoint, project_ids; service=OPENAIServiceEndpoint)
+    create_fine_tuning_checkpoint_permission(checkpoint, project_ids; admin_key=nothing, service=OPENAIServiceEndpoint)
 
 Share the fine-tuned model checkpoint `checkpoint` (e.g. `"ft:gpt-4.1-mini:org:custom:ckpt-step-10"`)
 with the projects `project_ids`; the result is a `FineTuningListSuccess` of the permissions made.
 
-The reference says this endpoint requires an admin API key: set `OPENAI_API_KEY` to one for the call.
-With a project key OpenAI refuses it, a `FineTuningFailure`. Takes `config` and `cancel` as
+The reference says this endpoint requires an admin API key, which the project key in `OPENAI_API_KEY`
+is not: the request sends `admin_key`, else the `OPENAI_ADMIN_KEY` variable, as its only credential,
+and with neither (or an empty one) the call throws an `ArgumentError` before any request. A project
+key sent as the admin key is refused, a `FineTuningFailure`. Takes `config` and `cancel` as
 [`cancel_fine_tuning_job`](@ref) does.
 """
 function create_fine_tuning_checkpoint_permission(checkpoint::String, project_ids::Vector{String};
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing)
+    admin_key::Union{Nothing,String}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    headers = _ft_admin_headers("create_fine_tuning_checkpoint_permission", admin_key)
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(_http("POST", _ft_permissions_url(service, checkpoint), auth_header(service),
+        _ft_list_resp(_http("POST", _ft_permissions_url(service, checkpoint), headers,
             JSON.json(Dict(:project_ids => project_ids)); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
@@ -325,27 +338,28 @@ end
 
 """
     list_fine_tuning_checkpoint_permissions(checkpoint; project_id=nothing, limit=nothing, after=nothing,
-                                            order=nothing, service=OPENAIServiceEndpoint)
+                                            order=nothing, admin_key=nothing, service=OPENAIServiceEndpoint)
 
 List the permissions of the fine-tuned model checkpoint `checkpoint`, a page at a time (`limit`,
 `after`), only those of `project_id` when given, in `order` `"ascending"` or `"descending"` (OpenAI's
-default; another order is an `ArgumentError`). Needs an admin API key, as
-[`create_fine_tuning_checkpoint_permission`](@ref) does.
+default; another order is an `ArgumentError`). Sends the admin key `admin_key`, else
+`OPENAI_ADMIN_KEY`, as [`create_fine_tuning_checkpoint_permission`](@ref) does.
 """
 function list_fine_tuning_checkpoint_permissions(checkpoint::String; project_id::Union{String,Nothing}=nothing,
     limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, order::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing)
+    admin_key::Union{Nothing,String}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     isnothing(order) || order in ("ascending", "descending") || throw(ArgumentError(
         "list_fine_tuning_checkpoint_permissions takes order \"ascending\" or \"descending\" (got $(repr(order)))"))
+    headers = _ft_admin_headers("list_fine_tuning_checkpoint_permissions", admin_key)
     cfg = _resolve_config(config); t0 = time_ns()
     query = String[]
     isnothing(project_id) || push!(query, "project_id=$(_uripart(project_id))")
     isnothing(order) || push!(query, "order=$(_uripart(order))")
     try
         _ft_list_resp(_http("GET", _ft_page(_ft_permissions_url(service, checkpoint), limit, after, query),
-            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
+            headers; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)
@@ -353,21 +367,22 @@ function list_fine_tuning_checkpoint_permissions(checkpoint::String; project_id:
 end
 
 """
-    delete_fine_tuning_checkpoint_permission(checkpoint, permission_id; service=OPENAIServiceEndpoint)
+    delete_fine_tuning_checkpoint_permission(checkpoint, permission_id; admin_key=nothing, service=OPENAIServiceEndpoint)
 
 Delete the permission `permission_id` of the fine-tuned model checkpoint `checkpoint`: a
 [`FineTuningDeleteSuccess`](@ref) when OpenAI's record names the permission, is a `"checkpoint.permission"`
-object and says `"deleted": true`, the `FineTuningCallError` otherwise. Needs an admin API key, as
-[`create_fine_tuning_checkpoint_permission`](@ref) does.
+object and says `"deleted": true`, the `FineTuningCallError` otherwise. Sends the admin key
+`admin_key`, else `OPENAI_ADMIN_KEY`, as [`create_fine_tuning_checkpoint_permission`](@ref) does.
 """
 function delete_fine_tuning_checkpoint_permission(checkpoint::String, permission_id::String;
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing)
+    admin_key::Union{Nothing,String}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    headers = _ft_admin_headers("delete_fine_tuning_checkpoint_permission", admin_key)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _http("DELETE", _ft_permissions_url(service, checkpoint) * "/" * _uripart(permission_id),
-            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
+            headers; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(FineTuningFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         _vs_deletion(FineTuningDeleteSuccess, d, "checkpoint.permission")

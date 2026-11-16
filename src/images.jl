@@ -43,8 +43,8 @@ provider takes it.
 - `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`).
   On `gpt-image-2` and later, any `WIDTHxHEIGHT` with both edges multiples of 16, up to
   `3840x2160` (aspect ratio between 1:3 and 3:1)
-- `quality::Union{String,Nothing}`: Quality level (`"low"`, `"medium"`, `"high"`, `"auto"`);
-  `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` also accept `"xhigh"` and `"max"`
+- `quality::Union{String,Nothing}`: Quality level (`"low"`, `"medium"`, `"high"`, `"auto"`); the
+  Sunburst and Flare models of GPT-Image-2.6 and GPT-Image-2.5 also accept `"xhigh"` and `"max"`
 - `background::Union{String,Nothing}`: Background (`"transparent"`, `"opaque"`, `"auto"`)
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"`);
   GIF output "Requires access to the GIF preview for the selected model" and takes no

@@ -358,7 +358,8 @@ images inline during a response.
 - `input_fidelity`: `"high"` or `"low"` — how closely edits preserve input images
   (omit it for `gpt-image-2`, which always uses high fidelity)
 - `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
-- `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
+- `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.6 and 2.5 Sunburst and Flare models add `"xhigh"`
+  and `"max"`
 - `complexity`: `"low"`, `"medium"` or `"high"`, which "Overrides the outer response's
   `reasoning.effort` for image generation" (the tool's reference)
 - `frame_count`, `frame_duration_ms`: a GIF's frames, 2 to 16, and each frame's milliseconds, at

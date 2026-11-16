@@ -2864,7 +2864,7 @@ own endpoint:
 
 - **Platform and lifecycle verbs** (files, vector stores, conversations,
   moderations, audio, batch, fine-tuning, containers, uploads, realtime, webhook
-  endpoints, safety, content provenance, FIM,
+  endpoints, safety, content provenance, token counting, FIM,
   prefix completion, System One, model listing) and the image verbs
   (`generate_image`, `:images`; `edit_image`, `:image_edits`) validate
   **strictly**: an endpoint with no declaration at all is not dispatched — the
@@ -2925,8 +2925,8 @@ reset_default_config!()                     # cleared: as if none had been set
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
 `generate_image`, `edit_image`, `transcribe`, `speak` on `GEMINIServiceEndpoint` and `OllamaEndpoint`,
 `translate` on `OllamaEndpoint`, `ask`, `ask_each`
-(per request), `list_models`, and the `tool_loop` family (streams retry only before the first callback
-fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
+(per request), `list_models`, `retrieve_model`, `count_tokens`, and the `tool_loop` family (streams retry only
+before the first callback fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
 retried), fine-tuning and grader, upload, vector-store, webhook endpoint, safety and provenance, speech
 and translation on OpenAI's Realtime API (`speak`,

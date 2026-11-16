@@ -10,8 +10,9 @@ validate capabilities before dispatching, giving clear errors instead of HTTP 40
 Validation comes in two strengths, and which one applies depends on the verb:
 
 - **Platform and lifecycle verbs** — files, vector stores, conversations,
-  moderations, audio, batch, fine-tuning, containers, uploads, realtime, FIM,
-  prefix completion, System One, model listing — and the image verbs
+  moderations, audio, batch, fine-tuning, containers, uploads, realtime, webhook
+  endpoints, safety, content provenance, token counting, FIM, prefix completion,
+  System One, model listing — and the image verbs
   [`generate_image`](@ref) (`:images`) and [`edit_image`](@ref) (`:image_edits`)
   validate **strictly**. These surfaces are provider-specific, and a backend that
   has not declared them would simply 404, so an endpoint that declares no

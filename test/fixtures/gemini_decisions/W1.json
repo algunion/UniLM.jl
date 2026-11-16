@@ -1,0 +1,37 @@
+{
+ "tag": "W1",
+ "utc": "2026-11-16T09:18:52+00:00",
+ "path": "/v1beta/decisions",
+ "request": {
+  "model": "gemini-decision-1",
+  "input": "Customer returned the sweater because they preferred green over blue.",
+  "questions": {
+   "is_defect": {
+    "type": "noul",
+    "instructions": "Is the customer reporting a product defect?",
+    "criteria": {
+     "true_description": "The product itself is broken or faulty.",
+     "false_description": "Preference, sizing, shipping, or pricing complaint."
+    }
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"gemini-decision-1\",\"input\":\"Customer returned the sweater because they preferred green over blue.\",\"questions\":{\"is_defect\":{\"type\":\"noul\",\"instructions\":\"Is the customer reporting a product defect?\",\"criteria\":{\"true_description\":\"The product itself is broken or faulty.\",\"false_description\":\"Preference, sizing, shipping, or pricing complaint.\"}}}}",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "vary": "Origin,Accept-Encoding",
+  "date": "Mon, 16 Nov 2026 09:18:52 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=169",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.35,
+ "body_text": "{\"answers\":{\"is_defect\":{\"confidence\":0.9721367323772473,\"noul\":0.027863267622752694,\"type\":\"noul\"}},\"usage\":{\"total_tokens\":139,\"total_input_tokens\":139,\"input_tokens_by_modality\":[{\"modality\":\"text\",\"tokens\":139}],\"total_output_tokens\":0}}"
+}

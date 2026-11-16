@@ -1,0 +1,39 @@
+{
+ "tag": "W14",
+ "utc": "2026-11-16T09:18:57+00:00",
+ "path": "/v1beta/decisions",
+ "request": {
+  "model": "gemini-decision-1",
+  "input": [
+   {
+    "type": "image",
+    "mime_type": "image/png",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA0UlEQVR4nO3PQQ7DMAwDQf//0+2xaC+VRFmM4SVyjbyzXodvuQPUAXAPgHsA3APgHoDfeyv0NT7YdCbWvUEinyinNzE0QEu9ZhAAjfWCofRbe7rAyAO21ucNtwEG6pOGDGCsPmMIA4brw4ZLAJb6mAHAAQBjfcAAAAAAAAAAAAAA4MGGv2kAjgC4DJGuawDzhmBUAjBpiBflADOGVM59gN2GbEsFsIlRq6gDeg3lBAnQZVDeVwEiQ39ZP/F9b6j782DjLcsAuAfAPQDuAXDveMAbE4sL73v1SXUAAAAASUVORK5CYII="
+   }
+  ],
+  "questions": {
+   "red": {
+    "type": "noul",
+    "instructions": "Is the shape in the image red?"
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"gemini-decision-1\",\"input\":[{\"type\":\"image\",\"mime_type\":\"image/png\",\"data\":\"iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA0UlEQVR4nO3PQQ7DMAwDQf//0+2xaC+VRFmM4SVyjbyzXodvuQPUAXAPgHsA3APgHoDfeyv0NT7YdCbWvUEinyinNzE0QEu9ZhAAjfWCofRbe7rAyAO21ucNtwEG6pOGDGCsPmMIA4brw4ZLAJb6mAHAAQBjfcAAAAAAAAAAAAAA4MGGv2kAjgC4DJGuawDzhmBUAjBpiBflADOGVM59gN2GbEsFsIlRq6gDeg3lBAnQZVDeVwEiQ39ZP/F9b6j782DjLcsAuAfAPQDuAXDveMAbE4sL73v1SXUAAAAASUVORK5CYII=\"}],\"questions\":{\"red\":{\"type\":\"noul\",\"instructions\":\"Is the shape in the image red?\"}}}",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "vary": "Origin,Accept-Encoding",
+  "date": "Mon, 16 Nov 2026 09:18:57 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=435",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.715,
+ "body_text": "{\"answers\":{\"red\":{\"confidence\":0.8744122120120085,\"noul\":0.8744122120120085,\"type\":\"noul\"}},\"usage\":{\"total_tokens\":1181,\"total_input_tokens\":1181,\"input_tokens_by_modality\":[{\"modality\":\"text\",\"tokens\":92},{\"modality\":\"image\",\"tokens\":1089}],\"total_output_tokens\":0}}"
+}

@@ -1,0 +1,33 @@
+{
+ "tag": "W6",
+ "utc": "2026-11-16T09:18:54+00:00",
+ "path": "/v1beta/decisions",
+ "request": {
+  "model": "models/gemini-decision-1",
+  "input": "The package arrived with a broken screen.",
+  "questions": {
+   "damaged": {
+    "type": "noul",
+    "instructions": "Does the customer report a damaged item?"
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"models/gemini-decision-1\",\"input\":\"The package arrived with a broken screen.\",\"questions\":{\"damaged\":{\"type\":\"noul\",\"instructions\":\"Does the customer report a damaged item?\"}}}",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "vary": "Origin,Accept-Encoding",
+  "date": "Mon, 16 Nov 2026 09:18:54 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=171",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.3368,
+ "body_text": "{\"answers\":{\"damaged\":{\"confidence\":0.9821386926445562,\"noul\":0.9821386926445562,\"type\":\"noul\"}},\"usage\":{\"total_tokens\":98,\"total_input_tokens\":98,\"input_tokens_by_modality\":[{\"modality\":\"text\",\"tokens\":98}],\"total_output_tokens\":0}}"
+}

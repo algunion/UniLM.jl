@@ -20,7 +20,7 @@ Standard capability symbols include:
   `:audio` (its translation route)
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
   Gemini TTS; Ollama, through its speech route)
-- System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
+- System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI and native Gemini, through their Decisions APIs; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, OpenAI, Anthropic, Gemini, Ollama)
 """
 provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models])

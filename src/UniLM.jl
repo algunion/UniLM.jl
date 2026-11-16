@@ -74,6 +74,7 @@ include("system_one.jl")
 include("typesafe.jl")
 include("typesafe_assets.jl")
 include("openai_decisions.jl")
+include("gemini_decisions.jl")
 include("ollama_system_one.jl")
 include("ask_each.jl")
 include("recorded_answers.jl")
@@ -609,6 +610,7 @@ public
     SystemOneProtocol,
     TypeSafeProtocol,
     OpenAIDecisionsProtocol,
+    GeminiDecisionsProtocol,
     OllamaSystemOneProtocol,
     system_one_protocol,
     encode_system_one,

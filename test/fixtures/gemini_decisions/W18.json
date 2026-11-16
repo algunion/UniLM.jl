@@ -1,0 +1,25 @@
+{
+ "tag": "W18",
+ "utc": "2026-11-16T09:18:58+00:00",
+ "path": "/v1beta/decisions",
+ "request": null,
+ "request_bytes": null,
+ "status": 400,
+ "headers": {
+  "vary": "Origin,Accept-Encoding",
+  "content-type": "application/json; charset=UTF-8",
+  "date": "Mon, 16 Nov 2026 09:18:58 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=136",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.3161,
+ "body_text": "{\"error\":{\"message\":\"* CreateDecisionRequest.questions: must have between 1 and 1000 questions\\n\",\"code\":\"invalid_request\"}}",
+ "request_note": "not kept: 1,001 questions q0 to q1000, each {\"type\":\"noul\",\"instructions\":\"Is it?\"}, of model gemini-decision-1 on the input \"The package arrived with a broken screen.\""
+}

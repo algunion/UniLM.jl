@@ -1,0 +1,52 @@
+{
+ "tag": "W4",
+ "utc": "2026-11-16T09:18:53+00:00",
+ "path": "/v1beta/decisions",
+ "request": {
+  "model": "gemini-decision-1",
+  "input": "Export fails in Safari but works in Chrome. I need this fixed before Friday's board meeting.",
+  "questions": {
+   "severity": {
+    "type": "score",
+    "instructions": "How severe is this issue?",
+    "criteria": [
+     "Cosmetic",
+     "Workaround available",
+     "Fully blocked"
+    ]
+   },
+   "department": {
+    "type": "choice",
+    "instructions": "Which department should handle this complaint?",
+    "criteria": {
+     "billing": "Payments, invoices, and refunds.",
+     "technical": "Problems using the product.",
+     "shipping": "Delivery and tracking.",
+     "other": "Requests outside these categories."
+    }
+   },
+   "deadline": {
+    "type": "noul",
+    "instructions": "Does the customer mention a deadline?"
+   }
+  }
+ },
+ "request_bytes": "{\"model\":\"gemini-decision-1\",\"input\":\"Export fails in Safari but works in Chrome. I need this fixed before Friday's board meeting.\",\"questions\":{\"severity\":{\"type\":\"score\",\"instructions\":\"How severe is this issue?\",\"criteria\":[\"Cosmetic\",\"Workaround available\",\"Fully blocked\"]},\"department\":{\"type\":\"choice\",\"instructions\":\"Which department should handle this complaint?\",\"criteria\":{\"billing\":\"Payments, invoices, and refunds.\",\"technical\":\"Problems using the product.\",\"shipping\":\"Delivery and tracking.\",\"other\":\"Requests outside these categories.\"}},\"deadline\":{\"type\":\"noul\",\"instructions\":\"Does the customer mention a deadline?\"}}}",
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "vary": "Origin,Accept-Encoding",
+  "date": "Mon, 16 Nov 2026 09:18:53 GMT",
+  "server": "scaffolding on HTTPServer2",
+  "x-xss-protection": "0",
+  "x-frame-options": "SAMEORIGIN",
+  "x-content-type-options": "nosniff",
+  "server-timing": "gfet4t7; dur=205",
+  "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+  "accept-ranges": "none",
+  "connection": "close",
+  "transfer-encoding": "chunked"
+ },
+ "latency_s": 0.3996,
+ "body_text": "{\"answers\":{\"department\":{\"confidence\":0.9858983602152944,\"choice\":\"technical\",\"probabilities\":{\"technical\":0.9858983602152944,\"billing\":0.0007129525690067271,\"other\":0.012375359906133133,\"shipping\":0.0010133273095657542},\"type\":\"choice\"},\"deadline\":{\"confidence\":0.9704234974954385,\"noul\":0.9704234974954385,\"type\":\"noul\"},\"severity\":{\"confidence\":0.8314441988121984,\"score\":1.0377109718627335,\"probabilities\":{\"2\":0.10313338652526749,\"1\":0.8314441988121984,\"0\":0.06542241466253416},\"legend\":{\"2\":\"Fully blocked\",\"1\":\"Workaround available\",\"0\":\"Cosmetic\"},\"type\":\"score\"}},\"usage\":{\"total_tokens\":241,\"total_input_tokens\":241,\"input_tokens_by_modality\":[{\"modality\":\"text\",\"tokens\":241}],\"total_output_tokens\":0}}"
+}

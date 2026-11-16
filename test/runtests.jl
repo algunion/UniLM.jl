@@ -168,6 +168,10 @@ end
         include("openai_decisions.jl")
     end
 
+    @testset "Gemini Decisions" begin
+        include("gemini_decisions.jl")
+    end
+
     @testset "Ollama System One" begin
         include("ollama_system_one.jl")
     end

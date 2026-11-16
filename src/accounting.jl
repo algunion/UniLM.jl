@@ -151,6 +151,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gemini-robotics-er-2-preview" => _price(1.0, 0.10, 5.0),
     "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only
     "gemini-embedding-001"  => _price(0.15, 0.15,  0.0),   # input only; page of 2026-11-02
+    "gemini-decision-1"     => _price(0.10, 0.10,  0.0),   # Decisions API: input only, every modality; page of 2026-11-16
     # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-10-25): Jev 1.14 and
     # Jev 1.13 at $42 per Btok of input, and output tokens are currently free. The aliases
     # resolve to the versioned id, which is what the response reports back.

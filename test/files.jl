@@ -272,3 +272,12 @@ end
     ok = page(Dict("object" => "list", "data" => [], "has_more" => true, "first_id" => nothing, "last_id" => nothing))
     @test ok isa FileListSuccess && isempty(ok.response.data) && ok.response.has_more
 end
+
+# OpenAI's DeleteFileResponse requires `id`.
+# Refuted if: a reply without it reports the requested id as the one deleted.
+@testset "delete_file: a reply without the deleted file's id is a FileCallError, never the requested id" begin
+    r = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body="""{"object": "file", "deleted": true}""")
+    @test r isa FileCallError && occursin("\"id\"", r.error)
+    r = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body="""{"id": 7, "object": "file", "deleted": true}""")
+    @test r isa FileCallError && occursin("\"id\"", r.error)
+end

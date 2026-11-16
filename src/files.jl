@@ -364,7 +364,7 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
         resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            return FileDeleteSuccess(id=get(d, "id", file_id), deleted=_confirm_deleted(d))
+            return FileDeleteSuccess(id=_file_required(d, "id", String), deleted=_confirm_deleted(d))
         else
             return _failure(FileFailure, resp)
         end

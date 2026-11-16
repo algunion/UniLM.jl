@@ -336,6 +336,16 @@ function _unreported_usage(r::ImageSuccess, model::String)::Nothing
         "unilm_svg_usage_", model) maxlog = 1
     nothing
 end
+# The image generation tool's SVG author reports its tokens as an image_generation_call's `svg_usage` (the
+# Responses reference), billed at the authoring model's rates, which no rate here prices: said once per model.
+function _unreported_usage(r::ResponseSuccess, model::String)::Nothing
+    any(_svg_call, r.response.output) && @warn "SVG authoring tokens (an image_generation_call's svg_usage) are not " *
+        "in the estimate: OpenAI bills them at the authoring model's rates" model _id = Symbol(
+        "unilm_svg_usage_tool_", model) maxlog = 1
+    nothing
+end
+_svg_call(item)::Bool = item isa AbstractDict && get(item, "type", nothing) == "image_generation_call" &&
+    get(item, "svg_usage", nothing) isa AbstractDict
 function _unreported_usage(r::EmbeddingSuccess, model::String)::Nothing
     isnothing(r.usage) && @warn "the embeddings reply reported no token usage; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unreported_usage_", model) maxlog = 1

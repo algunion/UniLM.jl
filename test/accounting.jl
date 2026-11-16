@@ -1165,6 +1165,21 @@ end
           estimated_cost(result("gpt-6-luna", nothing; service=nothing))
 end
 
+@testset "an image_generation_call's svg_usage is not in the estimate, which says so once per model" begin
+    # The Responses reference: an image_generation_call carries "svg_usage", the SVG author's tokens, which OpenAI
+    # bills at "the authoring model's rate" (the image generation guide) and which no rate here prices.
+    call(extra...) = Dict{String,Any}("type" => "image_generation_call", "id" => "ig_1", "status" => "completed",
+                                      "output_format" => "svg", "result" => "PHN2Zz4=", extra...)
+    result(model, item) = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model=model,
+        output=Any[item], usage=Dict{String,Any}("input_tokens" => 100, "output_tokens" => 10, "total_tokens" => 110),
+        raw=Dict{String,Any}()), service=OPENAIServiceEndpoint)
+    svg = Dict{String,Any}("model" => "gpt-6-luna", "input_tokens" => 1126, "output_tokens" => 238,
+                           "reasoning_tokens" => 164, "total_tokens" => 1364)
+    luna = (100 * 0.10 + 10 * 0.50) / 1e6
+    @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(result("gpt-6-luna", call("svg_usage" => svg)))) ≈ luna
+    @test (@test_logs estimated_cost(result("gpt-6-luna-2026-11-16", call()))) ≈ luna       # no svg_usage, no warning
+end
+
 @testset "the image generation tool defaults to gpt-image-2.6-sunburst; both 2.6 models have image rates" begin
     # The image generation tool's reference: "Default: `gpt-image-2.6-sunburst`". OpenAI's pricing page (2026-11-16),
     # Image generation models, Standard: "| gpt-image-2.6-sunburst | Image | $8.00 | $30.00 | $2.00 |", "| Text | $5.00

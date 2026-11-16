@@ -840,15 +840,16 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
     interaction = Dict("id" => "v1_a", "status" => "requires_action", "model" => "m")
     call = Dict("type" => "function_call", "id" => "fc_1", "name" => "f", "arguments" => [1])
     cfg = RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1)
-    tcp = Sockets.listen(Sockets.localhost, 0)
-    port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
-    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do _
+    # The server binds port 0 itself (no window between choosing a port and listening on it), and the
+    # assertion names what came back, so a failure says which result it was.
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do _
         HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(merge(interaction, Dict("steps" => [call]))))
     end
-    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$port/v1beta/interactions"
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$(HTTP.port(srv))/v1beta/interactions"
     try
         r = respond(Respond(service=_IxNonStreamMock, input="hi"); config=cfg)
-        @test r isa ResponseCallError && r.cause isa ArgumentError
+        @test (r isa ResponseCallError ? (ResponseCallError, typeof(r.cause)) : (typeof(r), r)) ==
+              (ResponseCallError, ArgumentError)
     finally
         close(srv)
     end

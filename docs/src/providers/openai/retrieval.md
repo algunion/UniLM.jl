@@ -168,12 +168,15 @@ the passages you put in a prompt yourself for instructions aimed at the model
 ## [Search a store directly](@id openai_retrieval_search)
 
 [`search_vector_store`](@ref)`(vs_id, query; max_num_results, rewrite_query, filters, ranking_options)`
-searches a store without a model: `query` is a string or a vector of strings, `filters` and
-`ranking_options` take the shapes of the tool's `filters` and `ranking` above, each sent as given,
-and `rewrite_query=true` lets OpenAI rewrite the query for vector search, the page's
-`search_query` saying what it searched. Each [`VectorStoreSearchResult`](@ref) holds the file's
-id, name, score and `attributes`, and in `content` the chunks that matched, each a `Dict` with
-its `"text"`:
+searches a store without a model: `query` is a string or a vector of strings, `filters` takes the
+shape of the tool's `filters` above, and `ranking_options` only a `ranker` (`"none"`, which turns
+re-ranking off and "can help reduce latency", `"auto"` or `"default-2024-11-15"`) and a
+`score_threshold` between 0 and 1: the search request allows no other key, so not the tool's
+`hybrid_search` ([API specification](https://github.com/openai/openai-openapi),
+VectorStoreSearchRequest). Each is sent as given, and `rewrite_query=true` lets OpenAI rewrite the
+query for vector search, the page's `search_query` saying what it searched. Each
+[`VectorStoreSearchResult`](@ref) holds the file's id, name, score and `attributes`, and in
+`content` the chunks that matched, each a `Dict` with its `"text"`:
 
 ```julia
 hits = search_vector_store(vs_id, "How long do I have to return a jacket?"; max_num_results=2,

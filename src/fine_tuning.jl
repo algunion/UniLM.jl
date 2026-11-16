@@ -76,11 +76,30 @@ function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,No
 end
 
 """
+    WandbIntegration(; project, name=nothing, entity=nothing, tags=nothing)
+
+A Weights & Biases integration for [`create_fine_tuning_job`](@ref)'s `integrations`: OpenAI reports
+the job's metrics to the W&B `project`, in a run named `name` (the job id when unset), under the
+`entity` (the W&B API key's default when unset), with `tags` beside the ones OpenAI adds.
+"""
+@kwdef struct WandbIntegration
+    project::String
+    name::Union{String,Nothing} = nothing
+    entity::Union{String,Nothing} = nothing
+    tags::Union{Vector{String},Nothing} = nothing
+end
+JSON.lower(w::WandbIntegration) = Dict{Symbol,Any}(:type => "wandb", :wandb => Dict{Symbol,Any}(
+    f => getfield(w, f) for f in fieldnames(WandbIntegration) if !isnothing(getfield(w, f))))
+
+"""
     create_fine_tuning_job(; model, training_file, validation_file=nothing, method=nothing,
-                           suffix=nothing, metadata=nothing, service=OPENAIServiceEndpoint)
+                           suffix=nothing, metadata=nothing, seed=nothing, integrations=nothing,
+                           service=OPENAIServiceEndpoint)
 
 Create a fine-tuning job. `training_file` is a file id from `upload_file(path, "fine-tune")`.
 `method` is e.g. `Dict("type"=>"supervised", "supervised"=>Dict("hyperparameters"=>...))`.
+`seed` (0 to 2147483647; an `ArgumentError` otherwise) makes a rerun reproducible, and
+`integrations` is a vector of [`WandbIntegration`](@ref)s.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
@@ -89,9 +108,13 @@ Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](
 function create_fine_tuning_job(; model::String, training_file::String,
     validation_file::Union{String,Nothing}=nothing, method::Union{AbstractDict,Nothing}=nothing,
     suffix::Union{String,Nothing}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
+    seed::Union{Int,Nothing}=nothing, integrations::Union{AbstractVector{WandbIntegration},Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    # The reference's range: a 32-bit signed seed that is not negative.
+    isnothing(seed) || 0 <= seed <= typemax(Int32) || throw(ArgumentError(
+        "create_fine_tuning_job takes a seed from 0 to 2147483647 (got $seed)"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:model => model, :training_file => training_file)
@@ -99,6 +122,8 @@ function create_fine_tuning_job(; model::String, training_file::String,
         !isnothing(method) && (d[:method] = method)
         !isnothing(suffix) && (d[:suffix] = suffix)
         !isnothing(metadata) && (d[:metadata] = metadata)
+        !isnothing(seed) && (d[:seed] = seed)
+        !isnothing(integrations) && (d[:integrations] = integrations)
         _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH, auth_header(service),
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
     catch e

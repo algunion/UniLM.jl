@@ -75,3 +75,33 @@ end
     rs = first(_with_scripted(jobs, (_, _) -> _json(200, """{"id":"ftjob_1","status":"queued","model":"m"}""")))
     @test all(r -> r isa FineTuningSuccess && r.response.status == "queued" && r.response.model == "m", rs)
 end
+
+@testset "Fine-tuning API — create_fine_tuning_job sends a seed and W&B integrations" begin
+    job = (_, _) -> _json(200, """{"id":"ftjob_1","status":"queued"}""")
+    r, seen = _with_scripted(job) do
+        create_fine_tuning_job(; model="gpt-4.1-mini", training_file="file_1", seed=42,
+            integrations=[WandbIntegration(project="p"),
+                          WandbIntegration(project="q", name="run", entity="team", tags=["a", "b"])],
+            service=URLProbe)
+    end
+    @test r isa FineTuningSuccess
+    b = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test b["seed"] == 42
+    @test b["integrations"] == [Dict("type" => "wandb", "wandb" => Dict("project" => "p")),
+        Dict("type" => "wandb", "wandb" => Dict("project" => "q", "name" => "run", "entity" => "team", "tags" => ["a", "b"]))]
+    _, seen = _with_scripted(job) do
+        create_fine_tuning_job(; model="gpt-4.1-mini", training_file="file_1", seed=0, integrations=WandbIntegration[],
+                               service=URLProbe)
+    end
+    b = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test b["seed"] == 0 && b["integrations"] == []
+    _, seen = _with_scripted(job) do
+        create_fine_tuning_job(; model="gpt-4.1-mini", training_file="file_1", service=URLProbe)
+    end
+    @test !any(k -> haskey(JSON.parse(only(seen).body), k), ("seed", "integrations"))
+    # The reference bounds the seed to 0..2147483647: refused before anything is sent.
+    for s in (-1, 2147483648)
+        err = try create_fine_tuning_job(; model="m", training_file="f", seed=s, service=SeamProbe); nothing catch e; e end
+        @test err isa ArgumentError && occursin("create_fine_tuning_job", err.msg) && occursin("2147483647", err.msg)
+    end
+end

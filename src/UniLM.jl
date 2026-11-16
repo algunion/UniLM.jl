@@ -488,6 +488,7 @@ export
     FineTuningListSuccess,
     FineTuningFailure,
     FineTuningCallError,
+    WandbIntegration,
     create_fine_tuning_job,
     retrieve_fine_tuning_job,
     cancel_fine_tuning_job,

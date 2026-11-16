@@ -380,6 +380,23 @@ end
     @test UniLM.estimated_cost(result) ≈ (800 * 0.30 + 200 * 0.03 + 500 * 2.50) / 1_000_000
 end
 
+@testset "gemini-4-hydrogen is priced at its standard, Flex and Priority rates, with no scheduled change" begin
+    # https://ai.google.dev/gemini-api/docs/pricing (2026-11-16), USD per 1M tokens of input, cache hit and output:
+    # Standard $1.50 / $0.075 / $7.50, Flex (and Batch) $0.75 / $0.0375 / $3.75, Priority $2.70 / $0.135 / $13.50;
+    # the page gives no date for another price.
+    @test DEFAULT_PRICING["gemini-4-hydrogen"] == UniLM._price(1.50, 0.075, 7.50)
+    @test !haskey(UniLM._PRICE_CHANGES, "gemini-4-hydrogen")
+    u(tier) = TokenUsage(prompt_tokens=1_000, cached_tokens=200, completion_tokens=500, total_tokens=1_500, service_tier=tier)
+    bill((i, c, o)) = (800 * i + 200 * c + 500 * o) / 1_000_000
+    cost(tier, day) = with(() -> estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"),
+        self=Chat(service=GEMINIServiceEndpoint, model="gemini-4-hydrogen"), usage=u(tier))), UniLM._PRICING_DATE => day)
+    for day in (Date(2026, 11, 16), Date(2027, 6, 1))
+        @test cost(nothing, day) ≈ bill((1.50, 0.075, 7.50))
+        @test cost("flex", day) ≈ bill((0.75, 0.0375, 3.75))
+        @test cost("priority", day) ≈ bill((2.70, 0.135, 13.50))
+    end
+end
+
 @testset "gemini-embedding-001 is priced at its input rate" begin
     # https://ai.google.dev/gemini-api/docs/pricing (2026-11-02), "Gemini Embedding": input $0.15 per 1M tokens on
     # the standard tier ($0.075 on Batch, which UniLM does not send); an embedding has no output to bill.
@@ -417,6 +434,7 @@ end
     # price or one on the date the old; the table's row changes; a row the caller set is replaced; or a model
     # without a scheduled change is priced otherwise on a later date.
     schedule = (("gemini-4-argon", Date(2026, 12, 1), (4.00, 0.20, 20.00)),
+                ("gemini-4-carbon", Date(2026, 12, 1), (4.00, 0.20, 20.00)),
                 ("gemini-3.8-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
                 ("gemini-3.7-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
                 ("gemini-3.6-flash", Date(2027, 1, 1), (1.50, 0.15, 7.50)),
@@ -449,6 +467,13 @@ end
     end
     # Google's Priority tables from the dates: $7.20 / $0.36 / $36.00 and $2.70 / $0.27 / $13.50.
     @test cost("gemini-4-argon", Date(2026, 12, 1); u=usage(tier="priority")) ≈ bill((7.20, 0.36, 36.00))
+    # Gemini 4 Carbon's Flex and Priority tables, each side of the date: $1.00 / $0.05 / $5.00 and $3.60 / $0.18 /
+    # $18.00 "through November 30, 2026", $2.00 / $0.10 / $10.00 and $7.20 / $0.36 / $36.00 "starting December 1, 2026".
+    for (tier, through, starting) in (("flex", (1.00, 0.05, 5.00), (2.00, 0.10, 10.00)),
+                                      ("priority", (3.60, 0.18, 18.00), (7.20, 0.36, 36.00)))
+        @test cost("gemini-4-carbon", Date(2026, 11, 30); u=usage(; tier)) ≈ bill(through)
+        @test cost("gemini-4-carbon", Date(2026, 12, 1); u=usage(; tier)) ≈ bill(starting)
+    end
     @test cost("gemini-3.8-flash", Date(2027, 1, 1); u=usage(tier="priority")) ≈ bill((2.70, 0.27, 13.50))
     # Audio on a one-price model bills at the row's input rate, so it moves with the row.
     heard = TokenUsage(prompt_tokens=1_010, completion_tokens=1, total_tokens=1_011, prompt_audio_tokens=1_000)

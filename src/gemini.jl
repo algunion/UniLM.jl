@@ -877,18 +877,20 @@ function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTu
     (prices.multiple, get(prices.cache, model, prices.multiple))
 end
 
-# The audio input rate of each model on https://ai.google.dev/gemini-api/docs/pricing (2026-10-22),
-# scaled on Flex and Priority as the table scales its text rates. The page spells input modalities
-# out wherever their rates differ ("$0.25 (text / image / video) $0.50 (audio)" on 3.1 Flash-Lite)
-# and where audio is excluded (an image model's "(text/image/video)"), so an input price that names
-# no modality, or names audio among the others, is every modality's. A model with an audio price of
-# its own maps to it, in USD per token at the standard tier; a model with its one input price maps
-# to `nothing`: audio bills at the price row's input rate, so a `pricing=` row, or a price change
-# such as Robotics-ER 2 Preview's on 2027-01-01, moves both. Audio on a model without an entry — an
-# image model, an id the page does not list — leaves the call unpriced, as a model without a price
-# row is.
+# The audio input rate of each model on https://ai.google.dev/gemini-api/docs/pricing (2026-10-22;
+# Gemini 4 Carbon and Hydrogen 2026-11-16), scaled on Flex and Priority as the table scales its text
+# rates. The page spells input modalities out wherever their rates differ ("$0.25 (text / image /
+# video) $0.50 (audio)" on 3.1 Flash-Lite) and where audio is excluded (an image model's
+# "(text/image/video)"), so an input price that names no modality, or names audio among the others,
+# is every modality's. A model with an audio price of its own maps to it, in USD per token at the
+# standard tier; a model with its one input price maps to `nothing`: audio bills at the price row's
+# input rate, so a `pricing=` row, or a price change such as Robotics-ER 2 Preview's on 2027-01-01,
+# moves both. Audio on a model without an entry — an image model, an id the page does not list —
+# leaves the call unpriced, as a model without a price row is.
 const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Union{Float64,Nothing}}(
-    "gemini-4-argon"                     => nothing,      # its one input price, naming no modality
+    "gemini-4-carbon"                    => nothing,      # its one input price, naming no modality
+    "gemini-4-argon"                     => nothing,      # likewise
+    "gemini-4-hydrogen"                  => nothing,      # likewise
     "gemini-3.8-flash"                   => nothing,      # likewise
     "gemini-3.7-flash"                   => nothing,      # routed to and priced as gemini-3.8-flash
     "gemini-3.6-flash"                   => nothing,      # its one input price, naming no modality

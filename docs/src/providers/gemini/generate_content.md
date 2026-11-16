@@ -507,7 +507,8 @@ lists a higher price from a date, an estimate computed on or after that day bill
 (the page names no time zone), while [`DEFAULT_PRICING`](@ref) keeps the shipped row and a row you set
 yourself is never replaced. Per 1M input, cache-hit and output tokens
 ([pricing](https://ai.google.dev/gemini-api/docs/pricing)): Gemini 4 Argon \$2.00 / \$0.10 / \$10.00
-"through November 30, 2026", then \$4.00 / \$0.20 / \$20.00 "starting December 1, 2026"; Gemini 3.8
+"through November 30, 2026", then \$4.00 / \$0.20 / \$20.00 "starting December 1, 2026"; Gemini 4 Carbon
+(`gemini-4-carbon`) \$2.00 / \$0.10 / \$10.00, then \$4.00 / \$0.20 / \$20.00 from the same day; Gemini 3.8
 and 3.6 Flash, and `gemini-3.7-flash` and `gemini-3.5-flash`, which Google serves as them, \$0.75 /
 \$0.075 / \$3.75 "through December 31, 2026", then \$1.50 / \$0.15 / \$7.50 "starting January 1, 2027";
 Robotics-ER 2 Preview \$1.00 / \$0.10 / \$5.00, then \$2.00 / \$0.20 / \$10.00 from the same day. The

@@ -1419,7 +1419,8 @@ end
                                    ("gemini-3.1-pro-preview-customtools", 2.00, 12.00), ("gemini-2.5-pro", 1.25, 10.00))
         @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end
-    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash")
+    for model in ("gemini-4-carbon", "gemini-4-argon", "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.7-flash",
+                  "gemini-3.6-flash", "gemini-3.5-flash")
         input, _, output = _gemini_rates(model)
         @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end

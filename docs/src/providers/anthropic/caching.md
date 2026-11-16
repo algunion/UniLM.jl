@@ -114,8 +114,9 @@ before any output only when its `stop_details.category` is one its page lists as
 `"frontier_llm"` and `"reasoning_extraction"` on 25 October 2026
 ([how refusals are billed](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#how-refusals-are-billed)).
 
-The rows are Anthropic's list prices as checked on 22 October 2026; prices change, so check Anthropic's
-page before relying on an estimate.
+The rows are Anthropic's list prices as checked on 22 October 2026 (`claude-fable-5-2`'s and
+`claude-mythos-5-2`'s on 16 November); prices change, so check Anthropic's page before relying on an
+estimate.
 
 ```@eval
 Main.ProviderFacts.price_table(:anthropic)

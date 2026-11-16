@@ -64,7 +64,9 @@ OpenAI-compatible routes, which carry none of `keep_alive`, the options or `runn
   message, keeping its first tokens and its tail: a 5,407-token message was cut to 2,050 tokens, the
   first 4 kept (Ollama 0.40.6), so the start of a long document is lost without a word, not only the
   oldest messages. An embeddings input is cut at its end instead
-  ([Long inputs](@ref ollama_embedding_window)).
+  ([Long inputs](@ref ollama_embedding_window)). `respond` carries no `truncate`: from Ollama 0.40.16 a
+  `Respond`'s own `truncation` decides, and an input that does not fit is the same HTTP 400 unless it is
+  `"auto"` ([respond and FIM](@ref ollama_respond)).
 - **A reply that fills the window.** `shift=false` stops it at finish reason `"length"` instead of
   letting it continue on shortened context.
 - **Keep-alive.** "By default models are kept in memory for 5 minutes before being unloaded", and

@@ -275,4 +275,39 @@ end
     @test isapprox(estimated_cost(r), 2 * (u.prompt_tokens * 8.0 + u.completion_tokens * 40.0) / 1e6; rtol=1e-12)
 end
 
+@testset "Anthropic Files — upload with an expiry, list, retrieve, the refused download, delete" begin
+    # Free: Files API operations bill no tokens. A 22-byte text file, deleted at the end.
+    path = joinpath(mktempdir(), "unilm-live.txt")
+    write(path, "UniLM live Files test\n")
+    a = ANTHROPICServiceEndpoint
+    up = upload_file(path; service=a, expires_after=3600)
+    @test up isa FileSuccess
+    if up isa FileSuccess
+        f = up.response
+        try
+            @test (f.filename, f.bytes, f.purpose, f.status) == ("unilm-live.txt", 22, nothing, nothing)
+            @test f.raw["mime_type"] == "text/plain" && f.raw["downloadable"] === false
+            @test abs(f.created_at - time()) < 600
+            expires = UniLM.Dates.datetime2unix(something(UniLM._rfc3339_utc(f.raw["expires_at"])))
+            @test isapprox(expires - f.created_at, 3600; atol=1)
+            got = retrieve_file(f.id; service=a)
+            @test got isa FileSuccess && got.response.id == f.id && got.response.created_at == f.created_at
+            listed = list_files(; limit=1000, service=a)
+            @test listed isa FileListSuccess && any(x -> x.id == f.id, listed.response.data)
+            one = list_files(; limit=1, service=a)
+            @test one isa FileListSuccess && length(one.response.data) == 1
+            if one isa FileListSuccess && one.response.has_more
+                @test list_files(; limit=1, after=one.response.raw["next_page"], service=a) isa FileListSuccess
+            end
+            # An uploaded file is not downloadable: Anthropic's HTTP 400, as it came.
+            dl = file_content(f.id; service=a)
+            @test dl isa FileFailure && dl.status == 400 && occursin("not downloadable", dl.response)
+        finally
+            del = delete_file(f.id; service=a)
+            @test del isa FileDeleteSuccess && (del.id, del.object) == (f.id, "file_deleted")
+        end
+        @test retrieve_file(f.id; service=a) isa FileFailure
+    end
+end
+
 end  # if ANTHROPIC_API_KEY

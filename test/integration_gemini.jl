@@ -233,4 +233,43 @@ end
     @test chatrequest!(chat) isa LLMSuccess
 end
 
+@testset "Gemini Files — resumable upload, poll, get, list, delete; the download refused, a registration answered" begin
+    # Free: the Files API bills no tokens, and stores up to 20 GB a project. A 22-byte text file, deleted at the end.
+    path = joinpath(mktempdir(), "unilm-live.txt")
+    write(path, "UniLM live Files test\n")
+    g = GEMINIServiceEndpoint
+    up = upload_file(path; service=g)
+    @test up isa FileSuccess
+    if up isa FileSuccess
+        f = up.response
+        try
+            @test (f.filename, f.bytes, f.purpose) == ("unilm-live.txt", 22, nothing)
+            @test f.status in ("PROCESSING", "ACTIVE") && abs(f.created_at - time()) < 600
+            @test f.raw["mimeType"] == "text/plain"
+            @test f.raw["uri"] == "https://generativelanguage.googleapis.com/v1beta/files/$(f.id)"
+            ready = poll_file(f.id; service=g, interval=1.0, timeout=120.0)
+            @test ready isa FileSuccess && ready.response.status == "ACTIVE"
+            got = retrieve_file("files/" * f.id; service=g)
+            @test got isa FileSuccess && got.response.id == f.id
+            seen, after = false, nothing
+            for _ in 1:5   # at most 500 files
+                page = list_files(; limit=100, after, service=g)
+                @test page isa FileListSuccess
+                page isa FileListSuccess || break
+                seen |= any(x -> x.id == f.id, page.response.data)
+                (seen || !page.response.has_more) && break
+                after = page.response.raw["nextPageToken"]
+            end
+            @test seen
+            @test_throws ArgumentError file_content(f.id; service=g)
+        finally
+            del = delete_file(f.id; service=g)
+            @test del isa FileDeleteSuccess && del.id == f.id
+        end
+    end
+    # A bucket that does not exist: Gemini refuses the registration (HTTP 404 on 2026-11-16), free.
+    reg = register_files(["gs://unilm-no-such-bucket-20261116/w.txt"])
+    @test reg isa FileFailure && reg.status in (400, 403, 404)
+end
+
 end  # if GEMINI_API_KEY

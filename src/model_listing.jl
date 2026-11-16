@@ -109,8 +109,18 @@ end
 _next_cursor(::_GeminiModels, page::Dict{String,Any})::Union{String,Nothing} =
     (t = _listing_field(page, "nextPageToken", String); isnothing(t) || isempty(t) ? nothing : t)
 
-_page_url(::_AnthropicModels, url::String, cursor::String)::String = url * "?after_id=" * _uripart(cursor)
-_page_url(::_GeminiModels, url::String, cursor::String)::String = url * "?pageToken=" * _uripart(cursor)
+# Every page asks for the largest page the API serves, so a listing takes as few requests as it
+# can: Anthropic's `limit` "Ranges from `1` to `1000`"
+# (https://platform.claude.com/docs/en/api/models/list), and Gemini's ListModels "returns at most
+# 1000 models per page", where "all other parameters provided to `ListModels` must match the call
+# that provided the page token" (pageSize, https://ai.google.dev/api/models). OpenAI lists every
+# model on one page.
+_first_page(::_OpenAIModels, url::String)::String = url
+_first_page(::_AnthropicModels, url::String)::String = url * "?limit=1000"
+_first_page(::_GeminiModels, url::String)::String = url * "?pageSize=1000"
+
+_page_url(l::_AnthropicModels, url::String, cursor::String)::String = _first_page(l, url) * "&after_id=" * _uripart(cursor)
+_page_url(l::_GeminiModels, url::String, cursor::String)::String = _first_page(l, url) * "&pageToken=" * _uripart(cursor)
 # A listing whose pages name no cursor (OpenAI's) has no page after the first.
 _page_url(listing::_ModelListing, ::String, ::String) =
     throw(ArgumentError("$(nameof(typeof(listing))) names no page after the first"))
@@ -237,7 +247,7 @@ function _list_models(listing::_ModelListing, service, config::Union{Nothing,Req
         first_page = _models_url(service)
         headers = _models_headers(service)
         models = ProviderModel[]; pages = Dict{String,Any}[]; cursors = Set{String}()
-        url = first_page
+        url = _first_page(listing, first_page)
         while true
             resp = _http_with_retries(cfg, t0, "GET", url, headers; cancel=tok)
             resp.status == 200 || return _failure(ModelListFailure, resp)

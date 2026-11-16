@@ -59,7 +59,7 @@ end
     page = _ml_page("anthropic.json")
     r, seen = _ml_list(_ML_ANTHROPIC, _ml_serving(_ml_fixture("anthropic.json")))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?limit=1000")]
     @test r.raw == [page]
     @test [m.id for m in r.models] == [e["id"] for e in page["data"]] && length(r.models) == 13
     h = r.models[1]
@@ -121,7 +121,7 @@ end
     page = _ml_page("gemini.json")
     r, seen = _ml_list(_ML_GEMINI, _ml_serving(_ml_fixture("gemini.json")))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?pageSize=1000")]
     @test r.raw == [page]
     @test [m.id for m in r.models] == [chopprefix(e["name"], "models/") for e in page["models"]]
     @test length(r.models) == 63
@@ -138,8 +138,11 @@ end
     @test sprint(show, f) == "ProviderModel(\"gemini-3.8-flash\", \"Gemini 3.8 Flash\")"
 end
 
+# Every page asks for the largest page the API serves: Anthropic's `limit` "Ranges from `1` to `1000`"
+# (1001 was HTTP 400 on 2026-11-16), and Gemini returns "at most 1000 models per page", with "all other
+# parameters" of a paged call matching the call that gave the page token.
 # Refuted if: a page after the first is skipped, fetched from the wrong cursor or with its cursor
-# unescaped, or the pages' models are merged out of order.
+# unescaped, a page asks for another page size, or the pages' models are merged out of order.
 @testset "pagination: every page is fetched, from the cursor the page before names" begin
     data = _ml_page("anthropic.json")["data"]
     p1 = Dict{String,Any}("data" => data[1:7], "has_more" => true, "first_id" => data[1]["id"], "last_id" => data[7]["id"])
@@ -147,7 +150,7 @@ end
                           "last_id" => data[end]["id"])
     r, seen = _ml_list(_ML_ANTHROPIC, (n, _) -> _json(200, JSON.json(n == 1 ? p1 : p2)))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models"), ("GET", "/v1/models?after_id=claude-fable-5")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?limit=1000"), ("GET", "/v1/models?limit=1000&after_id=claude-fable-5")]
     @test [m.id for m in r.models] == [e["id"] for e in data]
     @test r.raw == [p1, p2]
 
@@ -156,7 +159,8 @@ end
     q2 = Dict{String,Any}("models" => models[51:end])
     r, seen = _ml_list(_ML_GEMINI, (n, _) -> _json(200, JSON.json(n == 1 ? q1 : q2)))
     @test r isa ModelListSuccess
-    @test _ml_targets(seen) == [("GET", "/v1/models"), ("GET", "/v1/models?pageToken=Cg9tb2RlbHMvYXFh%2B%2F%3D")]
+    @test _ml_targets(seen) == [("GET", "/v1/models?pageSize=1000"),
+                                ("GET", "/v1/models?pageSize=1000&pageToken=Cg9tb2RlbHMvYXFh%2B%2F%3D")]
     @test [m.id for m in r.models] == [chopprefix(e["name"], "models/") for e in models]
     @test r.raw == [q1, q2]
     # An empty Gemini listing leaves `models` out: proto3 JSON omits an empty list.

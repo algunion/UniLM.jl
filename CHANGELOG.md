@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.33.0
+
+### Breaking
+- **Positional constructors of five request and result types gain trailing fields; keyword construction is
+  unaffected.** `Respond` takes 33 fields (the new last one is `image_context_compression`); `ImageGeneration` adds
+  `complexity`, `frame_count`, `frame_duration_ms` and `svg`; `ImageEdit` adds `complexity`, `frame_count`,
+  `frame_duration_ms` and `svg`; `ImageResponse` gains `svg_usage` before `raw`; `ResponseObject` gains
+  `image_context_compression`, and its 8-argument form still works.
+- **`respond_tool_loop!` on Gemini Interactions stops at a call whose arguments are no JSON object.** The loop ends
+  with `completed=false` and the call error, instead of answering the call with "Error: invalid arguments: …".
+
+### Added
+- **Gemini's Decisions API is a System One backend.** `GEMINIServiceEndpoint` declares `:system_one` and speaks
+  `UniLM.GeminiDecisionsProtocol` (public, not exported): `ask`, `ask_each`, `with_system_one`, `nl_classify`,
+  `nl_dispatch` and `@branch` send `POST /v1beta/decisions` with `GEMINI_API_KEY`, default model
+  `gemini-decision-1`. The state is text, a JSON value's text, or text and image content blocks (an image's `detail`
+  goes out as its `resolution`). Choice and Score `confidence` is recomputed with TypeSafe's published formulas, and
+  Google's own value (the top probability) stays in `raw`; probabilities are held to the float tolerance, since the
+  replies arrive unrounded. A blocked input (`prompt_feedback.block_reason`) is a `RefusalAnswer` for every
+  question, and a string error `code` (`invalid_request`, `safety`, …) is the `SystemOneFailure`'s `error_type`. The
+  reply names no model and no request id: the response carries the requested model without one leading `models/`
+  (the SDK's form of the same id, which the request still sends as given). Refused before any request: question
+  names outside `[A-Za-z0-9_-]{1,64}` or more than 1,000 questions; a Choice outside 2–255 options, or an option name
+  over 128 characters or 512 bytes, padded with whitespace, or holding control, format or non-ASCII space
+  characters; a Score outside 2–255 levels or with an empty level; instructions that are missing, empty or not
+  text; a blank state, an empty vector state or text block, or a `Message` in the state; images outside the state,
+  `detail="original"`, or more than 100 MiB of images; audio and PDF in the state; Box questions; any provider
+  option. Price row `gemini-decision-1`: $0.10 per 1M input tokens for every modality, no output charge. Recordings
+  are filed under `/gemini-decisions/v1beta/decisions`. The Decisions chapter has a Gemini Decisions API entry.
+- **Claude Fable 5.2 and Claude Mythos 5.2.** Rule rows (thinking always on, no forced `tool_choice`, no prefill,
+  every effort level, fast mode) and prices ($8 / $0.20 / $40 per 1M input / cache-hit / output tokens; cache writes
+  $10 for 5 minutes, $16 for 1 hour; fast mode $16 / $80).
+- **GPT-Image-2.6 controls on generations and edits.** `complexity` (`"low"`, `"medium"`, `"high"`); GIF output's
+  `frame_count` (2–16) and `frame_duration_ms` (at least 20), which need `output_format="gif"` and take no
+  `output_compression` (a generation) or `mask` (an edit); `SvgOptions(; model, effort)` and `svg_usage` for SVG
+  output (`n=1`, no stream, partial images or `output_compression`; an edit sends `svg[model]` and
+  `svg[reasoning][effort]`). An estimate of an image result with `svg_usage` warns that it leaves the SVG author's
+  tokens out. `ImageGenerationTool` takes `complexity`, `frame_count`, `frame_duration_ms` and `svg`. Each of these is
+  refused on Gemini before the request.
+- **`input_transformations` and `InputTransformation`.** A Responses result lists the input items OpenAI withheld,
+  for example a reasoning item from another model (`reason` `model_mismatch`), streamed or not.
+- **`image_context_compression` on `Respond`, `compact_response` and `ResponseObject`** (`"enabled"` or
+  `"disabled"`). Gemini Interactions and Ollama refuse it before the request.
+- **Prices:** image-tool rates for `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare`; the `gpt-6-cyber` row and terms
+  ($20 / $2 / $100, 30-minute and 12-hour cache writes $25 and $50, over 272K input tokens $40 / $4 / $150, and a long
+  prompt's cache writes at the long-context input rate, since OpenAI's page gives no price for them);
+  `gemini-4-carbon` ($2.00 / $0.10 / $10.00, then $4.00 / $0.20 / $20.00 from 2026-12-01) and `gemini-4-hydrogen`
+  ($1.50 / $0.075 / $7.50), Flex at half and Priority at 1.8×, audio input at the input rate.
+- **Gemini thinking rows and `xhigh`.** Rows for `gemini-4-carbon` (low, medium, high), `gemini-4-hydrogen` (low,
+  medium, high, xhigh) and `gemini-3.1-flash-lite` (minimal to high). `xhigh` is accepted only where a model's row
+  lists it, on generateContent and on Interactions; a refusal names the model's levels.
+- **`respond` on `OllamaEndpoint` sends `truncation`.** Ollama 0.40.16 reads it on `/v1/responses`: `"auto"` lets the
+  server shorten an input that does not fit the context window, and `"disabled"` or no field makes such an input an
+  HTTP 400 (`request (… tokens) exceeds the available context size (… tokens), try increasing it`); earlier servers
+  shortened it without a word. Any other value throws `ArgumentError` before the request, as Ollama answers it with
+  HTTP 400 `unknown truncation strategy`. The field used to be refused.
+- **The `live.transport.connected` webhook event.**
+
+### Changed
+- **The Gemini default model is `gemini-4-hydrogen`**, Google's named successor to `gemini-3.8-flash`, on
+  `GEMINIServiceEndpoint` and `GEMINIOpenAIServiceEndpoint`. Per 1M input / cache-hit / output tokens it costs $1.50 /
+  $0.075 / $7.50, against 3.8 Flash's $0.75 / $0.075 / $3.75 through 2026-12-31 (twice the input and output price);
+  from 2027-01-01 3.8 Flash costs $1.50 / $0.15 / $7.50. Hydrogen thinks at `high` when no effort is set (3.8 Flash:
+  `medium`) and refuses `minimal`. As a `gemini-4-` model, a default call gets the 20-minute default timeouts.
+- **The default OpenAI image model is `gpt-image-2.6-sunburst`** (was `gpt-image-2.5-sunburst`), at the same rates,
+  and the image tool's cost fallback is `gpt-image-2.6-sunburst` (was `gpt-image-2`); the model a reply echoes still
+  prices first.
+- **`GEMINIOpenAIServiceEndpoint` refuses a `reasoning_effort` the model's thinking row lacks**, before any request
+  and with the native endpoint's message: `"minimal"` on `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon` and
+  `gemini-3.8-flash`, `"xhigh"` on Carbon and 3.8 Flash, `"none"` on 3.8 Flash (accepted there, but it still thinks).
+  A `gemini-2.5-` model, which takes a thinking budget on this wire, and an id without a row are sent unchanged.
+- **A `max_output_tokens` above 65,536 on `gemini-4-argon` is sent without `background=true`.** The API now accepts
+  it and runs it in hops, which an unstreamed `respond` continues.
+- **Markup edits are documented as accepted on `gpt-image-2.6-flare`** (2026-11-16), and `gpt-5.6-sol`'s promotional
+  price as running until 2026-11-30.
+- **The Local decision models page notes AutoTrust's models** (`autotrust-jev`, Ollama 0.40.15), whose Score
+  questions take six levels; UniLM has not measured them.
+- **The precompile workload covers Gemini's Decisions API.**
+
+### Fixed
+- **A tool call whose arguments are no JSON object is a call error on Anthropic, Gemini and Gemini Interactions.**
+  Anthropic's `tool_use.input`, Gemini's `functionCall.args` and an Interactions `function_call`'s `arguments` decoded
+  as a call without arguments when they held an array, a string, a number or a boolean, so a tool loop ran the tool
+  without the model's arguments. The decode now throws `ArgumentError("<Provider> tool-call arguments must be a JSON
+  object, got a JSON <type>")`, which the verb returns as `LLMCallError` / `ResponseCallError`, streamed or not.
+  Absent or null arguments stay a call without arguments; a streamed Gemini `functionCall` with null `args` is now
+  one too (it was a call error).
+- **`GEMINIOpenAIServiceEndpoint` results bill the thinking the endpoint counts only in `total_tokens`.** The
+  difference is added to `completion_tokens` and `reasoning_tokens` and priced at the output rate, streamed or not; a
+  total below prompt + completion is kept as reported, with a one-time warning.
+
+### Docs
+- **UniLM stays on Gemini `v1beta`**: `v1` has no request `labels` field and no speech configuration, both of which
+  UniLM sends. The Responses truncation clause says trimming can begin earlier.
+
+### CI
+- **The provider drift check ignores model ids that only a Julia comment names** in a docs code block or a live
+  suite: pages print listing output as comments, so a retired snapshot shown there failed the release gate.
+- **The hosted-providers job runs the DeepSeek, TypeSafe and natural-language live suites.** `test/live_hosted.jl`
+  lists `integration_deepseek.jl`, `integration_typesafe.jl` and `integration_semantic.jl` and fails, naming the
+  key, when `DEEPSEEK_API_KEY` or `TYPESAFE_API_KEY` is unset; the job passes both from the repository's secrets.
+  The hosted suites also cover Gemini's Decisions API and each feature above that a provider serves.
+- **The release gate installs Ollama 0.40.16**, pinned by the SHA-256 Ollama publishes for its Linux build.
+
 ## 0.32.0
 
 ### Breaking

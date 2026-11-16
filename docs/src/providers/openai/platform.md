@@ -305,9 +305,12 @@ makes a container: `memory_limit` as above, OpenAI's default `"1g"` when not giv
 [`ContainerDomainSecret`](@ref)`(domain, name, value)`s OpenAI injects for an allowlisted domain
 (UniLM never prints a secret's value); and `skills`, [`SkillReference`](@ref)`(skill_id; version)`s
 to skills made with OpenAI's Skills API, which UniLM does not wrap, `version` a positive integer or
-`"latest"`, the skill's default version when not given. [`retrieve_container`](@ref),
-[`list_containers`](@ref)`(; limit, order, after, name)` — `name` keeps the containers of that
-name — and [`delete_container`](@ref) read, list and delete containers.
+`"latest"`, the skill's default version when not given. An organization whose policy disables
+container network access gets OpenAI's 400 for an allowlist: "Network policy 'allowlist' is not
+permitted because the organization policy disables container network access" (16 November 2026).
+[`retrieve_container`](@ref), [`list_containers`](@ref)`(; limit, order, after, name)` — `name`
+keeps the containers of that name — and [`delete_container`](@ref) read, list and delete
+containers.
 [`add_container_file`](@ref)`(id, path)` uploads a file into one, and `add_container_file(id;
 file_id)` copies one uploaded through the Files API, either returning a `ContainerSuccess` whose
 `response` is the file's record, its `path` where the code sees it; a path that is no file is

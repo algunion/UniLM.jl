@@ -165,6 +165,27 @@ hand, a decision model can read the answer against a chunk and send anything but
 the passages you put in a prompt yourself for instructions aimed at the model
 ([Screen what the model reads](@ref jev_llm_screen_input)).
 
+## [Search a store directly](@id openai_retrieval_search)
+
+[`search_vector_store`](@ref)`(vs_id, query; max_num_results, rewrite_query, filters, ranking_options)`
+searches a store without a model: `query` is a string or a vector of strings, `filters` and
+`ranking_options` take the shapes of the tool's `filters` and `ranking` above, each sent as given,
+and `rewrite_query=true` lets OpenAI rewrite the query for vector search, the page's
+`search_query` saying what it searched. Each [`VectorStoreSearchResult`](@ref) holds the file's
+id, name, score and `attributes`, and in `content` the chunks that matched, each a `Dict` with
+its `"text"`:
+
+```julia
+hits = search_vector_store(vs_id, "How long do I have to return a jacket?"; max_num_results=2,
+                           filters=Dict("type" => "eq", "key" => "team", "value" => "returns"))
+hits isa VectorStoreSearchSuccess || error("search failed: $hits")
+h = first(hits.response.data)
+(h.filename, round(h.score; digits=2), h.attributes["team"])
+# Run on 16 November 2026 with UniLM's development branch after 0.33.0, on a store of its own
+# holding the policy file with the attribute "team" => "returns":
+# ("returns.txt", 0.92, "returns")
+```
+
 ## [Clean up](@id openai_retrieval_cleanup)
 
 A store and a file stay on OpenAI's servers until they are deleted, or until a store's
@@ -173,7 +194,7 @@ A store and a file stay on OpenAI's servers until they are deleted, or until a s
 ```julia
 delete_vector_store(vs_id), delete_file(file_id)
 # Run on 25 October 2026 with UniLM's development branch after 0.26.0:
-# (VectorStoreDeleteSuccess("vs_6ade2f0d72148191a5b970d85c9826e9", true), FileDeleteSuccess("file-UoD6Ty5NGchHpMLtz28KyY", true))
+# (VectorStoreDeleteSuccess("vs_6ade2f0d72148191a5b970d85c9826e9", true), FileDeleteSuccess("file-UoD6Ty5NGchHpMLtz28KyY", true, "file"))
 ```
 
 Deleting a file is also to "remove it from all vector stores"
@@ -186,7 +207,9 @@ after, before, filter)` pages through them, `filter` keeping one status, [`retri
 reads one's record, [`vector_store_file_content`](@ref) the text OpenAI parsed from it, and
 [`delete_vector_store_file`](@ref) detaches it from the store, leaving the uploaded file in place.
 [`cancel_file_batch`](@ref) stops a batch and [`list_file_batch_files`](@ref) lists the files in
-one; [`list_vector_stores`](@ref)`(; limit, order, after, before)` pages through the stores. Every
+one: in a run on 16 November 2026, a batch of one file cancelled at once came back
+`"in_progress"`, reached `"cancelled"`, and listed its file as `"completed"` all the same, so a
+file's own status says whether it was indexed; [`list_vector_stores`](@ref)`(; limit, order, after, before)` pages through the stores. Every
 verb is in the [Vector Stores API](@ref vector_stores_api) reference.
 
 Recorded on 25 October 2026 on `gpt-6-sol` with UniLM's development branch after 0.26.0.

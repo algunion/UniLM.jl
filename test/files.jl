@@ -156,7 +156,7 @@ end
 @testset "delete_file reports success only when the service confirms the delete" begin
     del(body) = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body)
     @test del("""{"id": "file-1", "object": "file", "deleted": true}""") ==
-          FileDeleteSuccess(id="file-1", deleted=true)
+          FileDeleteSuccess(id="file-1", deleted=true, object="file")
     unconfirmed = del("""{"id": "file-1", "object": "file"}""")
     @test unconfirmed isa FileCallError && occursin("deleted", unconfirmed.error)
     @test del("""{"id": "file-1", "object": "file", "deleted": false}""") isa FileCallError
@@ -280,4 +280,17 @@ end
     @test r isa FileCallError && occursin("\"id\"", r.error)
     r = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body="""{"id": 7, "object": "file", "deleted": true}""")
     @test r isa FileCallError && occursin("\"id\"", r.error)
+end
+
+# OpenAI's DeleteFileResponse: `id`, `object` (always "file") and `deleted`, all required.
+# Refuted if: the reply's `object` is dropped, or a reply without it decodes; or the two-field
+# positional form no longer builds a result.
+@testset "delete_file decodes the reply's object, which OpenAI's reference requires" begin
+    del(body) = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body)
+    # The reply OpenAI sent on 2026-11-16.
+    r = del("""{"object": "file", "deleted": true, "id": "file-72AHrfpfi5ccZAiuHbFdhf"}""")
+    @test r isa FileDeleteSuccess && (r.id, r.deleted, r.object) == ("file-72AHrfpfi5ccZAiuHbFdhf", true, "file")
+    r = del("""{"id": "file-1", "deleted": true}""")
+    @test r isa FileCallError && occursin("\"object\"", r.error)
+    @test FileDeleteSuccess("file-1", true) == FileDeleteSuccess(id="file-1", deleted=true, object=nothing)
 end

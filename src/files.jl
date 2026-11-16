@@ -234,8 +234,14 @@ end
 @kwdef struct FileListSuccess <: LLMRequestResponse; response::FileList; end
 "Successful [`file_content`](@ref) result; `content` holds the raw file bytes."
 @kwdef struct FileContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
-"Successful [`delete_file`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
-@kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"""
+    FileDeleteSuccess
+
+Successful [`delete_file`](@ref) result: the service confirmed (`deleted` is always `true`) the
+removal of `id`. `object` is the reply's type tag: OpenAI's `object`, `"file"`.
+"""
+@kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; object::Union{String,Nothing} = nothing; end
+FileDeleteSuccess(id, deleted) = FileDeleteSuccess(id, deleted, nothing)
 "Files API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
 "Files API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
@@ -364,7 +370,8 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
         resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            return FileDeleteSuccess(id=_file_required(d, "id", String), deleted=_confirm_deleted(d))
+            return FileDeleteSuccess(id=_file_required(d, "id", String), deleted=_confirm_deleted(d),
+                                     object=_file_required(d, "object", String))
         else
             return _failure(FileFailure, resp)
         end

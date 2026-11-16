@@ -77,25 +77,40 @@ _parse_batch(d::AbstractDict) = BatchObject(id=_batch_required(d, "id", String),
     request_counts=Dict{String,Any}(something(_batch_optional(d, "request_counts", AbstractDict), Dict{String,Any}())),
     raw=Dict{String,Any}(d))
 
+# output_expires_after: the seconds after the batch's output or error file is created, its only anchor, that the
+# file expires — "between 3600 (1 hour) and 2592000 (30 days)" (BatchFileExpirationAfter in the Batch reference).
+_batch_expiry(::Nothing) = nothing
+function _batch_expiry(seconds::Integer)::Dict{Symbol,Any}
+    3600 <= seconds <= 2_592_000 || throw(ArgumentError("create_batch: output_expires_after is the seconds after a " *
+        "batch's output or error file is created that it expires, from 3600 (1 hour) to 2592000 (30 days) (got $seconds)"))
+    Dict{Symbol,Any}(:anchor => "created_at", :seconds => seconds)
+end
+
 """
-    create_batch(input_file_id, endpoint; completion_window="24h", metadata=nothing, service=OPENAIServiceEndpoint)
+    create_batch(input_file_id, endpoint; completion_window="24h", metadata=nothing, output_expires_after=nothing,
+                 service=OPENAIServiceEndpoint)
 
 Create a batch job. `endpoint` is e.g. `"/v1/chat/completions"`, `"/v1/responses"`, or
 `"/v1/embeddings"`. `input_file_id` comes from `upload_file(path, "batch")`.
+`output_expires_after` is the number of seconds, from 3600 (1 hour) to 2592000 (30 days), after which the
+batch's output and error files expire, counted from each file's creation; outside that range it throws
+`ArgumentError` before any request.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `BatchCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function create_batch(input_file_id::String, endpoint::String; completion_window::String="24h",
-    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing,
+    metadata::Union{AbstractDict,Nothing}=nothing, output_expires_after::Union{Integer,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
+    expires = _batch_expiry(output_expires_after)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:input_file_id => input_file_id, :endpoint => endpoint, :completion_window => completion_window)
         !isnothing(metadata) && (d[:metadata] = metadata)
+        isnothing(expires) || (d[:output_expires_after] = expires)
         resp = _http("POST", _api_base_url(service) * BATCHES_PATH, auth_header(service),
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :

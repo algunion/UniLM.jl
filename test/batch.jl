@@ -143,3 +143,31 @@ end
     @test ok isa BatchListSuccess && [b.id for b in ok.response.data] == ["batch_1"] && ok.response.has_more
     @test ok.response.raw == JSON.parse(page)
 end
+
+# output_expires_after: when the batch's output and error files expire, `seconds` after their creation (the only
+# anchor, created_at), "between 3600 (1 hour) and 2592000 (30 days)" (the Batch reference's BatchFileExpirationAfter).
+@testset "create_batch: output_expires_after sets when the output and error files expire" begin
+    created = (_, _) -> _json(200, "{\"id\":\"batch_1\",\"status\":\"validating\"}")
+    r, seen = _with_scripted(created) do
+        create_batch("file_in", "/v1/chat/completions"; output_expires_after=7200, service=URLProbe)
+    end
+    @test r isa BatchSuccess && r.response.status == "validating"
+    @test JSON.parse(only(seen).body) == Dict("input_file_id" => "file_in", "endpoint" => "/v1/chat/completions",
+        "completion_window" => "24h", "output_expires_after" => Dict("anchor" => "created_at", "seconds" => 7200))
+    _, unset = _with_scripted(created) do
+        create_batch("file_in", "/v1/chat/completions"; service=URLProbe)
+    end
+    @test !haskey(JSON.parse(only(unset).body), "output_expires_after")
+    for s in (3600, 2_592_000)
+        _, edge = _with_scripted(created) do
+            create_batch("file_in", "/v1/responses"; output_expires_after=s, service=URLProbe)
+        end
+        @test JSON.parse(only(edge).body)["output_expires_after"]["seconds"] == s
+    end
+    # Out of range: refused before any request (SeamProbe's dead port would make it a call error).
+    for s in (3599, 2_592_001, 0, -3600)
+        err = try create_batch("file_in", "/v1/chat/completions"; output_expires_after=s, service=SeamProbe); nothing
+              catch e; e end
+        @test err isa ArgumentError && occursin("output_expires_after", err.msg) && occursin("3600", err.msg)
+    end
+end

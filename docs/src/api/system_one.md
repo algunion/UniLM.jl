@@ -1,4 +1,4 @@
-# [System One API (Jev, OpenAI Decisions, Ollama)](@id system_one_api)
+# [System One API (Jev, OpenAI Decisions, Gemini Decisions, Ollama)](@id system_one_api)
 
 A System One model does not write text. It reads a piece of `state` and answers
 the questions you enumerate with a probability distribution over the outcomes
@@ -7,11 +7,12 @@ a box — so there is nothing to parse. The answer says *what*, the distribution
 says *whether to act on it*.
 
 UniLM has one System One surface — [`ask`](@ref), [`ask_each`](@ref), the
-question builders and the typed answers below — over three backends: TypeSafe's
-Jev (the default), OpenAI's Decisions API (generally available) and local decision
-models served by Ollama. [Route and Decide](@ref system_one_guide) is the how-to
-and [Choosing a decision provider](@ref system_one_backends) compares
-the three. This page gives what every backend shares, then each backend's setup,
+question builders and the typed answers below — over four backends: TypeSafe's
+Jev (the default), OpenAI's Decisions API (generally available), Google's Gemini
+Decisions API (Beta) and local decision models served by Ollama.
+[Route and Decide](@ref system_one_guide) is the how-to and
+[Choosing a decision provider](@ref system_one_backends) compares
+the four. This page gives what every backend shares, then each backend's setup,
 rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 [`nl_dispatch`](@ref) and [`@branch`](@ref) have a page of their own,
 [Natural-Language Dispatch](@ref nl_dispatch_api).
@@ -382,6 +383,27 @@ OpenAI answered in 0.48 s at the median and 2.44 s at the 95th percentile (Jev:
 UniLM.OpenAIDecisionsProtocol
 ```
 
+## [Gemini Decisions](@id system_one_gemini)
+
+[`GEMINIServiceEndpoint`](@ref) answers System One requests through Google's
+Decisions API (Beta), `POST https://generativelanguage.googleapis.com/v1beta/decisions`,
+with `GEMINI_API_KEY` and its one model, `gemini-decision-1`, the default; the
+[Gemini Decisions API](@ref gemini_decisions_start) entry has its setup, rules and
+failures. Its questions are a map keyed by name, as on TypeSafe's wire, each with
+text-only `instructions`; the state is text, a JSON value's text, or `text` and
+`image` content blocks; the API takes no provider options. Probabilities arrive
+unrounded and are held to the float tolerance; a Choice's and a Score's
+`confidence` is recomputed with TypeSafe's published formulas, Google's own value —
+the top probability — kept in `raw`. An input Google's filters block is a
+[`RefusalAnswer`](@ref) for every question. The reply names no model and carries
+no request id, so `response.model` is the model requested and `request_id`
+`nothing`. [`estimated_cost`](@ref) bills the input tokens at \$0.10 per million,
+every modality alike, and no output.
+
+```@docs
+UniLM.GeminiDecisionsProtocol
+```
+
 ## [Ollama](@id system_one_ollama)
 
 An [`OllamaEndpoint`](@ref) answers System One requests from a local decision
@@ -613,9 +635,10 @@ turns the reply into a typed result, its answers checked against the request.
 The rest is shared by every backend: the backend and model a call resolves
 (through [`with_system_one`](@ref)), recording and replay, retries and
 cancellation, the connection pool, and credentials, which `auth_header` supplies
-only when a request really goes out, so a replay needs no key. Three protocols
+only when a request really goes out, so a replay needs no key. Four protocols
 ship: [`TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) above, and
-[`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol) and
+[`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol),
+[`GeminiDecisionsProtocol`](@ref UniLM.GeminiDecisionsProtocol) and
 [`OllamaSystemOneProtocol`](@ref UniLM.OllamaSystemOneProtocol) in their
 backends' sections.
 

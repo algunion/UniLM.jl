@@ -15,9 +15,10 @@ heading_ids(path::String)::Vector{Tuple{Int,String}} =
     @test entry(:anthropic).default_model == UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-5-5"
     @test entry(:openai).default_model == "gpt-6-sol" && entry(:jev).default_model == "jev-latest"
     @test entry(:openai_decisions).default_model == "gpt-6-luna"
+    @test entry(:gemini_decisions).default_model == "gemini-decision-1"
     @test entry(:ollama).default_model === nothing && entry(:ollama_decisions).default_model === nothing
     @test all(e -> e.chapter == ProviderFacts.llm, filter(e -> e.key in (:openai, :anthropic, :gemini), REGISTRY))
-    @test length(unique(e.start_id for e in REGISTRY)) == length(REGISTRY) == 11
+    @test length(unique(e.start_id for e in REGISTRY)) == length(REGISTRY) == 12
 end
 @testset "ProviderFacts — tables have one row per entry and link each start page" begin
     t = provider_table(ProviderFacts.llm).content[1]

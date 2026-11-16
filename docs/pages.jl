@@ -71,6 +71,7 @@
             "Confidence, errors, cost & testing" => "decisions/jev/operations.md",
         ],
         "OpenAI Decisions API" => ["OpenAI Decisions API" => "decisions/openai.md"],
+        "Gemini Decisions API" => ["Gemini Decisions API" => "decisions/gemini.md"],
         "Local decision models" => ["Local decision models" => "decisions/ollama.md"],
         "Concepts (every decision provider)" => [
             "Route and Decide" => "guide/system_one.md",

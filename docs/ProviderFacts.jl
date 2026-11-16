@@ -158,6 +158,7 @@ end
 # environment of the process that loads this file.
 _decision_default(::UniLM.TypeSafeProtocol)::String = UniLM.TYPESAFE_DEFAULT_MODEL
 _decision_default(::UniLM.OpenAIDecisionsProtocol)::String = UniLM._DECISIONS_MODEL
+_decision_default(::UniLM.GeminiDecisionsProtocol)::String = UniLM._GEMINI_DECISIONS_MODEL
 _decision_default(::UniLM.OllamaSystemOneProtocol)::Nothing = nothing     # a call names an installed model
 
 # The code's default for an entry: its primary endpoint's chat default, or for a decision entry
@@ -321,6 +322,13 @@ const REGISTRY = _validated([
         features=_features(:openai_decisions, (:setup, :first_decision, :models, :questions, :limits, :confidence,
             :cost, :testing, :failures)),
         tokens=["Decisions API"]),
+    ProviderEntry(key=:gemini_decisions, chapter=decisions, provider=:gemini, name="Gemini Decisions API",
+        endpoints=[GEMINIServiceEndpoint], usage="GEMINIServiceEndpoint", key_vars=[UniLM.GEMINI_API_KEY],
+        env_vars=String[], default_model=UniLM._GEMINI_DECISIONS_MODEL,
+        pages=["decisions/gemini.md"], start_id="gemini_decisions_start",
+        features=_features(:gemini_decisions, (:setup, :first_decision, :models, :questions, :images, :limits,
+            :confidence, :cost, :testing, :failures)),
+        tokens=["Decisions API"]),     # Google's name for it too, as OpenAI's for theirs
     ProviderEntry(key=:ollama_decisions, chapter=decisions, provider=:ollama, name="Local decision models",
         endpoints=[_OLLAMA], usage="OllamaEndpoint()", key_vars=[UniLM.OLLAMA_HOST],
         env_vars=[UniLM.OLLAMA_API_KEY],   # read for a request to Ollama's cloud, https://ollama.com

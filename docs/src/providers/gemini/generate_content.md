@@ -30,9 +30,10 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 `reasoning_effort` sets the request's thinking level, `thinkingConfig.thinkingLevel`, and asks for the
 thought summaries, `includeThoughts: true` (below); a
 [`Reasoning`](@ref)'s `effort` sets a `Respond`'s, `thinking_level` on the Interactions API
-([Thinking on the Interactions API](@ref gemini_interactions_thinking)). A `reasoning_effort` of `"minimal"`,
-`"low"`, `"medium"` or `"high"` is checked against the table below; `"none"`, `"xhigh"` and
-`"max"` throw `ArgumentError` on every model ([Limits and refusals](@ref gemini_limits)).
+([Thinking on the Interactions API](@ref gemini_interactions_thinking)). A `reasoning_effort` is checked
+against the table below: `"minimal"`, `"low"`, `"medium"` and `"high"` where a row lists them, and `"xhigh"`
+only where a row lists it, `gemini-4-hydrogen`'s ("introduces `xhigh`", "supported on `gemini-4-hydrogen`");
+`"none"` and `"max"` throw `ArgumentError` on every model ([Limits and refusals](@ref gemini_limits)).
 
 ```@eval
 Main.ProviderFacts.gemini_thinking_table()

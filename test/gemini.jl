@@ -697,28 +697,31 @@ end
 end
 
 @testset "thinking levels — every level of every model of the provider table, on both wires" begin
-    # (model, its levels, the refusal of a level it lacks), transcribed from the "Controlling thinking" table
-    # (ai.google.dev/gemini-api/docs/thinking, 2026-10-22). The -latest aliases take the levels of the model
+    # (model, its levels, the refusal of every other effort), transcribed from the "Controlling thinking" table
+    # (ai.google.dev/gemini-api/docs/thinking, 2026-11-16). The -latest aliases take the levels of the model
     # that served each on 2026-10-22, and gemini-3.7-flash and gemini-3.5-flash those of the models Google
-    # routes them to. A model with all four levels refuses only a non-level.
-    three, four = "supports low, medium, or high thinking effort", "must be minimal, low, medium, or high"
+    # routes them to. Only a row that lists "xhigh" takes it; a refusal names the model and its levels.
+    three, four = "supports low, medium, or high thinking effort", "supports minimal, low, medium, or high thinking effort"
     L3, L4 = ["low", "medium", "high"], ["minimal", "low", "medium", "high"]
-    rows = (("gemini-4-argon",               L3, three),
+    rows = (("gemini-4-carbon",              L3, three),
+            ("gemini-4-argon",               L3, three),
+            ("gemini-4-hydrogen",            ["low", "medium", "high", "xhigh"], "supports low, medium, high, or xhigh thinking effort"),
             ("gemini-3.8-flash",             L3, three),
-            ("gemini-3.6-flash",             L4, nothing),
-            ("gemini-3.5-flash-lite",        L4, nothing),
+            ("gemini-3.6-flash",             L4, four),
+            ("gemini-3.5-flash-lite",        L4, four),
             ("gemini-3.1-pro-preview",       L3, three),
+            ("gemini-3.1-flash-lite",        L4, four),
             ("gemini-3.1-flash-lite-image",  ["minimal", "high"], "supports minimal or high thinking effort"),
-            ("gemini-3-flash-preview",       L4, nothing),
+            ("gemini-3-flash-preview",       L4, four),
             ("gemini-2.5-pro",               L3, three),
             ("gemini-2.5-flash",             L3, three),
             ("gemini-2.5-flash-lite",        L3, three),
-            ("gemini-robotics-er-2-preview", L4, nothing),
+            ("gemini-robotics-er-2-preview", L4, four),
             ("gemini-pro-latest",            L3, three),     # served by gemini-3.1-pro-preview
             ("gemini-flash-latest",          L3, three),     # served by gemini-3.8-flash
-            ("gemini-flash-lite-latest",     L4, nothing),   # served by gemini-3.5-flash-lite
+            ("gemini-flash-lite-latest",     L4, four),      # served by gemini-3.5-flash-lite
             ("gemini-3.7-flash",             L3, three),     # routed to gemini-3.8-flash
-            ("gemini-3.5-flash",             L4, nothing))   # routed to gemini-3.6-flash
+            ("gemini-3.5-flash",             L4, four))      # routed to gemini-3.6-flash
     @test Set(first.(rows)) == Set(keys(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
     @test !haskey(UniLM._GEMINI_THINKING_LEVELS, "gemini-3-pro-preview")  # shut down on 2026-03-09
     level(model, effort) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(
@@ -734,20 +737,26 @@ end
                 @test native(model, effort) == uppercase(effort)
             end
         end
-        for (effort, fragment) in [[e => refusal for e in setdiff(L4, levels)]; ["xhigh" => four, "none" => four]]
-            err = try level(model, effort); nothing catch e; e end   # each it lacks, and two that are no level
-            @test err isa ArgumentError && occursin(fragment, err.msg)
-            @test_throws ArgumentError native(model, effort)
+        for effort in setdiff(["minimal", "low", "medium", "high", "xhigh", "none", "max"], levels)  # each it lacks
+            for encode in (level, native)
+                err = try encode(model, effort); nothing catch e; e end
+                @test err isa ArgumentError && occursin(model, err.msg) && occursin(refusal, err.msg) &&
+                      occursin(repr(effort), err.msg)
+            end
         end
     end
     # Gemini 4 Argon and the aliases answer MINIMAL with HTTP 400 "Thinking level MINIMAL is not
-    # supported for this model" (observed 2026-10-22): the request is refused before it is sent.
-    for model in ("gemini-4-argon", "gemini-pro-latest", "gemini-flash-latest")
+    # supported for this model" (observed 2026-10-22), and so does Gemini 4 Hydrogen, on generateContent
+    # and the Interactions API ("THINKING_LEVEL_MINIMAL", observed 2026-11-16), and Gemini 4 Carbon and
+    # 3.8 Flash answer XHIGH so: each request is refused before it is sent.
+    for (model, effort) in (("gemini-4-argon", "minimal"), ("gemini-pro-latest", "minimal"), ("gemini-flash-latest", "minimal"),
+                            ("gemini-4-hydrogen", "minimal"), ("gemini-4-carbon", "xhigh"), ("gemini-3.8-flash", "xhigh"))
         for encode in (level, native)
-            err = try encode(model, "minimal"); nothing catch e; e end
-            @test err isa ArgumentError && occursin(model, err.msg) && occursin(three, err.msg)
+            @test_throws ArgumentError encode(model, effort)
         end
     end
+    # Gemini 4 Hydrogen took XHIGH on both APIs (HTTP 200, observed 2026-11-16).
+    @test level("gemini-4-hydrogen", "xhigh") == "xhigh" && native("gemini-4-hydrogen", "xhigh") == "XHIGH"
 end
 
 @testset "thinking — a Chat that sets reasoning_effort asks for the thought summaries reasoning_text reads" begin
@@ -784,7 +793,11 @@ end
                "gemini-3.8-flash-2026-10-01", "gemini-3.5-flash-lite-preview", "gemini-5-x")
         @test isnothing(UniLM._gemini_thinking_levels(id))
         @test UniLM._gemini_thinking_level(id, "minimal") == "minimal"      # the server's answer is the check
-        @test_throws ArgumentError UniLM._gemini_thinking_level(id, "xhigh") # no Gemini level at all
+        # "xhigh" only where a row lists it: the refusal names the generic levels and the models that take it.
+        err = try UniLM._gemini_thinking_level(id, "xhigh"); nothing catch e; e end
+        @test err isa ArgumentError && occursin("must be minimal, low, medium, or high", err.msg) &&
+              occursin("gemini-4-hydrogen", err.msg)
+        @test_throws ArgumentError UniLM._gemini_thinking_level(id, "none")
     end
     @test UniLM._gemini_thinking_levels("gemini-4-argon") == ["low", "medium", "high"]
     @test (@inferred UniLM._gemini_thinking_level("gemini-4-argon", "high")) == "high"

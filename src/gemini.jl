@@ -180,18 +180,23 @@ function _gemini_user_parts(m::Message)::Vector{Dict{Symbol,Any}}
 end
 
 # Thinking levels per model, by exact id, transcribed from the "Controlling thinking" table
-# (https://ai.google.dev/gemini-api/docs/thinking, 2026-10-22). Google's ids carry no dated
+# (https://ai.google.dev/gemini-api/docs/thinking, 2026-11-16). Google's ids carry no dated
 # snapshots, and distinct models share prefixes (gemini-3.8-flash-tts, gemini-3.8-live), so a
 # row never extends to a longer id: an unlisted id gets the generic check and the server's
 # answer. The -latest aliases carry the levels of the models that served them on 2026-10-22;
 # gemini-3.7-flash and gemini-3.5-flash, deprecated on 2026-10-08, those of the models Google
-# routes them to.
+# routes them to. Only Gemini 4 Hydrogen's row lists "xhigh": Hydrogen took it on generateContent
+# and the Interactions API, while Carbon and 3.8 Flash answered it with HTTP 400 "Thinking level
+# XHIGH is not supported for this model", as Hydrogen answered "minimal" (observed 2026-11-16).
 const _GEMINI_THINKING_LEVELS = Dict{String,Vector{String}}(
+    "gemini-4-carbon"              => ["low", "medium", "high"],
     "gemini-4-argon"               => ["low", "medium", "high"],
+    "gemini-4-hydrogen"            => ["low", "medium", "high", "xhigh"],
     "gemini-3.8-flash"             => ["low", "medium", "high"],
     "gemini-3.6-flash"             => ["minimal", "low", "medium", "high"],
     "gemini-3.5-flash-lite"        => ["minimal", "low", "medium", "high"],
     "gemini-3.1-pro-preview"       => ["low", "medium", "high"],
+    "gemini-3.1-flash-lite"        => ["minimal", "low", "medium", "high"],
     "gemini-3.1-flash-lite-image"  => ["minimal", "high"],
     "gemini-3-flash-preview"       => ["minimal", "low", "medium", "high"],
     "gemini-2.5-pro"               => ["low", "medium", "high"],
@@ -207,12 +212,21 @@ const _GEMINI_THINKING_LEVELS = Dict{String,Vector{String}}(
 _gemini_thinking_levels(model::AbstractString)::Union{Vector{String},Nothing} =
     get(_GEMINI_THINKING_LEVELS, model, nothing)
 
+# The levels an id no row names may take: the API's but "xhigh", which only a row that lists it takes.
+const _GEMINI_GENERIC_LEVELS = ("minimal", "low", "medium", "high")
+
 function _gemini_thinking_level(model::String, effort::String; native::Bool=false)::String
-    effort in ("minimal", "low", "medium", "high") || throw(ArgumentError(
-        "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))"))
     levels = _gemini_thinking_levels(model)
-    isnothing(levels) || effort in levels || throw(ArgumentError(
-        "$model supports $(join(levels, ", ", length(levels) == 2 ? " or " : ", or ")) thinking effort"))
+    if isnothing(levels)
+        effort in _GEMINI_GENERIC_LEVELS || throw(ArgumentError(
+            "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))" *
+            (effort == "xhigh" ? "; only " * join(sort!([m for (m, l) in _GEMINI_THINKING_LEVELS if "xhigh" in l]), ", ") *
+                                 " takes \"xhigh\"" : "")))
+    else
+        effort in levels || throw(ArgumentError(
+            "$model supports $(join(levels, ", ", length(levels) == 2 ? " or " : ", or ")) thinking effort " *
+            "(got $(repr(effort)))"))
+    end
     native && startswith(model, "gemini-2.5-") && throw(ArgumentError(
         "Gemini 2.5 generateContent uses thinkingBudget; use Respond with Reasoning for thinking levels"))
     effort

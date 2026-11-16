@@ -59,6 +59,64 @@ else
     end
 end
 
+@testset "OpenAI images — gpt-image-2.6-flare at complexity low, the smallest size" begin
+    # 1024x640 is 655,360 pixels, the fewest a custom size may have; 450 output tokens on 2026-11-16.
+    r = generate_image("a red circle on white"; model="gpt-image-2.6-flare", size="1024x640", quality="low",
+                       complexity="low")
+    @test r isa ImageSuccess
+    @info "OpenAI image (complexity) live usage" usage = get(r.response.raw, "usage", nothing)
+    @test (r.response.raw["size"], r.response.raw["output_format"]) == ("1024x640", "png")
+    bytes = base64decode(only(image_data(r)))
+    @test UniLM._sniff_image_mime(bytes) == "image/png" && _png_size(bytes) == (1024, 640)
+    @test token_usage(r).completion_tokens > 0 && isnothing(r.response.svg_usage)
+end
+
+@testset "OpenAI images — a 2-frame GIF on gpt-image-2.6-flare" begin
+    # The fewest frames at the smallest size: 1,584 output tokens on 2026-11-16. An organization without the GIF
+    # preview gets an HTTP 400, "Requires access to the GIF preview for the selected model".
+    r = generate_image("a red ball bouncing once on white"; model="gpt-image-2.6-flare", size="1024x640", quality="low",
+                       output_format="gif", frame_count=2, frame_duration_ms=200)
+    @test r isa ImageSuccess
+    @info "OpenAI image (GIF) live usage" usage = get(r.response.raw, "usage", nothing)
+    @test r.response.raw["output_format"] == "gif"
+    @test String(base64decode(only(image_data(r)))[1:6]) == "GIF89a"
+    @test token_usage(r).completion_tokens > 0
+end
+
+@testset "OpenAI images — the Responses image generation tool at complexity low runs gpt-image-2.6-sunburst" begin
+    # On 2026-11-16 the reply repeated the tool with "model":"gpt-image-2.6-sunburst" and "complexity":"low"; its
+    # tool_usage reported 824 image output tokens.
+    r = respond(Respond(model="gpt-6-luna", input="Draw a red circle on a white background.", store=false,
+                        reasoning=Reasoning(effort="none"), tool_choice=tool_choice_hosted("image_generation"),
+                        tools=[image_generation_tool(quality="low", size="1024x1024", complexity="low")]))
+    @test r isa ResponseSuccess
+    tool = only(t for t in r.response.raw["tools"] if t["type"] == "image_generation")
+    @test (tool["model"], tool["complexity"]) == ("gpt-image-2.6-sunburst", "low")
+    @test length(image_generation_results(r)) == 1
+    used = tool_usage(r)
+    @info "image tool live usage" used cost = estimated_cost(r)
+    @test used.image_output_tokens > 0
+    u = token_usage(r)
+    @test isapprox(estimated_cost(r), (u.prompt_tokens * 0.10 + u.completion_tokens * 0.50 +
+        (used.image_input_tokens - used.image_input_image_tokens) * 5.0 + used.image_input_image_tokens * 8.0 +
+        used.image_output_tokens * 30.0) / 1e6; rtol=1e-9)
+end
+
+@testset "OpenAI images — an SVG on gpt-image-2.6-flare, authored by gpt-6-luna, reports svg_usage" begin
+    # An organization with SVG model selection must name the author ("SVG generation requires 'svg.model'.",
+    # HTTP 400 without it, 2026-11-16); the reference image cost 450 output tokens, the author 1,364 tokens.
+    r = generate_image(ImageGeneration(prompt="a simple flat red circle icon", model="gpt-image-2.6-flare", size="1024x640",
+                                       quality="low", output_format="svg", n=1, svg=SvgOptions(model="gpt-6-luna", effort="low")))
+    @test r isa ImageSuccess
+    @info "OpenAI image (SVG) live usage" usage = get(r.response.raw, "usage", nothing) svg_usage = r.response.svg_usage
+    @test r.response.raw["output_format"] == "svg"
+    @test startswith(String(base64decode(only(image_data(r)))), "<svg")
+    s = r.response.svg_usage
+    @test s isa Dict{String,Any} && startswith(s["model"], "gpt-6-luna") && s["total_tokens"] > 0
+    rates = Dict("gpt-image-2.6-flare" => UniLM._price(5.0, 1.25, 30.0))
+    @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(r; model="gpt-image-2.6-flare", pricing=rates)) > 0
+end
+
 end
 
 if !haskey(ENV, "GEMINI_API_KEY")

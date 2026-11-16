@@ -126,7 +126,10 @@ models measured below are decision models by their own pages, with text and imag
 name the tag you measured, since a name without one means its `latest` tag ([Setup](@ref ollama_setup)). The model
 that answered is the one the request named: Ollama documents the reply's `model` as the "Model name from the
 request", and a cloud model whose reply drops its tag keeps the requested name in `r.response.model`, the reply's
-in `raw`.
+in `raw`. Ollama 0.40.15 added AutoTrust's decision models ([autotrust-jev](https://ollama.com/library/autotrust-jev),
+on Apple silicon in that release, 8 GB and up), whose Score questions take six levels where Ollama's
+[Decision](https://docs.ollama.com/capabilities/decision) page still gives 2–10 for every model; UniLM has not
+measured them, and they are not among the models below.
 
 Nine decision models answered the same 129 labelled support tickets, one Choice of seven intents each, through
 UniLM on one machine:

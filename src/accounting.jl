@@ -29,7 +29,7 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
-`gpt-6-astra-law` on 2026-11-02; Anthropic's `claude-fable-5-2` and `claude-mythos-5-2` on 2026-11-16),
+`gpt-6-astra-law` on 2026-11-02, `gpt-6-cyber` on 2026-11-16; Anthropic's `claude-fable-5-2` and `claude-mythos-5-2` on 2026-11-16),
 TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
@@ -84,6 +84,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
     "gpt-6-rosalind"  => _price(15.0, 1.50, 75.0),  # life sciences, trusted access; the page of 2026-11-02
     "gpt-6-astra-law" => _price(10.0, 1.0,  50.0),  # promotional, at least through 2026-12-31; no later price yet
+    "gpt-6-cyber"     => _price(20.0, 2.0,  100.0), # Daybreak Red trusted access, Standard only; the page of 2026-11-16
     "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, at least through 2026-11-21
     "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
     "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),

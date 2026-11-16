@@ -1163,6 +1163,15 @@ end
     end
 end
 
+@testset "gpt-6-cyber has its price row" begin
+    # OpenAI's pricing page (2026-11-16), Cyber — Trusted Access: "| gpt-6-cyber (short context) | $20.00 | $100.00 |
+    # $2.00 | $25.00 | $50.00 |" (input, output, cached input, 30m and 12h writes).
+    @test get(DEFAULT_PRICING, "gpt-6-cyber", nothing) == UniLM._price(20.0, 2.0, 100.0)
+    u = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, completion_tokens=100, total_tokens=10_100)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-6-cyber", u))), (9_000 * 20.0 + 1_000 * 2.0 + 100 * 100.0) / 1e6;
+                   rtol=1e-12)
+end
+
 @testset "gpt-6-rosalind and gpt-6-astra-law have their price rows; no other model's rule passes to them" begin
     # OpenAI's pricing page (2026-11-02), Life sciences, Standard only: "| gpt-6-rosalind | $15.00 | $75.00 | $1.50 |
     # $18.75 | $37.50 | $30.00 | $112.50 | $3.00 | $37.50 | $75.00 |" (input, output, cached input, 30m and 12h writes,

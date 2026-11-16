@@ -1315,6 +1315,39 @@ end
     end
 end
 
+@testset "compat — a reasoning_effort the model's thinking row lacks is refused before any request" begin
+    # The endpoint answered each with HTTP 400 on 2026-11-16 — "minimal" on gemini-4-hydrogen, -carbon and -argon and on
+    # gemini-3.8-flash ("Thinking level MINIMAL is not supported for this model"), "xhigh" on Carbon and 3.8 Flash, "max"
+    # on Hydrogen ("Invalid reasoning_effort: max") — but "none" on 3.8 Flash, which it took and thought anyway (82
+    # thinking tokens). The refusal is the native endpoint's, word for word.
+    chat(service, model, effort) = Chat(; service, model, reasoning_effort=effort, messages=[Message(Val(:user), "hi")])
+    encode(model, effort) = JSON.parse(encode_request(GEMINIOpenAIServiceEndpoint, chat(GEMINIOpenAIServiceEndpoint, model, effort)))
+    three, hydrogen = "supports low, medium, or high thinking effort", "supports low, medium, high, or xhigh thinking effort"
+    for (model, effort, fragment) in (("gemini-4-hydrogen", "minimal", hydrogen), ("gemini-4-hydrogen", "max", hydrogen),
+                                      ("gemini-4-carbon", "minimal", three), ("gemini-4-argon", "minimal", three),
+                                      ("gemini-4-carbon", "xhigh", three), ("gemini-3.8-flash", "minimal", three),
+                                      ("gemini-3.8-flash", "xhigh", three), ("gemini-3.8-flash", "none", three))
+        err = _gemini_caught(() -> encode(model, effort))
+        @test err isa ArgumentError && occursin(model, err.msg) && occursin(fragment, err.msg) && occursin(repr(effort), err.msg)
+        @test err.msg == _gemini_caught(() -> encode_request(GEMINIServiceEndpoint, chat(GEMINIServiceEndpoint, model, effort))).msg
+        # Refused before any request: with no key, a call that got past the refusal would be a call error.
+        @test withenv(() -> _gemini_caught(() -> chatrequest!(chat(GEMINIOpenAIServiceEndpoint, model, effort);
+                                                               config=RequestConfig(max_attempts=1))),
+                      "GEMINI_API_KEY" => nothing) isa ArgumentError
+    end
+    # A level the row lists goes as set.
+    for (model, effort) in (("gemini-4-hydrogen", "xhigh"), ("gemini-4-hydrogen", "low"), ("gemini-3.8-flash", "high"),
+                            ("gemini-3.6-flash", "minimal"))
+        @test encode(model, effort)["reasoning_effort"] == effort
+    end
+    # A gemini-2.5- model takes a thinking budget on this wire, and "none" turns it off: gemini-2.5-flash answered
+    # "none", "minimal" and "xhigh" with HTTP 200 (2026-11-16). An id without a row goes as given too.
+    for model in ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-5-x"), effort in ("none", "minimal", "xhigh")
+        @test encode(model, effort)["reasoning_effort"] == effort
+    end
+    @test encode("gemini-5-x", "max")["reasoning_effort"] == "max"
+end
+
 # Replies of Google's OpenAI-compatible endpoint on gemini-4-hydrogen, as they came (2026-11-16): an unstreamed
 # one at reasoning_effort "xhigh" (prompt_tokens 38, completion_tokens 5, total_tokens 124) and a stream at "low"
 # (its last usage 38, 5, 63). Neither names completion_tokens_details: the thinking is only inside total_tokens.

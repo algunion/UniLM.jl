@@ -321,18 +321,33 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     JSON.json(body)
 end
 
+# A reasoning_effort on the compatible endpoint meets the model's row of the thinking table, with the
+# refusal generateContent gives: the endpoint answered an effort the row lacks with HTTP 400 —
+# "Thinking level MINIMAL is not supported for this model" on gemini-4-hydrogen, -carbon and -argon
+# and on gemini-3.8-flash, XHIGH likewise on Carbon and 3.8 Flash, "Invalid reasoning_effort: max" on
+# Hydrogen — or took "none" on 3.8 Flash and thought anyway (82 thinking tokens), observed 2026-11-16,
+# though Google's compatibility page maps "minimal" to "low" on Gemini 4. A gemini-2.5- model takes a
+# thinking budget on this wire, which "none" turns off (gemini-2.5-flash answered "none", "minimal" and
+# "xhigh" with HTTP 200), and an id without a row is the server's to check: both go as set.
+function _gemini_compat_effort(model::String, effort::Union{String,Nothing})::Nothing
+    isnothing(effort) || startswith(model, "gemini-2.5-") || isnothing(_gemini_thinking_levels(model)) ||
+        _gemini_thinking_level(model, effort)
+    nothing
+end
+
 # GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, so the same models take
 # the sampling parameters: Google's page on Gemini 3.6 says the models ignore them, without
 # naming an endpoint, and that they are ignored on this wire too is inferred from that page,
 # not measured on it. It takes the service tiers Google's compatibility page names —
 # `service_tier="priority"` or `"flex"`, and `"standard"`, which `service_tier` "defaults to"
 # (https://ai.google.dev/gemini-api/docs/openai#flex-and-priority-inference) — and no other
-# OpenAI tier. Its other refusals are the server's: it answers HTTP 400 to
-# `prompt_cache_options` ("Unknown name") and to a request ending with an assistant turn
-# ("Requests ending with a model turn are not supported."), observed on gemini-3.8-flash on
-# 2026-10-22.
+# OpenAI tier. A reasoning_effort meets the model's row of the thinking table (`_gemini_compat_effort`).
+# Its other refusals are the server's: it answers HTTP 400 to `prompt_cache_options` ("Unknown name")
+# and to a request ending with an assistant turn ("Requests ending with a model turn are not
+# supported."), observed on gemini-3.8-flash on 2026-10-22.
 function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
+    _gemini_compat_effort(chat.model, chat.reasoning_effort)
     _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini's OpenAI-compatible endpoint")
     _compat_audio_estimate(chat)
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)

@@ -182,10 +182,17 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   (a tier a reply names is kept): `"flex"` is priced at the Flex rates and `"priority"` at the Priority
   rates, an upper bound, since a downgraded Priority request bills at the standard rate and this wire
   did not say so.
-- **Everything else is sent as set.** No other check runs: `reasoning_effort` goes as it is, Google
-  mapping it to a thinking level, and `prompt_cache_options`, a request that ends with an assistant
-  turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach Google, which answered
-  the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.
+- **Thinking levels.** `reasoning_effort` is checked against the model's row of the
+  [thinking table](@ref gemini_reasoning), as on generateContent, and an effort the row lacks is refused
+  before the request is sent. Google's compatibility page maps `"minimal"` to `low` on Gemini 4, but the
+  endpoint answered `"minimal"` on `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon` and
+  `gemini-3.8-flash` with HTTP 400 "Thinking level MINIMAL is not supported for this model", and took
+  `"none"` on `gemini-3.8-flash` and thought anyway (16 November 2026). A `gemini-2.5-` model takes a
+  thinking budget there, which `"none"` turns off, so its effort goes as set, as does an effort for an
+  id no row names.
+- **Everything else is sent as set.** No other check runs: `prompt_cache_options`, a request that ends
+  with an assistant turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach
+  Google, which answered the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.
 - **No thinking; signatures go back.** UniLM keeps no provider content from this wire:
   `reasoning_text` gives `nothing`. A function call's thought signature, which this wire gives in the
   call's `extra_content.google.thought_signature`, stays on its `ToolCall` (`thought_signature`) and

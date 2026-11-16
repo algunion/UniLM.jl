@@ -227,3 +227,36 @@ end
     @test_throws ArgumentError delete_container_file("c", "f"; service=ds)
     @test_throws ArgumentError container_file_content("c", "f"; service=ds)
 end
+
+@testset "add_container_file(id; file_id): an uploaded file copied in, sent as JSON" begin
+    cfile = """{"id": "cfile_1", "object": "container.file", "created_at": 1, "bytes": 3, "container_id": "cntr_1",
+                "path": "/mnt/data/a.txt", "source": "user"}"""
+    r, seen = _with_scripted((_, _) -> _json(200, cfile)) do
+        add_container_file("cntr_1"; file_id="file-abc", service=URLProbe)
+    end
+    @test r isa ContainerSuccess && r.response isa UniLM.ContainerFileObject && r.response.path == "/mnt/data/a.txt"
+    req = only(seen)
+    @test (req.method, req.target, JSON.parse(req.body)) == ("POST", "/v1/containers/cntr_1/files", Dict("file_id" => "file-abc"))
+    @test _seam_timeout(add_container_file("cntr_x"; file_id="f", service=SeamProbe, config=_TINY_DEADLINE), ContainerCallError)
+    @test _recorded_targets(() -> add_container_file(_HOSTILE_ID; file_id="f", service=URLProbe)) ==
+          ["/v1/containers/$_HOSTILE_ENC/files"]
+    @test_throws UndefKeywordError add_container_file("cntr_1"; service=URLProbe)
+    @test_throws ArgumentError add_container_file("cntr_1"; file_id="f", service=DeepSeekEndpoint("k"))
+end
+
+@testset "the container verbs take cancel as their last keyword, and a cancelled token sends nothing" begin
+    for f in (create_container, list_containers, add_container_file, list_container_files, retrieve_container_file,
+              delete_container_file, container_file_content),
+        m in methods(f)
+        @test (f, last(filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m)))) == (f, :cancel)
+    end
+    tok = cancel!(CancelToken())
+    for call in (() -> add_container_file("cntr_1"; file_id="f", service=URLProbe, cancel=tok),
+                 () -> list_container_files("cntr_1"; service=URLProbe, cancel=tok),
+                 () -> retrieve_container_file("cntr_1", "f"; service=URLProbe, cancel=tok),
+                 () -> delete_container_file("cntr_1", "f"; service=URLProbe, cancel=tok),
+                 () -> container_file_content("cntr_1", "f"; service=URLProbe, cancel=tok))
+        r, seen = _with_scripted(call, (_, _) -> _json(200, "{}"))
+        @test r isa ContainerCallError && r.cause isa UniLMCancelled && isempty(seen)
+    end
+end

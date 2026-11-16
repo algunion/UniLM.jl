@@ -327,6 +327,24 @@ function add_container_file(container_id::String, path::String; service::Service
 end
 
 """
+    add_container_file(container_id; file_id, service=OPENAIServiceEndpoint)
+
+Copy a file uploaded through the Files API ([`upload_file`](@ref)) into the container, by its
+id, sent as JSON. A success is a `ContainerSuccess` whose `response` is the created
+[`ContainerFileObject`](@ref).
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `ContainerCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function add_container_file(container_id::String; file_id::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :containers, "Containers API")
+    _cont_call(d -> ContainerSuccess(response=_parse_container_file(d)), "POST", "/" * _uripart(container_id) * "/files",
+               service, config, cancel; body=Dict(:file_id => file_id))
+end
+
+"""
     list_container_files(container_id; limit=nothing, order=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
 List the files in a container — those added and those its code wrote — a page at a time: `order`

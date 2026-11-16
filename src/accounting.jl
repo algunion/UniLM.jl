@@ -272,7 +272,8 @@ outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `mod
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
 not model, and a price this function cannot compute is not a zero it can report. An
 `ImageSuccess` whose reply reports `svg_usage`, the tokens of an SVG's author, is estimated from
-its `usage` alone, with one warning per model that the author's tokens are left out.
+its `usage` alone, with one warning per model that the author's tokens are left out; so is a Responses result
+whose `image_generation_call` reports `svg_usage`.
 `pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix

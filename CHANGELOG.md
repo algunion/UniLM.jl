@@ -11,6 +11,13 @@
 - **`tool_loop` on a Gemini Interactions `Respond` stops at a call whose arguments are no JSON object.** The turn is
   a `ResponseCallError` and the loop ends with `completed=false`, where it used to answer the call with "Error:
   invalid arguments: …" and go on.
+- **The Gemini default model is `gemini-4-hydrogen`**, Google's named successor to `gemini-3.8-flash`, on
+  `GEMINIServiceEndpoint` and `GEMINIOpenAIServiceEndpoint`. Per 1M input / cache-hit / output tokens it costs $1.50 /
+  $0.075 / $7.50, against 3.8 Flash's $0.75 / $0.075 / $3.75 through 2026-12-31 (twice the input and output price);
+  from 2027-01-01 3.8 Flash costs $1.50 / $0.15 / $7.50. Hydrogen thinks at `high` when no effort is set (3.8 Flash:
+  `medium`) and refuses `minimal`. As a `gemini-4-` model, a default call gets the 20-minute default timeouts.
+  Upgrading: name `model = "gemini-3.8-flash"` to keep the previous model; a call that sets `reasoning_effort =
+  "minimal"` and no model now throws `ArgumentError`.
 
 ### Added
 - **Gemini's Decisions API is a System One backend.** `GEMINIServiceEndpoint` declares `:system_one` and speaks
@@ -41,10 +48,12 @@
   `output_compression` (a generation) or `mask` (an edit); `SvgOptions(; model, effort)`, whose `model` is required,
   and `svg_usage` for SVG output (`n=1`, no stream, partial images or `output_compression`; an edit sends
   `svg[model]` and `svg[reasoning][effort]`). An estimate of an image result with `svg_usage` warns that it leaves
-  the SVG author's tokens out. `ImageGenerationTool` takes `complexity`, `frame_count`, `frame_duration_ms` and
+  the SVG author's tokens out, as does one of a Responses result whose `image_generation_call` carries it.
+  `ImageGenerationTool` takes `complexity`, `frame_count`, `frame_duration_ms` and
   `svg`, and no `output_compression` with GIF or SVG output. Each of these is refused on Gemini before the request.
 - **`input_transformations` and `InputTransformation`.** A Responses result lists the input items OpenAI withheld,
-  for example a reasoning item from another model (`reason` `model_mismatch`), streamed or not.
+  for example a reasoning item from another model (`reason` `model_mismatch`), streamed or not; a reply whose list
+  is not an array throws (JSON `null` reads as none).
 - **`image_context_compression` on `Respond`, `compact_response` and `ResponseObject`** (`"auto"`, `"enabled"` or
   `"disabled"`; the reply's resolved policy is `"enabled"` or `"disabled"`). Gemini Interactions and Ollama refuse it
   before the request.
@@ -64,11 +73,6 @@
 - **The `live.transport.connected` webhook event.**
 
 ### Changed
-- **The Gemini default model is `gemini-4-hydrogen`**, Google's named successor to `gemini-3.8-flash`, on
-  `GEMINIServiceEndpoint` and `GEMINIOpenAIServiceEndpoint`. Per 1M input / cache-hit / output tokens it costs $1.50 /
-  $0.075 / $7.50, against 3.8 Flash's $0.75 / $0.075 / $3.75 through 2026-12-31 (twice the input and output price);
-  from 2027-01-01 3.8 Flash costs $1.50 / $0.15 / $7.50. Hydrogen thinks at `high` when no effort is set (3.8 Flash:
-  `medium`) and refuses `minimal`. As a `gemini-4-` model, a default call gets the 20-minute default timeouts.
 - **The default OpenAI image model is `gpt-image-2.6-sunburst`** (was `gpt-image-2.5-sunburst`), at the same rates,
   and the image tool's cost fallback is `gpt-image-2.6-sunburst` (was `gpt-image-2`); the model a reply echoes still
   prices first.
@@ -99,9 +103,6 @@
   difference is added to `completion_tokens` and `reasoning_tokens` and priced at the output rate, streamed or not; a
   total below prompt + completion is kept as reported, with a one-time warning.
 
-- **`input_transformations` throws for a reply whose list is not an array** (JSON `null` still reads as none), and an
-  estimate of a Responses result whose `image_generation_call` carries `svg_usage` warns that it leaves the SVG
-  author's tokens out.
 
 ### Docs
 - **UniLM stays on Gemini `v1beta`**: `v1` has no request `labels` field and no speech configuration, both of which

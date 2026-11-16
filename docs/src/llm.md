@@ -2017,7 +2017,9 @@ Each wrapper's rules, refused before any I/O (on every backend also a `DocumentA
   state (an `ImageAttachment`, or a vector or tuple of strings and images),
   ≤ 100 MiB of image bytes in all, `detail="original"` refused; a blank state, an
   empty vector state or text block, a `Message` in the state, an `AudioAttachment`
-  anywhere and every provider option refused.
+  anywhere, a `RawQuestion` whose fields nest more than 98 levels (the body takes a
+  JSON nesting depth of 100; a JSON state is sent as text and does not count) and
+  every provider option refused.
 - **Ollama:** see the Ollama bullet under Service Endpoints: 1–64 questions,
   `instructions` required by Ollama's API reference, and not blank, 2–255 options
   (its `minProperties: 2`), 2–10 levels (a
@@ -2289,7 +2291,7 @@ ask_each(requests::AbstractVector{<:SystemOneRequest}; service=nothing, config=n
 with_system_one(f, service; model=nothing, options...)   # -> f(); the backend of every call inside f
     # that names no service, spawned tasks included, and for those calls the model and the provider options
     # (ask's keywords) when the call names none; service must declare :system_one, model must not be blank,
-    # and the backend's wrapper must accept the options (TypeSafe, OpenAI, Ollama: by the rule and with the
+    # and the backend's wrapper must accept the options (TypeSafe, OpenAI, Gemini, Ollama: by the rule and with the
     # message each request gets), or ArgumentError before f runs; a backend UniLM does not wrap checks its
     # options only when it sends a request
 
@@ -2321,8 +2323,9 @@ asked as a string unchanged — OpenAI's echoed labels likewise; object, array a
 image levels are not compared; every probability, confidence, noul and box edge
 in `0 … 1`, a box not inside out (`top ≤ bottom`, `left ≤ right`); probabilities
 summing to 1 within the backend's rounding — `0.005n` on TypeSafe and OpenAI,
-`n·0.5e-4` on Ollama, plus a floating-point margin — and the chosen option at most
-one rounding step below the most probable (0.01, 0.01, 1e-4); a `model` string
+`n·0.5e-4` on Ollama, plus a floating-point margin, and `1e-6` on Gemini, whose
+probabilities arrive unrounded — and the chosen option at most one rounding step
+below the most probable (0.01, 0.01, 1e-4, 1e-6); a `model` string
 that is not blank); a reply that fails is a `SystemOneCallError`. A usage value
 that is not a non-negative whole number reads as 0 with a warning (on OpenAI, so
 does a usage details value that is not an object). `ask`, `ask_each` and
@@ -2330,8 +2333,8 @@ does a usage details value that is not an object). `ask`, `ask_each` and
 502–504, 520–524 and 529, and the final `SystemOneFailure` carries `retry_after`
 — the wait the service asked for in seconds, or `nothing` when it sent no hint.
 With no `RequestConfig` set by the user (no `config`, no `with_request_config`
-scope, no `set_default_config!`), calls on TypeSafe's wire and OpenAI's use
-`request_timeout = 60`, `total_deadline = 150`; Ollama's use the field defaults.
+scope, no `set_default_config!`), calls on TypeSafe's wire, OpenAI's and Gemini's
+use `request_timeout = 60`, `total_deadline = 150`; Ollama's use the field defaults.
 TypeSafe retries carry `X-TypeSafe-Retry-Count` (`"1"` on the second attempt).
 Every System One exchange uses one connection pool per process (256 idle
 connections per host, kept 30 s), created by the first live request.
@@ -2475,7 +2478,8 @@ struct ReplayMissError <: Exception       # thrown by the recorded verbs (or a s
     dir::String
     key::String
     method::String                        # "POST" | "GET" | "DELETE"
-    path::String                          # as keyed: "/v1/systemone" | "/openai-decisions/v1/decisions" | "/ollama/v1/systemone" | "/v1/models" | …
+    path::String                          # as keyed: "/v1/systemone" | "/openai-decisions/v1/decisions" |
+                                          #   "/gemini-decisions/v1beta/decisions" | "/ollama/v1/systemone" | "/v1/models" | …
     body::String                          # as keyed: credentials "<redacted>", data-URL images as digests ("" when
                                           #   none is sent), then "\n" * key_extra if any
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"

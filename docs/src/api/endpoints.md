@@ -25,8 +25,8 @@ UniLM.TYPESAFEServiceEndpoint
 model, Jev ([System One API](@ref system_one_api)), and declares only
 `:system_one` and `:models`, so the chat, Responses and embedding verbs reject
 it up front. `OPENAIServiceEndpoint` answers System One requests too, through
-OpenAI's Decisions API, and so does an [`OllamaEndpoint`](@ref), from a local
-decision model.
+OpenAI's Decisions API, `GEMINIServiceEndpoint` through Google's Decisions API,
+and an [`OllamaEndpoint`](@ref) from a local decision model.
 
 ## Generic Endpoint
 

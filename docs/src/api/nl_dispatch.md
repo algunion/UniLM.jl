@@ -38,7 +38,8 @@ near-ties included: set it, or pass `decide`, to hand unsure answers elsewhere.
 returns an offered option — not only the winner — or `nothing` to decline,
 which takes the same fallback or raises [`DecisionDeclinedError`](@ref). A
 question the backend declines to answer — a [`RefusalAnswer`](@ref), which
-OpenAI's Decisions API may send — is a decline no policy sees: the fallback
+OpenAI's Decisions API may send, and Gemini's for every question of an input its
+filters block — is a decline no policy sees: the fallback
 runs, or `DecisionDeclinedError` carries the refusal.
 [`meanings`](@ref)`(f)` is the union of the options of every natural-language
 method of `f`; `meanings(f, Tuple{…})` lists the ones a call with ordinary

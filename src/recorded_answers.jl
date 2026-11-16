@@ -228,7 +228,8 @@ A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 path of the request URL alone: never its host, nor its query, which can carry a
 credential. A System One backend other than TypeSafe files its requests under a
 namespace of its own, followed by its wire's path — `"/openai-decisions/v1/decisions"`
-for OpenAI's Decisions API, `"/ollama/v1/systemone"` for Ollama — so the same question
+for OpenAI's Decisions API, `"/gemini-decisions/v1beta/decisions"` for Gemini's,
+`"/ollama/v1/systemone"` for Ollama — so the same question
 asked of two backends is two recordings; a System One request that carries an option its
 backend keys (TypeSafe's `long_context`) or image parts, and a
 [`list_input_items`](@ref) request, whose query names the page, append a newline and

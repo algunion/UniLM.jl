@@ -20,8 +20,9 @@ which UniLM checks:
   ratio must be between 1:3 and 3:1, and neither edge may exceed 3840 pixels. The total pixel
   count must be between 655,360 and 8,294,400 (4K)"
   ([image generation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
-- **`quality`**: `"low"`, `"medium"`, `"high"` or `"auto"`, and `"xhigh"` and `"max"` on the 2.5
-  models, which "default to `auto`"; "Use `quality: "low"` for quick drafts"
+- **`quality`**: `"low"`, `"medium"`, `"high"` or `"auto"`, and `"xhigh"` and `"max"` on the Sunburst and
+  Flare models of GPT-Image-2.6 and GPT-Image-2.5 ("the quality options are `low`, `medium`, `high`, `xhigh`,
+  and `max`"), which "default to `auto`"; "Use `quality: "low"` for quick drafts"
   ([image generation](https://developers.openai.com/api/docs/guides/image-generation#size-and-quality-options)).
 - **`background`, `output_format`, `output_compression`**: `"transparent"`, `"opaque"` or
   `"auto"`, a transparent one with `"png"` or `"webp"`; the format `"png"`, the default,
@@ -386,8 +387,9 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | a `complexity` other than `"low"`, `"medium"` and `"high"`, a `frame_count` outside 2 to 16 or a `frame_duration_ms` under 20, on an image request or an `ImageGenerationTool` (when it is built) | `complexity must be`, `frame_count must be 2 to 16`, `frame_duration_ms must be at least 20`: the reference's values | a value in the range |
 | `frame_count` or `frame_duration_ms` without `output_format="gif"`, or `svg` without `output_format="svg"`, on an image request or an `ImageGenerationTool` | `only with output_format="gif"`, `only with output_format="svg"`: each is "Only supported with output_format=gif", "Requires output_format=svg" | the format, or unset the field |
 | GIF output (`output_format="gif"`) with an `output_compression`, or a GIF edit with a `mask` | `GIF output takes no`: "GIF output does not support streaming, partial images, masks, or custom output compression" | unset it |
+| an `ImageGenerationTool` with an `output_compression` beside `output_format="gif"` or `"svg"` (when it is built) | `GIF output takes no output_compression`, `SVG output takes no output_compression`: the API answered either with HTTP 400 on 16 November 2026 | unset `output_compression` |
 | SVG output (`output_format="svg"`) with an `n` other than 1, or with an `output_compression` | `SVG output takes n=1`, `SVG output takes no output_compression`: "SVG generation requires n=1 and does not support [...] output_compression" | `n=1`, no compression |
-| an `SvgOptions` with an empty `model`, or an `effort` other than `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"` (when it is built) | `SvgOptions model`, `SvgOptions effort`: the reference's `minLength: 1` and its efforts | a model name; one of the efforts |
+| an `SvgOptions` with no `model` or an empty one, or an `effort` other than `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"` (when it is built) | `SvgOptions needs its model`, `SvgOptions model`, `SvgOptions effort`: an SVG without `svg.model` was HTTP 400, "SVG generation requires 'svg.model'." (2026-11-16), "When model selection is disabled, omit this object"; the reference's `minLength: 1` and its efforts | a model name, or no `svg` at all where model selection is disabled; one of the efforts |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |
 | a `voice` that is not one of the ten built-in voices, a custom voice among them | `OpenAI Realtime voices are`: UniLM sends the built-in voices only | one of them |
 | a `speak` `response_format` other than `"wav"` and `"pcm"` | `response_format must be "wav"`: the session's audio is 24 kHz PCM, which UniLM returns as a WAV file or as samples | `"wav"` or `"pcm"` |

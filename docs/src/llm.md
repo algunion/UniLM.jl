@@ -732,13 +732,13 @@ end
 
 # action, moderation, partial_images, input_fidelity, complexity, frame_count, frame_duration_ms
 # and svg are validated at construction (ArgumentError; the frame fields only with output_format
-# "gif", svg only with "svg"); quality, background, and output_format pass through unchecked
+# "gif", svg only with "svg", no output_compression with "gif" or "svg"); quality, background, and output_format pass through unchecked
 # (the accepted quality values depend on the model). Unset, the tool runs gpt-image-2.6-sunburst.
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
     output_format::Union{String, Nothing} = nothing
     output_compression::Union{Int, Nothing} = nothing
-    quality::Union{String, Nothing} = nothing               # "low","medium","high","auto"; 2.5 models add "xhigh","max"
+    quality::Union{String, Nothing} = nothing               # "low","medium","high","auto"; the 2.6 and 2.5 models add "xhigh","max"
     size::Union{String, Nothing} = nothing
     model::Union{String, Nothing} = nothing                 # e.g. "gpt-image-2.5-flare"
     action::Union{String, Nothing} = nothing                # "generate","edit","auto"
@@ -1090,7 +1090,7 @@ println(tokens["input_tokens"])
     prompt::String
     n::Union{Int,Nothing} = nothing                         # 1–10 on OpenAI; Gemini takes only 1
     size::Union{String,Nothing} = nothing                   # OpenAI: "1024x1024","1536x1024","1024x1536","auto"; gpt-image-2+: any WIDTHxHEIGHT, multiples of 16, up to 3840x2160
-    quality::Union{String,Nothing} = nothing                # OpenAI: "low","medium","high","auto"; gpt-image-2.5-flare/-sunburst add "xhigh","max"
+    quality::Union{String,Nothing} = nothing                # OpenAI: "low","medium","high","auto"; gpt-image-2.6/2.5 Sunburst and Flare add "xhigh","max"
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
     output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg","gif","svg"
     output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only; not with "svg" or "gif")
@@ -1104,10 +1104,13 @@ println(tokens["input_tokens"])
     svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: the SVG author, with output_format "svg" (and n 1, no output_compression)
 end
 
-@kwdef struct SvgOptions                                    # the Images API's and the image tool's `svg` object
-    model::Union{String,Nothing} = nothing                  # the author model; non-empty ("When model selection is enabled, supply svg.model")
-    effort::Union{String,Nothing} = nothing                 # sent as reasoning.effort: "none","minimal","low","medium","high","xhigh","max"
+struct SvgOptions                                           # the Images API's and the image tool's `svg` object
+    model::String                                           # the author model: required, non-empty (the API answers an SVG
+                                                            #   without one "SVG generation requires 'svg.model'."); where
+                                                            #   model selection is disabled, set no svg at all
+    effort::Union{String,Nothing}                           # sent as reasoning.effort: "none","minimal","low","medium","high","xhigh","max"
 end
+SvgOptions(; model, effort=nothing)                         # SvgOptions() or SvgOptions(; effort) throws ArgumentError
 
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint

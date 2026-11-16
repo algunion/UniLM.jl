@@ -137,7 +137,7 @@ end
 | `n`                  | both     | Int    | `1`               | Number of images (1–10); Gemini takes only 1 |
 | `safety_identifier`  | both     | String | —                 | Stable end-user id for abuse monitoring: 1–128 characters on OpenAI; on Gemini the request label, at most 63 lowercase letters, numerals, `_` or `-`, international ones included |
 | `size`               | OpenAI   | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
-| `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` |
+| `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on the Sunburst and Flare models of GPT-Image-2.6 and 2.5 |
 | `background`         | OpenAI   | String | `"auto"`          | `"transparent"`, `"opaque"`        |
 | `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"` |
 | `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG or GIF output |

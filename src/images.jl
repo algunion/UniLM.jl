@@ -24,7 +24,7 @@ provider takes it.
 - `service`: `OPENAIServiceEndpoint` (default) or `GEMINIServiceEndpoint`; any other
   endpoint is sent the OpenAI Images API request.
 - `model::String`: The default is the sentinel `""`, which resolves at serialization
-  time to the service's default image model (`"gpt-image-2.5-sunburst"` for OpenAI,
+  time to the service's default image model (`"gpt-image-2.6-sunburst"` for OpenAI,
   `"gemini-nano-banana-2.1"` for Gemini) — so the field READS BACK as `""` until you set
   it explicitly, and a service with no default image model throws `ArgumentError` when
   the request is serialized. Inspect `JSON.json(ig)` to see the body that will go on the
@@ -393,7 +393,7 @@ vector of paths) changed as `prompt` asks. OpenAI is sent multipart/form-data at
 `/v1/images/edits`; `GEMINIServiceEndpoint` is sent `generateContent` with each image
 as an inline part ahead of the prompt, its format read from the file's bytes (PNG,
 JPEG, GIF or WebP). `model` left `""` is the service's default image model
-(`"gpt-image-2.5-sunburst"` on OpenAI, `"gemini-nano-banana-2.1"` on Gemini), resolved
+(`"gpt-image-2.6-sunburst"` on OpenAI, `"gemini-nano-banana-2.1"` on Gemini), resolved
 when the edit is sent.
 
 # Fields — both providers

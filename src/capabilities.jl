@@ -127,7 +127,7 @@ default_embedding_model(::GenericOpenAIEndpoint)          = nothing
 default_embedding_model(_) = nothing
 
 """Default image generation model per provider."""
-default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2.5-sunburst"
+default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2.6-sunburst"   # "For new integrations, use GPT-Image-2.6"
 default_image_model(::Type{GEMINIServiceEndpoint}) = "gemini-nano-banana-2.1"
 default_image_model(_) = nothing
 

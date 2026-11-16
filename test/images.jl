@@ -1,9 +1,9 @@
 @testset "ImageGeneration" begin
     @testset "minimal creation" begin
         ig = ImageGeneration(prompt="A cute robot")
-        @test ig.model == ""  # resolved to "gpt-image-2.5-sunburst" during serialization
-        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2.5-sunburst"
-        @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.5-sunburst"
+        @test ig.model == ""  # resolved to "gpt-image-2.6-sunburst" during serialization
+        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2.6-sunburst"
+        @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.6-sunburst"
         @test ig.prompt == "A cute robot"
         @test ig.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(ig.n)
@@ -41,7 +41,7 @@
     @testset "JSON serialization" begin
         ig = ImageGeneration(prompt="test", quality="high", size="1024x1024")
         lowered = JSON.lower(ig)
-        @test lowered[:model] == "gpt-image-2.5-sunburst"
+        @test lowered[:model] == "gpt-image-2.6-sunburst"
         @test lowered[:prompt] == "test"
         @test lowered[:quality] == "high"
         @test lowered[:size] == "1024x1024"
@@ -59,7 +59,7 @@
         ig = ImageGeneration(prompt="A sunset", n=2, size="1536x1024", background="opaque")
         json_str = JSON.json(ig)
         parsed = JSON.parse(json_str)
-        @test parsed["model"] == "gpt-image-2.5-sunburst"
+        @test parsed["model"] == "gpt-image-2.6-sunburst"
         @test parsed["prompt"] == "A sunset"
         @test parsed["n"] == 2
         @test parsed["size"] == "1536x1024"
@@ -534,7 +534,7 @@ _refusal(f) = try f(); nothing catch e; e end
 
 @testset "OpenAI images — safety_identifier replaces the deprecated user field" begin
     @test _image_json(ImageGeneration(prompt="p", safety_identifier="u1")) ==
-          Dict{String,Any}("model" => "gpt-image-2.5-sunburst", "prompt" => "p", "safety_identifier" => "u1")
+          Dict{String,Any}("model" => "gpt-image-2.6-sunburst", "prompt" => "p", "safety_identifier" => "u1")
     @test !hasfield(ImageGeneration, :user) && !hasfield(ImageEdit, :user)
     @test_throws MethodError ImageGeneration(prompt="p", user="u1")
     # OpenAI's safety guide: at most 128 characters, counted as characters, not bytes.
@@ -577,7 +577,7 @@ end
     end
 end
 
-@testset "OpenAI image edits — safety_identifier is a form field; the default model is gpt-image-2.5-sunburst" begin
+@testset "OpenAI image edits — safety_identifier is a form field; the default model is gpt-image-2.6-sunburst" begin
     path = tempname() * ".png"
     write(path, UInt8[0x89, 0x50, 0x4e, 0x47])
     ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
@@ -592,7 +592,7 @@ end
         url, _, body = withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, ImageEdit(image=path, prompt="p")),
                                "OPENAI_API_KEY" => "sk-test")
         @test url == "https://api.openai.com/v1/images/edits"
-        @test occursin("name=\"model\"\r\n\r\ngpt-image-2.5-sunburst\r\n", String(read(body.build())))
+        @test occursin("name=\"model\"\r\n\r\ngpt-image-2.6-sunburst\r\n", String(read(body.build())))
     finally
         rm(path; force=true)
     end

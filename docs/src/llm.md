@@ -209,7 +209,8 @@ load_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)     #
     # ArgumentError; a runner the model has no variant for → OllamaFailure 404 from the show; one total_deadline
     # bounds both requests
 unload_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)   # empty /api/chat, keep_alive 0, runner
-delete_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)   # DELETE /api/delete
+delete_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)   # DELETE /api/delete; on OPENAIServiceEndpoint,
+    # DELETE /v1/models/{model} (a fine-tuned model) → ModelDeleteSuccess | ModelListFailure | ModelListCallError
     # each → OllamaSuccess{T} | OllamaFailure (404: not installed) | OllamaCallError; an empty name → ArgumentError
 ```
 

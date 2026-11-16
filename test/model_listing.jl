@@ -428,6 +428,12 @@ end
     end
     e = try UniLM._delete_model(_ML_OPENAI, "", nothing, nothing); nothing catch x; x end
     @test e isa ArgumentError
+    # The verb routes an OpenAI endpoint here, and refuses one without fine-tuning by name.
+    r, seen = _with_scripted(() -> delete_model(id; service=_ML_OPENAI, config=_ML_CFG),
+                             _ml_serving("""{"id":"$id","object":"model","deleted":true}"""))
+    @test r isa ModelDeleteSuccess && _ml_targets(seen) == [("DELETE", "/v1/models/ft%3Agpt-4o-mini%3Aorg%3Asuffix%3Aabc123")]
+    e = try delete_model(id; service=ANTHROPICServiceEndpoint); nothing catch x; x end
+    @test e isa ArgumentError && startswith(e.msg, "Model deletion is not supported by ANTHROPICServiceEndpoint")
 end
 
 # ─── The drift checks (provider_drift_checks.jl) ─────────────────────────────

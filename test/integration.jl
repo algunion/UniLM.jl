@@ -475,7 +475,7 @@ end
 
 # Never a real model: the delete of a made-up fine-tuned model is OpenAI's free witness, a 404.
 @testset "delete a fine-tuned model — a made-up id is a 404" begin
-    r = UniLM._delete_model(OPENAIServiceEndpoint, "ft:gpt-4o-mini:unilm:made-up:abc123", nothing, nothing)
+    r = delete_model("ft:gpt-4o-mini:unilm:made-up:abc123"; service=OPENAIServiceEndpoint)
     @test r isa ModelListFailure && r.status == 404 && occursin("model_not_found", r.response)
 end
 

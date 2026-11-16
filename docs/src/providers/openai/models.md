@@ -41,9 +41,10 @@ m.id, m.created, m.retires, m.raw["owned_by"]
 
 [`retrieve_model`](@ref) asks for one model by id (`GET /v1/models/{model}`) and returns a `ModelSuccess`
 whose `model` is the `ProviderModel` the listing would hold for it; an id the key cannot use is a
-`ModelListFailure` with status 404 ([One model by id](@ref models_lookup)). OpenAI deletes a fine-tuned
-model with `DELETE /v1/models/{model}`, for an organization Owner; UniLM decodes its reply into a
-`ModelDeleteSuccess` once the reply names the model and confirms the deletion.
+`ModelListFailure` with status 404 ([One model by id](@ref models_lookup)). [`delete_model`](@ref) with
+`service=OPENAIServiceEndpoint` deletes a fine-tuned model (`DELETE /v1/models/{model}`, for an
+organization Owner) and returns a `ModelDeleteSuccess` once the reply names the model and confirms the
+deletion.
 
 The listing also names models whose shutdown date has passed. Before you use a newly listed model,
 check that it has a price row, as the lookup above does, and whether it needs request rules UniLM does

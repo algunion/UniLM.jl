@@ -86,9 +86,9 @@ ModelListCallError
 
 A missing key, a network failure, a timeout or a cancel gives a `ModelListCallError`, and
 so does a reply that is not the documented listing or model; an error status on any page,
-or on a lookup, gives a `ModelListFailure`. A `ModelDeleteSuccess` is the result of a
-fine-tuned model's deletion on OpenAI (`DELETE /v1/models/{model}`), which holds the id the
-reply names once the reply confirms the deletion.
+or on a lookup, gives a `ModelListFailure`. A `ModelDeleteSuccess` is the result of [`delete_model`](@ref) on OpenAI,
+a fine-tuned model's deletion (`DELETE /v1/models/{model}`): it holds the id the reply names
+once the reply confirms the deletion.
 
 [`list_models`](@ref) is documented with the System One verbs: on TypeSafe it lists the Jev
 models and aliases, on an [`OllamaEndpoint`](@ref) the models a server has installed.

@@ -415,12 +415,24 @@ Remove the installed model `name` from an Ollama server's disk (`DELETE /api/del
 [`OllamaCallError`](@ref). `config` and `cancel` work as for [`model_info`](@ref). An empty `name`
 throws `ArgumentError` before any request. There is no undo: [`pull_model`](@ref) downloads it again.
 
+On [`OPENAIServiceEndpoint`](@ref) it deletes a fine-tuned model (`DELETE /v1/models/{model}`, for an
+organization Owner): a [`ModelDeleteSuccess`](@ref) once the reply names the model and confirms the
+deletion, a [`ModelListFailure`](@ref) (404 for a model the key cannot see or delete), or a
+[`ModelListCallError`](@ref). An empty id, and an endpoint without the `:fine_tuning` capability or
+without OpenAI's Models API, throw `ArgumentError` before any request.
+
 ```julia
 delete_model("all-minilm:22m")
+delete_model("ft:gpt-4o-mini:my-org:custom:abc123"; service=OPENAIServiceEndpoint)
 ```
 """
-delete_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
+delete_model(name::AbstractString; service::ServiceEndpointSpec=OllamaEndpoint(),
              config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    _delete_model(service, name, config, cancel)
+
+# An Ollama server's own route; any other endpoint's is in model_listing.jl.
+_delete_model(service::OllamaEndpoint, name::AbstractString, config::Union{Nothing,RequestConfig},
+              cancel::Union{Nothing,CancelToken}) =
     _ollama_call(nothing, service, "DELETE", "/api/delete", JSON.json(Dict("model" => _ollama_model_name(name))),
                  config, cancel)
 

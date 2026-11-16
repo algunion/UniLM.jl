@@ -66,7 +66,7 @@ end
 struct ModelSuccess <: LLMRequestResponse
     model::ProviderModel
 end
-"Successful result of a fine-tuned model's deletion on OpenAI (`DELETE /v1/models/{model}`): the `id` the reply names, and `deleted`, which the reply confirmed (`true`)."
+"Successful [`delete_model`](@ref) result on OpenAI (`DELETE /v1/models/{model}`), a fine-tuned model's deletion: the `id` the reply names, and `deleted`, which the reply confirmed (`true`)."
 @kwdef struct ModelDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Error result of [`list_models`](@ref) and [`retrieve_model`](@ref), and of a fine-tuned model's deletion, on OpenAI, Anthropic or Gemini: HTTP `status`, the raw `response` body, and the `request_id` the provider sent (`x-request-id`/`request-id` header), if any. An error status on any page is the listing's failure; an unknown model is a 404."
 @kwdef struct ModelListFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end

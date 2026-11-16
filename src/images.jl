@@ -49,6 +49,9 @@ provider takes it.
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`)
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `moderation::Union{String,Nothing}`: Content-moderation strictness (`"auto"`, `"low"`)
+- `complexity::Union{String,Nothing}`: `"low"`, `"medium"` or `"high"`, "Computation spent planning
+  the image, independently of rendering quality" (the GPT-Image-2.6 models, which "use `high`" when it
+  is omitted); another value throws `ArgumentError` when the request is built
 
 # Fields — Gemini only
 [Gemini's image controls](https://ai.google.dev/gemini-api/docs/image-generation#aspect-ratios-and-image-size):
@@ -99,6 +102,23 @@ ImageGeneration(service=GEMINIServiceEndpoint, prompt="A lighthouse at dusk",
     moderation::Union{String,Nothing} = nothing
     aspect_ratio::Union{String,Nothing} = nothing
     resolution::Union{String,Nothing} = nothing
+    complexity::Union{String,Nothing} = nothing
+    function ImageGeneration(service, model, prompt, n, size, quality, background, output_format, output_compression,
+                             safety_identifier, moderation, aspect_ratio, resolution, complexity)
+        _check_image_controls("OpenAI image", complexity)
+        new(service, model, prompt, n, size, quality, background, output_format, output_compression,
+            safety_identifier, moderation, aspect_ratio, resolution, complexity)
+    end
+end
+
+# The GPT-Image-2.6 controls of the Images API and the image generation tool
+# (https://developers.openai.com/api/reference/resources/images/methods/generate), checked where the
+# request is built: `who` names the request in the message.
+const _IMAGE_COMPLEXITIES = ("low", "medium", "high")
+function _check_image_controls(who::String, complexity::Union{AbstractString,Nothing})::Nothing
+    isnothing(complexity) || complexity in _IMAGE_COMPLEXITIES || throw(ArgumentError(
+        "$who complexity must be \"low\", \"medium\" or \"high\" (got $(repr(complexity)))"))
+    nothing
 end
 
 # What `generate_image` sends, checked against its provider's rules first: the body
@@ -117,7 +137,8 @@ function _image_payload(service, ig::ImageGeneration)::Dict{Symbol,Any}
         model = dm
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
-    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :safety_identifier, :moderation)
+    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :safety_identifier, :moderation,
+              :complexity)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -412,6 +433,7 @@ when the edit is sent.
 - `size`, `quality`, `background`, `output_format`: as on [`ImageGeneration`](@ref)
 - `input_fidelity::Union{String,Nothing}`: how closely the edit keeps the input's
   features (`"high"`, `"low"`)
+- `complexity`: as on [`ImageGeneration`](@ref)
 
 # Fields — Gemini only
 `aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
@@ -439,6 +461,13 @@ OpenAI values are sent as given, for OpenAI to judge.
     safety_identifier::Union{String,Nothing} = nothing
     aspect_ratio::Union{String,Nothing} = nothing
     resolution::Union{String,Nothing} = nothing
+    complexity::Union{String,Nothing} = nothing
+    function ImageEdit(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
+                       output_format, safety_identifier, aspect_ratio, resolution, complexity)
+        _check_image_controls("OpenAI image", complexity)
+        new(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
+            output_format, safety_identifier, aspect_ratio, resolution, complexity)
+    end
 end
 
 """
@@ -592,7 +621,7 @@ function _image_request(service, e::ImageEdit)
         isnothing(markup) || push!(parts, "markup" => _markup_part(markup))
         for (k, f) in (("n", :n), ("size", :size), ("quality", :quality), ("input_fidelity", :input_fidelity),
                        ("background", :background), ("output_format", :output_format),
-                       ("safety_identifier", :safety_identifier))
+                       ("safety_identifier", :safety_identifier), ("complexity", :complexity))
             v = getfield(e, f)
             !isnothing(v) && push!(parts, k => string(v))
         end
@@ -623,8 +652,9 @@ end
 # The OpenAI Images API fields generateContent has no counterpart for, and how a refusal names
 # the request.
 _openai_only_image_fields(::ImageGeneration) =
-    (:size, :quality, :background, :output_format, :output_compression, :moderation)
-_openai_only_image_fields(::ImageEdit) = (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format)
+    (:size, :quality, :background, :output_format, :output_compression, :moderation, :complexity)
+_openai_only_image_fields(::ImageEdit) =
+    (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format, :complexity)
 _image_verb(::ImageGeneration) = "image generation"
 _image_verb(::ImageEdit) = "image editing"
 

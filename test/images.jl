@@ -894,3 +894,36 @@ end
     err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
     @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take markup,")
 end
+
+# ── OpenAI GPT-Image-2.6 controls (the Images reference and the image generation guide) ─────────────────
+
+# The multipart fields an OpenAI edit sends, with no key and no request.
+_edit_form(e::ImageEdit) = String(read(last(withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, e),
+                                                    "OPENAI_API_KEY" => "sk-test")).build()))
+
+@testset "OpenAI images — complexity is low, medium or high, on generations and edits; Gemini takes none" begin
+    # The Images reference: `complexity: optional "low" or "medium" or "high"`, "Computation spent planning the image,
+    # independently of rendering quality"; the API answers another value with HTTP 400 (witnessed 2026-11-16).
+    for c in ("low", "medium", "high")
+        @test _image_json(ImageGeneration(prompt="p", complexity=c))["complexity"] == c
+    end
+    @test !haskey(_image_json(ImageGeneration(prompt="p")), "complexity")
+    for bad in ("max", "", "Low"), make in (() -> ImageGeneration(prompt="p", complexity=bad),
+                                             () -> ImageEdit(image="never-read.png", prompt="p", complexity=bad))
+        err = _refusal(make)
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("complexity", "\"low\"", "\"medium\"", "\"high\""))
+    end
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        @test occursin("name=\"complexity\"\r\n\r\nmedium\r\n", _edit_form(ImageEdit(image=path, prompt="p", complexity="medium")))
+        @test !occursin("name=\"complexity\"", _edit_form(ImageEdit(image=path, prompt="p")))
+    finally
+        rm(path; force=true)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", complexity="low")))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take complexity,")
+    e = ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", complexity="low")
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take complexity,")
+end

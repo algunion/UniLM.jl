@@ -41,7 +41,7 @@ UniLM.jl wraps these surfaces:
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter; the task prompts of EmbeddingGemma and `gemini-embedding-2` via `task`; images and audio (`EmbeddingInput`) through Ollama.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
 6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
-7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and realtime, through `OPENAIServiceEndpoint`. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
+7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning and its graders, moderation, webhooks and webhook endpoints, safety cases and alerts, content provenance checks and realtime, through `OPENAIServiceEndpoint`. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
@@ -1357,8 +1357,9 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   token-billed API — chat, Responses, embeddings, image generation, FIM and System
   One. Failures of those APIs report all-zero usage.
 - **Both functions throw `ArgumentError` for result types outside the token-billed
-  APIs** — audio, batch, container, conversation, file, fine-tuning, moderation,
-  upload, vector-store, realtime. Those calls carry no token usage at all,
+  APIs** — audio, batch, container, conversation, file, fine-tuning (graders
+  included), moderation, upload, vector-store, realtime, webhook endpoint, safety and
+  provenance. Those calls carry no token usage at all,
   and a `0.0` would be indistinguishable from a genuinely free call.
 - The model priced is `model=` when given; else the one the provider reports having
   served (`LLMSuccess.model`; `response.model` for Responses, FIM and System One); else the
@@ -2791,7 +2792,7 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:webhooks`, `:safety`, `:content_provenance` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
 | Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API) |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
@@ -2805,7 +2806,8 @@ Validation comes in two strengths, and the difference matters if you write your
 own endpoint:
 
 - **Platform and lifecycle verbs** (files, vector stores, conversations,
-  moderations, audio, batch, fine-tuning, containers, uploads, realtime, FIM,
+  moderations, audio, batch, fine-tuning, containers, uploads, realtime, webhook
+  endpoints, safety, content provenance, FIM,
   prefix completion, System One, model listing) and the image verbs
   (`generate_image`, `:images`; `edit_image`, `:image_edits`) validate
   **strictly**: an endpoint with no declaration at all is not dispatched — the
@@ -2869,7 +2871,8 @@ reset_default_config!()                     # cleared: as if none had been set
 (per request), `list_models`, and the `tool_loop` family (streams retry only before the first callback
 fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning, upload, vector-store, speech and translation on OpenAI's Realtime API (`speak`,
+retried), fine-tuning and grader, upload, vector-store, webhook endpoint, safety and provenance, speech
+and translation on OpenAI's Realtime API (`speak`,
 `translate`: a retry after the session's `response.create`, or after its audio, may bill a second
 response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
 `max_attempts` has no effect on them. A 429 that no retry can serve — spent credit, a
@@ -2894,7 +2897,8 @@ Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToke
 `chatrequest!`, `respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
 `prefix_complete`, `ask`, `ask_each`, `list_models`, the Ollama model calls, `poll_batch`,
 `poll_file_batch`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
-lifecycle verb (files, uploads, vector stores, conversations, containers, batch, fine-tuning,
+lifecycle verb (files, uploads, vector stores, conversations, containers, batch, fine-tuning, graders,
+webhook endpoints, safety cases and alerts, content provenance checks,
 `moderate`, `speak`, `transcribe`, `translate`, `mint_realtime_secret`, and `get_response`,
 `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`).
 `nothing` resolves the ambient token, and an explicit token wins over it. The exception is
@@ -2966,7 +2970,7 @@ not observe the token (`speak` and `translate`, which run Realtime sessions of t
 
 ## Result Type Hierarchy
 
-All 71 API call result types inherit from `LLMRequestResponse`, in 18 per-API
+All 86 API call result types inherit from `LLMRequestResponse`, in 20 per-API
 families:
 
 ```
@@ -2983,7 +2987,9 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
-├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · GraderRunSuccess · GraderValidateSuccess · FineTuningFailure · FineTuningCallError
+├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
+├─ Safety             SafetyCaseSuccess · SafetyAlertSuccess · ProvenanceCheckSuccess · SafetyFailure · SafetyCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
@@ -3174,7 +3180,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (405), grouped by area:
+Every exported symbol (454), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -3227,13 +3233,17 @@ Every exported symbol (405), grouped by area:
 
 **Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`
 
-**Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningFailure`, `FineTuningCallError`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`
+**Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningDeleteSuccess`, `FineTuningFailure`, `FineTuningCallError`, `WandbIntegration`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `pause_fine_tuning_job`, `resume_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`, `create_fine_tuning_checkpoint_permission`, `list_fine_tuning_checkpoint_permissions`, `delete_fine_tuning_checkpoint_permission`
+- *Graders*: `Grader`, `StringCheckGrader`, `TextSimilarityGrader`, `PythonGrader`, `GraderRun`, `GraderRunSuccess`, `GraderValidateSuccess`, `run_grader`, `validate_grader`
 
 **Containers**: `ContainerObject`, `ContainerList`, `ContainerSuccess`, `ContainerListSuccess`, `ContainerDeleteSuccess`, `ContainerFailure`, `ContainerCallError`, `create_container`, `retrieve_container`, `list_containers`, `delete_container`, `add_container_file`
 
 **Uploads**: `UploadObject`, `UploadPartObject`, `UploadSuccess`, `UploadPartSuccess`, `UploadFailure`, `UploadCallError`, `create_upload`, `add_upload_part`, `complete_upload`, `cancel_upload`
 
 **Webhooks**: `WebhookEvent`, `WEBHOOK_EVENTS`, `verify_webhook`, `parse_webhook`
+- *Endpoint management*: `WebhookEndpoint`, `WebhookEndpointList`, `WebhookEndpointTest`, `WebhookEndpointSuccess`, `WebhookEndpointListSuccess`, `WebhookEndpointDeleteSuccess`, `WebhookTestSuccess`, `WebhookEventTypesSuccess`, `WebhookEndpointFailure`, `WebhookEndpointCallError`, `create_webhook_endpoint`, `list_webhook_endpoints`, `retrieve_webhook_endpoint`, `update_webhook_endpoint`, `delete_webhook_endpoint`, `rotate_webhook_endpoint_secret`, `test_webhook_endpoint`, `list_webhook_event_types`
+
+**Safety & content provenance**: `SafetyCase`, `SafetyAlert`, `ProvenanceResult`, `ProvenanceCheck`, `SafetyCaseSuccess`, `SafetyAlertSuccess`, `ProvenanceCheckSuccess`, `SafetyFailure`, `SafetyCallError`, `retrieve_safety_case`, `retrieve_safety_alert`, `check_content_provenance`
 
 **Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
 

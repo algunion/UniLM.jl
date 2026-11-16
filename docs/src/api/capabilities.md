@@ -74,6 +74,9 @@ has_capability
 | `:realtime` | Realtime API: [`realtime_connect`](@ref), [`translate`](@ref) and the Realtime session `speak` runs on OpenAI |
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI and native Gemini (their Decisions APIs) and Ollama |
 | `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama |
+| `:webhooks` | Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): OpenAI |
+| `:safety` | Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): OpenAI |
+| `:content_provenance` | Content provenance checks ([`check_content_provenance`](@ref)): OpenAI |
 
 ## Capabilities by Provider
 

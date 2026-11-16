@@ -387,11 +387,14 @@ _gd_decode(request::SystemOneRequest, fx; service=GEMINIServiceEndpoint) =
     s = _gd_decode(_gd_request("W3"), _gd_fixture("W3"))["severity"]
     @test s.score == 1.121459528316996 && s.legend[1] == "Workaround available: a task fails, but another way works."
     @test s.raw["confidence"] == s.probabilities[1] && s.confidence < s.raw["confidence"]
-    # A model the call names is the response's: the reply names none.
+    # A model the call names is the response's, as the reply names none, without one leading "models/": the
+    # SDK's form of the same id, which the API answered (W6) and which is sent as written.
     w6 = _gd_fixture("W6")
-    r = _gd_decode(SystemOneRequest(_GD_TICKET, "damaged" => noul("Does the customer report a damaged item?");
-                                    model = "models/gemini-decision-1"), w6)
-    @test r.response.model == "models/gemini-decision-1"
+    named(model) = _gd_decode(SystemOneRequest(_GD_TICKET, "damaged" => noul("Does the customer report a damaged item?");
+                                               model), w6).response.model
+    @test named("models/gemini-decision-1") == named("gemini-decision-1") == "gemini-decision-1"
+    @test named("models/models/gemini-decision-1") == "models/gemini-decision-1"     # one prefix, no more
+    @test named("gemini-decision-1-models/") == "gemini-decision-1-models/"
     # The same request three times: the same answer, in another key order (W2, W11a–c).
     @test length(unique(_gd_decode(_gd_request("W2"), _gd_fixture(t))["department"].probabilities
                         for t in ("W2", "W11a", "W11b", "W11c"))) == 1
@@ -633,9 +636,18 @@ end
     by_hand = SystemOneSuccess(SystemOneResponse("gemini-decision-1", Dict{String,SystemOneAnswer}(),
         TokenUsage(prompt_tokens=1000, completion_tokens=0, total_tokens=1000), nothing, Dict{String,Any}(), GEMINIServiceEndpoint))
     @test estimated_cost(by_hand) ≈ 1000 * 0.10 / 1_000_000
-    # The prefixed id the API also answers has no row of its own: the bare id is the one priced.
+    # The prefixed id the API also answers is priced as the bare id, with no missing-price warning: from the
+    # reply, from a response built by hand, and as `model`.
     prefixed = _gd_decode(SystemOneRequest(_GD_TICKET, "damaged" => noul("Does the customer report a damaged item?");
                                            model = "models/gemini-decision-1"), _gd_fixture("W6"))
-    @test (@test_logs (:warn, r"no price row") estimated_cost(prefixed)) == 0.0
-    @test estimated_cost(prefixed; model = "gemini-decision-1") ≈ 98 * 0.10 / 1_000_000
+    bare = estimated_cost(prefixed; model = "gemini-decision-1")
+    @test bare ≈ 98 * 0.10 / 1_000_000
+    @test (@test_logs min_level=Logging.Warn estimated_cost(prefixed)) == bare
+    @test (@test_logs min_level=Logging.Warn estimated_cost(prefixed; model = "models/gemini-decision-1")) == bare
+    hand(model, service) = SystemOneSuccess(SystemOneResponse(model, Dict{String,SystemOneAnswer}(),
+        TokenUsage(prompt_tokens=1000, total_tokens=1000), nothing, Dict{String,Any}(), service))
+    @test (@test_logs min_level=Logging.Warn estimated_cost(hand("models/gemini-decision-1", GEMINIServiceEndpoint))) ≈
+          1000 * 0.10 / 1_000_000
+    # On the Decisions backend only: the same name from another backend is no id of a priced model.
+    @test (@test_logs (:warn, r"no price row") estimated_cost(hand("models/gemini-decision-1", TYPESAFEServiceEndpoint))) == 0.0
 end

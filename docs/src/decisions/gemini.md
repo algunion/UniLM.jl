@@ -97,8 +97,9 @@ Developer API (v1beta) with Gemini Decision 1 only"
 inputs, an input token limit of 262,144, and calibrated probabilities with 0 output tokens. A call may name another
 `model`, which UniLM sends as written: Google answered `models/gemini-decision-1` with HTTP 200, and an unknown
 model with HTTP 404 and the code `not_found` (16 November 2026). The reply names no model, so `r.response.model` is
-the name the request sent; [`estimated_cost`](@ref) prices the bare id, and the prefixed name has no price row of
-its own ([Cost](@ref gemini_decisions_cost)).
+the name the request sent, without one leading `models/`: Google's SDK documents `models/{model}` as the same id, so
+both forms read as `gemini-decision-1` and [`estimated_cost`](@ref) prices them alike
+([Cost](@ref gemini_decisions_cost)).
 
 [`list_models`](@ref)`(service = GEMINIServiceEndpoint)` lists every model Google serves the key, the language
 models with this one ([Models](@ref gemini_models)); no recording holds it, so inside a replay scope it reaches

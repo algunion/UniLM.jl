@@ -396,8 +396,8 @@ unrounded and are held to the float tolerance; a Choice's and a Score's
 `confidence` is recomputed with TypeSafe's published formulas, Google's own value —
 the top probability — kept in `raw`. An input Google's filters block is a
 [`RefusalAnswer`](@ref) for every question. The reply names no model and carries
-no request id, so `response.model` is the model requested and `request_id`
-`nothing`. [`estimated_cost`](@ref) bills the input tokens at \$0.10 per million,
+no request id, so `response.model` is the model requested, without one leading
+`models/` (the SDK's form of the same id), and `request_id` `nothing`. [`estimated_cost`](@ref) bills the input tokens at \$0.10 per million,
 every modality alike, and no output.
 
 ```@docs

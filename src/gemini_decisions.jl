@@ -63,15 +63,16 @@ own — the top probability — stays in each answer's `raw`. An input the API's
 (a 200 whose `prompt_feedback.block_reason` is set) reads as a [`RefusalAnswer`](@ref) for
 every question, its `raw` the `block_reason` and `block_reason_message`; the
 natural-language verbs take it as a decline. The reply names no model, so the response's
-`model` is the one requested; `request_id` is `nothing`, as no header carries one; `usage`
+`model` is the one requested without one leading `models/`, the SDK's form of the same id;
+`request_id` is `nothing`, as no header carries one; `usage`
 counts the input (its audio apart) and the output, always 0. A reply with a status other
 than 200 is a [`SystemOneFailure`](@ref) whose `error_type` is the error's `code` when it is
 a string (`"invalid_request"`, `"not_found"`, and for a blocked input `"safety"`,
 `"prohibited_content"`, `"blocklist"`, `"image_safety"` or `"content_blocked"`), else its
 `status`. Recordings are filed under `/gemini-decisions/v1beta/decisions`, each image keyed
 and written as the SHA-256 of its base64 text, never its bytes. [`estimated_cost`](@ref)
-bills the input tokens at the model's input rate, the same for every modality, and no
-output.
+bills the input tokens at the input rate of the model, named without one leading `models/`,
+the same for every modality, and no output.
 
 Public extension API (not exported).
 """
@@ -397,11 +398,22 @@ function decode_system_one(p::GeminiDecisionsProtocol, service, request::SystemO
     answers = isnothing(blocked) ? _gemini_decisions_answers(raw) :
               Dict{String,SystemOneAnswer}(name => RefusalAnswer(copy(blocked)) for (name, _) in request.questions)
     # The reply names no model: the one requested answered, as the API serves one.
-    model, usage = _system_one_model(p, service, request), _gemini_decisions_usage(raw)
+    model, usage = _gemini_decisions_model(_system_one_model(p, service, request)), _gemini_decisions_usage(raw)
     _check_answers(p, request, SystemOneResponse(model, answers, usage, nothing, raw, service))
     surfaced = Dict{String,SystemOneAnswer}(name => _surface_confidence(name, a) for (name, a) in answers)
     SystemOneSuccess(SystemOneResponse(model, surfaced, usage, nothing, raw, service))
 end
+
+# A model's id without one leading "models/": the SDK documents CreateDecisionRequest.model as `models/{model}`
+# and its guide names the bare id, and the API answered both (measured on 2026-11-16), so the two are one model,
+# named and priced alike. The request still sends the id as given.
+_gemini_decisions_model(model::AbstractString)::String = String(chopprefix(model, "models/"))
+
+# The default price of an evaluation, for the model named without that prefix: a `model` given to
+# `estimated_cost` as well as the response's.
+_system_one_cost(::GeminiDecisionsProtocol, result::SystemOneSuccess, model::Union{Nothing,String},
+                 pricing::AbstractDict{String,PriceRow})::Float64 =
+    _system_one_cost(nothing, result, _gemini_decisions_model(something(model, result.response.model)), pricing)
 
 # An error body is `{"error": {"message", "code"}}` with a string `code` (`invalid_request`, `not_found`, and
 # for a blocked input `safety`, `prohibited_content`, `blocklist`, `image_safety` or `content_blocked`), or

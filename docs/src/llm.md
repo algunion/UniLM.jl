@@ -2046,7 +2046,8 @@ in every bin above 0.5) — tune `min_confidence` per backend.
   recomputed with TypeSafe's formulas (Google's, the top probability, stays in
   `raw`). A 200 whose `prompt_feedback.block_reason` is set is a `RefusalAnswer`
   for every question, its `raw` the `block_reason` and `block_reason_message`. The
-  reply names no model (`response.model` is the requested one) and no request id
+  reply names no model (`response.model` is the requested one without one leading
+  `models/`, which `estimated_cost` prices as the bare id) and no request id
   (`nothing`). Usage: prompt = `total_input_tokens` (images, video frames and PDF
   pages as image tokens), completion = `total_output_tokens` (always 0), cached =
   `total_cached_tokens`, `prompt_audio_tokens` the input's audio modality; a bad

@@ -153,8 +153,8 @@ prefer [`with_request_config`](@ref) in programs.
 A process default you set — even one equal to the field defaults — also
 replaces the default a System One backend or a model brings. Until one is set,
 [`ask`](@ref), [`ask_each`](@ref) and the natural-language verbs on TypeSafe and
-OpenAI's Decisions API, and [`list_models`](@ref) on TypeSafe, use
-`request_timeout = 60` and `total_deadline = 150` (both services typically answer
+OpenAI's and Gemini's Decisions APIs, and [`list_models`](@ref) on TypeSafe, use
+`request_timeout = 60` and `total_deadline = 150` (the three typically answer
 in under a second; the field defaults' ten minutes per attempt would only delay
 reporting a stalled call); [`chatrequest!`](@ref) and [`respond`](@ref) to a Gemini 4
 model (an id starting `gemini-4-`, on `GEMINIServiceEndpoint` or

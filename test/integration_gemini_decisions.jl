@@ -1,7 +1,7 @@
 # ─── Gemini Decisions API Integration Tests ──────────────────────────────────
 # Requires UNILM_LIVE=1 and GEMINI_API_KEY (both, or the suite skips). Spend is capped at
-# exactly twelve calls: ten of 100 to 250 input tokens, one picture of about 400, and one
-# refused by the API with HTTP 400; at $0.10 per 1M input tokens that is about $0.0003 a run
+# exactly sixteen calls: fourteen of 100 to 250 input tokens, one picture of about 400, and
+# one refused by the API with HTTP 400; at $0.10 per 1M input tokens that is about $0.0003 a run
 # (free on the free tier). Every state is unambiguous, so a correct client is the only thing
 # standing between the input and the asserted answer.
 
@@ -20,6 +20,8 @@ keyed(::Val{:refund}, ticket)  = :refund
 keyed(::Val{:pricing}, ticket) = :pricing
 keyed(::Val{:bug}, ticket)     = :bug
 end
+
+using Logging   # the missing-price warning a priced call must not log
 
 const _GEMINI_DECISIONS_LIVE_TICKET =
     "My package arrived crushed and the screen is cracked. I want my money back."
@@ -99,6 +101,43 @@ end
         a = r["is_defect"]
         @test a isa NoulAnswer && 0.01 <= a.noul < 0.5
         @test a.raw["confidence"] ≈ max(a.noul, 1 - a.noul)
+    end
+end
+
+@testset "Gemini Decisions — a noul with `yes` alone" begin
+    r = _gemini_decisions_live("noul, yes alone") do
+        ask(_GEMINI_DECISIONS_LIVE_TICKET, "damaged" => noul("Is the item damaged?"; yes = "It is broken.");
+            service=GEMINIServiceEndpoint, config=_GEMINI_DECISIONS_LIVE_CFG)
+    end
+    @test r isa SystemOneSuccess
+    r isa SystemOneSuccess && @test r["damaged"].noul > 0.5
+end
+
+@testset "Gemini Decisions — models/gemini-decision-1 is answered, named and priced as the bare id" begin
+    r = _gemini_decisions_live("models/ id") do
+        ask(_GEMINI_DECISIONS_LIVE_TICKET, "damaged" => noul("Does the customer report a damaged item?");
+            service=GEMINIServiceEndpoint, model="models/gemini-decision-1", config=_GEMINI_DECISIONS_LIVE_CFG)
+    end
+    @test r isa SystemOneSuccess
+    if r isa SystemOneSuccess
+        @test r.response.model == "gemini-decision-1" && r["damaged"].noul > 0.5
+        cost = @test_logs min_level=Logging.Warn estimated_cost(r)
+        @test token_usage(r).prompt_tokens > 0 && cost ≈ token_usage(r).prompt_tokens * _GEMINI_DECISIONS_RATE
+    end
+end
+
+@testset "Gemini Decisions — ask_each: one result per state, in input order" begin
+    team = (billing = "Payments, invoices, and refunds.", technical = "Problems using the product.",
+            shipping = "Delivery and tracking.", other = nothing)
+    rs = ask_each(["I was charged twice for my order.", "The app crashes every time I open my order history."],
+                  "department" => choice("Which department should handle this request?", team);
+                  service=GEMINIServiceEndpoint, config=_GEMINI_DECISIONS_LIVE_CFG, ntasks=2)
+    @test length(rs) == 2 && all(r -> r isa SystemOneSuccess, rs)
+    if all(r -> r isa SystemOneSuccess, rs)
+        @test [r["department"].choice for r in rs] == ["billing", "technical"]
+        @info "Gemini Decisions live: ask_each" input = sum(r -> token_usage(r).prompt_tokens, rs) cost = sum(estimated_cost, rs)
+    else
+        @info "Gemini Decisions ask_each did not succeed" rs
     end
 end
 

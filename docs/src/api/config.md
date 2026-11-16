@@ -48,7 +48,7 @@ supplies every field):
    [`reset_default_config!`](@ref) or `set_default_config!(nothing)` clears it.
 4. The backend's own default — System One calls only: [`ask`](@ref),
    [`ask_each`](@ref) and the natural-language verbs on TypeSafe and on OpenAI's
-   Decisions API, and [`list_models`](@ref) on TypeSafe, use
+   and Gemini's Decisions APIs, and [`list_models`](@ref) on TypeSafe, use
    `request_timeout = 60` and `total_deadline = 150`; Ollama brings none.
 5. The built-in field defaults.
 

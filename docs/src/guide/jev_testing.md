@@ -209,7 +209,7 @@ through a directory of recordings:
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names
   the directory, the start of the key, and what the request asked for: a
-  decision request's questions (Jev, Ollama, OpenAI Decisions); any other
+  decision request's questions (Jev, Ollama, OpenAI Decisions, Gemini Decisions); any other
   request's model; nothing for a bodyless request. It also says what
   recording it takes: the provider's key, or a running local server.
 - **A lost write is loud too.** In a recording mode, an answer whose file cannot

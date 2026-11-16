@@ -23,6 +23,7 @@ rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 | :--- | :--- | :--- | :--- |
 | [TypeSafe's Jev](@ref system_one_typesafe) (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` |
 | [OpenAI's Decisions API](@ref system_one_openai) (generally available) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| [Google's Gemini Decisions API](@ref system_one_gemini) (Beta) | `GEMINIServiceEndpoint` | `gemini-decision-1` | `GEMINI_API_KEY` |
 | [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:4b` (`clef-flash:9b` for pictures) | none |
 
 A call takes its backend from `service = …`; without one, from the enclosing
@@ -45,7 +46,7 @@ probabilities; a reply that does not fit is a [`SystemOneCallError`](@ref).
 `confidence` is one measure on every backend — `(n·p_max − 1)/(n − 1)` for a
 Choice over `n` options, `1 − Σᵢ pᵢ·|i − m| / MAD_unif` for a Score whose most
 likely level is `m` ([Confidence](https://docs.typesafe.ai/confidence)): TypeSafe
-and OpenAI report it, and the Ollama wrapper computes it from the probabilities;
+and OpenAI report it, and the Gemini and Ollama wrappers compute it from the probabilities;
 over a single option it is 1.0, as TypeSafe answers a one-option Choice. How far
 a confidence can be trusted is a property of the model, not of the formula.
 
@@ -61,18 +62,20 @@ a confidence can be trusted is a property of the model, not of the formula.
 
 While you set no [`RequestConfig`](@ref) of your own — no `config`, no
 [`with_request_config`](@ref) scope, no [`set_default_config!`](@ref) — a backend
-may bound its calls itself: TypeSafe's wire and OpenAI's by 60 s per attempt and
-150 s in all, while Ollama brings no bound of its own, so the field defaults
-apply (loading a model on a CPU can take minutes). [`ask_each`](@ref) keeps at
-most 16 requests in flight on TypeSafe's wire and OpenAI's, 1 on Ollama and 8 on
-a protocol of your own, unless its `ntasks` says otherwise. Every System One
+may bound its calls itself: TypeSafe's wire, OpenAI's and Gemini's by 60 s per
+attempt and 150 s in all, while Ollama brings no bound of its own, so the field
+defaults apply (loading a model on a CPU can take minutes). [`ask_each`](@ref)
+keeps at most 16 requests in flight on TypeSafe's wire and OpenAI's, 8 on
+Gemini's, 1 on Ollama and 8 on a protocol of your own, unless its `ntasks` says
+otherwise. Every System One
 exchange goes through one connection pool per process, which keeps up to 256
 idle connections per host for 30 s, so a batch or a loop finds its connections
 open.
 
 [`with_recorded_answers`](@ref) files each backend's exchanges apart: TypeSafe's
 under the request's path (`/v1/systemone`), OpenAI's under
-`/openai-decisions/v1/decisions`, Ollama's under `/ollama/v1/systemone`. A
+`/openai-decisions/v1/decisions`, Gemini's under `/gemini-decisions/v1beta/decisions`,
+Ollama's under `/ollama/v1/systemone`. A
 recording never replays for another backend; an endpoint that speaks TypeSafe's
 wire shares TypeSafe's recordings, since its requests are TypeSafe's. An option
 that changes how a request is served but never what it is answered — OpenAI's

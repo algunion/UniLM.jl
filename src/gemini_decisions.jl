@@ -38,7 +38,9 @@ The request:
   characters and at most 512 bytes, with no leading or trailing whitespace and no control,
   format or non-ASCII space characters — and its description the value (`""` for
   `nothing`); a [`ScoreQuestion`](@ref) a `score` of 2 to 255 levels, each a non-empty
-  string; a [`RawQuestion`](@ref) its fields as written. At most 1,000 questions.
+  string; a [`RawQuestion`](@ref) its fields as written, nesting objects and arrays at most
+  98 levels, as the body takes 100 and holds a question at the third. At most 1,000
+  questions.
 - every question needs `instructions`: a non-empty string, or a vector or tuple of
   non-empty strings sent as `text` blocks, which the API joins with no separator.
 
@@ -112,6 +114,13 @@ const _GEMINI_DECISIONS_NAME = r"^[A-Za-z0-9_-]{1,64}$"
 const _GEMINI_DECISIONS_OPTION_CHARS = 128
 const _GEMINI_DECISIONS_OPTION_BYTES = 512
 const _GEMINI_DECISIONS_INLINE_BYTES = 100 * 1024^2
+# "JSON nesting depth: 100 levels" of the request body, which holds a question at the third level (the body
+# object, then `questions`), so a question's fields nest at most 98 more: the API answered a body 101 levels deep
+# with HTTP 400 "exceeds maximum nesting depth of 100" and one of 100 with its next rule (measured on 2026-11-16).
+# A JSON state is sent as its text, a string, which the depth does not count: a state's text 101 levels deep was
+# answered.
+const _GEMINI_DECISIONS_BODY_DEPTH = 100
+const _GEMINI_DECISIONS_QUESTION_DEPTH = _GEMINI_DECISIONS_BODY_DEPTH - 2
 
 _gemini_decisions_refuse(name::String, why::String) = throw(ArgumentError(
     "Gemini's Decisions API cannot carry the question $(repr(name)): $why"))
@@ -243,6 +252,10 @@ function _gemini_decisions_question(name::String, q::RawQuestion)::JSON.Object{S
     isempty(_collect_images!(ImageAttachment[], q.fields)) || _gemini_decisions_refuse(name,
         "it holds an image, and a question's instructions are text only: an image goes in the state, as " *
         _GEMINI_DECISIONS_IMAGE_FORMS)
+    _nests_deeper(q.fields, _GEMINI_DECISIONS_QUESTION_DEPTH) && _gemini_decisions_refuse(name,
+        "it nests objects and arrays more than $(_GEMINI_DECISIONS_QUESTION_DEPTH) levels deep, and the request body " *
+        "takes a JSON nesting depth of $(_GEMINI_DECISIONS_BODY_DEPTH), holding the question at its third level. " *
+        "Flatten it")
     q.fields
 end
 

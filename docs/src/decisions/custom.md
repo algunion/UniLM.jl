@@ -135,20 +135,20 @@ checked again on each upgrade. Each has a fallback, which a protocol that define
 
 | Internal hook | Fallback | The built-in providers |
 | :--- | :--- | :--- |
-| `_system_one_default_model(p, service)` | an `ArgumentError`: a call must name its model | TypeSafe: `TYPESAFE_DEFAULT_MODEL`, else `jev-latest`; OpenAI: `gpt-6-luna`; Ollama: none |
-| `_system_one_namespace(p)` | the protocol's type name, in front of a recording's path | TypeSafe: none; OpenAI: `openai-decisions`; Ollama: `ollama` |
+| `_system_one_default_model(p, service)` | an `ArgumentError`: a call must name its model | TypeSafe: `TYPESAFE_DEFAULT_MODEL`, else `jev-latest`; OpenAI: `gpt-6-luna`; Gemini: `gemini-decision-1`; Ollama: none |
+| `_system_one_namespace(p)` | the protocol's type name, in front of a recording's path | TypeSafe: none; OpenAI: `openai-decisions`; Gemini: `gemini-decisions`; Ollama: `ollama` |
 | `_system_one_request_id(p, response)` | `nothing` | TypeSafe: `x-typesafe-request-id`; OpenAI: `x-request-id` |
-| `_probability_tolerance(p, n)`, `_probability_slack(p)` | `1e-6` each: how far `n` probabilities may sum from 1, and the chosen option fall below the most probable | TypeSafe: `0.005n + 1e-6`, `0.01 + 1e-6`; OpenAI: `0.005n + 1e-9`, `0.01 + 1e-9`; Ollama: `n·0.5e-4 + 1e-6`, `1e-4 + 1e-6` |
-| `_allows_refusal(p)` | `false`: a declined question makes the call a `SystemOneCallError` | OpenAI: `true`, a [`RefusalAnswer`](@ref) |
-| `_allows_raw(p)` | `false`: a [`RawQuestion`](@ref) is refused before sending | all three: `true` |
+| `_probability_tolerance(p, n)`, `_probability_slack(p)` | `1e-6` each: how far `n` probabilities may sum from 1, and the chosen option fall below the most probable | TypeSafe: `0.005n + 1e-6`, `0.01 + 1e-6`; OpenAI: `0.005n + 1e-9`, `0.01 + 1e-9`; Ollama: `n·0.5e-4 + 1e-6`, `1e-4 + 1e-6`; Gemini: the fallback, its probabilities arriving unrounded |
+| `_allows_refusal(p)` | `false`: a declined question makes the call a `SystemOneCallError` | OpenAI: `true`, a [`RefusalAnswer`](@ref); Gemini: `true`, a `RefusalAnswer` for every question of an input its filters block |
+| `_allows_raw(p)` | `false`: a [`RawQuestion`](@ref) is refused before sending | TypeSafe, OpenAI, Gemini and Ollama: `true` |
 | `_system_one_models(p, service, config, cancel)` | an `ArgumentError`: [`list_models`](@ref) has no listing | TypeSafe: `GET /v1/models` |
-| `_system_one_default_config(p, service)` | `nothing`: the [`RequestConfig`](@ref) field defaults, 600 s per attempt and 900 s in all | TypeSafe and OpenAI: 60 s per attempt, 150 s in all |
+| `_system_one_default_config(p, service)` | `nothing`: the [`RequestConfig`](@ref) field defaults, 600 s per attempt and 900 s in all | TypeSafe, OpenAI and Gemini: 60 s per attempt, 150 s in all |
 | `_system_one_retry_header(p)` | `nothing`: retries carry no count | TypeSafe: `X-TypeSafe-Retry-Count` |
-| `_system_one_concurrency(p, service)` | 8: the requests [`ask_each`](@ref) keeps in flight when its `ntasks` names none | TypeSafe and OpenAI: 16; Ollama: 1 |
-| `_validate_system_one_options(p, options)` | `nothing`: a scope's options are not checked when it opens | TypeSafe: `long_context`, a `Bool`; OpenAI: `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`; Ollama: `keep_alive`. Each encoder calls it, and so does [`with_system_one`](@ref) when its scope opens |
-| `_system_one_cost(p, result, model, pricing)` | input, cached input and output tokens at the model's row of the price table | OpenAI: the input tokens alone, cache reads and writes at OpenAI's caching rates, and no output |
+| `_system_one_concurrency(p, service)` | 8: the requests [`ask_each`](@ref) keeps in flight when its `ntasks` names none | TypeSafe and OpenAI: 16; Ollama: 1; Gemini: the fallback, 8 |
+| `_validate_system_one_options(p, options)` | `nothing`: a scope's options are not checked when it opens | TypeSafe: `long_context`, a `Bool`; OpenAI: `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`; Ollama: `keep_alive`; Gemini: none, every option refused. Each encoder calls it, and so does [`with_system_one`](@ref) when its scope opens |
+| `_system_one_cost(p, result, model, pricing)` | input, cached input and output tokens at the model's row of the price table | OpenAI: the input tokens alone, cache reads and writes at OpenAI's caching rates, and no output; Gemini: the fallback, for the model named without one leading `models/` |
 | `_api_base_url(service)` | none for an endpoint of your own: define it, or write the URL into the wire | where the built-in encoders start a request's URL |
-| `_image_detail_refusal(p)` | why the wire has no field for an image's `detail` level, so an image that sets one is refused | OpenAI: `nothing`, the level is sent; TypeSafe and Ollama: their wire's reason |
+| `_image_detail_refusal(p)` | why the wire has no field for an image's `detail` level, so an image that sets one is refused | OpenAI and Gemini: `nothing`, the level is sent (Gemini's as the image block's `resolution`); TypeSafe and Ollama: their wire's reason |
 | `_check_request(p, service, request)` | — | called first by each built-in encoder: a blank or repeated question name, criteria that are not valid, a `RawQuestion` the protocol does not allow, a `DocumentAttachment`, or an image `detail` the protocol refuses |
 | `_check_answers(p, request, response)` | — | called by each built-in decoder: every question answered once, of its kind, within the protocol's tolerance |
 

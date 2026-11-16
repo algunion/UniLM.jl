@@ -151,8 +151,9 @@ What reaches the model:
   alphabetically in UTF-8 byte order. Changing key order in your JSON request doesn't change option positions, and
   exact probability ties break to the alphabetically first key"
   ([Pick one option](https://ai.google.dev/gemini-api/docs/decisions-api#choice)). The order you pass is sent, and
-  read by no model: a catch-all named `none_of_the_above` sorts ahead of `shipping`, which is why the guide names
-  one `other`.
+  sets no position. Name a catch-all by what it means, not by where you expect it: the guide advises "a
+  non-positional key like "other" rather than "none_of_the_above", since the API sorts option keys alphabetically"
+  ([Best practices](https://ai.google.dev/gemini-api/docs/decisions-api#best-practices)).
 - **Other guidance is text.** An option's description, a Score level and a Noul's `yes` and `no` are strings; a
   level is not empty. Anything else is a refusal ([Limits and refusals](@ref gemini_decisions_limits)).
 
@@ -245,6 +246,7 @@ answered so on 16 November 2026, or, for the 100 MB, is read from the guide:
 | Instructions | text only, at least one non-empty block | yes |
 | Input | not empty: a string that is not blank, no empty text block | yes |
 | Inline data | "up to 100 MB per request", read as 100 MiB of image bytes (untested at the limit) | yes |
+| JSON nesting depth | 100 levels in the request body, which holds a question at the third; a JSON state is sent as its text, a string, and does not count (a state's text 101 levels deep was answered on 16 November 2026) | yes: a `RawQuestion`'s fields, at most 98 levels |
 | Context | 262,144 tokens across the input and all questions | no: Google counts them |
 | Rate limits | per project and tier ([Rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)) | no ([When something fails](@ref gemini_decisions_failures)) |
 
@@ -270,6 +272,7 @@ answer would carry no sign of the change.
 | a `bounding_box` question | `it is a Box question, and the API answers noul, choice and score questions only` | ask it of a provider that answers Box questions |
 | a question type of your own, a subtype of `SystemOneQuestion` | `the API answers noul, choice and score questions; a RawQuestion is sent verbatim` | build it as a `RawQuestion` |
 | a `RawQuestion` that holds a picture | `it holds an image, and a question's instructions are text only` | put the picture in the state |
+| a `RawQuestion` whose fields nest objects and arrays more than 98 levels | `nests objects and arrays more than 98 levels deep`: the API answers a body nested deeper than 100 levels with HTTP 400, "exceeds maximum nesting depth of 100" | flatten it |
 | a blank state, or an empty vector or tuple | `takes no empty input`: "Input can't be empty" | pass the text the questions are about |
 | a vector or tuple state that holds a [`Message`](@ref) | `takes no conversation as its input`: "Serialize multi-turn context as text" | pass the conversation's text |
 | a picture inside a JSON state | `takes images in the state only as`: a JSON state is sent as its text, which holds no picture | pass the texts and the pictures as a vector or tuple of strings and images |
@@ -407,9 +410,22 @@ end
 issuccess(scoped)
 ```
 
-Google's rate limits for Gemini Decision 1 are per project and tier: 200 requests a minute on the free tier and 1,500
-on Tier 1 ([Rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)); 8 requests in flight at about 0.4 s each
-stay under Tier 1's.
+Google's rate limits for Gemini Decision 1 are per project and tier
+([Rate limits](https://ai.google.dev/gemini-api/docs/rate-limits#gemini-decision)):
+
+| Tier | Requests a minute | Tokens a minute | Requests a day | `ntasks` for short requests |
+| :--- | :--- | :--- | :--- | :--- |
+| Free | 200 | 50,000 | 10,000 | 1 |
+| Tier 1 | 1,500 | 1,000,000 | 50,000 | 6 |
+| Tier 2 | 5,000 | 4,000,000 | unlimited | 21 |
+| Tier 3 | 15,000 | 10,000,000 | unlimited | 65 |
+
+The requests in flight make the rate: at the fastest reply measured, 0.26 s (16 November 2026), each keeps up to
+about 230 requests a minute going, so the default 8 can pass Tier 1's limit, and every tier's below it. The last
+column is the tier's requests a minute × 0.26 s ÷ 60 s, rounded down and at least 1: give it to [`ask_each`](@ref)
+as `ntasks`. A request of many tokens meets the tokens a minute first: use the tier's tokens a minute divided by the
+request's input tokens in place of its requests a minute. One request in flight can still pass the free tier's 200
+when replies come fast; a 429 is retried within `total_deadline`, the requests of a batch backing off together.
 
 | What you see | Why | What to do |
 | :--- | :--- | :--- |

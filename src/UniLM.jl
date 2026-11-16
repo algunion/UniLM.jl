@@ -322,7 +322,9 @@ export
     retrieve_file,
     delete_file,
     file_content,
-    save_file_content
+    save_file_content,
+    poll_file,
+    register_files
 
 # ─── Vector Stores API ────────────────────────────────────────────────────────
 export

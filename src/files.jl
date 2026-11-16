@@ -3,6 +3,7 @@
 # each provider's own Files API:
 #   OpenAI     /v1/files  https://developers.openai.com/api/reference/resources/files
 #   Anthropic  /v1/files  https://platform.claude.com/docs/en/api/files/upload (list, retrieve, download, delete)
+#   Gemini     /v1beta/files  https://ai.google.dev/api/files (uploads at /upload/v1beta/files)
 # OpenAI's files feed the Responses file_search & code_interpreter tools, the Batch API,
 # and fine-tuning.
 # ============================================================================
@@ -29,17 +30,28 @@ end
 abstract type _FilesWire end
 struct _OpenAIFiles <: _FilesWire end
 struct _AnthropicFiles <: _FilesWire end
+struct _GeminiFiles <: _FilesWire end
 
 _files_wire(service) = _OpenAIFiles()
 _files_wire(::_AnthropicEndpoint) = _AnthropicFiles()
+_files_wire(::Type{GEMINIServiceEndpoint}) = _GeminiFiles()
 
 _files_provider(::_OpenAIFiles) = "OpenAI"
 _files_provider(::_AnthropicFiles) = "Anthropic"
+_files_provider(::_GeminiFiles) = "Gemini"
 
-# The Files API's address; a function, so tests can route an endpoint to a local server.
+# The Files API's address; a function, so tests can route an endpoint to a local server. Gemini takes
+# the bytes at its media upload path (discovery's media.upload).
 _files_url(service)::String = _api_base_url(service) * FILES_PATH
 _files_url(::_AnthropicEndpoint)::String = ANTHROPIC_BASE_URL * FILES_PATH
-_file_url(service, file_id::String)::String = _files_url(service) * "/" * _uripart(file_id)
+_files_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * "/files"
+_files_upload_url(::Type{GEMINIServiceEndpoint})::String = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+_file_url(service, file_id::String)::String =
+    _files_url(service) * "/" * _uripart(_file_id(_files_wire(service), file_id))
+
+# The id a verb takes: Gemini names a file "files/<id>", and either form is taken.
+_file_id(::_FilesWire, file_id::String)::String = file_id
+_file_id(::_GeminiFiles, file_id::String)::String = chopprefix(file_id, "files/")
 
 # The headers of a Files request: the endpoint's own on OpenAI's wire. Anthropic's Files reference
 # names `anthropic-version` and `anthropic-workspace-id`, and no `anthropic-beta` or user-profile
@@ -53,7 +65,7 @@ _files_headers(service::_AnthropicEndpoint)::Vector{Pair{String,String}} =
 _files_upload_headers(service) = auth_header_multipart(service)
 _files_upload_headers(service::_AnthropicEndpoint) = _files_headers(service)
 
-# OpenAI's Files API requires a purpose; Anthropic's takes none.
+# OpenAI's Files API requires a purpose; Anthropic's and Gemini's take none.
 function _check_upload_purpose(::_OpenAIFiles, purpose::Union{String,Nothing})::Nothing
     isnothing(purpose) && throw(ArgumentError(
         "upload_file: OpenAI's Files API requires a purpose: $(join(repr.(_FILE_PURPOSES), ", ", " or "))"))
@@ -66,17 +78,28 @@ _check_upload_purpose(wire::_FilesWire, purpose::Union{String,Nothing})::Nothing
 # Seconds from the upload until a file expires: OpenAI's `expires_after.seconds`, "between 3600 (1 hour)
 # and 2592000 (30 days)" (FileExpirationAfter, on the Files and Uploads APIs alike); Anthropic's
 # `expires_in_seconds`, "between 3600 (one hour) and 7776000 (ninety days)". Each API answered HTTP 400
-# one second outside its range on 2026-11-16.
+# one second outside its range on 2026-11-16. Gemini stores a file for 48 hours and takes no expiry
+# (https://ai.google.dev/gemini-api/docs/files: "Files are stored for 48 hours").
 _file_expiry(::_OpenAIFiles) = 3600:2592000
 _file_expiry(::_AnthropicFiles) = 3600:7776000
+_file_expiry(::_GeminiFiles) = nothing
 
 function _check_file_expiry(verb::String, wire::_FilesWire, expires_after::Union{Int,Nothing})::Nothing
     isnothing(expires_after) && return nothing
     r = _file_expiry(wire)
+    isnothing(r) && throw(ArgumentError("$verb: Gemini stores an uploaded file for 48 hours and takes no " *
+        "expiry (https://ai.google.dev/gemini-api/docs/files); unset expires_after"))
     expires_after in r || throw(ArgumentError("$verb: $(_files_provider(wire))'s Files API takes expires_after " *
         "from $(first(r)) to $(last(r)) seconds (got $expires_after)"))
     nothing
 end
+
+# Gemini serves no download of an uploaded file ("you can't download user-uploaded files",
+# https://ai.google.dev/gemini-api/docs/files); its download answered "Only GENERATED files can be
+# downloaded." (HTTP 400) for one on 2026-11-16.
+_check_download(::_FilesWire)::Nothing = nothing
+_check_download(::_GeminiFiles) = throw(ArgumentError("file_content: Gemini serves no download of an " *
+    "uploaded file (\"you can't download user-uploaded files\", https://ai.google.dev/gemini-api/docs/files)"))
 
 function _mime_for(path::AbstractString)
     ext = lowercase(splitext(path)[2])
@@ -218,14 +241,15 @@ _last_status(seen)::String =
 
 A file-upload request; `file` is a path on disk. On OpenAI `purpose` is required, one of
 `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"`, `"user_data"`; any other purpose throws
-`ArgumentError`, `"evals"` naming the Evals API's shutdown on 2026-11-30. Anthropic's Files API
-takes no purpose, and refuses one with `ArgumentError`.
+`ArgumentError`, `"evals"` naming the Evals API's shutdown on 2026-11-30. Anthropic's and
+Gemini's Files APIs take no purpose, and refuse one with `ArgumentError`.
 
 `expires_after` is the number of seconds from the upload until the file expires: 3600 (one
 hour) to 2592000 (30 days) on OpenAI, to 7776000 (90 days) on Anthropic; a value outside the
 range throws `ArgumentError`. `nothing` keeps the provider's default: on OpenAI "files with
 `purpose=batch` expire after 30 days and all other files are persisted until they are manually
-deleted"; on Anthropic a file does not expire.
+deleted"; on Anthropic a file does not expire. Gemini stores every file for 48 hours, and
+refuses an `expires_after` with `ArgumentError`.
 """
 @kwdef struct FileUpload
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -249,27 +273,32 @@ FileUpload(service, file, purpose) = FileUpload(service, file, purpose, nothing)
 
 A file stored by a provider's Files API; `raw` holds the object as the provider sent it.
 
-- `id::String`: the file's id, which the other Files verbs take.
-- `bytes::Union{Int,Nothing}`: the size — OpenAI's `bytes`, Anthropic's `size_bytes`. `nothing`
-  when OpenAI gives the size as null, which its Files reference allows "In a completed file
-  upload response, … when the file size is not yet available".
-- `created_at::Int`: the creation time in Unix seconds — OpenAI's `created_at`; Anthropic's RFC 3339
-  `created_at`, to the second.
-- `filename::String`: the file's name.
-- `purpose::Union{String,Nothing}`: OpenAI's purpose; `nothing` on Anthropic, which has none.
-- `status::Union{String,Nothing}`: OpenAI's (deprecated) status; `nothing` on Anthropic.
+- `id::String`: the file's id, which the other Files verbs take — on Gemini, its `name` without
+  the `files/` prefix (the verbs take the name too).
+- `bytes::Union{Int,Nothing}`: the size — OpenAI's `bytes`, Anthropic's `size_bytes`, Gemini's
+  `sizeBytes`. `nothing` when OpenAI gives the size as null, which its Files reference allows "In a
+  completed file upload response, … when the file size is not yet available", or Gemini leaves it out.
+- `created_at::Int`: the creation time in Unix seconds — OpenAI's `created_at`; Anthropic's
+  `created_at` and Gemini's `createTime`, RFC 3339 times, to the second.
+- `filename::Union{String,Nothing}`: the file's name — Gemini's `displayName`, which UniLM's upload
+  sets to the file's name, and `nothing` for a Gemini file without one.
+- `purpose::Union{String,Nothing}`: OpenAI's purpose; `nothing` on Anthropic and Gemini, which have none.
+- `status::Union{String,Nothing}`: OpenAI's (deprecated) status; Gemini's `state` (`"PROCESSING"`,
+  `"ACTIVE"`, `"FAILED"`; [`poll_file`](@ref) waits out `"PROCESSING"`); `nothing` on Anthropic.
 
-Anthropic's `mime_type`, `downloadable` and `expires_at`, and OpenAI's `expires_at`, are in `raw`.
-A reply without a field the provider's reference requires — OpenAI's `id`, `bytes`, `created_at`,
-`filename` or `purpose`; Anthropic's `id`, `size_bytes`, `created_at` or `filename` — is no file:
-the call returns its call error, a [`FileCallError`](@ref) (from `complete_upload`, an
+The rest is in `raw`: OpenAI's `expires_at`; Anthropic's `mime_type`, `downloadable` and
+`expires_at`; Gemini's `uri` (the file's address in a request), `mimeType`, `expirationTime`,
+`sha256Hash`, `source` and, for a file that failed processing, `error`. A reply without a field the
+provider's reference requires — OpenAI's `id`, `bytes`, `created_at`, `filename` or `purpose`;
+Anthropic's `id`, `size_bytes`, `created_at` or `filename`; Gemini's `name` or `createTime` — is no
+file: the call returns its call error, a [`FileCallError`](@ref) (from `complete_upload`, an
 `UploadCallError`).
 """
 @kwdef struct FileObject
     id::String
     bytes::Union{Int,Nothing}
     created_at::Int
-    filename::String
+    filename::Union{String,Nothing}
     purpose::Union{String,Nothing}
     status::Union{String,Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
@@ -280,7 +309,8 @@ end
 
 A page of [`FileObject`](@ref)s from [`list_files`](@ref); `has_more` signals that further pages
 are available, and `raw` holds the page as the provider sent it, with the cursor of the next page:
-OpenAI's `last_id`, Anthropic's `next_page`.
+OpenAI's `last_id`, Anthropic's `next_page`, Gemini's `nextPageToken`. From
+[`register_files`](@ref), the registered files, `has_more` `false`.
 """
 @kwdef struct FileList
     data::Vector{FileObject}
@@ -322,19 +352,37 @@ _parse_file(::_AnthropicFiles, d::AbstractDict)::FileObject = FileObject(
     id=_file_required(d, "id", String), bytes=_file_required(d, "size_bytes", Int),
     created_at=_file_time(d, "created_at"), filename=_file_required(d, "filename", String),
     purpose=nothing, status=nothing, raw=Dict{String,Any}(d))
+# Gemini's File (https://ai.google.dev/api/files#File): `name` is "files/<id>", `sizeBytes` an int64
+# in a string, `state` the processing state; `displayName` is optional.
+function _parse_file(::_GeminiFiles, d::AbstractDict)::FileObject
+    name = _file_required(d, "name", String)
+    id = chopprefix(name, "files/")
+    (id == name || isempty(id)) && throw(ArgumentError("the Gemini file's name is not \"files/<id>\": $(repr(name))"))
+    size = _file_field(d, "sizeBytes", String)
+    bytes = isnothing(size) ? nothing :
+        @something(tryparse(Int, size), throw(ArgumentError("Files reply field \"sizeBytes\" is no integer: $(repr(size))")))
+    FileObject(id=id, bytes=bytes, created_at=_file_time(d, "createTime"), filename=_file_field(d, "displayName", String),
+               purpose=nothing, status=_file_field(d, "state", String), raw=Dict{String,Any}(d))
+end
 
 # A page: OpenAI's `data` and `has_more`, both required. Anthropic's `data`, and `next_page`, its
-# opaque cursor of the next page, null on the last.
+# opaque cursor of the next page, null on the last. Gemini's `files` and `nextPageToken`, each left
+# out when empty (proto3 JSON omits a field at its default value), so `{}` is an empty last page.
 _file_page(wire::_OpenAIFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
     has_more=_file_required(d, "has_more", Bool), raw=d)
 _file_page(wire::_AnthropicFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
     has_more=!isnothing(_file_field(d, "next_page", String)), raw=d)
+function _file_page(wire::_GeminiFiles, d::Dict{String,Any})::FileList
+    token = _file_field(d, "nextPageToken", String)
+    FileList(data=FileObject[_parse_file(wire, f) for f in something(_file_field(d, "files", AbstractVector), [])],
+             has_more=!(isnothing(token) || isempty(token)), raw=d)
+end
 
 # A page's query. OpenAI's listFiles takes `purpose`, `limit`, `after` (a file id) and `order`;
-# Anthropic's takes `limit` and `page`, the cursor `after` carries. An option the provider does not
-# take is refused by name.
+# Anthropic's takes `limit` and `page`, Gemini's `pageSize` and `pageToken`: the cursor `after`
+# carries. An option the provider does not take is refused by name.
 _query(kv::Pair...)::Vector{String} = String[k * "=" * _uripart(v) for (k, v) in kv if !isnothing(v)]
 
 function _list_query(::_OpenAIFiles, purpose, limit, after, order)::Vector{String}
@@ -348,6 +396,10 @@ function _list_query(wire::_AnthropicFiles, purpose, limit, after, order)::Vecto
     _refuse_list_options(wire, purpose, order)
     _query("limit" => limit, "page" => after)
 end
+function _list_query(wire::_GeminiFiles, purpose, limit, after, order)::Vector{String}
+    _refuse_list_options(wire, purpose, order)
+    _query("pageSize" => limit, "pageToken" => after)
+end
 
 function _refuse_list_options(wire::_FilesWire, purpose, order)::Nothing
     set = [k for (k, v) in ("purpose" => purpose, "order" => order) if !isnothing(v)]
@@ -358,7 +410,8 @@ end
 
 # A delete's reply. OpenAI's DeleteFileResponse requires `id`, `object` ("file") and `deleted`.
 # Anthropic's DeletedFile has the `id`, and a `type` that is "file_deleted" when present: its 200 is
-# the confirmation.
+# the confirmation. Gemini's files.delete answers an Empty message, `{}`: its 200 is the confirmation,
+# and the file deleted is the one requested.
 _file_deleted(::_OpenAIFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess = FileDeleteSuccess(
     id=_file_required(d, "id", String), deleted=_confirm_deleted(d), object=_file_required(d, "object", String))
 function _file_deleted(::_AnthropicFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess
@@ -367,6 +420,8 @@ function _file_deleted(::_AnthropicFiles, d::Dict{String,Any}, ::String)::FileDe
         throw(ArgumentError("the delete reply's type is $(repr(type)), not \"file_deleted\""))
     FileDeleteSuccess(id=_file_required(d, "id", String), deleted=true, object=type)
 end
+_file_deleted(wire::_GeminiFiles, ::Dict{String,Any}, file_id::String)::FileDeleteSuccess =
+    FileDeleteSuccess(id=_file_id(wire, file_id), deleted=true, object=nothing)
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
@@ -381,14 +436,19 @@ end
 
 Successful [`delete_file`](@ref) result: the service confirmed (`deleted` is always `true`) the
 removal of `id`, the id its reply names. `object` is the reply's type tag: OpenAI's `object`,
-`"file"`; Anthropic's `type`, `"file_deleted"`, or `nothing` when its reply has none.
+`"file"`; Anthropic's `type`, `"file_deleted"`, or `nothing` when its reply has none. Gemini's
+reply is empty: `id` is the file requested, without its `files/` prefix, and `object` is `nothing`.
 """
 @kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; object::Union{String,Nothing} = nothing; end
 FileDeleteSuccess(id, deleted) = FileDeleteSuccess(id, deleted, nothing)
 "Files API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
-"Files API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
-@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
+"Files API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_file`](@ref) runs out of time or is cancelled: the last [`FileObject`](@ref) it saw, if any."
+@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,FileObject} = nothing; end
+FileCallError(error, status, cause) = FileCallError(error, status, cause, nothing)
+
+_transient(r::FileFailure) = _is_retryable(r.status, r.response)
+_transient(r::FileCallError) = _per_attempt_timeout(r.cause)
 
 _file_resp(wire::_FilesWire, resp::HTTP.Response) = resp.status == 200 ?
     FileSuccess(response=_parse_file(wire, _json_object(resp.body))) : _failure(FileFailure, resp)
@@ -407,11 +467,32 @@ end
 _upload_fields(::_AnthropicFiles, u::FileUpload)::Vector{Pair{String,Any}} =
     isnothing(u.expires_after) ? Pair{String,Any}[] : Pair{String,Any}["expires_in_seconds" => string(u.expires_after)]
 
-function _upload(wire::_FilesWire, u::FileUpload, cfg::RequestConfig, t0::UInt64, tok)
+function _upload(wire::Union{_OpenAIFiles,_AnthropicFiles}, u::FileUpload, cfg::RequestConfig, t0::UInt64, tok)
     form = HTTP.Form(push!(_upload_fields(wire, u),
         "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))))
     _file_resp(wire, _http("POST", _files_url(u.service), _files_upload_headers(u.service), form;
                            cfg, remaining=_remaining_s(cfg, t0), cancel=tok))
+end
+
+# Gemini's resumable upload, the protocol its Files guide documents
+# (https://ai.google.dev/gemini-api/docs/files): a `start` POST with the file's size, MIME type and
+# display name answers the session's address in `X-Goog-Upload-URL`, and one `upload, finalize` POST
+# of the bytes there answers `{"file": File}`. As in the guide, the key goes with the start only:
+# the session's address carries its own upload id.
+function _upload(wire::_GeminiFiles, u::FileUpload, cfg::RequestConfig, t0::UInt64, tok)
+    bytes = read(u.file)
+    start = _http("POST", _files_upload_url(u.service),
+        vcat(_files_headers(u.service), ["X-Goog-Upload-Protocol" => "resumable", "X-Goog-Upload-Command" => "start",
+             "X-Goog-Upload-Header-Content-Length" => string(length(bytes)),
+             "X-Goog-Upload-Header-Content-Type" => _mime_for(u.file)]),
+        JSON.json(Dict("file" => Dict("displayName" => basename(u.file)))); cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
+    start.status == 200 || return _failure(FileFailure, start)
+    session = HTTP.header(start, "X-Goog-Upload-URL", "")
+    isempty(session) && throw(ArgumentError("Gemini's upload start answered no X-Goog-Upload-URL"))
+    done = _http("POST", session, ["X-Goog-Upload-Offset" => "0", "X-Goog-Upload-Command" => "upload, finalize"], bytes;
+                 cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
+    done.status == 200 || return _failure(FileFailure, done)
+    FileSuccess(response=_parse_file(wire, _file_required(_json_object(done.body), "file", AbstractDict)))
 end
 
 """
@@ -420,9 +501,12 @@ end
     upload_file(u::FileUpload) -> LLMRequestResponse
 
 Upload a file. Returns `FileSuccess`, `FileFailure`, or `FileCallError`. OpenAI's Files API
-requires a `purpose`; Anthropic's takes none, so `upload_file(path; service=ANTHROPICServiceEndpoint)`.
-`expires_after` is the number of seconds until the file expires (see [`FileUpload`](@ref)).
-The file goes as multipart/form-data, its MIME type read from its extension.
+requires a `purpose`; Anthropic's and Gemini's take none, so
+`upload_file(path; service=ANTHROPICServiceEndpoint)`. `expires_after` is the number of seconds
+until the file expires (see [`FileUpload`](@ref)). The file's MIME type is read from its extension.
+OpenAI and Anthropic take the file as multipart/form-data. Gemini takes it through its resumable
+upload — a start request, then the bytes in one request — and names it by the file's name
+(`displayName`); a large file may come back `"PROCESSING"`: [`poll_file`](@ref) waits for it.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call
 (a single bounded attempt; `max_attempts` does not apply). Like every other create, an
@@ -464,12 +548,12 @@ List uploaded files, a page at a time. Returns `FileListSuccess`, `FileFailure`,
 
 - `limit`: the page's size.
 - `after`: where the page starts — on OpenAI, the id of the last file of the page before; on
-  Anthropic, the page before's `next_page` (in its `raw`).
+  Anthropic, the page before's `next_page`, on Gemini its `nextPageToken` (in its `raw`).
 - `purpose` (OpenAI only): only the files of that purpose.
 - `order` (OpenAI only): by creation time, `"asc"` or `"desc"` (any other value throws
   `ArgumentError` before any request); `nothing` keeps the API's order.
 
-`purpose` or `order` on Anthropic throws `ArgumentError` before any request.
+`purpose` or `order` on Anthropic or Gemini throws `ArgumentError` before any request.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
@@ -550,6 +634,8 @@ Download a file's raw bytes. Returns `FileContentSuccess` (`.content::Vector{UIn
 
 Anthropic serves the bytes of a file a tool made (its metadata's `downloadable` is `true`); for
 a file uploaded through its Files API the call returns Anthropic's HTTP 400 as a `FileFailure`.
+Gemini serves no download of an uploaded file: on `GEMINIServiceEndpoint` the call throws
+`ArgumentError` before any request.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
@@ -558,12 +644,90 @@ Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](
 function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :files, "Files API")
+    _check_download(_files_wire(service))
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
         resp = _http("GET", _file_url(service, file_id) * "/content", _files_headers(service);
                      cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 ? FileContentSuccess(content=Vector{UInt8}(resp.body)) : _failure(FileFailure, resp)
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(FileCallError, e)
+    end
+end
+
+# Whether a file is still being processed, by its provider's status: OpenAI's (deprecated) "uploaded",
+# before "processed" or "error"; Gemini's PROCESSING, before ACTIVE or FAILED. An Anthropic file has no
+# processing status: it is ready once uploaded.
+_file_processing(::_OpenAIFiles, status) = status == "uploaded"
+_file_processing(::_GeminiFiles, status) = status == "PROCESSING"
+_file_processing(::_AnthropicFiles, _) = false
+
+"""
+    poll_file(file_id; interval=2.0, timeout=300.0, service=OPENAIServiceEndpoint, cancel=nothing)
+
+Poll a file's metadata until it is no longer being processed — Gemini's `state` past
+`"PROCESSING"` (`"ACTIVE"` or `"FAILED"`), OpenAI's status past `"uploaded"`; an Anthropic file
+needs no wait — and return that `FileSuccess`. `timeout` bounds the wall-clock time of the whole
+poll (`Inf` waits indefinitely); `interval` is the pause between GETs. Both must be positive, else
+`ArgumentError`.
+
+A transient failure — a status in the retryable set (408/429/500/502–504/520–524/529) or a GET
+that timed out — is polled through; any other failure is returned as it came. When the time runs
+out the result is a `FileCallError` with `cause = UniLMTimeout(:deadline, …)` and `last_observed`
+set to the last `FileObject` seen (`nothing` if no GET succeeded).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to
+make the poll cancellable: a cancel ends it at once, mid-GET or mid-pause, with a `FileCallError`
+whose `cause` is a [`UniLMCancelled`](@ref) and `last_observed` as above; a token cancelled before
+the poll sends nothing.
+
+Pass `config::Union{Nothing,RequestConfig}` to bound each GET (a single attempt; its
+`total_deadline` is capped at the time left).
+"""
+function poll_file(file_id::String; interval::Real=2.0, timeout::Real=300.0,
+                   service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+                   config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :files, "Files API")
+    wire = _files_wire(service)
+    _poll(cfg -> retrieve_file(file_id; service, config=cfg), FileSuccess,
+          r -> !_file_processing(wire, r.response.status),
+          (seen, why) -> FileCallError(error=_poll_end_text("poll_file", file_id, why, seen), cause=why,
+                                       last_observed=isnothing(seen) ? nothing : seen.response);
+          interval, timeout, config, cancel)
+end
+
+"""
+    register_files(uris; service=GEMINIServiceEndpoint)
+
+Register Google Cloud Storage objects with Gemini's Files API (files.register): `uris` are
+`gs://bucket/object` addresses, which Gemini does not copy. Returns a `FileListSuccess` whose
+`FileList` holds one [`FileObject`](@ref) per URI, `FileFailure` — Gemini registers all or none —
+or `FileCallError`. An empty `uris` throws `ArgumentError` before any request. Gemini only
+(capability `:file_registration`); the key's project must be able to read the objects.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single
+bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `FileCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function register_files(uris::AbstractVector{<:AbstractString}; service::ServiceEndpointSpec=GEMINIServiceEndpoint,
+                        config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :file_registration, "File registration")
+    # RegisterFilesRequest: "Required. The Google Cloud Storage URIs to register."
+    isempty(uris) && throw(ArgumentError("register_files: uris is empty; Gemini registers one or more gs:// objects"))
+    cfg = _resolve_config(config)
+    t0 = time_ns()
+    try
+        resp = _http("POST", _files_url(service) * ":register", _files_headers(service),
+                     JSON.json(Dict("uris" => collect(String, uris))); cfg, remaining=_remaining_s(cfg, t0),
+                     cancel=_resolve_cancel(cancel))
+        resp.status == 200 || return _failure(FileFailure, resp)
+        d = _json_object(resp.body)
+        wire = _files_wire(service)
+        FileListSuccess(response=FileList(
+            data=FileObject[_parse_file(wire, f) for f in _file_required(d, "files", AbstractVector)], has_more=false, raw=d))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FileCallError, e)

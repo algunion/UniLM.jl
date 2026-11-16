@@ -370,6 +370,44 @@ const _ANTHROPIC_FILE = """{"type":"file","id":"file_01YLNcm6NoeziqXvw8FX4zaY","
     end
 end
 
+# ── Gemini's Files API ───────────────────────────────────────────────────────
+# Its replies here are those Gemini sent on 2026-11-16 for a 5-byte text file (`sha256Hash` shortened).
+const _GEMINI_FILE = """{"name":"files/rvbxh1rsu85u","displayName":"w.txt","mimeType":"text/plain","sizeBytes":"5",""" *
+    """"createTime":"2026-11-16T20:14:01.385879Z","updateTime":"2026-11-16T20:14:01.385879Z",""" *
+    """"expirationTime":"2026-11-18T20:14:00.555605689Z","sha256Hash":"MmNm",""" *
+    """"uri":"https://generativelanguage.googleapis.com/v1beta/files/rvbxh1rsu85u","state":"ACTIVE","source":"UPLOADED"}"""
+
+# Refuted if: the native Gemini endpoint refuses the Files verbs or registration, sends them anywhere but
+# generativelanguage.googleapis.com, or asks Gemini for an uploaded file's bytes, which it does not serve.
+@testset "Gemini: the Files verbs and register_files are served, at generativelanguage.googleapis.com" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    g = GEMINIServiceEndpoint
+    try
+        withenv("GEMINI_API_KEY" => "local-0000") do
+            @test has_capability(g, :files) && has_capability(g, :file_registration)
+            @test _seam_timeout(upload_file(path; service=g, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(list_files(; service=g, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(retrieve_file("files/f1"; service=g, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(delete_file("files/f1"; service=g, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(poll_file("files/f1"; service=g, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(register_files(["gs://bucket/w.txt"]; config=_TINY_DEADLINE), FileCallError)
+        end
+        @test UniLM._files_url(g) == "https://generativelanguage.googleapis.com/v1beta/files"
+        @test UniLM._files_upload_url(g) == "https://generativelanguage.googleapis.com/upload/v1beta/files"
+        e = try file_content("files/f1"; service=g); nothing catch x; x end
+        @test e isa ArgumentError && e.msg == "file_content: Gemini serves no download of an uploaded file " *
+              "(\"you can't download user-uploaded files\", https://ai.google.dev/gemini-api/docs/files)"
+        for s in (OPENAIServiceEndpoint, ANTHROPICServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+            e = try register_files(["gs://bucket/w.txt"]; service=s); nothing catch x; x end
+            @test e isa ArgumentError && startswith(e.msg, "File registration is not supported by $(nameof(s))")
+        end
+        @test !has_capability(GEMINIOpenAIServiceEndpoint, :files)
+    finally
+        rm(path; force=true)
+    end
+end
+
 # An endpoint that speaks Files wire `W`, served by `_with_scripted`.
 struct FilesProbe{W} <: UniLM.ServiceEndpoint end
 UniLM._files_wire(::Type{FilesProbe{W}}) where {W} = W()
@@ -531,5 +569,182 @@ UniLM.provider_capabilities(::_AnthropicFilesAt) = Set([:files])
         end
     finally
         rm(path; force=true)
+    end
+end
+
+# A Gemini endpoint whose Files requests `_with_scripted` serves.
+struct GeminiFilesProbe <: UniLM.ServiceEndpoint end
+UniLM._files_wire(::Type{GeminiFilesProbe}) = UniLM._GeminiFiles()
+UniLM._files_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/v1beta/files"
+UniLM._files_upload_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/upload/v1beta/files"
+UniLM.auth_header(::Type{GeminiFilesProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{GeminiFilesProbe}) = Set([:files, :file_registration])
+const _GF = GeminiFilesProbe
+
+# Gemini's resumable upload (https://ai.google.dev/gemini-api/docs/files): a `start` POST with the key,
+# the size, the MIME type and the display name; the bytes, `upload, finalize`, at the address the start
+# answers in X-Goog-Upload-URL, without the key; `{"file": File}` back.
+# Refuted if: a header or the display name is missing or wrong, the key goes with the bytes, the bytes
+# go anywhere but the session's address, a refused start still sends them, or the File is misread.
+@testset "Gemini upload_file: a resumable start, then the bytes at the session's address" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    session() = _url_probe_base[] * "/upload/v1beta/files?upload_id=u1&upload_protocol=resumable"
+    started() = HTTP.Response(200, ["X-Goog-Upload-URL" => session(), "X-Goog-Upload-Status" => "active"], UInt8[])
+    try
+        hdrs = Dict{String,String}[]
+        r, seen = _with_scripted((n, req) -> (push!(hdrs, Dict(lowercase(String(k)) => String(v) for (k, v) in req.headers));
+                                             n == 1 ? started() : _json(200, """{"file":$_GEMINI_FILE}"""))) do
+            upload_file(path; service=_GF)
+        end
+        @test [(q.method, q.target) for q in seen] ==
+              [("POST", "/upload/v1beta/files"), ("POST", "/upload/v1beta/files?upload_id=u1&upload_protocol=resumable")]
+        @test JSON.parse(seen[1].body) == Dict("file" => Dict("displayName" => basename(path)))
+        start, bytes = hdrs
+        @test [start[k] for k in ("x-goog-api-key", "content-type", "x-goog-upload-protocol", "x-goog-upload-command",
+                                  "x-goog-upload-header-content-length", "x-goog-upload-header-content-type")] ==
+              ["t", "application/json", "resumable", "start", "5", "text/plain"]
+        @test (bytes["x-goog-upload-offset"], bytes["x-goog-upload-command"]) == ("0", "upload, finalize")
+        @test !haskey(bytes, "x-goog-api-key")
+        @test seen[2].body == "hello"
+        @test r isa FileSuccess
+        f = r.response
+        @test (f.id, f.bytes, f.filename, f.purpose, f.status) == ("rvbxh1rsu85u", 5, "w.txt", nothing, "ACTIVE")
+        @test f.created_at == 1794860041   # 2026-11-16T20:14:01Z
+        @test (f.raw["uri"], f.raw["mimeType"], f.raw["expirationTime"]) ==
+              ("https://generativelanguage.googleapis.com/v1beta/files/rvbxh1rsu85u", "text/plain",
+               "2026-11-18T20:14:00.555605689Z")
+        # A refused start is the upload's failure, and sends no bytes.
+        r, seen = _with_scripted(() -> upload_file(path; service=_GF), (_, _) -> _json(429, """{"error":{"code":429}}"""))
+        @test r isa FileFailure && r.status == 429 && length(seen) == 1
+        # A start that names no session is a call error, and sends no bytes.
+        r, seen = _with_scripted(() -> upload_file(path; service=_GF), (_, _) -> _json(200, "{}"))
+        @test r isa FileCallError && occursin("X-Goog-Upload-URL", r.error) && length(seen) == 1
+        # A refused finalize is the upload's failure; one that answers no file, a call error.
+        r, _ = _with_scripted(() -> upload_file(path; service=_GF), (n, _) -> n == 1 ? started() : _json(400, "{}"))
+        @test r isa FileFailure && r.status == 400
+        r, _ = _with_scripted(() -> upload_file(path; service=_GF), (n, _) -> n == 1 ? started() : _json(200, _GEMINI_FILE))
+        @test r isa FileCallError && occursin("\"file\"", r.error)
+        # Refused before any request.
+        e = try upload_file(path, "user_data"; service=_GF); nothing catch x; x end
+        @test e isa ArgumentError &&
+              e.msg == "upload_file: Gemini's Files API takes no purpose (got \"user_data\"); call upload_file(path; service)"
+        e = try upload_file(path; service=_GF, expires_after=3600); nothing catch x; x end
+        @test e isa ArgumentError && e.msg == "upload_file: Gemini stores an uploaded file for 48 hours and takes no " *
+              "expiry (https://ai.google.dev/gemini-api/docs/files); unset expires_after"
+    finally
+        rm(path; force=true)
+    end
+end
+
+# Gemini's File: `name` "files/<id>", `sizeBytes` an int64 string, `createTime` RFC 3339, `state`;
+# `displayName`, `sizeBytes` and `state` may be absent.
+# Refuted if: a File without its name or creation time, or with a name that is not "files/<id>" or a
+# size that is no integer, decodes; or an absent optional field is made up.
+@testset "Gemini: a File without name or createTime is a FileCallError; absent optional fields are nothing" begin
+    full = JSON.parse(_GEMINI_FILE)
+    get1(d) = _answered(() -> retrieve_file("files/rvbxh1rsu85u"; service=_GF), 200; body=JSON.json(d))
+    for key in ("name", "createTime")
+        r = get1(delete!(copy(full), key))
+        @test r isa FileCallError && occursin(key, r.error)
+    end
+    for bad in (Dict("name" => "rvbxh1rsu85u"), Dict("name" => "files/"), Dict("sizeBytes" => "five"), Dict("sizeBytes" => 5))
+        @test get1(merge(full, bad)) isa FileCallError
+    end
+    r = get1(delete!(delete!(delete!(copy(full), "displayName"), "sizeBytes"), "state"))
+    @test r isa FileSuccess && (r.response.filename, r.response.bytes, r.response.status) == (nothing, nothing, nothing)
+end
+
+# Gemini's files.list: `pageSize` and `pageToken`; `files` and `nextPageToken`, each left out when empty.
+# Refuted if: `limit` or `after` go under OpenAI's names, OpenAI's purpose or order are sent, `{}` is not
+# an empty last page, or has_more does not follow `nextPageToken`.
+@testset "Gemini list_files: pageSize and pageToken, files and nextPageToken" begin
+    r, seen = _with_scripted(() -> list_files(; limit=1, after=_HOSTILE_ID, service=_GF),
+                             (_, _) -> _json(200, """{"files":[$_GEMINI_FILE],"nextPageToken":"tok_2"}"""))
+    @test only(seen).target == "/v1beta/files?pageSize=1&pageToken=$_HOSTILE_ENC"
+    @test r isa FileListSuccess && r.response.has_more && only(r.response.data).id == "rvbxh1rsu85u"
+    empty = _answered(() -> list_files(; service=_GF), 200; body="{}")
+    @test empty isa FileListSuccess && isempty(empty.response.data) && !empty.response.has_more
+    @test _answered(() -> list_files(; service=_GF), 200; body="""{"files":{}}""") isa FileCallError
+    e = try list_files(; service=_GF, order="desc"); nothing catch x; x end
+    @test e isa ArgumentError && e.msg == "list_files: Gemini's Files API takes no order, which only OpenAI's takes; unset order"
+end
+
+# Gemini's files.get and files.delete at v1beta/files/<id>; the delete answers `{}` (2026-11-16).
+# Refuted if: either form of the id ("files/<id>" or "<id>") leaves one path segment, or the delete
+# reports another id than the one requested.
+@testset "Gemini retrieve_file and delete_file take the id or the name" begin
+    t = _recorded_targets() do
+        retrieve_file("files/rvbxh1rsu85u"; service=_GF)
+        retrieve_file("rvbxh1rsu85u"; service=_GF)
+        delete_file("files/rvbxh1rsu85u"; service=_GF)
+        retrieve_file(_HOSTILE_ID; service=_GF)
+    end
+    @test t == ["/v1beta/files/rvbxh1rsu85u", "/v1beta/files/rvbxh1rsu85u", "/v1beta/files/rvbxh1rsu85u",
+                "/v1beta/files/$_HOSTILE_ENC"]
+    for id in ("files/rvbxh1rsu85u", "rvbxh1rsu85u")
+        @test _answered(() -> delete_file(id; service=_GF), 200; body="{}") ==
+              FileDeleteSuccess(id="rvbxh1rsu85u", deleted=true, object=nothing)
+    end
+    # Gemini answered a GET after the delete with HTTP 403 (2026-11-16).
+    @test _answered(() -> retrieve_file("rvbxh1rsu85u"; service=_GF), 403).status == 403
+end
+
+# poll_file: GET until the file is no longer processing — Gemini's state past PROCESSING, OpenAI's status
+# past "uploaded"; an Anthropic file at once.
+# Refuted if: the poll ends on a processing file or polls past a terminal one, a non-transient failure is
+# polled through, the time running out loses the last file seen, or a cancelled token sends a request.
+@testset "poll_file waits out Gemini's PROCESSING and OpenAI's uploaded" begin
+    processing = replace(_GEMINI_FILE, "\"ACTIVE\"" => "\"PROCESSING\"")
+    r, seen = _with_scripted(() -> poll_file("files/rvbxh1rsu85u"; service=_GF, interval=0.01, timeout=30.0),
+                             (n, _) -> _json(200, n < 3 ? processing : _GEMINI_FILE))
+    @test r isa FileSuccess && r.response.status == "ACTIVE" && length(seen) == 3
+    @test all(q -> q.target == "/v1beta/files/rvbxh1rsu85u", seen)
+    failed = replace(_GEMINI_FILE, "\"ACTIVE\"" => "\"FAILED\"")
+    r, seen = _with_scripted(() -> poll_file("rvbxh1rsu85u"; service=_GF, interval=0.01, timeout=30.0), (_, _) -> _json(200, failed))
+    @test r isa FileSuccess && r.response.status == "FAILED" && length(seen) == 1
+    r, _ = _with_scripted(() -> poll_file("rvbxh1rsu85u"; service=_GF, interval=0.05, timeout=0.5), (_, _) -> _json(200, processing))
+    @test r isa FileCallError && r.cause isa UniLMTimeout && r.last_observed.status == "PROCESSING"
+    @test startswith(r.error, "poll_file timeout: rvbxh1rsu85u") && endswith(r.error, "(last observed status: PROCESSING)")
+    file(status) = JSON.json(Dict("id" => "file-1", "object" => "file", "bytes" => 3, "created_at" => 1,
+                                  "filename" => "a.jsonl", "purpose" => "fine-tune", "status" => status))
+    r, seen = _with_scripted(() -> poll_file("file-1"; service=URLProbe, interval=0.01, timeout=30.0),
+                             (n, _) -> _json(200, file(n == 1 ? "uploaded" : "processed")))
+    @test r isa FileSuccess && r.response.status == "processed" && length(seen) == 2
+    r, seen = _with_scripted(() -> poll_file("file_1"; service=_AF, interval=0.01, timeout=30.0), (_, _) -> _json(200, _ANTHROPIC_FILE))
+    @test r isa FileSuccess && length(seen) == 1
+    # A transient status is polled through; another failure is the result.
+    r, seen = _with_scripted(() -> poll_file("f"; service=_GF, interval=0.01, timeout=30.0),
+                             (n, _) -> n == 1 ? _json(503, "{}") : _json(200, _GEMINI_FILE))
+    @test r isa FileSuccess && length(seen) == 2
+    @test _answered(() -> poll_file("f"; service=_GF, interval=0.01, timeout=30.0), 403) isa FileFailure
+    r, seen = _with_scripted(() -> poll_file("f"; service=_GF, cancel=cancel!(CancelToken())), (_, _) -> _json(200, processing))
+    @test r isa FileCallError && r.cause isa UniLMCancelled && isempty(seen)
+    @test_throws ArgumentError poll_file("f"; service=_GF, interval=0)
+    # The three-field positional form still builds a call error.
+    @test FileCallError("e", nothing, nothing).last_observed === nothing
+end
+
+# Gemini's files.register: POST v1beta/files:register `{"uris": [...]}`, answered `{"files": [File…]}`.
+# Refuted if: the URIs are sent in another shape or place, an empty list is sent, a 200 without `files`
+# decodes, or Gemini's refusal is anything but a FileFailure.
+@testset "register_files: Gemini's files.register, one File per gs:// URI" begin
+    r, seen = _with_scripted(() -> register_files(["gs://bucket/w.txt"]; service=_GF),
+                             (_, _) -> _json(200, """{"files":[$_GEMINI_FILE]}"""))
+    @test (only(seen).method, only(seen).target) == ("POST", "/v1beta/files:register")
+    @test JSON.parse(only(seen).body) == Dict("uris" => ["gs://bucket/w.txt"])
+    @test r isa FileListSuccess && only(r.response.data).id == "rvbxh1rsu85u" && !r.response.has_more
+    # Gemini's reply on 2026-11-16 for an object the key cannot reach.
+    r = _answered(() -> register_files(["gs://bucket/w.txt"]; service=_GF), 404;
+                  body="""{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}""")
+    @test r isa FileFailure && r.status == 404
+    @test _answered(() -> register_files(["gs://bucket/w.txt"]; service=_GF), 200; body="{}") isa FileCallError
+    e = try register_files(String[]; service=_GF); nothing catch x; x end
+    @test e isa ArgumentError && e.msg == "register_files: uris is empty; Gemini registers one or more gs:// objects"
+end
+
+@testset "every method of the Files verbs takes `cancel` as its last keyword" begin
+    for f in (upload_file, list_files, retrieve_file, delete_file, file_content, poll_file, register_files), m in methods(f)
+        @test (f, last(filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m)))) == (f, :cancel)
     end
 end

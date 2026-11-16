@@ -20,7 +20,8 @@ request is sent, and the model goes in the URL. Size the image with two fields o
 They go in `generationConfig.imageConfig`, and `safety_identifier` in the request label
 ([Request options](@ref gemini_request_options)). A request returns one image, so `n` takes only 1,
 and the image fields generateContent has no counterpart for — `size`, `quality`, `background`,
-`output_format`, `output_compression`, `moderation`, and an edit's `mask` and `input_fidelity` — are
+`output_format`, `output_compression`, `moderation`, OpenAI's GPT-Image-2.6 controls (`complexity`,
+`frame_count`, `frame_duration_ms` and `svg`), and an edit's `mask` and `input_fidelity` — are
 refused before the request ([Limits and refusals](@ref gemini_limits)). An image request is not recorded, so its
 output here is quoted from a live run:
 

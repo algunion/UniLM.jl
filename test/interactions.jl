@@ -707,7 +707,8 @@ end
              :conversation => "conv_1", :context_management => [Dict("type" => "x")],
              :stream_options => Dict("include_usage" => true),
              :prompt_cache_options => PromptCacheOptions(mode="explicit"),
-             :moderation => ModerationConfig(model="omni-moderation-latest"))
+             :moderation => ModerationConfig(model="omni-moderation-latest"),
+             :image_context_compression => "disabled")
     @test Set(first.(cases)) == Set(UniLM._INTERACTIONS_UNMAPPED_FIELDS)   # every unmapped field covered
     for (field, value) in cases
         rr = Respond(; service=GEMINIServiceEndpoint, input="x", (field => value,)...)

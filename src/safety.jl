@@ -120,7 +120,8 @@ end
 
 The safety case `id` (a `safety.warning_issued` or `safety.deactivation_issued` webhook's
 `data["id"]`) as a [`SafetyCaseSuccess`](@ref); a case that does not exist, or that the key may not
-read, is OpenAI's 404, a `SafetyFailure`.
+read, is OpenAI's 404, and a key without the `api.safety.read` scope gets its 403 (witnessed on
+November 16, 2026): each a `SafetyFailure`.
 
 Each safety and provenance verb makes one attempt bounded by its `config` and takes `cancel`: a
 cancelled token returns a `SafetyCallError` whose `cause` is a [`UniLMCancelled`](@ref), without

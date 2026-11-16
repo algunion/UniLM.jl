@@ -644,4 +644,33 @@ end
     @test c isa AbstractDict && c["image"] == Dict("context_compression" => "disabled")
 end
 
+@testset "Responses API — a streamed reply's input_transformations: a reasoning item replayed on another model" begin
+    # As the unstreamed testset above, the second turn streamed: the list arrives in response.completed.
+    q1 = InputMessage(role="user", content="How many primes are there below 200? Answer with the number only.")
+    ask(model, input; kw...) = respond(Respond(; model, input, reasoning=Reasoning(effort="medium"), store=false,
+                                               include=["reasoning.encrypted_content"], max_output_tokens=3000, kw...))
+    r1 = ask("gpt-6-luna", [q1])
+    @test r1 isa ResponseSuccess
+    ids = [item["id"] for item in reasoning_items(r1)]
+    r2 = fetch(ask("gpt-5.6-luna", Any[q1, r1.response.output...,
+                                        InputMessage(role="user", content="And below 300? Answer with the number only.")];
+                   stream=true))
+    @test r2 isa ResponseSuccess
+    withheld = input_transformations(r2)
+    @info "input_transformations live (streamed)" ids withheld cost = estimated_cost(r1) + estimated_cost(r2)
+    @test [t.id for t in withheld] == ids
+    @test all(t -> (t.type, t.action, t.reason) == ("reasoning", "removed", :model_mismatch), withheld)
+end
+
+@testset "Responses API — image_context_compression enabled, streamed, and auto, which resolves to a policy" begin
+    ask(v; kw...) = respond(Respond(; model="gpt-6-luna", input="Reply with the single word: ok",
+                                    reasoning=Reasoning(effort="none"), max_output_tokens=16, store=false,
+                                    image_context_compression=v, kw...))
+    s = fetch(ask("enabled"; stream=true))
+    @test s isa ResponseSuccess && s.response.image_context_compression == "enabled"
+    a = ask("auto")
+    @test a isa ResponseSuccess && a.response.image_context_compression in ("enabled", "disabled")
+    @info "image_context_compression live" streamed = s.response.image_context_compression auto = a.response.image_context_compression
+end
+
 end  # if OPENAI_API_KEY

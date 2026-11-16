@@ -396,6 +396,40 @@ end
     @test occursin("model_info", e.msg)
 end
 
+# DeleteModelResponse (OpenAI's OpenAPI spec) requires id, object and deleted; OpenAI answered the delete
+# of a made-up fine-tuned model with HTTP 404 model_not_found on 2026-11-16.
+# Refuted if: the delete goes to another URL or method, a reply without its id or its confirmation reads as
+# a deletion, the requested id stands in for the reply's, or an endpoint without fine-tuning is sent anything.
+@testset "a fine-tuned model's deletion on OpenAI: DELETE /v1/models/{model}, confirmed by the reply" begin
+    del(id, respond::Function; config=_ML_CFG, cancel=nothing, service=_ML_OPENAI) =
+        _with_scripted(() -> UniLM._delete_model(service, id, config, cancel), respond)
+    id = "ft:gpt-4o-mini:org:suffix:abc123"
+    r, seen = del(id, _ml_serving("""{"id":"$id","object":"model","deleted":true}"""))
+    @test r isa ModelDeleteSuccess && issuccess(r) && (r.id, r.deleted) == (id, true)
+    @test _ml_targets(seen) == [("DELETE", "/v1/models/ft%3Agpt-4o-mini%3Aorg%3Asuffix%3Aabc123")]
+    for reply in ("""{"object":"model","deleted":true}""", """{"id":"","object":"model","deleted":true}""",
+                  """{"id":"$id","object":"model"}""", """{"id":"$id","object":"model","deleted":false}""", "[]")
+        r, seen = del(id, _ml_serving(reply))
+        @test r isa ModelListCallError && length(seen) == 1
+    end
+    body = """{"error":{"message":"The model '$id' does not exist","code":"model_not_found"}}"""
+    r, _ = del(id, (_, _) -> _json(404, body; headers=["x-request-id" => "req_1"]))
+    @test r isa ModelListFailure && (r.status, r.response, r.request_id) == (404, body, "req_1")
+    r, seen = del(id, _ml_serving("{}"); config=_TINY_DEADLINE)
+    @test _seam_timeout(r, ModelListCallError) && isempty(seen)
+    r = withenv(() -> UniLM._delete_model(OPENAIServiceEndpoint, id, _ML_CFG, nothing), "OPENAI_API_KEY" => nothing)
+    @test r isa ModelListCallError && r.cause isa KeyError
+    for (service, says) in ((ANTHROPICServiceEndpoint, "Model deletion is not supported by ANTHROPICServiceEndpoint"),
+                            (GEMINIServiceEndpoint, "Model deletion is not supported by GEMINIServiceEndpoint"),
+                            (SeamProbe, "Model deletion is not supported by SeamProbe"),
+                            (_MLUndeclared, "Model deletion is not supported by _MLUndeclared"))
+        e = try UniLM._delete_model(service, id, nothing, nothing); nothing catch x; x end
+        @test e isa ArgumentError && startswith(e.msg, says)
+    end
+    e = try UniLM._delete_model(_ML_OPENAI, "", nothing, nothing); nothing catch x; x end
+    @test e isa ArgumentError
+end
+
 # ─── The drift checks (provider_drift_checks.jl) ─────────────────────────────
 
 _ml_models(name::AbstractString, wire) = UniLM._page_models(wire, _ml_page(name * ".json"))

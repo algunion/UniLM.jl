@@ -5,7 +5,8 @@
 #   Anthropic  GET /v1/models      https://platform.claude.com/docs/en/api/models/list
 #   Gemini     GET /v1beta/models  https://ai.google.dev/api/models
 # Anthropic and Gemini answer in pages, and every page is fetched. One model by id is
-# GET <listing>/{model} on all three.
+# GET <listing>/{model} on all three; OpenAI deletes a fine-tuned model with
+# DELETE /v1/models/{model}.
 # ============================================================================
 
 """
@@ -65,9 +66,11 @@ end
 struct ModelSuccess <: LLMRequestResponse
     model::ProviderModel
 end
-"Error result of [`list_models`](@ref) and [`retrieve_model`](@ref) on OpenAI, Anthropic or Gemini: HTTP `status`, the raw `response` body, and the `request_id` the provider sent (`x-request-id`/`request-id` header), if any. An error status on any page is the listing's failure; an unknown model is a 404."
+"Successful result of a fine-tuned model's deletion on OpenAI (`DELETE /v1/models/{model}`): the `id` the reply names, and `deleted`, which the reply confirmed (`true`)."
+@kwdef struct ModelDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"Error result of [`list_models`](@ref) and [`retrieve_model`](@ref), and of a fine-tuned model's deletion, on OpenAI, Anthropic or Gemini: HTTP `status`, the raw `response` body, and the `request_id` the provider sent (`x-request-id`/`request-id` header), if any. An error status on any page is the listing's failure; an unknown model is a 404."
 @kwdef struct ModelListFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
-"[`list_models`](@ref) or [`retrieve_model`](@ref) call on OpenAI, Anthropic or Gemini that produced no result (a missing key, no connection, a timeout, a cancel, or a reply that is not the documented listing or model); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel."
+"[`list_models`](@ref) or [`retrieve_model`](@ref) call, or a fine-tuned model's deletion, on OpenAI, Anthropic or Gemini that produced no result (a missing key, no connection, a timeout, a cancel, or a reply that is not the documented listing, model or deletion); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel."
 @kwdef struct ModelListCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── The three wires ─────────────────────────────────────────────────────────
@@ -335,3 +338,34 @@ function _retrieve_model(::Any, service, ::AbstractString, ::Union{Nothing,Reque
 end
 _lookup_instead(_)::String = "list_models lists its models"
 _lookup_instead(::OllamaEndpoint)::String = "model_info shows an installed model, and list_models lists them"
+
+# ─── A fine-tuned model's deletion (OpenAI) ──────────────────────────────────
+
+# OpenAI's DELETE /v1/models/{model} deletes a fine-tuned model ("You must have the Owner role in
+# your organization", 403 otherwise; 404 for a model the key cannot see or that the endpoint cannot
+# delete). One attempt, as the other delete verbs make; the reply must name the model and confirm.
+function _delete_model(service, id::AbstractString, config::Union{Nothing,RequestConfig},
+                       cancel::Union{Nothing,CancelToken})
+    validate_capability(service, :fine_tuning, "Model deletion")
+    _delete_model(_model_listing(service), service, id, config, cancel)
+end
+
+_delete_model(::Any, service, ::AbstractString, ::Union{Nothing,RequestConfig}, ::Union{Nothing,CancelToken}) =
+    throw(ArgumentError("Model deletion is not supported by $(_service_name(service)): OpenAI's Models API deletes a " *
+                        "fine-tuned model by id; send it to OPENAIServiceEndpoint"))
+
+function _delete_model(::_OpenAIModels, service, id::AbstractString, config::Union{Nothing,RequestConfig},
+                       cancel::Union{Nothing,CancelToken})
+    isempty(id) && throw(ArgumentError("delete_model needs the id of a fine-tuned model (\"ft:…\")"))
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        resp = _http("DELETE", _model_url(service, id), _models_headers(service); cfg, remaining=_remaining_s(cfg, t0),
+                     cancel=_resolve_cancel(cancel))
+        resp.status == 200 || return _failure(ModelListFailure, resp)
+        d = _model_reply(resp)
+        ModelDeleteSuccess(id=_listing_id(d), deleted=_confirm_deleted(d))
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(ModelListCallError, e)
+    end
+end

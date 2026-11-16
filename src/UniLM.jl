@@ -434,6 +434,7 @@ export
     ProviderModel,
     ModelListSuccess,
     ModelSuccess,
+    ModelDeleteSuccess,
     ModelListFailure,
     ModelListCallError,
     retrieve_model

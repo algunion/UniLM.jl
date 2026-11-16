@@ -673,4 +673,139 @@ end
     @info "image_context_compression live" streamed = s.response.image_context_compression auto = a.response.image_context_compression
 end
 
+@testset "Vector Stores API — a store's update, its files and their attributes, a batch's cancel and files, search" begin
+    # Two small files, one store that expires after a day of disuse; everything made is deleted below.
+    dir = mktempdir()
+    texts = ("returns.txt" => "Jackets can be returned within 30 days of delivery for a full refund to the original card.\n",
+             "shipping.txt" => "Orders ship within 2 business days. Express shipping arrives the next business day.\n")
+    up = [upload_file((p = joinpath(dir, name); write(p, text); p), "user_data") for (name, text) in texts]
+    @test all(u -> u isa FileSuccess, up)
+    fa, fb = up[1].response.id, up[2].response.id
+    vs = create_vector_store(; name="unilm-live-vector-stores", description="UniLM live test store",
+                             expires_after=Dict("anchor" => "last_active_at", "days" => 1))
+    @test vs isa VectorStoreSuccess
+    vid = vector_store_id(vs.response)
+    @info "create_vector_store live" vs.response.raw
+    try
+        added = add_vector_store_file(vid, fa; attributes=Dict("team" => "returns", "year" => 2026))
+        @test added isa VectorStoreFileSuccess
+        # The file is indexed when its status leaves "in_progress".
+        f = added
+        for _ in 1:60
+            f.response.status == "in_progress" || break
+            sleep(1)
+            f = retrieve_vector_store_file(vid, fa)
+            f isa VectorStoreFileSuccess || break
+        end
+        @test f isa VectorStoreFileSuccess && f.response.status == "completed"
+        @test f.response.raw["attributes"] == Dict("team" => "returns", "year" => 2026)
+
+        # A batch of one entry with attributes of its own, cancelled at once, then its file list.
+        b = create_file_batch(vid, [VectorStoreFileEntry(file_id=fb, attributes=Dict("team" => "shipping"))])
+        @test b isa VectorStoreBatchSuccess
+        c = cancel_file_batch(vid, b.response.id)
+        @info "cancel_file_batch live" c
+        done = poll_file_batch(vid, b.response.id; interval=1.0, timeout=60.0)
+        @test done isa VectorStoreBatchSuccess && done.response.status in ("completed", "cancelled")
+        bf = list_file_batch_files(vid, b.response.id; order="asc")
+        @info "list_file_batch_files live" done.response.status bf
+        @test bf isa VectorStoreFileListSuccess && [x.id for x in bf.response.data] == [fb]
+
+        listed = list_vector_store_files(vid; filter="completed", order="asc", limit=10)
+        @test listed isa VectorStoreFileListSuccess && fa in [x.id for x in listed.response.data]
+
+        u = update_vector_store_file(vid, fa, Dict("team" => "returns", "reviewed" => true))
+        @test u isa VectorStoreFileSuccess && u.response.raw["attributes"] == Dict("team" => "returns", "reviewed" => true)
+
+        content = vector_store_file_content(vid, fa)
+        @test content isa VectorStoreContentSuccess
+        @test occursin("30 days", join(part["text"] for part in content.response.data))
+
+        hits = search_vector_store(vid, "How long do I have to return a jacket?"; max_num_results=2,
+                                   filters=Dict("type" => "eq", "key" => "team", "value" => "returns"))
+        @test hits isa VectorStoreSearchSuccess && !isempty(hits.response.data)
+        h = first(hits.response.data)
+        @test (h.file_id, h.filename, h.attributes["team"]) == (fa, "returns.txt", "returns")
+        @test 0 <= h.score <= 1 && occursin("30 days", join(part["text"] for part in h.content))
+        @info "search_vector_store live" hits.response.search_query h.score
+
+        renamed = update_vector_store(vid; name="unilm-live-vector-stores-renamed", metadata=Dict("suite" => "live"))
+        @test renamed isa VectorStoreSuccess && renamed.response.name == "unilm-live-vector-stores-renamed"
+        @test renamed.response.raw["metadata"] == Dict("suite" => "live")
+
+        page = list_vector_stores(; limit=5, order="desc")
+        @test page isa VectorStoreListSuccess
+        older = list_vector_stores(; limit=5, order="desc", after=vid)
+        @test older isa VectorStoreListSuccess && vid ∉ [x.id for x in older.response.data]
+        newer = list_vector_stores(; limit=5, order="desc", before=vid)
+        @test newer isa VectorStoreListSuccess && vid ∉ [x.id for x in newer.response.data]
+
+        gone = delete_vector_store_file(vid, fa)
+        @test gone isa VectorStoreDeleteSuccess && gone.id == fa
+    finally
+        @test delete_vector_store(vid) isa VectorStoreDeleteSuccess
+        foreach(id -> delete_file(id), (fa, fb))
+    end
+end
+
+@testset "Containers API — memory, network policy, a name filter, files by id and by upload, their content" begin
+    # No outbound access: an organization whose policy disables container network access gets a 400 for an allowlist.
+    dir = mktempdir()
+    a, b = joinpath(dir, "prices.csv"), joinpath(dir, "notes.txt")
+    write(a, "item,price\nlantern,24.50\n")
+    write(b, "two files\n")
+    name = "unilm-live-container-$(rand(UInt32))"
+    c = create_container(; name, memory_limit="4g", network_policy=ContainerNetworkDisabled())
+    @test c isa ContainerSuccess
+    cid = c.response.id
+    up = upload_file(a, "user_data")
+    try
+        @test c.response.raw["memory_limit"] == "4g"
+        @info "create_container live" c.response.raw
+        l = list_containers(; name, order="asc", limit=5)
+        @test l isa ContainerListSuccess && [x["id"] for x in l.response.data] == [cid]
+        @test up isa FileSuccess
+        byid = add_container_file(cid; file_id=up.response.id)
+        @test byid isa ContainerSuccess && byid.response isa UniLM.ContainerFileObject
+        byup = add_container_file(cid, b)
+        @test byup isa ContainerSuccess
+        files = list_container_files(cid; order="asc", limit=10)
+        @test files isa ContainerFileListSuccess
+        @test issubset([byid.response.id, byup.response.id], [x.id for x in files.response.data])
+        g = retrieve_container_file(cid, byid.response.id)
+        @test g isa ContainerSuccess && g.response.path == byid.response.path
+        bytes = container_file_content(cid, byid.response.id)
+        @test bytes isa FileContentSuccess && bytes.content == read(a)
+        gone = delete_container_file(cid, byid.response.id)
+        @test gone isa ContainerDeleteSuccess && gone.id == byid.response.id
+    finally
+        @test delete_container(cid) isa ContainerDeleteSuccess
+        up isa FileSuccess && delete_file(up.response.id)
+    end
+end
+
+@testset "Containers API — a skill reference reaches OpenAI" begin
+    # No skill of that id exists, so OpenAI's answer names the id it read from the reference.
+    r = create_container(; name="unilm-live-skill", skills=[SkillReference("skill_unilm_live_missing"; version="latest")])
+    r isa ContainerSuccess && delete_container(r.response.id)
+    @info "create_container with a skill reference live" r
+    @test r isa ContainerFailure && occursin("skill_unilm_live_missing", r.response)
+end
+
+@testset "Responses API — code_interpreter(memory_limit) sets the memory of the container it makes" begin
+    r = respond(Respond(model="gpt-6-luna", input="Use the python tool to print 6*7.", reasoning=Reasoning(effort="none"),
+                        tools=[code_interpreter(memory_limit="4g")], tool_choice="required", max_output_tokens=300))
+    @test r isa ResponseSuccess
+    calls = code_interpreter_outputs(r)
+    @test !isempty(calls)
+    cid = first(calls)["container_id"]
+    try
+        c = retrieve_container(cid)
+        @test c isa ContainerSuccess && c.response.raw["memory_limit"] == "4g"
+        @info "code_interpreter(memory_limit) live" cost = estimated_cost(r) memory = c.response.raw["memory_limit"]
+    finally
+        @test delete_container(cid) isa ContainerDeleteSuccess
+    end
+end
+
 end  # if OPENAI_API_KEY

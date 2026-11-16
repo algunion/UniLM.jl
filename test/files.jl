@@ -294,3 +294,36 @@ end
     @test r isa FileCallError && occursin("\"object\"", r.error)
     @test FileDeleteSuccess("file-1", true) == FileDeleteSuccess(id="file-1", deleted=true, object=nothing)
 end
+
+# OpenAI's FileExpirationAfter: `anchor` "created_at" and `seconds`, 3600 to 2592000; a form sends the
+# object as bracketed fields (the Files reference's curl: `-F expires_after[anchor]="created_at"`).
+# Refuted if: expires_after is not sent, is sent in another shape or when unset, or a value outside
+# the range reaches the network.
+@testset "upload_file sends expires_after as OpenAI's bracketed form fields, 3600 to 2592000 seconds" begin
+    path = tempname() * ".jsonl"
+    write(path, "{}\n")
+    ok = JSON.json(Dict("id" => "file-1", "object" => "file", "bytes" => 3, "created_at" => 1, "expires_at" => 3601,
+                        "filename" => basename(path), "purpose" => "batch", "status" => "processed"))
+    try
+        for call in (() -> upload_file(path, "batch"; service=URLProbe, expires_after=3600),
+                     () -> upload_file(FileUpload(service=URLProbe, file=path, purpose="batch", expires_after=3600)))
+            r, seen = _with_scripted(call, (_, _) -> _json(200, ok))
+            body = only(seen).body
+            @test r isa FileSuccess && r.response.raw["expires_at"] == 3601
+            @test occursin("name=\"expires_after[anchor]\"\r\n\r\ncreated_at\r\n", body)
+            @test occursin("name=\"expires_after[seconds]\"\r\n\r\n3600\r\n", body)
+        end
+        _, seen = _with_scripted(() -> upload_file(path, "batch"; service=URLProbe), (_, _) -> _json(200, ok))
+        @test !occursin("expires_after", only(seen).body)
+        for s in (3599, 2592001)
+            e = try upload_file(path, "batch"; service=SeamProbe, expires_after=s); nothing catch x; x end
+            @test e isa ArgumentError &&
+                  e.msg == "upload_file: OpenAI's Files API takes expires_after from 3600 to 2592000 seconds (got $s)"
+        end
+        @test FileUpload(file=path, purpose="batch", expires_after=2592000).expires_after == 2592000
+        # The three-field positional form still builds a request.
+        @test FileUpload(SeamProbe, path, "batch").expires_after === nothing
+    finally
+        rm(path; force=true)
+    end
+end

@@ -20,6 +20,18 @@ function _check_file_purpose(purpose)::Nothing
     nothing
 end
 
+# Seconds from creation until an uploaded file expires: OpenAI's `expires_after.seconds`, "between 3600
+# (1 hour) and 2592000 (30 days)" (FileExpirationAfter, on the Files and Uploads APIs alike); the Uploads
+# API answered 3599 and 2592001 with HTTP 400 on 2026-11-16.
+const _OPENAI_FILE_EXPIRY = 3600:2592000
+
+function _check_file_expiry(verb::String, expires_after::Union{Int,Nothing})::Nothing
+    isnothing(expires_after) || expires_after in _OPENAI_FILE_EXPIRY || throw(ArgumentError(
+        "$verb: OpenAI's Files API takes expires_after from $(first(_OPENAI_FILE_EXPIRY)) to " *
+        "$(last(_OPENAI_FILE_EXPIRY)) seconds (got $expires_after)"))
+    nothing
+end
+
 function _mime_for(path::AbstractString)
     ext = lowercase(splitext(path)[2])
     get(Dict(
@@ -156,22 +168,28 @@ _last_status(seen)::String =
 # ─── Request type ─────────────────────────────────────────────────────────────
 
 """
-    FileUpload(; file, purpose, service=OPENAIServiceEndpoint)
+    FileUpload(; file, purpose, expires_after=nothing, service=OPENAIServiceEndpoint)
 
 A file-upload request. `file` is a path on disk; `purpose` is one of
 `"assistants"`, `"batch"`, `"fine-tune"`, `"vision"`, `"user_data"`. Any other purpose
 throws `ArgumentError`, `"evals"` naming the Evals API's shutdown on 2026-11-30.
+`expires_after` is the number of seconds from the upload until the file expires, 3600 (one
+hour) to 2592000 (30 days); `nothing` keeps OpenAI's default ("files with `purpose=batch`
+expire after 30 days and all other files are persisted until they are manually deleted").
 """
 @kwdef struct FileUpload
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     file::String
     purpose::String
-    function FileUpload(service, file, purpose)
+    expires_after::Union{Int,Nothing} = nothing
+    function FileUpload(service, file, purpose, expires_after)
         isfile(file) || throw(ArgumentError("file not found: $file"))
         _check_file_purpose(purpose)
-        new(service, file, purpose)
+        _check_file_expiry("upload_file", expires_after)
+        new(service, file, purpose, expires_after)
     end
 end
+FileUpload(service, file, purpose) = FileUpload(service, file, purpose, nothing)
 
 # ─── Parsed objects ───────────────────────────────────────────────────────────
 
@@ -250,10 +268,11 @@ FileDeleteSuccess(id, deleted) = FileDeleteSuccess(id, deleted, nothing)
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
 """
-    upload_file(path, purpose; service=OPENAIServiceEndpoint) -> LLMRequestResponse
+    upload_file(path, purpose; service=OPENAIServiceEndpoint, expires_after=nothing) -> LLMRequestResponse
     upload_file(u::FileUpload) -> LLMRequestResponse
 
 Upload a file (multipart/form-data). Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
+`expires_after` is the number of seconds until the file expires (see [`FileUpload`](@ref)).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call
 (a single bounded attempt; `max_attempts` does not apply). Like every other create, an
@@ -273,7 +292,11 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
         # A cancelled token reads no file: the form holds the whole file, read before `_http` checks the token
         # (and outside the request's time bound).
         iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
-        form = HTTP.Form(["purpose" => u.purpose,
+        # A form sends the `expires_after` object as bracketed fields, as OpenAI's Files reference does
+        # (`-F expires_after[anchor]="created_at"`).
+        expiry = isnothing(u.expires_after) ? Pair{String,Any}[] :
+            Pair{String,Any}["expires_after[anchor]" => "created_at", "expires_after[seconds]" => string(u.expires_after)]
+        form = HTTP.Form(Pair{String,Any}["purpose" => u.purpose; expiry;
             "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
         resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
                      cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
@@ -286,8 +309,9 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
     end
 end
 upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
-    upload_file(FileUpload(service=service, file=path, purpose=purpose); config=config, cancel=cancel)
+    expires_after::Union{Int,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing) =
+    upload_file(FileUpload(; service, file=path, purpose, expires_after); config, cancel)
 
 """
     list_files(; purpose=nothing, limit=nothing, after=nothing, service=OPENAIServiceEndpoint)

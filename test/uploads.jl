@@ -6,6 +6,8 @@
     @test _seam_timeout(cancel_upload("upload_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.UploadCallError)
 end
 
+# OpenAI's CreateUploadRequest lists four purposes; the Uploads API accepted `user_data` as well on
+# 2026-11-16 (an upload created with it, then cancelled), so create_upload takes the Files purposes.
 @testset "create_upload accepts only the Files purposes" begin
     @test_throws ArgumentError create_upload(filename="a.bin", purpose="bogus", bytes=4,
         mime_type="application/octet-stream", service=SeamProbe)
@@ -78,4 +80,25 @@ end
         cancel_upload("upload_abc123"; service=URLProbe)
     end
     @test g == ["/v1/uploads/upload_abc123/cancel"]
+end
+
+# OpenAI's CreateUploadRequest takes `expires_after`, a FileExpirationAfter: `anchor` "created_at" and
+# `seconds`, 3600 to 2592000.
+# Refuted if: expires_after is not sent, is sent in another shape or when unset, or a value outside
+# the range reaches the network.
+@testset "create_upload sends expires_after as OpenAI's FileExpirationAfter, 3600 to 2592000 seconds" begin
+    up = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "pending", "filename" => "a.jsonl",
+                        "bytes" => 3, "purpose" => "batch", "created_at" => 1, "expires_at" => 3601))
+    call(service; kw...) = create_upload(; filename="a.jsonl", purpose="batch", bytes=3, mime_type="application/jsonl",
+                                         service, kw...)
+    r, seen = _with_scripted(() -> call(URLProbe; expires_after=7200), (_, _) -> _json(200, up))
+    @test r isa UploadSuccess
+    @test JSON.parse(only(seen).body)["expires_after"] == Dict("anchor" => "created_at", "seconds" => 7200)
+    _, seen = _with_scripted(() -> call(URLProbe), (_, _) -> _json(200, up))
+    @test !haskey(JSON.parse(only(seen).body), "expires_after")
+    for s in (3599, 2592001)
+        e = try call(SeamProbe; expires_after=s); nothing catch x; x end
+        @test e isa ArgumentError &&
+              e.msg == "create_upload: OpenAI's Files API takes expires_after from 3600 to 2592000 seconds (got $s)"
+    end
 end

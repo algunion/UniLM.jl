@@ -1413,6 +1413,55 @@ function _tool_usage(u::AbstractDict)::ToolUsage
 end
 
 
+# ─── Withheld reasoning inputs ───────────────────────────────────────────────
+
+"""
+    InputTransformation(type, id, action, reason)
+
+A reasoning input a Responses reply says it withheld from the model: an item of the response's
+`input_transformations`, "Reasoning inputs withheld from the model, in input order" (the
+Responses reference), as [`input_transformations`](@ref) reads it.
+
+- `type::String`: `"reasoning"`.
+- `id::String`: "The original reasoning item ID", the replayed reasoning item the model did not see.
+- `action::String`: `"removed"`.
+- `reason::Symbol`: why, the reply's string as a `Symbol`: `:organization_mismatch`,
+  `:end_user_mismatch`, `:model_mismatch` (a reasoning item another model produced),
+  `:prefix_mismatch` or `:turn_boundary`, the reasons the reference lists; another string the reply
+  sends is kept as its `Symbol`.
+"""
+struct InputTransformation
+    type::String
+    id::String
+    action::String
+    reason::Symbol
+end
+
+"""
+    input_transformations(r) -> Vector{InputTransformation}
+
+The reasoning inputs a Responses reply withheld from the model, in input order, read from its
+`input_transformations`, unstreamed or in a stream's `response.completed`: one
+[`InputTransformation`](@ref) for each replayed reasoning item the model did not see, such as one
+another model produced (`reason` `:model_mismatch`). Empty when the reply withheld none or carries
+no such list (another provider's reply), and for a [`ResponseFailure`](@ref) or
+[`ResponseCallError`](@ref). An item without its four strings (`type`, `id`, `action`, `reason`)
+throws: it is no transformation the reference describes.
+"""
+input_transformations(r::ResponseObject)::Vector{InputTransformation} =
+    InputTransformation[_input_transformation(x) for x in _as_iter(get(r.raw, "input_transformations", nothing))]
+input_transformations(r::ResponseSuccess) = input_transformations(r.response)
+input_transformations(::Union{ResponseFailure,ResponseCallError}) = InputTransformation[]
+
+function _input_transformation(x)::InputTransformation
+    str(k) = (v = x isa AbstractDict ? get(x, k, nothing) : nothing; v isa AbstractString ? String(v) : nothing)
+    type, id, action, reason = str("type"), str("id"), str("action"), str("reason")
+    any(isnothing, (type, id, action, reason)) && error(
+        "an item of the reply's input_transformations is not {type, id, action, reason} strings: ", JSON.json(x))
+    InputTransformation(type, id, action, Symbol(reason))
+end
+
+
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
 function parse_response(resp::HTTP.Response)::ResponseObject

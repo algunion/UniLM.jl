@@ -3234,3 +3234,41 @@ end
         @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
     end
 end
+
+@testset "input_transformations: the reasoning inputs a Responses reply says it withheld, typed" begin
+    # The Responses reference, Response.input_transformations: "Reasoning inputs withheld from the model, in input
+    # order", each {type: "reasoning", id: "The original reasoning item ID", action: "removed", reason}, the reason
+    # one of organization_mismatch, end_user_mismatch, model_mismatch, prefix_mismatch and turn_boundary; all four
+    # are required.
+    item(id, reason) = Dict{String,Any}("type" => "reasoning", "id" => id, "action" => "removed", "reason" => reason)
+    reply(extra...) = Dict{String,Any}("id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                                       "output" => Any[], extra...)
+    parsed(d) = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(d))))
+    items = Any[item("rs_1", "model_mismatch"), item("rs_2", "turn_boundary")]
+    want = [InputTransformation("reasoning", "rs_1", "removed", :model_mismatch),
+            InputTransformation("reasoning", "rs_2", "removed", :turn_boundary)]
+    @test input_transformations(parsed(reply("input_transformations" => items))) == want
+    @test (@inferred input_transformations(parsed(reply("input_transformations" => Any[])))) == InputTransformation[]
+    @test input_transformations(parsed(reply())) == InputTransformation[]          # absent: another provider's reply
+    # A reason this release does not list is kept, as the symbol of its wire string.
+    @test only(input_transformations(parsed(reply("input_transformations" => Any[item("rs_3", "organization_binding_mismatch")])))).reason ===
+          :organization_binding_mismatch
+    # An item without its four strings is no transformation: reading it fails loud, naming the item.
+    for bad in (Dict{String,Any}("type" => "reasoning", "id" => "rs_1", "action" => "removed"), "rs_1",
+                Dict{String,Any}("type" => "reasoning", "id" => 1, "action" => "removed", "reason" => "model_mismatch"))
+        @test_throws r"input_transformations" input_transformations(parsed(reply("input_transformations" => Any[bad])))
+    end
+    @test input_transformations(ResponseFailure(response="{}", status=500)) == InputTransformation[]
+    @test input_transformations(ResponseCallError(error="e")) == InputTransformation[]
+    # Unstreamed and from a stream's response.completed alike.
+    cfg = RequestConfig(max_attempts=1)
+    ask(; kw...) = respond(Respond(service=_ToolUsageProbe, model="gpt-6-luna", input="hi"; kw...); config=cfg)
+    full = reply("input_transformations" => items)
+    plain, _ = _with_scripted(() -> ask(), (_, _) -> _json(200, JSON.json(full)))
+    sse = "event: response.completed\ndata: " * JSON.json(Dict("type" => "response.completed", "response" => full)) * "\n\n"
+    streamed, _ = _with_scripted(() -> fetch(ask(stream=true)),
+        (_, _) -> HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}(sse)))
+    for r in (plain, streamed)
+        @test r isa ResponseSuccess && input_transformations(r) == want && input_transformations(r.response) == want
+    end
+end

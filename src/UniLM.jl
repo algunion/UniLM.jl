@@ -203,6 +203,7 @@ export
     ModerationConfig,
     ResponseObject,
     ToolUsage,
+    InputTransformation,
     # Result types
     ResponseSuccess,
     ResponseFailure,
@@ -232,6 +233,7 @@ export
     incomplete_details,
     usage_details,
     tool_usage,
+    input_transformations,
     # Input helpers
     input_text,
     input_image,

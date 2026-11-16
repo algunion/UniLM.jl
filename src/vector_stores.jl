@@ -569,6 +569,47 @@ function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEn
 end
 
 """
+    cancel_file_batch(vector_store_id, batch_id; service=OPENAIServiceEndpoint)
+
+Cancel a file batch: OpenAI stops processing its files as soon as it can. Returns
+`VectorStoreBatchSuccess` with the batch as it then stands, `VectorStoreFailure`, or
+`VectorStoreCallError`; [`poll_file_batch`](@ref) waits for its final status.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function cancel_file_batch(vs_id::String, batch_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    _vs_call(_vs_batch_success, "POST", "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id) * "/cancel",
+             service, config, cancel)
+end
+
+"""
+    list_file_batch_files(vector_store_id, batch_id; limit=nothing, order=nothing, after=nothing,
+                          before=nothing, filter=nothing, service=OPENAIServiceEndpoint)
+
+List the files of a file batch, a page at a time, with the paging and the status `filter` of
+[`list_vector_store_files`](@ref). Returns `VectorStoreFileListSuccess`, `VectorStoreFailure`, or
+`VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VectorStoreCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried).
+"""
+function list_file_batch_files(vs_id::String, batch_id::String; limit::Union{Int,Nothing}=nothing,
+    order::Union{String,Nothing}=nothing, after::Union{String,Nothing}=nothing, before::Union{String,Nothing}=nothing,
+    filter::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :vector_stores, "Vector Stores API")
+    query = _vs_list_query("list_file_batch_files", "limit" => limit, "order" => order, "after" => after,
+                           "before" => before, "filter" => filter)
+    _vs_call(_vs_file_list, "GET", "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id) * "/files" * query,
+             service, config, cancel)
+end
+
+"""
     poll_file_batch(vector_store_id, batch_id; interval=2.0, timeout=300.0, service=OPENAIServiceEndpoint)
 
 Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) and

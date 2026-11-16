@@ -356,7 +356,9 @@ export
     vector_store_file_content,
     create_file_batch,
     retrieve_file_batch,
-    poll_file_batch
+    poll_file_batch,
+    cancel_file_batch,
+    list_file_batch_files
 
 # ─── Conversations API ────────────────────────────────────────────────────────
 export

@@ -282,3 +282,37 @@ end
     @test_throws ArgumentError update_vector_store_file("vs_1", "f", Dict("k" => "v"^513); service=URLProbe)
     @test_throws ArgumentError create_file_batch("vs_1", ["f"]; attributes=Dict("k"^65 => 1), service=URLProbe)
 end
+
+@testset "cancel_file_batch and list_file_batch_files" begin
+    batch = """{"id": "vsfb_1", "object": "vector_store.file_batch", "status": "cancelling", "file_counts": {"total": 2}}"""
+    c, seen = _with_scripted((_, _) -> _json(200, batch)) do
+        cancel_file_batch("vs_1", "vsfb_1"; service=URLProbe)
+    end
+    @test c isa VectorStoreBatchSuccess && c.response.status == "cancelling"
+    @test (only(seen).method, only(seen).target) == ("POST", "/v1/vector_stores/vs_1/file_batches/vsfb_1/cancel")
+    @test _answered(() -> cancel_file_batch("vs_1", "vsfb_1"; service=URLProbe), 200;
+                    body="""{"id": "vsfb_1"}""") isa VectorStoreCallError
+    page = """{"object": "list", "data": [{"id": "file-1", "status": "cancelled"}], "has_more": true}"""
+    l, seen = _with_scripted((_, _) -> _json(200, page)) do
+        list_file_batch_files("vs_1", "vsfb_1"; limit=1, order="desc", after="file-0", before="file-2", filter="cancelled",
+                              service=URLProbe)
+    end
+    @test l isa VectorStoreFileListSuccess && [(f.id, f.status) for f in l.response.data] == [("file-1", "cancelled")]
+    @test l.response.has_more
+    @test (only(seen).method, only(seen).target) ==
+          ("GET", "/v1/vector_stores/vs_1/file_batches/vsfb_1/files?limit=1&order=desc&after=file-0&before=file-2&filter=cancelled")
+    @test _answered(() -> list_file_batch_files("vs_1", "vsfb_1"; service=URLProbe), 200;
+                    body="""{"data": []}""") isa VectorStoreCallError
+    @test_throws ArgumentError list_file_batch_files("vs_1", "vsfb_1"; order="newest", service=URLProbe)
+    @test_throws ArgumentError list_file_batch_files("vs_1", "vsfb_1"; filter="expired", service=URLProbe)
+    t = _recorded_targets() do
+        cancel_file_batch(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+        list_file_batch_files(_HOSTILE_ID, _HOSTILE_ID; service=URLProbe)
+    end
+    @test t == ["/v1/vector_stores/$_HOSTILE_ENC/file_batches/$_HOSTILE_ENC/cancel",
+                "/v1/vector_stores/$_HOSTILE_ENC/file_batches/$_HOSTILE_ENC/files"]
+    @test _seam_timeout(cancel_file_batch("vs_x", "b"; service=SeamProbe, config=_TINY_DEADLINE), VectorStoreCallError)
+    @test _seam_timeout(list_file_batch_files("vs_x", "b"; service=SeamProbe, config=_TINY_DEADLINE), VectorStoreCallError)
+    @test_throws ArgumentError cancel_file_batch("vs_1", "b"; service=DeepSeekEndpoint("k"))
+    @test_throws ArgumentError list_file_batch_files("vs_1", "b"; service=DeepSeekEndpoint("k"))
+end

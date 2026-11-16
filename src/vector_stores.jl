@@ -185,7 +185,7 @@ _parse_vs_hit(d::AbstractDict) = VectorStoreSearchResult(file_id=d["file_id"], f
 # last page.
 _vs_page(d::AbstractDict) = (d["data"]::AbstractVector, d["has_more"]::Bool)
 
-# A deletion record (`T` the family's delete result; containers.jl shares it): OpenAI's reference
+# A deletion record (`T` the family's delete result; containers.jl, fine_tuning.jl and webhooks.jl share it): OpenAI's reference
 # requires its `id` — never the one requested put in its place — and its `object`, which names
 # what was deleted (`"vector_store.deleted"`, `"container.file.deleted"`, …); `_confirm_deleted`
 # reads its `deleted`. The throws become the verb's *CallError.

@@ -2924,10 +2924,10 @@ reset_default_config!()                     # cleared: as if none had been set
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
 `generate_image`, `edit_image`, `transcribe`, `speak` on `GEMINIServiceEndpoint` and `OllamaEndpoint`,
 `translate` on `OllamaEndpoint`, `ask`, `ask_each`
-(per request), `list_models`, `retrieve_model`, `count_tokens`, and the `tool_loop` family (streams retry only
+(per request), `list_models`, `retrieve_model`, `count_tokens`, `delete_model` on `OllamaEndpoint`, and the `tool_loop` family (streams retry only
 before the first callback fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning, upload, vector-store, webhook endpoint, safety and provenance, speech
+retried), fine-tuning (and `delete_model` on OpenAI), upload, vector-store, webhook endpoint, safety and provenance, speech
 and translation on OpenAI's Realtime API (`speak`,
 `translate`: a retry after the session's `response.create`, or after its audio, may bill a second
 response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and

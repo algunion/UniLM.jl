@@ -22,7 +22,7 @@ Main.ProviderFacts.at_a_glance(:openai)
 
 | I want to… | Use | You get |
 | :--- | :--- | :--- |
-| [set my key](@ref openai_setup) | `OPENAI_API_KEY` in the environment | every request through `OPENAIServiceEndpoint` sent with it |
+| [set my key](@ref openai_setup) | `OPENAI_API_KEY` in the environment | every request through `OPENAIServiceEndpoint` sent with it, but the checkpoint-permission verbs', which send an admin key ([Fine-tuning](@ref openai_fine_tuning)) |
 | [choose between Chat Completions and Responses](@ref openai_apis) | a `Chat` or a `Respond` | the API whose features the request needs |
 | [make a first call](@ref openai_first_call) | `chatrequest!(chat)` or `respond(input)` | an `LLMSuccess` or a `ResponseSuccess`: the reply and its usage, priced by `estimated_cost` |
 | [hold a conversation](@ref openai_conversations) | `push!` and `chatrequest!` again, or `previous_response_id` | each turn answered with the turns before it |

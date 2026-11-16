@@ -261,4 +261,18 @@ end
     @test_throws ArgumentError chatrequest!(forced)
 end
 
+@testset "Anthropic Chat — fast mode on claude-fable-5-2 bills twice its rates" begin
+    # Fast mode is served on Claude Fable 5.2 "with no beta header", at "$16 USD per MTok of input and $80 USD per MTok
+    # of output" (the release notes of 2026-11-09). A tiny cap: the turn may stop at max_tokens.
+    chat = Chat(service=ANTHROPICServiceEndpoint(inference_geo="global"), model="claude-fable-5-2", max_tokens=32,
+                reasoning_effort="low", service_tier="fast", messages=[Message(Val(:user), "Reply with exactly: hello")])
+    @test JSON.parse(UniLM.encode_request(chat.service, chat))["speed"] == "fast"
+    r = chatrequest!(chat)
+    @test r isa LLMSuccess
+    r isa LLMSuccess && @info "billed" r.model r.usage.prompt_tokens r.usage.completion_tokens cost = estimated_cost(r)
+    u = r.usage
+    @test u.service_tier == "fast" && u.inference_geo == "global" && (u.cached_tokens, u.cache_write_tokens) == (0, 0)
+    @test isapprox(estimated_cost(r), 2 * (u.prompt_tokens * 8.0 + u.completion_tokens * 40.0) / 1e6; rtol=1e-12)
+end
+
 end  # if ANTHROPIC_API_KEY

@@ -306,9 +306,10 @@ The author of an SVG that an OpenAI image model draws: the `svg` object of an
 `output_format="svg"` only. OpenAI "creates a reference image and uses it to produce the SVG"
 ([image generation](https://developers.openai.com/api/docs/guides/image-generation#generate-svg-output)).
 
-- `model`: the model that authors the SVG, sent as `svg.model`; "When model selection is enabled,
-  supply svg.model. When model selection is disabled, omit this object". An empty name throws
-  `ArgumentError`.
+- `model`: the model that authors the SVG, sent as `svg.model`; required, and not empty (`ArgumentError`
+  otherwise): "When model selection is enabled, supply svg.model. When model selection is disabled,
+  omit this object", and on 2026-11-16 the API answered an SVG without one with HTTP 400, "SVG
+  generation requires 'svg.model'.". Where model selection is disabled, set no `svg` at all.
 - `effort`: the author's reasoning effort, sent as `svg.reasoning.effort`: `"none"`, `"minimal"`,
   `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, of which "Supported efforts depend on the
   selected author model"; another value throws `ArgumentError`. Unset, "uses the author model's default".
@@ -316,22 +317,26 @@ The author of an SVG that an OpenAI image model draws: the `svg` object of an
 The reply reports the author's tokens apart from the image's, as `svg_usage`
 ([`ImageResponse`](@ref)).
 """
-@kwdef struct SvgOptions
-    model::Union{String,Nothing} = nothing
-    effort::Union{String,Nothing} = nothing
-    function SvgOptions(model, effort)
-        isnothing(model) || !isempty(model) || throw(ArgumentError(
-            "SvgOptions model names the SVG author and cannot be empty; unset it to use the default author"))
+struct SvgOptions
+    model::String
+    effort::Union{String,Nothing}
+    function SvgOptions(model::AbstractString, effort::Union{AbstractString,Nothing}=nothing)
+        isempty(model) && throw(ArgumentError("SvgOptions model names the SVG author and cannot be empty"))
         isnothing(effort) || effort in _SVG_EFFORTS || throw(ArgumentError(
             "SvgOptions effort must be one of $(join(repr.(_SVG_EFFORTS), ", ")) (got $(repr(effort)))"))
         new(model, effort)
     end
 end
+# An SVG without its author is no request OpenAI takes: "When model selection is enabled, supply svg.model.
+# When model selection is disabled, omit this object".
+SvgOptions(; model::Union{AbstractString,Nothing}=nothing, effort::Union{AbstractString,Nothing}=nothing) =
+    isnothing(model) ? throw(ArgumentError("SvgOptions needs its model, the SVG author: the API answers an SVG " *
+        "without one with HTTP 400 (\"SVG generation requires 'svg.model'.\") where model selection is enabled; " *
+        "where it is disabled, omit the object: set no svg")) : SvgOptions(model, effort)
 const _SVG_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 function JSON.lower(s::SvgOptions)
-    d = Dict{Symbol,Any}()
-    isnothing(s.model) || (d[:model] = s.model)
+    d = Dict{Symbol,Any}(:model => s.model)
     isnothing(s.effort) || (d[:reasoning] = Dict{Symbol,Any}(:effort => s.effort))
     d
 end
@@ -353,7 +358,8 @@ images inline during a response.
 - `input_fidelity`: `"high"` or `"low"` — how closely edits preserve input images
   (omit it for `gpt-image-2`, which always uses high fidelity)
 - `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
-- `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
+- `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.6 and 2.5 Sunburst and Flare models add `"xhigh"`
+  and `"max"`
 - `complexity`: `"low"`, `"medium"` or `"high"`, which "Overrides the outer response's
   `reasoning.effort` for image generation" (the tool's reference)
 - `frame_count`, `frame_duration_ms`: a GIF's frames, 2 to 16, and each frame's milliseconds, at
@@ -364,7 +370,8 @@ images inline during a response.
 
 Unset, `model` is the tool's default, `"gpt-image-2.6-sunburst"`. `action`, `moderation`,
 `partial_images`, `input_fidelity`, `complexity`, `frame_count`, `frame_duration_ms` and `svg`
-are validated at construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
+are validated at construction (`ArgumentError`), as is an `output_compression` with GIF or SVG output,
+which the API answers with HTTP 400. `quality`, `background`, and `output_format` are passed
 through unchecked (the accepted `quality` values depend on the model). Unset fields are
 omitted from the request.
 """
@@ -399,10 +406,23 @@ omitted from the request.
         # The Images API's GPT-Image-2.6 controls (images.jl), with the tool's own name.
         _check_image_controls("image_generation", complexity, frame_count, frame_duration_ms)
         _check_image_format("image_generation", output_format, frame_count, frame_duration_ms, svg)
+        _check_tool_compression(output_format, output_compression)
         new(background, output_format, output_compression, quality, size,
             model, action, moderation, partial_images, input_fidelity, input_image_mask, complexity,
             frame_count, frame_duration_ms, svg)
     end
+end
+
+# GIF output "does not support streaming, partial images, masks, or custom output compression", and SVG generation
+# "does not support streaming, partial images, prompt_rewriter, or output_compression" (the Images reference); the
+# API answers the tool with either pair with HTTP 400 (2026-11-16).
+const _TOOL_NO_COMPRESSION = Dict("gif" => "\"'output_compression' is not supported for GIF output.\"",
+                                  "svg" => "\"SVG output does not support output_compression.\"")
+function _check_tool_compression(output_format, output_compression)::Nothing
+    isnothing(output_compression) || isnothing(output_format) || !haskey(_TOOL_NO_COMPRESSION, output_format) ||
+        throw(ArgumentError("image_generation $(uppercase(output_format)) output takes no output_compression: the API " *
+            "answers it with HTTP 400, $(_TOOL_NO_COMPRESSION[output_format]); unset output_compression"))
+    nothing
 end
 
 function JSON.lower(t::ImageGenerationTool)
@@ -1489,12 +1509,16 @@ The reasoning inputs a Responses reply withheld from the model, in input order, 
 `input_transformations`, unstreamed or in a stream's `response.completed`: one
 [`InputTransformation`](@ref) for each replayed reasoning item the model did not see, such as one
 another model produced (`reason` `:model_mismatch`). Empty when the reply withheld none or carries
-no such list (another provider's reply), and for a [`ResponseFailure`](@ref) or
-[`ResponseCallError`](@ref). An item without its four strings (`type`, `id`, `action`, `reason`)
-throws: it is no transformation the reference describes.
+no such list (another provider's reply; JSON `null` counts as none), and for a [`ResponseFailure`](@ref) or
+[`ResponseCallError`](@ref). A list that is no array, or an item without its four strings (`type`,
+`id`, `action`, `reason`), throws: it is no transformation the reference describes.
 """
-input_transformations(r::ResponseObject)::Vector{InputTransformation} =
-    InputTransformation[_input_transformation(x) for x in _as_iter(get(r.raw, "input_transformations", nothing))]
+function input_transformations(r::ResponseObject)::Vector{InputTransformation}
+    items = get(r.raw, "input_transformations", nothing)
+    isnothing(items) && return InputTransformation[]
+    items isa AbstractVector || error("the reply's input_transformations is not an array: ", JSON.json(items))
+    InputTransformation[_input_transformation(x) for x in items]
+end
 input_transformations(r::ResponseSuccess) = input_transformations(r.response)
 input_transformations(::Union{ResponseFailure,ResponseCallError}) = InputTransformation[]
 

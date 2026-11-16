@@ -132,6 +132,47 @@ end
     @test s isa Dict{String,Any} && startswith(s["model"], "gpt-6-luna") && s["total_tokens"] > 0
 end
 
+@testset "OpenAI images — the Responses image generation tool draws a 2-frame GIF" begin
+    # The tool's frame_count and frame_duration_ms, with output_format "gif", on gpt-6-luna at quality low and the
+    # smallest size; the tool's model is gpt-image-2.6-flare, which drew GIFs on the Images API on 2026-11-16.
+    r = respond(Respond(model="gpt-6-luna", input="Draw a red ball bouncing once on white.", store=false,
+                        reasoning=Reasoning(effort="none"), tool_choice=tool_choice_hosted("image_generation"),
+                        tools=[image_generation_tool(model="gpt-image-2.6-flare", quality="low", size="1024x640",
+                                                     output_format="gif", frame_count=2, frame_duration_ms=200)]))
+    @test r isa ResponseSuccess
+    @info "image tool (GIF) live usage" used = tool_usage(r) cost = estimated_cost(r)
+    tool = only(t for t in r.response.raw["tools"] if t["type"] == "image_generation")
+    @test (tool["output_format"], tool["frame_count"], tool["frame_duration_ms"]) == ("gif", 2, 200)
+    @test String(base64decode(only(image_generation_results(r)))[1:6]) == "GIF89a"
+end
+
+@testset "OpenAI images — the Responses image generation tool draws an SVG authored by gpt-6-luna" begin
+    # The tool's svg, with output_format "svg"; the call reports its author's tokens as svg_usage, which the estimate
+    # leaves out and says so.
+    r = respond(Respond(model="gpt-6-luna", input="Draw a simple flat red circle icon.", store=false,
+                        reasoning=Reasoning(effort="none"), tool_choice=tool_choice_hosted("image_generation"),
+                        tools=[image_generation_tool(model="gpt-image-2.6-flare", quality="low", size="1024x640",
+                                                     output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"))]))
+    @test r isa ResponseSuccess
+    call = only(item for item in r.response.output if item["type"] == "image_generation_call")
+    @info "image tool (SVG) live usage" used = tool_usage(r) svg_usage = get(call, "svg_usage", nothing)
+    @test startswith(String(base64decode(only(image_generation_results(r)))), "<svg")
+    @test get(call, "svg_usage", nothing) isa AbstractDict
+    @test (@test_logs (:warn, r"SVG authoring tokens") match_mode=:any estimated_cost(r)) > 0
+end
+
+@testset "OpenAI images — a markup-guided edit on gpt-image-2.6-flare" begin
+    # A 16x16 image and a 16x16 transparent overlay that outlines a square; on 2026-11-16 the API took this edit
+    # (HTTP 200). Quality low, the smallest size.
+    dir = joinpath(@__DIR__, "fixtures", "openai_images")
+    r = edit_image(joinpath(dir, "edit-16.png"), "Fill the outlined square with blue."; model="gpt-image-2.6-flare",
+                   quality="low", size="1024x640", markup=joinpath(dir, "markup-16.png"))
+    @test r isa ImageSuccess
+    @info "OpenAI image edit (markup) live usage" usage = get(r.response.raw, "usage", nothing)
+    bytes = base64decode(only(image_data(r)))
+    @test UniLM._sniff_image_mime(bytes) == "image/png" && _png_size(bytes) == (1024, 640)
+end
+
 end
 
 if !haskey(ENV, "GEMINI_API_KEY")

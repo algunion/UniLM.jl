@@ -3235,6 +3235,32 @@ end
     end
 end
 
+@testset "ImageGenerationTool — GIF and SVG output take no output_compression" begin
+    # The Images reference: GIF output "does not support streaming, partial images, masks, or custom output
+    # compression"; SVG generation "does not support streaming, partial images, prompt_rewriter, or output_compression".
+    # On 2026-11-16 the API answered the tool with either pair with HTTP 400: "'output_compression' is not supported for
+    # GIF output.", "SVG output does not support output_compression.".
+    for (fmt, kw) in (("gif", (; frame_count=2)), ("svg", (; svg=SvgOptions(model="m"))))
+        err = try ImageGenerationTool(; output_format=fmt, output_compression=50, kw...); nothing catch e; e end
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), ("image_generation", uppercase(fmt), "output_compression"))
+        err = try image_generation_tool(; output_format=fmt, output_compression=50, kw...); nothing catch e; e end
+        @test err isa ArgumentError
+    end
+    for fmt in ("webp", "jpeg", nothing)
+        @test JSON.lower(image_generation_tool(; output_format=fmt, output_compression=50))[:output_compression] == 50
+    end
+end
+
+@testset "input_transformations: a list that is no array is no list of transformations — reading it fails loud" begin
+    reply(v) = UniLM.parse_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "id" => "r", "object" => "response", "status" => "completed", "model" => "gpt-6-luna", "output" => Any[],
+        "input_transformations" => v)))))
+    for bad in ("model_mismatch", Dict("type" => "reasoning"), 3, true)
+        @test_throws r"input_transformations" input_transformations(reply(bad))
+    end
+    @test input_transformations(reply(nothing)) == InputTransformation[]    # JSON null: no list, as absent
+end
+
 @testset "input_transformations: the reasoning inputs a Responses reply says it withheld, typed" begin
     # The Responses reference, Response.input_transformations: "Reasoning inputs withheld from the model, in input
     # order", each {type: "reasoning", id: "The original reasoning item ID", action: "removed", reason}, the reason

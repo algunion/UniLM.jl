@@ -2,11 +2,12 @@
 # Ollama (https://docs.ollama.com/api). Chat and embeddings speak the native API
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
-# OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond`, compaction, FIM, transcription, speech and translation keep the
-# OpenAI-compatible routes (`/v1/responses`, `/v1/responses/compact`, `/v1/completions`,
-# and Ollama's audio routes), which carry none of the endpoint's `keep_alive`, `options`
-# or `runner`.
+# OpenAI-compatible routes accept and ignore them. `respond`, compaction, FIM, transcription,
+# speech and translation keep the OpenAI-compatible routes (`/v1/responses`,
+# `/v1/responses/compact`, `/v1/completions`, and Ollama's audio routes), which carry none of
+# the endpoint's `keep_alive`, `options` or `runner`. `/v1/responses` reads a Respond's own
+# `truncation` from Ollama 0.40.16 on: unless it is "auto", an input that does not fit the
+# context window is an HTTP 400, where earlier servers shortened it without a word.
 # ============================================================================
 
 get_url(s::OllamaEndpoint, ::Chat)::String = s.base_url * OLLAMA_CHAT_PATH
@@ -379,12 +380,18 @@ _failure_hint(s::OllamaEndpoint, e) = _unwrap_exception(e) isa HTTP.ConnectError
 # Ollama serves the Responses API statelessly and reads only the fields below
 # (https://docs.ollama.com/api/openai-compatibility); anything else it ignores
 # without an error — a previous_response_id would silently lose the conversation.
+# `truncation` is read from Ollama 0.40.16 on, though that page still lists it as unsupported:
+# "`/v1/responses` respects `truncation` and no longer silently truncates by default"
+# (https://github.com/ollama/ollama/releases/tag/v0.40.16).
 # Those fields are refused here instead, each with its reason: a field that relies on a
 # stored response because Ollama keeps none, any other because it reads none. A seed is
 # refused on its own: that page lists none for /v1/responses, while Ollama's chat API
 # reads one, so its fix is a Chat.
 const _OLLAMA_RESPOND_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
-    :temperature, :top_p, :max_output_tokens, :stream, :text, :reasoning)
+    :temperature, :top_p, :max_output_tokens, :stream, :text, :reasoning, :truncation)
+# The values its `truncation` takes: "auto" shortens an input that does not fit the context window,
+# "disabled" (like no field) refuses it; any other is HTTP 400 "unknown truncation strategy".
+const _OLLAMA_TRUNCATION = ("auto", "disabled")
 const _OLLAMA_RESPOND_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _OLLAMA_RESPOND_MAPPED_FIELDS, (:seed,)))
 # Of those, the fields that ask the server to keep a response, or to read one it kept.
 const _OLLAMA_RESPOND_STATE_FIELDS = (:store, :previous_response_id, :background, :conversation)
@@ -432,6 +439,10 @@ function encode_agentic(service::OllamaEndpoint, r::Respond)::String
         "so the seed would be dropped: unset seed, or send the request as a Chat, whose seed Ollama reads"))
     isnothing(r.tool_choice) || r.tool_choice == "auto" || throw(ArgumentError(
         "Ollama has no tool_choice: the model decides whether to call a tool (\"auto\")"))
+    isnothing(r.truncation) || r.truncation in _OLLAMA_TRUNCATION || throw(ArgumentError(
+        "Ollama's Responses API takes truncation \"auto\" or \"disabled\" (read from Ollama 0.40.16 on) and " *
+        "answers $(repr(r.truncation)) with HTTP 400 \"unknown truncation strategy\": set \"auto\" to let it " *
+        "shorten an input that does not fit the context window, \"disabled\" or none to have such an input refused"))
     rs = r.reasoning
     isnothing(rs) || all(isnothing, (rs.generate_summary, rs.summary, rs.context, rs.mode)) ||
         throw(ArgumentError("Ollama reads only reasoning.effort"))

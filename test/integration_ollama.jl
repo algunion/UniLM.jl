@@ -2,7 +2,8 @@
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else
 # 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b, which also
 # transcribes and translates), the embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma),
-# the GGUF chat model UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base), the FIM model
+# the GGUF chat model UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base; respond's truncation on it
+# needs Ollama 0.40.16 or later), the FIM model
 # UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and the speech model
 # UNILM_OLLAMA_SPEECH_MODEL (default phonon; speech needs Ollama 0.40.9 or later) installed. Live, nothing is
 # skipped for want of a model: a server that does not list its models is an error, and so is
@@ -283,6 +284,26 @@ end
     end
     runaways > 0 && @warn "respond structured output: $runaways of 3 replies ran to the $_FORMAT_CAP-token cap"
     @test runaways <= 1
+end
+
+@testset "respond truncation: an input longer than the window is a 400 unless \"auto\"" begin
+    # On the GGUF model, which llama.cpp or ggml serves (the context-window testset checks it). Refuted by: an
+    # over-long input answered with truncation unset or "disabled" (Ollama before 0.40.16 shortened it without a
+    # word), a refusal that is not the 400 naming the context size, or "auto" refused or answered from more
+    # tokens than the window holds.
+    once = RequestConfig(max_attempts=1)
+    ask(input; kw...) = respond(Respond(; service=_OLLAMA_EP, model=_OLLAMA_GGUF, input, max_output_tokens=8,
+                                          temperature=0.0, kw...); config=once)
+    @test ask("Say OK.") isa ResponseSuccess                  # loads the model with the route's own window
+    window = _ollama_ps(_OLLAMA_EP)[_OLLAMA_GGUF]
+    long = repeat("word ", window + window ÷ 4) * "\nSay OK."  # a token a word: a quarter longer than the window
+    for truncation in (nothing, "disabled")
+        r = ask(long; truncation)
+        @test r isa ResponseFailure && r.status == 400 &&
+              occursin(r"request \(\d+ tokens\) exceeds the available context size \(\d+ tokens\)", r.response)
+    end
+    r = ask(long; truncation="auto")
+    @test r isa ResponseSuccess && 0 < token_usage(r).prompt_tokens <= window
 end
 
 @testset "fill-in-the-middle with a code model" begin

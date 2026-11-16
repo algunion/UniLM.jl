@@ -10,7 +10,9 @@ The event types of OpenAI's webhooks
 responses, batches and fine-tuning jobs that end, incoming SIP calls for the Realtime and
 Live APIs, a Live session that connects (`live.transport.connected`, "Sent when a direct Live
 WebRTC session is created or an Instant Connect session activates"), safety warnings and
-deactivations for a safety identifier, and safety alerts.
+deactivations for a safety identifier, safety alerts, and the agent sessions of OpenAI's Agents
+API and the environments they run in (`agent.session.*`, `agent.environment.*`, which OpenAI's
+API specification lists).
 `live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
 existing subscriptions. The reference also lists `eval.run.succeeded`, `eval.run.failed` and
 `eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026
@@ -23,6 +25,9 @@ const WEBHOOK_EVENTS = (
     "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
     "realtime.call.incoming", "live.call.incoming", "live.transport.incoming", "live.transport.connected",
     "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created",
+    "agent.environment.ready", "agent.environment.failed", "agent.environment.suspended", "agent.environment.expired",
+    "agent.session.created", "agent.session.action_required", "agent.session.in_progress", "agent.session.idle",
+    "agent.session.failed",
 )
 
 # HMAC-SHA256 via the SHA stdlib: H((K⊕opad) ‖ H((K⊕ipad) ‖ msg)), K padded to 64 bytes.

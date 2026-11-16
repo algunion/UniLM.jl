@@ -321,4 +321,38 @@ end
     end
 end
 
+@testset "Gemini batches — two requests run to their end: polled, batch-priced successes, each on its request's Chat" begin
+    # Two gemini-3.8-flash requests at thinking "low", left to run: a batch of 2026-11-16 succeeded in under five
+    # minutes, and the poll gives it ten. Each success bills at the Batch rates, half the standard ones; read with
+    # the requests, each result's self is its request's Chat with the reply appended.
+    q() = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+               messages=[Message(Val(:user), "Reply with exactly: ok")])
+    requests = ["one" => q(), "two" => q()]
+    created = create_batch(requests)
+    @test created isa BatchSuccess
+    if created isa BatchSuccess
+        id = created.response.id
+        seconds = @elapsed (ended = poll_batch(id; service=GEMINIServiceEndpoint, interval=15.0, timeout=600.0))
+        done = ended isa BatchSuccess && ended.response.status == "BATCH_STATE_SUCCEEDED"
+        @test done
+        if done
+            r = batch_results(id; service=GEMINIServiceEndpoint, requests)
+            @test r isa BatchResultsSuccess && first.(r.results) == ["one", "two"]   # inline: the requests' order
+            for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
+                @test x isa LLMSuccess
+                x isa LLMSuccess || continue
+                standard = LLMSuccess(message=x.message, self=x.self, model=x.model, usage=UniLM._standard_tier(x.usage))
+                @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
+                chat = Dict(requests)[cid]
+                @test x.self !== chat && length(x.self.messages) == length(chat.messages) + 1 && last(x.self.messages) === x.message
+            end
+            r isa BatchResultsSuccess && @info "Gemini batch run to its end" id seconds cost = sum(
+                (estimated_cost(x) for (_, x) in r.results if x isa LLMSuccess); init=0.0)
+            @test delete_batch(id; service=GEMINIServiceEndpoint) isa BatchDeleteSuccess
+        else
+            cancel_batch(id; service=GEMINIServiceEndpoint)   # the poll gave up: stop the batch
+        end
+    end
+end
+
 end  # if GEMINI_API_KEY

@@ -30,7 +30,8 @@ auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
 # ─── Capabilities & defaults ─────────────────────────────────────────────────
 
 provider_capabilities(::Type{GEMINIServiceEndpoint}) =
-    Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech, :system_one])
+    Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech, :system_one,
+         :token_count])
 
 # Google names Gemini 4 Hydrogen the successor to 3.8 Flash ("Change your model string from
 # `gemini-3.8-flash` to `gemini-4-hydrogen`",

@@ -21,9 +21,11 @@ Standard capability symbols include:
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
   Gemini TTS; Ollama, through its speech route)
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI and native Gemini, through their Decisions APIs; Ollama)
-- Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, OpenAI, Anthropic, Gemini, Ollama)
+- Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, OpenAI, Anthropic, Gemini, Ollama);
+  a model by id ([`retrieve_model`](@ref)) on OpenAI, Anthropic and Gemini
+- Token counting ([`count_tokens`](@ref)): `:token_count` (OpenAI, Anthropic, Gemini)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])

@@ -2602,7 +2602,8 @@ The keywords are the fields of OpenAI's token count body, each sent only when se
 `previous_response_id`), `reasoning` ([`Reasoning`](@ref)), `text` ([`TextConfig`](@ref)),
 `truncation` (`"auto"` or `"disabled"`), and `personality`, "a model-owned style preset" of at most
 64 characters (`"friendly"`, `"pragmatic"`, …), which only the count takes. A value outside those
-limits throws `ArgumentError` before any request.
+limits throws `ArgumentError` before any request. [`count_tokens`](@ref) counts a whole
+[`Respond`](@ref) on this route and returns a typed result.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys; a 200 reply
 without an integer `"input_tokens"` is a `ResponseCallError`.

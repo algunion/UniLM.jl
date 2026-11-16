@@ -151,6 +151,10 @@ end
         include("model_listing.jl")
     end
 
+    @testset "token counting" begin
+        include("token_count.jl")
+    end
+
     @testset "typesafe" begin
         include("typesafe.jl")
         include("typesafe_assets.jl")

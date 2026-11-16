@@ -58,8 +58,8 @@ const UNRECORDABLE = Set{String}([
     "mcp_connect", "mcp_disconnect!", "mcp_tools", "mcp_tools_respond", "call_tool", "list_tools!",
     "list_resources!", "list_prompts!", "read_resource", "get_prompt", "ping", "serve",
     "model_info", "pull_model", "running_models", "load_model", "unload_model", "delete_model",
-    # the provider model lookup
-    "retrieve_model",
+    # the provider model lookup and token counts
+    "retrieve_model", "count_tokens",
 ])
 
 # A fenced block: the block quote, list item and indentation markers before its fence (Documenter runs an executed

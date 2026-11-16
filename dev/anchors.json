@@ -275,6 +275,9 @@
   "UniLM.GPTToolCall": [
     "/api/chat/"
   ],
+  "UniLM.GeminiDecisionsProtocol": [
+    "/api/system_one/"
+  ],
   "UniLM.GenericOpenAIEndpoint": [
     "/api/endpoints/"
   ],
@@ -309,6 +312,9 @@
     "/api/images/"
   ],
   "UniLM.InputMessage": [
+    "/api/responses/"
+  ],
+  "UniLM.InputTransformation": [
     "/api/responses/"
   ],
   "UniLM.InvalidConversationError": [
@@ -565,6 +571,9 @@
   ],
   "UniLM.StreamState": [
     "/api/endpoints/"
+  ],
+  "UniLM.SvgOptions": [
+    "/api/images/"
   ],
   "UniLM.SystemOneAnswer": [
     "/api/system_one/"
@@ -951,6 +960,9 @@
     "/api/responses/"
   ],
   "UniLM.input_text": [
+    "/api/responses/"
+  ],
+  "UniLM.input_transformations": [
     "/api/responses/"
   ],
   "UniLM.is_flagged": [
@@ -1780,6 +1792,42 @@
   ],
   "gemini_cost": [
     "/providers/gemini/generate_content/"
+  ],
+  "gemini_decisions_blocked": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_confidence": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_cost": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_failures": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_first_decision": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_images": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_limits": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_models": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_questions": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_setup": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_start": [
+    "/decisions/gemini/"
+  ],
+  "gemini_decisions_testing": [
+    "/decisions/gemini/"
   ],
   "gemini_embeddings": [
     "/providers/gemini/media/"
@@ -2749,6 +2797,9 @@
   ],
   "system_one_first": [
     "/guide/system_one/"
+  ],
+  "system_one_gemini": [
+    "/api/system_one/"
   ],
   "system_one_guide": [
     "/guide/system_one/"

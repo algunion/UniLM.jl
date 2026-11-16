@@ -69,9 +69,10 @@
   and the image tool's cost fallback is `gpt-image-2.6-sunburst` (was `gpt-image-2`); the model a reply echoes still
   prices first.
 - **`GEMINIOpenAIServiceEndpoint` refuses a `reasoning_effort` the model's thinking row lacks**, before any request
-  and with the native endpoint's message: `"minimal"` on `gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-argon` and
-  `gemini-3.8-flash`, `"xhigh"` on Carbon and 3.8 Flash, `"none"` on 3.8 Flash (accepted there, but it still thinks).
-  A `gemini-2.5-` model, which takes a thinking budget on this wire, and an id without a row are sent unchanged.
+  and with the native endpoint's message: for example `"minimal"` on `gemini-4-hydrogen`, `gemini-4-carbon`,
+  `gemini-4-argon` and `gemini-3.8-flash`, `"xhigh"` on Carbon and 3.8 Flash, and `"none"` on 3.8 Flash (accepted
+  there, but it still thinks). A `gemini-2.5-` model, which takes a thinking budget on this wire, and an id without a
+  row are sent unchanged.
 - **A `max_output_tokens` above 65,536 on `gemini-4-argon` is sent without `background=true`.** The API now accepts
   it and runs it in hops, which an unstreamed `respond` continues.
 - **Markup edits are documented as accepted on `gpt-image-2.6-flare`** (2026-11-16), and `gpt-5.6-sol`'s promotional
@@ -85,7 +86,9 @@
   Anthropic's `tool_use.input`, Gemini's `functionCall.args` and an Interactions `function_call`'s `arguments` decoded
   as a call without arguments when they held an array, a string, a number or a boolean, so a tool loop ran the tool
   without the model's arguments. The decode now throws `ArgumentError("<Provider> tool-call arguments must be a JSON
-  object, got a JSON <type>")`, which the verb returns as `LLMCallError` / `ResponseCallError`, streamed or not.
+  object, got a JSON <type>")`, which the verb returns as `LLMCallError` / `ResponseCallError`; a streamed Anthropic
+  or Gemini chat call is refused by the stream decoder ("streamed tool-call arguments must be a JSON object"), and a
+  streamed Interactions call ends the turn as a `ResponseCallError`.
   Absent or null arguments stay a call without arguments; a streamed Gemini `functionCall` with null `args` is now
   one too (it was a call error).
 - **`GEMINIOpenAIServiceEndpoint` results bill the thinking the endpoint counts only in `total_tokens`.** The
@@ -97,17 +100,19 @@
   UniLM sends. The Responses truncation clause says trimming can begin earlier.
 
 ### CI
-- **The provider drift check ignores model ids that only a Julia comment names, and checks translate's default
-  model.** Pages print listing output as comments in docs code blocks, so a retired snapshot shown there failed the
-  release gate. `gpt-realtime-translate`, which only a docs comment used to name, is now checked as a default, and a
-  keyless test checks every default against the recorded listings.
+- **The provider drift check ignores model ids that only a Julia comment names, and checks every default model.**
+  Pages print listing output as comments in docs code blocks, so a retired snapshot shown there failed the release
+  gate. Translate's default (`gpt-realtime-translate`), which only a docs comment named, and Gemini Decisions'
+  default (`gemini-decision-1`) are now among the defaults the check reads, and a keyless test checks every default
+  against the OpenAI, Gemini and Anthropic listings of 2026-11-16.
 - **The hosted-providers job runs the DeepSeek, TypeSafe and natural-language live suites.** `test/live_hosted.jl`
   lists `integration_deepseek.jl`, `integration_typesafe.jl` and `integration_semantic.jl` and fails, naming the
   key, when `DEEPSEEK_API_KEY` or `TYPESAFE_API_KEY` is unset; the job passes both from the repository's secrets.
   The hosted suites also cover Gemini's Decisions API and each feature above that a provider serves.
 - **The release gate installs Ollama 0.40.16**, pinned by the SHA-256 Ollama publishes for its Linux build.
-- **Dependencies:** `julia-actions/julia-runtest` 1.13.0; the site's `@sindresorhus/slugify` 4.0.0, Next.js 16.4.5,
-  Tailwind CSS 4.3.5 and ESLint 10.14.0.
+- **Dependencies:** `julia-actions/julia-runtest` 1.13.0; Documenter 1.20 for the manual; the site's
+  `@sindresorhus/slugify` 4.0.0, Next.js 16.4.5, Tailwind CSS 4.3.5 and ESLint 10.14.0 (every heading anchor and
+  every page's text unchanged).
 
 ## 0.32.0
 

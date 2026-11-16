@@ -108,7 +108,13 @@ A config is resolved, in precedence order:
 1. the per-call `config=` keyword on any request verb,
 2. a `with_request_config` dynamic scope,
 3. the process default (`set_default_config!`),
-4. the built-in defaults above.
+4. the built-in defaults above — or, while channels 1–3 supply nothing, a backend's or a model's own default:
+   System One (`ask`, `ask_each` and the NL verbs) on TypeSafe's wire and on OpenAI's and Gemini's Decisions APIs
+   uses `request_timeout = 60`, `total_deadline = 150`; `chatrequest!` and `respond` to a Gemini 4 model
+   (`gemini-4-…`, the Gemini default `gemini-4-hydrogen` among them) use
+   `request_timeout = stream_idle_timeout = total_deadline = 1200` (Google ends a non-streamed Gemini 4 Argon call
+   after 10 minutes and a stream after 20, and advises a 20-minute read timeout). A process default you set, even
+   one equal to the built-in defaults, replaces either.
 
 `current_config()` returns whatever is in force right now.
 

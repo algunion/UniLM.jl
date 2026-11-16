@@ -433,8 +433,10 @@ export
 export
     ProviderModel,
     ModelListSuccess,
+    ModelSuccess,
     ModelListFailure,
-    ModelListCallError
+    ModelListCallError,
+    retrieve_model
 
 # ─── Ollama model management ───
 export

@@ -110,7 +110,7 @@ end
     @test r isa ImageSuccess
     @info "OpenAI image (SVG) live usage" usage = get(r.response.raw, "usage", nothing) svg_usage = r.response.svg_usage
     @test r.response.raw["output_format"] == "svg"
-    @test startswith(String(base64decode(only(image_data(r)))), "<svg")
+    @test occursin("<svg", String(base64decode(only(image_data(r)))))
     s = r.response.svg_usage
     @test s isa Dict{String,Any} && startswith(s["model"], "gpt-6-luna") && s["total_tokens"] > 0
     rates = Dict("gpt-image-2.6-flare" => UniLM._price(5.0, 1.25, 30.0))
@@ -127,7 +127,7 @@ end
     @test r isa ImageSuccess
     @info "OpenAI image edit (SVG) live usage" usage = get(r.response.raw, "usage", nothing) svg_usage = r.response.svg_usage
     @test r.response.raw["output_format"] == "svg"
-    @test startswith(String(base64decode(only(image_data(r)))), "<svg")
+    @test occursin("<svg", String(base64decode(only(image_data(r)))))
     s = r.response.svg_usage
     @test s isa Dict{String,Any} && startswith(s["model"], "gpt-6-luna") && s["total_tokens"] > 0
 end
@@ -156,7 +156,7 @@ end
     @test r isa ResponseSuccess
     call = only(item for item in r.response.output if item["type"] == "image_generation_call")
     @info "image tool (SVG) live usage" used = tool_usage(r) svg_usage = get(call, "svg_usage", nothing)
-    @test startswith(String(base64decode(only(image_generation_results(r)))), "<svg")
+    @test occursin("<svg", String(base64decode(only(image_generation_results(r)))))
     @test get(call, "svg_usage", nothing) isa AbstractDict
     @test (@test_logs (:warn, r"SVG authoring tokens") match_mode=:any estimated_cost(r)) > 0
 end

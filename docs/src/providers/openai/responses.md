@@ -152,7 +152,8 @@ frame or SVG field without its format, and for an `output_compression` with GIF 
 November 2026 the API answered an invalid value of each of the four with HTTP 400 naming it, and an
 `output_compression` with GIF or SVG output with HTTP 400 too ("'output_compression' is not supported for
 GIF output.", "SVG output does not support output_compression."); a tool with `complexity="low"` on
-`gpt-6-luna` drew an image.
+`gpt-6-luna` drew an image. A call that drew an SVG reports its author's tokens as `svg_usage`, which
+[`estimated_cost`](@ref) leaves out of the estimate, with one warning per model.
 
 ## [Structured output on Responses](@id openai_responses_structured_output)
 

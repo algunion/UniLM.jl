@@ -299,7 +299,7 @@ function JSON.lower(t::MCPTool)
 end
 
 """
-    SvgOptions(; model=nothing, effort=nothing)
+    SvgOptions(; model, effort=nothing)
 
 The author of an SVG that an OpenAI image model draws: the `svg` object of an
 [`ImageGeneration`](@ref) (and of the [`ImageGenerationTool`](@ref)), sent with

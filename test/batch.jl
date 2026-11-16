@@ -361,3 +361,131 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     end)
     @test t isa BatchCallError && occursin("custom_id", t.error)
 end
+
+# ── Anthropic Message Batches ── the replies are the shapes the API returned on 2026-11-16.
+@testset "Message Batches: Anthropic serves the Batch API" begin
+    @test has_capability(ANTHROPICServiceEndpoint, :batch)
+    @test has_capability(ANTHROPICServiceEndpoint(betas=["message-batches-2024-09-24"]), :batch)
+    @test UniLM._batch_root(ANTHROPICServiceEndpoint) == UniLM._batch_root(ANTHROPICServiceEndpoint()) ==
+          "https://api.anthropic.com"
+end
+
+const _ANB = _batch_probe(UniLM._AnthropicBatches, ANTHROPICServiceEndpoint)
+const _AN_BATCH = Dict{String,Any}("id" => "msgbatch_1", "type" => "message_batch", "processing_status" => "in_progress",
+    "request_counts" => Dict{String,Any}("processing" => 2, "succeeded" => 0, "errored" => 0, "canceled" => 0, "expired" => 0),
+    "ended_at" => nothing, "created_at" => "2026-11-16T20:16:21.225859+00:00",
+    "expires_at" => "2026-11-17T20:16:21.225859+00:00", "archived_at" => nothing, "cancel_initiated_at" => nothing,
+    "results_url" => nothing)
+_an_batch(; kw...) = JSON.json(merge(_AN_BATCH, Dict{String,Any}(string(k) => v for (k, v) in kw)))
+
+@testset "Message Batches: the headers each operation names" begin
+    withenv("ANTHROPIC_API_KEY" => "k") do
+        e = ANTHROPICServiceEndpoint(betas=["message-batches-2024-09-24", "output-300k-2026-03-24"],
+                                     user_profile_id="up_1", workspace_id="wrkspc_1")
+        create, other = Dict(UniLM._batch_headers(e, true)), Dict(UniLM._batch_headers(e, false))
+        @test create["anthropic-beta"] == other["anthropic-beta"] == "message-batches-2024-09-24,output-300k-2026-03-24"
+        @test create["anthropic-user-profile-id"] == "up_1" && !haskey(other, "anthropic-user-profile-id")
+        @test create["anthropic-workspace-id"] == other["anthropic-workspace-id"] == "wrkspc_1"
+        @test create["anthropic-version"] == other["anthropic-version"] == UniLM.ANTHROPIC_VERSION
+        @test create["Authorization"] == other["Authorization"] == "Bearer k"
+        @test !haskey(Dict(UniLM._batch_headers(ANTHROPICServiceEndpoint, true)), "anthropic-beta")
+    end
+end
+
+@testset "create_batch(requests) on Anthropic: each Chat's Messages body as its params" begin
+    haiku(q; kw...) = Chat(; service=_ANB, model="claude-haiku-5-5", max_tokens=16, messages=[Message(Val(:user), q)], kw...)
+    reqs = ["q-1" => haiku("one"), "q_2" => haiku("two"; reasoning_effort="low")]
+    r, seen = _with_scripted((_, _) -> _json(200, _an_batch())) do
+        create_batch(reqs)
+    end
+    @test r isa BatchSuccess && r.response.id == "msgbatch_1" && r.response.status == "in_progress"
+    @test r.response.request_counts == _AN_BATCH["request_counts"] && r.response.raw == _AN_BATCH
+    @test all(isnothing, (r.response.endpoint, r.response.input_file_id, r.response.output_file_id, r.response.error_file_id))
+    @test _batch_targets(seen) == [("POST", "/v1/messages/batches")]
+    @test JSON.parse(only(seen).body) == Dict("requests" => [
+        Dict("custom_id" => id, "params" => JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, c))) for (id, c) in reqs])
+    # Not batched: a custom id outside ^[a-zA-Z0-9_-]{1,64}$, a stream, fast mode (`speed`), the OpenAI options, and
+    # OpenAI's file-based form; each refused before any request.
+    opus = Chat(service=_ANB, model="claude-opus-5-5", service_tier="fast", messages=[Message(Val(:user), "q")])
+    for call in (() -> create_batch(["has space" => haiku("q")]), () -> create_batch([repeat("x", 65) => haiku("q")]),
+                 () -> create_batch(["a" => haiku("q"; stream=true)]), () -> create_batch(["a" => opus]),
+                 () -> create_batch(["a" => haiku("q")]; metadata=Dict("k" => "v")),
+                 () -> create_batch(["a" => haiku("q")]; output_expires_after=3600),
+                 () -> create_batch("file_in", "/v1/chat/completions"; service=_ANB),
+                 () -> update_batch("msgbatch_1"; priority=1, service=_ANB))
+        @test _batch_refused(call) isa ArgumentError
+    end
+    @test occursin("fast", _batch_refused(() -> create_batch(["a" => opus])).msg)
+    @test isnothing(UniLM._batch_custom_ids(UniLM._AnthropicBatches(), [repeat("x", 64), "a-B_9"]))
+end
+
+@testset "Message Batches: retrieve, list, cancel, delete and poll" begin
+    r, seen = _with_scripted((_, _) -> _json(200, _an_batch())) do
+        retrieve_batch("msgbatch_1"; service=_ANB)
+    end
+    @test r isa BatchSuccess && r.response.status == "in_progress" && _batch_targets(seen) == [("GET", "/v1/messages/batches/msgbatch_1")]
+    page = Dict("data" => [_AN_BATCH], "has_more" => true, "first_id" => "msgbatch_1", "last_id" => "msgbatch_1")
+    l, lseen = _with_scripted((_, _) -> _json(200, JSON.json(page))) do
+        list_batches(; limit=2, after="msgbatch_0", service=_ANB)
+    end
+    @test l isa BatchListSuccess && only(l.response.data).id == "msgbatch_1" && l.response.has_more && l.response.raw == page
+    @test _batch_targets(lseen) == [("GET", "/v1/messages/batches?limit=2&after_id=msgbatch_0")]
+    for body in ("{}", "{\"data\":[]}", "{\"has_more\":false}")       # data and has_more are required
+        @test _answered(() -> list_batches(; service=_ANB), 200; body) isa BatchCallError
+    end
+    c, cseen = _with_scripted((_, _) -> _json(200, _an_batch(processing_status="canceling",
+                                                               cancel_initiated_at="2026-11-16T20:16:22Z"))) do
+        cancel_batch("msgbatch_1"; service=_ANB)
+    end
+    @test c isa BatchSuccess && c.response.status == "canceling" && _batch_targets(cseen) == [("POST", "/v1/messages/batches/msgbatch_1/cancel")]
+    d, dseen = _with_scripted((_, _) -> _json(200, "{\"id\":\"msgbatch_1\",\"type\":\"message_batch_deleted\"}")) do
+        delete_batch("msgbatch_1"; service=_ANB)
+    end
+    @test d isa BatchDeleteSuccess && d.id == "msgbatch_1" && d.deleted && _batch_targets(dseen) == [("DELETE", "/v1/messages/batches/msgbatch_1")]
+    for body in ("{}", "{\"type\":\"message_batch_deleted\"}", "{\"id\":\"msgbatch_1\",\"type\":\"message_batch\"}")
+        @test _answered(() -> delete_batch("msgbatch_1"; service=_ANB), 200; body) isa BatchCallError
+    end
+    @test _answered(() -> retrieve_batch("msgbatch_1"; service=_ANB), 200; body="{\"id\":\"msgbatch_1\"}") isa BatchCallError
+    # processing_status "ended" is the only terminal one.
+    states = ["in_progress", "canceling", "ended"]
+    p, pseen = _with_scripted((n, _) -> _json(200, _an_batch(processing_status=states[n]))) do
+        poll_batch("msgbatch_1"; interval=0.01, timeout=30.0, service=_ANB)
+    end
+    @test p isa BatchSuccess && p.response.status == "ended" && length(pseen) == 3
+end
+
+_an_message(text; usage=Dict("input_tokens" => 18, "output_tokens" => 4, "service_tier" => "batch")) =
+    Dict("model" => "claude-haiku-5-5", "id" => "msg_1", "type" => "message", "role" => "assistant",
+         "content" => [Dict("type" => "text", "text" => text)], "stop_reason" => "end_turn", "usage" => usage)
+
+@testset "batch_results on Anthropic: the results stream, each result by custom id" begin
+    lines = _batch_jsonl(Dict("custom_id" => "b", "result" => Dict("type" => "succeeded", "message" => _an_message("ok"))),
+        Dict("custom_id" => "e", "result" => Dict("type" => "errored", "error" => Dict("type" => "error",
+            "error" => Dict("type" => "invalid_request_error", "message" => "max_tokens: too large"), "request_id" => "req_e"))),
+        Dict("custom_id" => "c", "result" => Dict("type" => "canceled")),
+        Dict("custom_id" => "x", "result" => Dict("type" => "expired")),
+        Dict("custom_id" => "n", "result" => Dict("type" => "succeeded", "message" => _an_message("ok"; usage=Dict(
+            "input_tokens" => 5, "output_tokens" => 1)))),
+        Dict("custom_id" => "m", "result" => Dict("type" => "succeeded", "message" => Dict("type" => "message"))),
+        Dict("custom_id" => "z", "result" => Dict("type" => "postponed")))
+    r, seen = _with_scripted((_, _) -> _json(200, lines)) do
+        batch_results("msgbatch_1"; service=_ANB)
+    end
+    @test r isa BatchResultsSuccess && _batch_targets(seen) == [("GET", "/v1/messages/batches/msgbatch_1/results")]
+    @test first.(r.results) == ["b", "e", "c", "x", "n", "m", "z"]
+    b = r.results[1].second
+    @test b isa LLMSuccess && b.message.content == "ok" && b.model == "claude-haiku-5-5" && b.self.service === _ANB
+    @test (b.usage.prompt_tokens, b.usage.completion_tokens, b.usage.service_tier) == (18, 4, "batch")
+    e = r.results[2].second
+    @test e isa LLMCallError && e.request_id == "req_e" && occursin("invalid_request_error", e.error) && isnothing(e.status)
+    @test occursin("canceled", r.results[3].second.error) && occursin("expired", r.results[4].second.error)
+    @test all(i -> r.results[i].second isa LLMCallError, 3:4)
+    @test r.results[5].second.usage.service_tier == "batch"           # a usage that names no tier is a batch one too
+    @test r.results[6].second isa LLMCallError && occursin("stop_reason", r.results[6].second.error)
+    @test r.results[7].second isa LLMCallError && occursin("postponed", r.results[7].second.error)
+    # An unfinished batch has no results: the API's 404 is the failure.
+    nf = _answered(() -> batch_results("msgbatch_1"; service=_ANB), 404;
+                   body="{\"type\":\"error\",\"error\":{\"type\":\"not_found_error\",\"message\":\"Message Batch msgbatch_1 has no available results.\"}}")
+    @test nf isa BatchFailure && nf.status == 404
+    @test _answered(() -> batch_results("msgbatch_1"; service=_ANB), 200; body="{\"result\":{}}\n") isa BatchCallError
+end

@@ -127,13 +127,16 @@ end
         "response.completed", "response.cancelled", "response.failed", "response.incomplete",
         "batch.completed", "batch.cancelled", "batch.expired", "batch.failed",
         "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
-        "realtime.call.incoming", "live.call.incoming", "live.transport.incoming",
+        "realtime.call.incoming", "live.call.incoming", "live.transport.incoming", "live.transport.connected",
         "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created")
     # The Evals API shuts down on 2026-11-30, and its run events are not listed; the docstring says
     # so, since a filter on the list drops the events OpenAI still sends until then.
     @test !any(e -> startswith(e, "eval."), WEBHOOK_EVENTS)
-    @test WEBHOOK_EVENTS isa NTuple{18,String}
+    @test WEBHOOK_EVENTS isa NTuple{19,String}
     doc = string(@doc WEBHOOK_EVENTS)
+    # The reference: live.transport.connected is "Sent when a direct Live WebRTC session is created or an Instant
+    # Connect session activates".
+    @test occursin("`live.transport.connected`", doc) && occursin("Instant Connect", doc)
     @test occursin("also lists `eval.run.succeeded`, `eval.run.failed` and", doc) &&
           occursin("`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026", doc)
 end

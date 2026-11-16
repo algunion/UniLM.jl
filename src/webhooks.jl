@@ -8,7 +8,9 @@
 The event types of OpenAI's webhooks
 ([reference](https://developers.openai.com/api/reference/resources/webhooks)): background
 responses, batches and fine-tuning jobs that end, incoming SIP calls for the Realtime and
-Live APIs, safety warnings and deactivations for a safety identifier, and safety alerts.
+Live APIs, a Live session that connects (`live.transport.connected`, "Sent when a direct Live
+WebRTC session is created or an Instant Connect session activates"), safety warnings and
+deactivations for a safety identifier, and safety alerts.
 `live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
 existing subscriptions. The reference also lists `eval.run.succeeded`, `eval.run.failed` and
 `eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026
@@ -19,7 +21,7 @@ const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",
     "batch.completed", "batch.cancelled", "batch.expired", "batch.failed",
     "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
-    "realtime.call.incoming", "live.call.incoming", "live.transport.incoming",
+    "realtime.call.incoming", "live.call.incoming", "live.transport.incoming", "live.transport.connected",
     "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created",
 )
 

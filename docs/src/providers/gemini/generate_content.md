@@ -487,7 +487,9 @@ for it, its usage naming the tier `"batch"` (the reply itself says `"standard"`)
 [`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref gemini_cost)); a request's
 error status is an [`LLMCallError`](@ref) holding it as JSON. A batch not yet done, one that ended
 without results (a cancelled one ends with an error and none), and a response without a key are a
-`BatchCallError` naming why.
+`BatchCallError` naming why. Pass the pairs that created the batch, `batch_results(id; service,
+requests)`, and each result's `self` is its request's own `Chat`, a copy with the reply appended for a
+success, so the conversation goes on with `chatrequest!`.
 
 [`list_batches`](@ref) takes `limit` (`pageSize`) and `after`, the previous page's
 `raw["nextPageToken"]`; [`cancel_batch`](@ref) answers with the batch as read right after the cancel, which

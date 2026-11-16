@@ -1415,8 +1415,9 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   and a `0.0` would be indistinguishable from a genuinely free call. The requests of
   a batch are Chat results: `batch_results` returns each as an `LLMSuccess` whose usage
   names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates
-  (half the standard ones on every model a pricing page lists; a model it lists none for
-  is estimated at the standard rates, with a warning).
+  (half the standard ones on every model a pricing page lists, but for a cache hit on the
+  six Gemini models whose Batch tab keeps the standard cache-hit price; a model it lists
+  none for is estimated at the standard rates, with a warning).
 - The model priced is `model=` when given; else the one the provider reports having
   served (`LLMSuccess.model`; `response.model` for Responses, FIM and System One); else the
   one requested (`self.model` for Chat, `embeddings.model` for Embeddings) — so a routed id

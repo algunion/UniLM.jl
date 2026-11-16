@@ -2,17 +2,25 @@
 
 Create, retrieve, cancel, list and delete asynchronous batch jobs, poll them to completion, and read
 their results, on OpenAI, Anthropic and Gemini. A batch runs its requests within 24 hours at the
-provider's Batch rates — half its standard ones on every model each page lists — and
-[`estimated_cost`](@ref) prices a batch result at them.
+provider's Batch rates — half its standard ones on every model each page lists, but for a cache hit on
+the six Gemini models whose Batch tab keeps the standard cache-hit price (`gemini-3.1-pro-preview`,
+`gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`
+and `gemini-2.5-flash-lite`) — and [`estimated_cost`](@ref) prices a batch result at them.
 
 - [`create_batch`](@ref)`(requests; service)` takes the requests as `custom_id => Chat` pairs and
-  sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests, uploaded
-  with purpose `"batch"`, then the batch; Anthropic a Message Batch of Messages requests; Gemini inline
-  `generateContent` requests to `batchGenerateContent`. OpenAI's own file-based form,
+  sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests to one
+  model, uploaded with purpose `"batch"`, then the batch; Anthropic a Message Batch of Messages
+  requests; Gemini inline `generateContent` requests to `batchGenerateContent`. OpenAI's own file-based form,
   `create_batch(input_file_id, endpoint)`, runs any endpoint its Batch API serves.
 - [`batch_results`](@ref) reads the results of an ended batch as the results [`chatrequest!`](@ref)
   returns — an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) per custom id —,
-  decoded by the provider's own decoder, each success's usage at the tier `"batch"`.
+  decoded by the provider's own decoder, each success's usage at the tier `"batch"`. On OpenAI it
+  reads a `/v1/chat/completions` batch alone: another endpoint's is a `BatchCallError` naming
+  [`file_content`](@ref)`(output_file_id)`, which reads its output file as OpenAI writes it. Given the
+  pairs that created the batch, `batch_results(id; service, requests)`, each result is the one
+  `chatrequest!` returns for its request's `Chat`: a success's `self` is a copy of that `Chat` with the
+  reply appended (the `Chat` passed is not changed), a failure's the `Chat` itself; without them, a
+  stand-in `Chat` without messages.
 - [`retrieve_batch`](@ref), [`list_batches`](@ref), [`cancel_batch`](@ref) and [`poll_batch`](@ref)
   run on all three; [`delete_batch`](@ref) on Anthropic and Gemini; [`update_batch`](@ref) (a batch's
   priority) on Gemini.
@@ -67,6 +75,17 @@ if results isa BatchResultsSuccess
     for (id, r) in results.results
         r isa LLMSuccess && println(id, ": ", r.message.content, " (USD ", estimated_cost(r), ")")
     end
+end
+
+# With the requests, each result's self is its request's Chat with the reply appended: talk on
+requests = ["norway" => ask("Capital of Norway?"), "peru" => ask("Capital of Peru?")]
+batch = create_batch(requests)
+poll_batch(batch.response.id; service=ANTHROPICServiceEndpoint, interval=60)
+results = batch_results(batch.response.id; service=ANTHROPICServiceEndpoint, requests)
+norway = Dict(results.results)["norway"]
+if norway isa LLMSuccess
+    push!(norway.self, Message(Val(:user), "And its population?"))
+    chatrequest!(norway.self)
 end
 
 # OpenAI's file-based form: upload a JSONL request file, then create a batch from it

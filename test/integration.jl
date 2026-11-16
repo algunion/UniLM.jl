@@ -385,6 +385,11 @@ end
     @test retrieved.response.id == rid
     @test retrieved.response.status == "completed"
     @test !isempty(output_text(retrieved))
+
+    # The token count takes the stored response as the turns before its input (a count bills no tokens).
+    alone = count_input_tokens(model="gpt-5.6-luna", input="And again?")
+    after = count_input_tokens(model="gpt-5.6-luna", input="And again?", previous_response_id=rid)
+    @test after isa Dict && alone isa Dict && after["input_tokens"] > alone["input_tokens"]
 end
 
 @testset "Responses API — list_input_items" begin
@@ -452,6 +457,18 @@ end
                                personality="friendly")
     @test plain isa Dict && every isa Dict
     @test every["input_tokens"] > plain["input_tokens"] > 0
+    # A conversation's items count as the turns before the input (creating one bills nothing).
+    conv = create_conversation(; items=[Dict("type" => "message", "role" => "user",
+                                             "content" => "My name is Ada, and I write Julia every day.")])
+    @test conv isa ConversationSuccess
+    if conv isa ConversationSuccess
+        try
+            within = count_input_tokens(model="gpt-6-luna", input="Tell me a joke", conversation=conv.response.id)
+            @test within isa Dict && within["input_tokens"] > plain["input_tokens"]
+        finally
+            @test delete_conversation(conv.response.id) isa ConversationDeleteSuccess
+        end
+    end
 end
 
 @testset "count_tokens — a Respond's input tokens, as count_input_tokens counts them" begin
@@ -471,6 +488,9 @@ end
     @test !isnothing(r.model.created)
     r = retrieve_model("gpt-made-up-0")
     @test r isa ModelListFailure && r.status == 404
+    # A fine-tuned id's colons go percent-encoded; OpenAI decodes them, so its 404 names the id as given.
+    r = retrieve_model("ft:gpt-4o-mini:unilm:made-up:abc123")
+    @test r isa ModelListFailure && r.status == 404 && occursin("'ft:gpt-4o-mini:unilm:made-up:abc123'", r.response)
 end
 
 # Never a real model: the delete of a made-up fine-tuned model is OpenAI's free witness, a 404.
@@ -901,7 +921,8 @@ end
 @testset "Batch API — a batch of two Chats: create, retrieve, list and cancel" begin
     # Two 16-token gpt-6-luna requests at effort "none", cancelled before they run: OpenAI bills the tokens of the
     # requests a batch completed, so the run costs at most those two requests at the Batch rates. The gate does
-    # not wait for results (OpenAI's 24-hour window); test/batch.jl reads them from fixtures.
+    # not wait for this batch's results (OpenAI's 24-hour window): the next testset reads those of a batch an
+    # earlier run left, and test/batch.jl reads every result shape from fixtures.
     luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16, messages=[Message(Val(:user), "Reply with exactly: ok")])
     created = create_batch(["one" => luna(), "two" => luna()]; metadata=Dict("suite" => "unilm-live"),
                            output_expires_after=3600)
@@ -917,6 +938,33 @@ end
         @test stopped isa BatchSuccess && stopped.response.status in ("cancelling", "cancelled")
         @info "OpenAI batch" id status = stopped.response.status input = created.response.input_file_id
         @test delete_file(created.response.input_file_id) isa FileDeleteSuccess
+    end
+end
+
+# OpenAI's queue held a batch for over an hour on 2026-11-16, so the gate waits for none: each run leaves one tagged
+# 1-request batch behind, never cancelled, and reads the newest completed one an earlier run left. A run that finds
+# none fails: the gate's claim to read OpenAI batch results rests on it. A run bills its one request (USD ~2e-6).
+@testset "Batch API — the results of a batch an earlier run left; one left for the next run" begin
+    tag = "unilm_gate" => "results"
+    luna = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,
+                messages=[Message(Val(:user), "Reply with exactly: ok")])
+    left = create_batch(["gate" => luna]; metadata=Dict(tag), output_expires_after=2_592_000)
+    @test left isa BatchSuccess && left.response.raw["metadata"] == Dict(tag)
+    mine = left isa BatchSuccess ? left.response.id : nothing
+    page = list_batches(; limit=100)
+    @test page isa BatchListSuccess
+    tagged(b) = b.id != mine && b.status == "completed" &&
+                get(something(get(b.raw, "metadata", nothing), Dict()), first(tag), nothing) == last(tag)
+    earlier = page isa BatchListSuccess ?
+        sort(filter(tagged, page.response.data); by=b -> b.raw["created_at"], rev=true) : BatchObject[]
+    @test !isempty(earlier)
+    if !isempty(earlier)
+        b = first(earlier)
+        r = batch_results(b.id)
+        @test r isa BatchResultsSuccess && first.(r.results) == ["gate"]
+        x = r isa BatchResultsSuccess ? only(r.results).second : nothing
+        @test x isa LLMSuccess && x.usage.service_tier == "batch" && estimated_cost(x) > 0
+        @info "OpenAI gate batch" read = b.id left = mine cost = x isa LLMSuccess ? estimated_cost(x) : 0.0
     end
 end
 

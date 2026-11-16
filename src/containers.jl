@@ -148,7 +148,7 @@ struct SkillReference
         1 <= length(skill_id) <= 64 || throw(ArgumentError(
             "SkillReference: skill_id has 1 to 64 characters (got $(length(skill_id)))"))
         v = isnothing(version) ? nothing : string(version)
-        isnothing(v) || v == "latest" || occursin(r"^[1-9][0-9]*$", v) || throw(ArgumentError(
+        isnothing(v) || v == "latest" || occursin(r"^[1-9][0-9]*\z", v) || throw(ArgumentError(
             "SkillReference: version is a positive integer or \"latest\" (got $(repr(version)))"))
         new(skill_id, v)
     end

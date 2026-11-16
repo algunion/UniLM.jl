@@ -28,7 +28,8 @@ function _batch_headers(service::_AnthropicEndpoint, create::Bool)::Vector{Pair{
 end
 
 # A custom id "Must be 1 to 64 characters and contain only alphanumeric characters, hyphens, and underscores".
-const _ANTHROPIC_CUSTOM_ID = r"^[a-zA-Z0-9_-]{1,64}$"
+# `\z`, not `$`, which also matches before a final newline.
+const _ANTHROPIC_CUSTOM_ID = r"^[a-zA-Z0-9_-]{1,64}\z"
 function _batch_custom_ids(::_AnthropicBatches, ids)
     for id in ids
         occursin(_ANTHROPIC_CUSTOM_ID, id) || throw(ArgumentError("create_batch: an Anthropic custom id is 1 to 64 " *

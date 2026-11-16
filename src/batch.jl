@@ -212,12 +212,12 @@ function _batch_service(requests::AbstractVector, service)
 end
 
 # Every custom id names one request: none is empty and none repeats.
-function _check_custom_ids(ids::AbstractVector{<:AbstractString})
+function _check_custom_ids(ids::AbstractVector{<:AbstractString}, verb::String="create_batch")
     i = findfirst(isempty, ids)
-    isnothing(i) || throw(ArgumentError("create_batch: request $i has an empty custom id"))
+    isnothing(i) || throw(ArgumentError("$verb: request $i has an empty custom id"))
     seen = Set{String}()
     for id in ids
-        id in seen && throw(ArgumentError("create_batch: custom ids must be unique; $(repr(id)) names two requests"))
+        id in seen && throw(ArgumentError("$verb: custom ids must be unique; $(repr(id)) names two requests"))
         push!(seen, id)
     end
 end
@@ -245,8 +245,12 @@ function _batch_expiry(seconds::Integer)::Dict{Symbol,Any}
 end
 
 # The requests as OpenAI's input file: one line per request, its custom id and the Chat Completions body the
-# Chat's encoder builds.
+# Chat's encoder builds. "Each input file can only include requests to a single model"
+# (https://developers.openai.com/api/docs/guides/batch).
 function _batch_input(::_OpenAIBatches, service, requests, metadata, output_expires_after)
+    models = unique(chat.model for (_, chat) in requests)
+    length(models) == 1 || throw(ArgumentError("create_batch: an OpenAI batch's input file holds requests to a " *
+        "single model; the requests name $(join(repr.(models), ", ")): create one batch per model"))
     io = IOBuffer()
     for (id, chat) in requests
         println(io, JSON.json(Dict("custom_id" => String(id), "method" => "POST", "url" => CHAT_COMPLETIONS_PATH,
@@ -312,13 +316,28 @@ function _openai_batch_item(service, model, line::Dict{String,Any})::Pair{String
                       request_id=_batch_optional(resp, "request_id", String)))
 end
 
+# The results decode as Chat Completions replies, the requests create_batch(requests) sends. A batch of another
+# endpoint's requests, created from a file of them, keeps its results in its output file as OpenAI writes them.
+function _chat_completions_batch(b::BatchObject)
+    b.endpoint == CHAT_COMPLETIONS_PATH && return nothing
+    file = isnothing(b.output_file_id) ? "output_file_id) once it has one" : repr(b.output_file_id) * ")"
+    throw(ArgumentError("batch_results: batch $(b.id) " * (isnothing(b.endpoint) ? "names no endpoint" : "runs $(b.endpoint)") *
+        ", and batch_results decodes $CHAT_COMPLETIONS_PATH replies alone; read its results with file_content($file"))
+end
+
 # OpenAI's results: the output file's lines, then the error file's, once the batch has either.
 function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
     got = _retrieve_batch(wire, service, id, cfg, t0, tok)
     got isa BatchSuccess || return got
     b = got.response
+    _chat_completions_batch(b)
     files = String[f for f in (b.output_file_id, b.error_file_id) if !isnothing(f)]
-    isempty(files) && throw(ArgumentError("batch $id has no output or error file yet (status $(b.status))"))
+    # A batch that ended without either file (it failed validation, or expired or was cancelled before a request
+    # ran) will get none: its `errors` say why.
+    isempty(files) && throw(ArgumentError(_batch_ended(wire, b.status) ?
+        "batch $id ended without results (status $(b.status)); its errors: " *
+        JSON.json(_batch_optional(b.raw, "errors", AbstractDict)) :
+        "batch $id has no output or error file yet (status $(b.status))"))
     model = _batch_optional(b.raw, "model", String)
     results = Pair{String,_BatchItem}[]
     for f in files
@@ -328,6 +347,30 @@ function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
     end
     BatchResultsSuccess(results)
 end
+
+# The results for the requests that created the batch: each one as chatrequest! returns it for its request's Chat.
+# A success's `self` is a fork of that Chat with the reply appended and the result's cost added, as chatrequest!
+# appends to and bills the Chat it sends; a failure's `self` is the Chat itself, which nothing changed.
+function _batch_requests(requests)::Union{Nothing,Dict{String,Chat}}
+    isnothing(requests) && return nothing
+    _check_custom_ids(String[first(p) for p in requests], "batch_results")
+    foreach(p -> _validate_reply_slot(p.second), requests)
+    Dict{String,Chat}(String(id) => chat for (id, chat) in requests)
+end
+
+_with_self(r::T, self::Chat) where {T<:_BatchItem} = T(map(f -> f === :self ? self : getfield(r, f), fieldnames(T))...)
+_request_result(r::Union{LLMFailure,LLMCallError}, chat::Chat) = _with_self(r, chat)
+function _request_result(r::LLMSuccess, chat::Chat)
+    result = _with_self(r, update!(fork(chat), r.message))
+    _accumulate_cost!(result.self, result)
+    result
+end
+
+_for_requests(r::BatchResultsSuccess, chats::Dict{String,Chat}) = BatchResultsSuccess(Pair{String,_BatchItem}[
+    id => _request_result(item, get(chats, id) do
+        throw(ArgumentError("batch_results: the result $(repr(id)) is for none of the requests; pass the " *
+                            "custom_id => Chat pairs that created the batch"))
+    end) for (id, item) in r.results])
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
@@ -346,6 +389,8 @@ Create an OpenAI batch job from an uploaded file. `endpoint` is e.g. `"/v1/chat/
 batch's output and error files expire, counted from each file's creation; outside that range it throws
 `ArgumentError` before any request. This is OpenAI's form: on an Anthropic or Gemini endpoint it throws
 `ArgumentError` before any request; pass the requests themselves, `create_batch(requests; service)`.
+[`batch_results`](@ref) decodes a `"/v1/chat/completions"` batch; another endpoint's results are its
+output file, which [`file_content`](@ref)`(output_file_id)` reads.
 
 $_BATCH_CONFIG_DOC
 """
@@ -371,7 +416,8 @@ Chats as its own Chat requests, encoded as [`chatrequest!`](@ref) encodes them:
 
 - OpenAI: a JSONL file of `/v1/chat/completions` requests, uploaded with purpose `"batch"` (one more
   request, which leaves the file in place should the create fail), then the batch;
-  `metadata` and `output_expires_after` are its create's options.
+  `metadata` and `output_expires_after` are its create's options. One model per batch: "each input file
+  can only include requests to a single model".
 - Anthropic: a Message Batch whose requests' `params` are the Messages bodies. A custom id is 1 to 64
   letters, digits, hyphens and underscores; fast mode (`service_tier="fast"`) is not batched. The
   endpoint's `betas` go in the `anthropic-beta` header (e.g. `"output-300k-2026-03-24"`, which raises
@@ -493,7 +539,7 @@ function update_batch(id::String; priority::Int, service::ServiceEndpointSpec, c
 end
 
 """
-    batch_results(id; service=OPENAIServiceEndpoint)
+    batch_results(id; service=OPENAIServiceEndpoint, requests=nothing)
 
 The results of the batch `id`, once it has ended: `BatchResultsSuccess`, whose `results` pair each
 request's custom id with its result, in the order the provider returns them (neither OpenAI nor Anthropic
@@ -505,22 +551,41 @@ provider's Batch rates; an [`LLMFailure`](@ref) for an OpenAI request answered w
 [`LLMCallError`](@ref) for a request with no reply — its `error` holds the provider's error object as JSON
 (Anthropic's `errored` result, with its `request_id`; Gemini's status; an OpenAI error-file entry), or why
 there is none (an Anthropic request `canceled` or `expired` before it ran) — and for a reply the decoder
-cannot read. A result's `self` is a stand-in [`Chat`](@ref) on `service`, without messages: its model is the
-one the provider names for the reply or the batch, else the endpoint's default model.
+cannot read.
+
+Pass `requests`, the `custom_id => Chat` pairs that created the batch, and each result is the one
+[`chatrequest!`](@ref) returns for its request's Chat: a success's `self` is a copy of that Chat
+([`fork`](@ref)) with the reply appended and the result's cost added to its [`cumulative_cost`](@ref), so
+its conversation goes on, or runs its tool calls, from there; a failure's `self` is the request's Chat
+itself. The Chats passed are not changed. An empty or repeated custom id throws `ArgumentError` before any
+request, and a Chat whose reply could not be appended (`history` on, the conversation ending with an
+assistant message) throws [`InvalidConversationError`](@ref), as [`chatrequest!`](@ref) does; a result
+whose custom id is none of the requests' is a `BatchCallError`. Without `requests`, a result's `self` is a
+stand-in [`Chat`](@ref) on `service`, without messages: its model is the one the provider names for the
+reply or the batch, else the endpoint's default model.
 
 The results are read from OpenAI's output and error files ([`file_content`](@ref): output lines, then error
-lines), Anthropic's results stream, and Gemini's inlined responses or its responses file. A batch with no
+lines), Anthropic's results stream, and Gemini's inlined responses or its responses file. On OpenAI the
+batch is a `"/v1/chat/completions"` one, as [`create_batch`](@ref)`(requests)` makes it: a batch of another
+endpoint is a `BatchCallError` whose `ArgumentError` names `file_content(output_file_id)`, raised after the
+batch is read and before any file is downloaded. A batch with no
 results yet is a `BatchFailure` on Anthropic (its 404) and a `BatchCallError` naming the batch's status on
-OpenAI and Gemini; so is a Gemini batch that ended without results (its error is in the message), and a
-Gemini response without the custom id [`create_batch`](@ref) sets in its `metadata` (`key`).
+OpenAI and Gemini; so is a batch that ended without results on either (the message holds OpenAI's
+`errors`, Gemini's `error`), and a Gemini response without the custom id [`create_batch`](@ref) sets in
+its `metadata` (`key`).
 
 $_BATCH_CONFIG_DOC The config bounds every request of the call together.
 """
 function batch_results(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    requests::Union{Nothing,AbstractVector{<:Pair{<:AbstractString,Chat}}}=nothing,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     wire = _batch_wire(service)
-    _batch_call((cfg, t0, tok) -> _batch_results(wire, service, id, cfg, t0, tok), config, cancel)
+    chats = _batch_requests(requests)
+    _batch_call(config, cancel) do cfg, t0, tok
+        r = _batch_results(wire, service, id, cfg, t0, tok)
+        isnothing(chats) || !(r isa BatchResultsSuccess) ? r : _for_requests(r, chats)
+    end
 end
 
 """

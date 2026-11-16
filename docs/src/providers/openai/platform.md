@@ -433,15 +433,22 @@ throw `ArgumentError` here; [`delete_file`](@ref) removes a batch's files.
 A batch of chat requests needs no file of yours: [`create_batch`](@ref)`(requests)` takes them as
 `custom_id => Chat` pairs, writes the input file — one `/v1/chat/completions` line per request, its
 `body` the one [`chatrequest!`](@ref) sends —, uploads it with the purpose `"batch"` and creates the
-batch, `metadata` and `output_expires_after` as above. A streamed `Chat`, an empty or repeated custom id
-and a `Chat` for another endpoint are refused with an `ArgumentError` before anything is sent; should the
-create fail after the upload, the file stays, under the purpose `"batch"`. [`batch_results`](@ref) reads
+batch, `metadata` and `output_expires_after` as above. A streamed `Chat`, an empty or repeated custom id,
+a `Chat` for another endpoint and `Chat`s for two models (one input file, one model, as above) are refused
+with an `ArgumentError` before anything is sent; should the create fail after the upload, the file stays,
+under the purpose `"batch"`. [`batch_results`](@ref) reads
 the output file's lines, then the error file's, and returns each request's result by its custom id: a
 200 is the [`LLMSuccess`](@ref) `chatrequest!` returns for its body, its usage naming the tier
 `"batch"`, so [`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref openai_cost));
 another status is an [`LLMFailure`](@ref) with it; a request that got no response, such as one a batch
 expired before it ran, is an [`LLMCallError`](@ref) holding OpenAI's error object as JSON. A batch
-without either file yet is a `BatchCallError` naming its status.
+without either file yet is a `BatchCallError` naming its status, and one that ended without either — it
+failed validation, or expired or was cancelled before a request ran — a `BatchCallError` holding the
+batch's `errors`. A batch of another endpoint, such as
+the `/v1/responses` one above, is a `BatchCallError` naming `file_content(output_file_id)`, which reads
+its output file. Pass the pairs that created the batch, `batch_results(id; requests)`, and each result's
+`self` is its request's own `Chat`, a copy with the reply appended for a success, so the conversation goes
+on with `chatrequest!`.
 
 ```julia
 luna() = Chat(model="gpt-6-luna", reasoning_effort="none", max_tokens=16,

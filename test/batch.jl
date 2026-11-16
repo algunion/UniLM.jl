@@ -296,6 +296,18 @@ end
     @test occursin("delete_file", _batch_refused(() -> delete_batch("batch_1"; service=_OAB)).msg)
 end
 
+# OpenAI's Batch guide: "each input file can only include requests to a single model".
+# Refuted if: Chats for two models are uploaded instead of refused before any request, or the refusal does not
+# name the models.
+@testset "create_batch(requests) on OpenAI: one model per batch, refused before any request" begin
+    c(model) = Chat(service=_OAB, model=model, messages=[Message(Val(:user), "q")])
+    e, seen = _with_scripted((_, _) -> _json(500, "{}")) do
+        _batch_refused(() -> create_batch(["a" => c("gpt-6-luna"), "b" => c("gpt-6-sol"), "c" => c("gpt-6-luna")]))
+    end
+    @test e isa ArgumentError && isempty(seen)
+    e isa ArgumentError && @test occursin("single model", e.msg) && occursin("\"gpt-6-luna\", \"gpt-6-sol\"", e.msg)
+end
+
 _batch_oa_reply(text; model="gpt-6-luna-2026-09-14") = Dict("id" => "chatcmpl-1", "object" => "chat.completion",
     "model" => model, "service_tier" => "default",
     "choices" => [Dict("index" => 0, "message" => Dict("role" => "assistant", "content" => text), "finish_reason" => "stop")],
@@ -312,7 +324,7 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
                       "response" => Dict("status_code" => 200, "request_id" => "req_d", "body" => Dict("choices" => []))))
     err = _batch_jsonl(Dict("id" => "batch_req_3", "custom_id" => "c", "response" => nothing,
                       "error" => Dict("code" => "batch_expired", "message" => "This request could not be executed before the completion window expired.")))
-    batch = Dict("id" => "batch_1", "status" => "completed", "model" => "gpt-6-luna",
+    batch = Dict("id" => "batch_1", "status" => "completed", "model" => "gpt-6-luna", "endpoint" => "/v1/chat/completions",
                  "output_file_id" => "file-out", "error_file_id" => "file-err")
     served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out,
                   "/v1/files/file-err/content" => err)
@@ -336,7 +348,7 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     @test c isa LLMCallError && isnothing(c.status) && occursin("batch_expired", c.error)
     # Before the batch has an output or error file there are no results: a call error naming its status.
     pending = _answered(() -> batch_results("batch_1"; service=_OAB), 200;
-                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\"}")
+                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\",\"endpoint\":\"/v1/chat/completions\"}")
     @test pending isa BatchCallError && pending.cause isa ArgumentError && occursin("in_progress", pending.error)
     # A file the Files API does not serve is the results' failure.
     gone, _ = _with_scripted((n, _) -> n == 1 ? _json(200, JSON.json(batch)) : _json(404, "{\"error\":{}}")) do
@@ -344,12 +356,57 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     end
     @test gone isa BatchFailure && gone.status == 404
     # A line without its custom id cannot be paired with a request: the reply is malformed.
-    torn = Dict("/v1/batches/batch_1" => JSON.json(Dict("id" => "batch_1", "status" => "completed", "output_file_id" => "f")),
+    torn = Dict("/v1/batches/batch_1" => JSON.json(Dict("id" => "batch_1", "status" => "completed", "output_file_id" => "f",
+                                                        "endpoint" => "/v1/chat/completions")),
                 "/v1/files/f/content" => _batch_jsonl(Dict("response" => Dict("status_code" => 200, "body" => _batch_oa_reply("x")))))
     t = first(_with_scripted((_, req) -> _json(200, torn[String(req.target)])) do
         batch_results("batch_1"; service=_OAB)
     end)
     @test t isa BatchCallError && occursin("custom_id", t.error)
+end
+
+# batch_results decodes Chat Completions replies; a batch made from a file of another endpoint's requests
+# (create_batch(input_file_id, endpoint)) keeps its results in its output file.
+# Refuted if: such a batch's output is decoded as Chat Completions (each billed success an LLMCallError), a file is
+# downloaded, or the refusal does not name the endpoint and file_content.
+@testset "batch_results on OpenAI: a batch of another endpoint is refused, naming file_content" begin
+    reply = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gpt-6-luna",
+                 "output" => [], "usage" => Dict("input_tokens" => 10, "output_tokens" => 2, "total_tokens" => 12))
+    out = _batch_jsonl(Dict("id" => "batch_req_1", "custom_id" => "a", "error" => nothing,
+                            "response" => Dict("status_code" => 200, "request_id" => "req_a", "body" => reply)))
+    for endpoint in ("/v1/responses", "/v1/embeddings", nothing)
+        batch = Dict{String,Any}("id" => "batch_1", "status" => "completed", "output_file_id" => "file-out")
+        isnothing(endpoint) || (batch["endpoint"] = endpoint)
+        served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out)
+        r, seen = _with_scripted((_, req) -> _json(200, served[String(req.target)])) do
+            batch_results("batch_1"; service=_OAB)
+        end
+        @test r isa BatchCallError && r.cause isa ArgumentError
+        @test _batch_targets(seen) == [("GET", "/v1/batches/batch_1")]
+        r isa BatchCallError && @test occursin("file_content(\"file-out\")", r.error) &&
+                                      occursin(something(endpoint, "no endpoint"), r.error)
+    end
+    # Before it has an output file, the refusal says where its results will be.
+    pending = _answered(() -> batch_results("batch_1"; service=_OAB), 200;
+                        body="{\"id\":\"batch_1\",\"status\":\"in_progress\",\"endpoint\":\"/v1/responses\"}")
+    @test pending isa BatchCallError && occursin("file_content(output_file_id)", pending.error)
+end
+
+# A batch that ended without an output or error file (it failed validation, or expired or was cancelled before a
+# request ran) will have no results: its `errors` say why.
+# Refuted if: the error reads as a batch still running, or leaves out the batch's errors.
+@testset "batch_results on OpenAI: a batch that ended without results names its errors" begin
+    errors = Dict("object" => "list", "data" => [Dict("code" => "invalid_json_line", "line" => 1, "param" => nothing,
+                                                      "message" => "This line is not parseable as valid JSON.")])
+    for status in ("failed", "expired", "cancelled")
+        b = Dict("id" => "batch_1", "status" => status, "endpoint" => "/v1/chat/completions", "errors" => errors)
+        r, seen = _with_scripted((_, _) -> _json(200, JSON.json(b))) do
+            batch_results("batch_1"; service=_OAB)
+        end
+        @test r isa BatchCallError && r.cause isa ArgumentError && length(seen) == 1
+        @test occursin("ended without results (status $status)", r.error) && occursin("invalid_json_line", r.error)
+        @test !occursin("yet", r.error)
+    end
 end
 
 # ── Anthropic Message Batches ── the replies are the shapes the API returned on 2026-11-16.
@@ -406,6 +463,16 @@ end
     end
     @test occursin("fast", _batch_refused(() -> create_batch(["a" => opus])).msg)
     @test isnothing(UniLM._batch_custom_ids(UniLM._AnthropicBatches(), [repeat("x", 64), "a-B_9"]))
+end
+
+# Refuted if: a custom id that ends in a newline passes the rule (a regex `$` also matches before a final newline).
+@testset "create_batch(requests) on Anthropic: a custom id ending in a newline is refused" begin
+    haiku = Chat(service=_ANB, model="claude-haiku-5-5", max_tokens=16, messages=[Message(Val(:user), "q")])
+    e, seen = _with_scripted((_, _) -> _json(200, _an_batch())) do
+        _batch_refused(() -> create_batch(["abc\n" => haiku]))
+    end
+    @test e isa ArgumentError && isempty(seen)
+    e isa ArgumentError && @test occursin(repr("abc\n"), e.msg)
 end
 
 @testset "Message Batches: retrieve, list, cancel, delete and poll" begin
@@ -625,4 +692,61 @@ _gm_reply(text) = Dict("candidates" => [Dict("content" => Dict("parts" => [Dict(
         batch_results("abc123"; service=_GMB)
     end
     @test gone isa BatchFailure && gone.status == 404
+end
+
+# batch_results(id; requests): given the pairs that created the batch, each result is the one chatrequest! returns
+# for its request's Chat: a success's `self` a copy of that Chat with the reply appended (the caller's Chat as it
+# was), a failure's the Chat itself.
+# Refuted if: a success's self lacks the request's messages or the reply, the caller's Chat is mutated, a failure's
+# self is a stand-in, a result whose custom id names no request decodes, or repeated custom ids reach the network.
+@testset "batch_results(id; requests): each result's self is its request's Chat, as chatrequest! returns it" begin
+    quiet(f) = Base.CoreLogging.with_logger(f, Base.CoreLogging.NullLogger())   # a probe has no Batch rates
+    oa_served = Dict("/v1/batches/b1" => JSON.json(Dict("id" => "b1", "status" => "completed", "model" => "gpt-6-luna",
+            "endpoint" => "/v1/chat/completions", "output_file_id" => "file-out")),
+        "/v1/files/file-out/content" => _batch_jsonl(
+            Dict("custom_id" => "ok", "response" => Dict("status_code" => 200, "body" => _batch_oa_reply("ok"))),
+            Dict("custom_id" => "bad", "response" => Dict("status_code" => 400, "body" => Dict("error" => Dict("message" => "bad"))))))
+    an_lines = _batch_jsonl(Dict("custom_id" => "ok", "result" => Dict("type" => "succeeded", "message" => _an_message("ok"))),
+        Dict("custom_id" => "bad", "result" => Dict("type" => "errored", "error" => Dict("type" => "error",
+            "error" => Dict("type" => "invalid_request_error", "message" => "bad")))))
+    gm_done = JSON.json(_gm_op(state="BATCH_STATE_SUCCEEDED", done=true, response=Dict("inlinedResponses" => Dict(
+        "inlinedResponses" => [Dict("response" => _gm_reply("ok"), "metadata" => Dict("key" => "ok")),
+                               Dict("error" => Dict("code" => 3, "message" => "bad"), "metadata" => Dict("key" => "bad"))]))))
+    for (service, model, script) in ((_OAB, "gpt-6-luna", (_, req) -> _json(200, oa_served[String(req.target)])),
+                                     (_ANB, "claude-haiku-5-5", (_, _) -> _json(200, an_lines)),
+                                     (_GMB, "gemini-3.8-flash", (_, _) -> _json(200, gm_done)))
+        ok = Chat(service=service, model=model, max_tokens=16,
+                  messages=[Message(Val(:system), "Be brief."), Message(Val(:user), "one")])
+        bad = Chat(service=service, model=model, max_tokens=16, messages=[Message(Val(:user), "two")])
+        r, _ = quiet() do
+            _with_scripted(script) do
+                batch_results("b1"; service, requests=["ok" => ok, "bad" => bad])
+            end
+        end
+        @test r isa BatchResultsSuccess
+        r isa BatchResultsSuccess || continue
+        s, e = Dict(r.results)["ok"], Dict(r.results)["bad"]
+        @test s isa LLMSuccess && s.self !== ok && s.self.service === service && s.self.model == model
+        @test [(m.role, m.content) for m in s.self.messages] == [("system", "Be brief."), ("user", "one"), ("assistant", "ok")]
+        @test s.usage.service_tier == "batch" && quiet(() -> cumulative_cost(s.self) == estimated_cost(s) > 0)
+        @test length(ok.messages) == 2 && cumulative_cost(ok) == 0          # the caller's Chat as it was
+        @test e isa Union{LLMFailure,LLMCallError} && e.self === bad
+        # A result whose custom id names none of the requests pairs with no Chat: the reply is not the batch's.
+        u, _ = quiet() do
+            _with_scripted(script) do
+                batch_results("b1"; service, requests=["ok" => ok, "other" => bad])
+            end
+        end
+        @test u isa BatchCallError && u.cause isa ArgumentError
+        u isa BatchCallError && @test occursin("\"bad\"", u.error)
+    end
+    # Repeated custom ids are refused before any request; so is a Chat whose reply could not be appended.
+    c = Chat(service=_OAB, model="gpt-6-luna", messages=[Message(Val(:user), "q")])
+    replied = Chat(service=_OAB, model="gpt-6-luna", messages=[Message(Val(:user), "q"), Message(role=RoleAssistant, content="a")])
+    for (requests, T) in ((["a" => c, "a" => c], ArgumentError), (["a" => replied], InvalidConversationError))
+        e, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            _batch_refused(() -> batch_results("b1"; service=_OAB, requests))
+        end
+        @test e isa T && isempty(seen)
+    end
 end

@@ -343,10 +343,11 @@ end
 
 _json_object(body)::Dict{String,Any} = JSON.parse(body; dicttype=Dict{String,Any})
 
+# OpenAI's File object: `filename` and `purpose` are required strings; `bytes` alone may be null.
 function _parse_file_object(d::AbstractDict)
     FileObject(
-        id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=d["filename"], purpose=d["purpose"],
-        status=get(d, "status", nothing), raw=Dict{String,Any}(d))
+        id=d["id"], bytes=d["bytes"], created_at=d["created_at"], filename=_file_required(d, "filename", String),
+        purpose=_file_required(d, "purpose", String), status=get(d, "status", nothing), raw=Dict{String,Any}(d))
 end
 
 _parse_file(::_OpenAIFiles, d::AbstractDict)::FileObject = _parse_file_object(d)
@@ -369,14 +370,15 @@ function _parse_file(::_GeminiFiles, d::AbstractDict)::FileObject
 end
 
 # A page: OpenAI's `data` and `has_more`, both required. Anthropic's `data`, and `next_page`, its
-# opaque cursor of the next page, null on the last. Gemini's `files` and `nextPageToken`, each left
-# out when empty (proto3 JSON omits a field at its default value), so `{}` is an empty last page.
+# opaque cursor of the next page, null on the last (an empty one ends the listing too, as Anthropic's
+# SDK reads it). Gemini's `files` and `nextPageToken`, each left out when empty (proto3 JSON omits a
+# field at its default value), so `{}` is an empty last page.
 _file_page(wire::_OpenAIFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
     has_more=_file_required(d, "has_more", Bool), raw=d)
 _file_page(wire::_AnthropicFiles, d::Dict{String,Any})::FileList = FileList(
     data=FileObject[_parse_file(wire, f) for f in _file_required(d, "data", AbstractVector)],
-    has_more=!isnothing(_file_field(d, "next_page", String)), raw=d)
+    has_more=!isempty(something(_file_field(d, "next_page", String), "")), raw=d)
 function _file_page(wire::_GeminiFiles, d::Dict{String,Any})::FileList
     token = _file_field(d, "nextPageToken", String)
     FileList(data=FileObject[_parse_file(wire, f) for f in something(_file_field(d, "files", AbstractVector), [])],
@@ -415,8 +417,11 @@ end
 # Anthropic's DeletedFile has the `id`, and a `type` that is "file_deleted" when present: its 200 is
 # the confirmation. Gemini's files.delete answers an Empty message, `{}`: its 200 is the confirmation,
 # and the file deleted is the one requested.
-_file_deleted(::_OpenAIFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess = FileDeleteSuccess(
-    id=_file_required(d, "id", String), deleted=_confirm_deleted(d), object=_file_required(d, "object", String))
+function _file_deleted(::_OpenAIFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess
+    object = _file_required(d, "object", String)
+    object == "file" || throw(ArgumentError("the delete reply's object is $(repr(object)), not \"file\""))
+    FileDeleteSuccess(id=_file_required(d, "id", String), deleted=_confirm_deleted(d), object=object)
+end
 function _file_deleted(::_AnthropicFiles, d::Dict{String,Any}, ::String)::FileDeleteSuccess
     type = _file_field(d, "type", String)
     isnothing(type) || type == "file_deleted" ||

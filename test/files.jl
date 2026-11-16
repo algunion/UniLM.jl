@@ -184,6 +184,25 @@ end
     end
 end
 
+# OpenAI's File object requires `filename` and `purpose` as strings; of its fields only `bytes` may be null.
+# Refuted if: a reply whose filename or purpose is null decodes as a file, from a retrieve, a listing or an upload.
+@testset "an OpenAI file object whose filename or purpose is null is a FileCallError" begin
+    full = Dict{String,Any}("id" => "file-1", "object" => "file", "bytes" => 3, "created_at" => 1,
+                            "filename" => "a.jsonl", "purpose" => "batch")
+    for key in ("filename", "purpose")
+        null = merge(full, Dict{String,Any}(key => nothing))
+        r = _answered(() -> retrieve_file("file-1"; service=URLProbe), 200; body=JSON.json(null))
+        @test r isa FileCallError && occursin(key, r.error)
+        page = JSON.json(Dict("object" => "list", "data" => [null], "has_more" => false))
+        @test _answered(() -> list_files(; service=URLProbe), 200; body=page) isa FileCallError
+        done = JSON.json(Dict("id" => "upload_1", "object" => "upload", "status" => "completed", "bytes" => 3,
+                              "created_at" => 1, "expires_at" => 2, "filename" => "a.jsonl", "purpose" => "batch",
+                              "file" => null))
+        @test _answered(() -> complete_upload("upload_1", ["part_1"]; service=URLProbe), 200; body=done) isa
+              UniLM.UploadCallError
+    end
+end
+
 @testset "upload_file: a cancelled token reads no file" begin
     # The file exists, but its mode forbids reading it: a call that read it would end in that
     # SystemError. (Root reads it anyway; the result is the same.)
@@ -293,6 +312,17 @@ end
     r = del("""{"id": "file-1", "deleted": true}""")
     @test r isa FileCallError && occursin("\"object\"", r.error)
     @test FileDeleteSuccess("file-1", true) == FileDeleteSuccess(id="file-1", deleted=true, object=nothing)
+end
+
+# OpenAI's DeleteFileResponse: `object` is always "file".
+# Refuted if: a delete reply that names another object (a vector store file's delete, a batch) reports a deleted file.
+@testset "delete_file on OpenAI: a reply whose object is not \"file\" is a FileCallError" begin
+    for object in ("vector_store.file.deleted", "batch", "")
+        r = _answered(() -> delete_file("file-1"; service=URLProbe), 200;
+                      body=JSON.json(Dict("id" => "file-1", "object" => object, "deleted" => true)))
+        @test r isa FileCallError
+        r isa FileCallError && @test occursin(repr(object), r.error)
+    end
 end
 
 # OpenAI's FileExpirationAfter: `anchor` "created_at" and `seconds`, 3600 to 2592000; a form sends the
@@ -488,6 +518,14 @@ end
     end
     e = try list_files(; service=_AF, purpose="batch", order="asc"); nothing catch x; x end
     @test e isa ArgumentError && occursin("takes no purpose or order", e.msg)
+end
+
+# Anthropic's SDK ends a listing on an empty `next_page` as on a null one (`if not next_page`), and the Gemini
+# branch ends on an empty `nextPageToken`.
+# Refuted if: a page whose next_page is "" reports more pages.
+@testset "Anthropic list_files: an empty next_page is the last page" begin
+    r = _answered(() -> list_files(; service=_AF), 200; body="""{"data":[$_ANTHROPIC_FILE],"next_page":""}""")
+    @test r isa FileListSuccess && !r.response.has_more
 end
 
 # Anthropic's retrieve_metadata, download and delete: GET /v1/files/{id}, GET …/content, DELETE; the

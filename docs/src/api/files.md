@@ -11,7 +11,7 @@ source, a Gemini `fileData` part, a Chat `file_id`) is not available yet.
 | :--- | :--- | :--- | :--- |
 | `upload_file` | `upload_file(path, purpose)`, multipart | `upload_file(path; service)`, multipart; no purpose | `upload_file(path; service)`, Gemini's resumable upload; no purpose |
 | `expires_after` (seconds) | 3600 to 2592000 (`expires_after`) | 3600 to 7776000 (`expires_in_seconds`) | refused: Gemini stores a file for 48 hours |
-| `list_files` | `purpose`, `limit`, `after` (a file id), `order` | `limit`, `after` (the `next_page` cursor); `purpose` and `order` refused | `limit` (`pageSize`), `after` (the `nextPageToken`); `purpose` and `order` refused |
+| `list_files` | `purpose`, `limit`, `after` (a file id), `order` | `limit`, `after` (the `next_page` cursor, null or empty on the last page); `purpose` and `order` refused | `limit` (`pageSize`), `after` (the `nextPageToken`); `purpose` and `order` refused |
 | `file_content` | the bytes | the bytes of a file a tool made; an uploaded file is Anthropic's HTTP 400 | refused before any request: Gemini serves no download of an uploaded file |
 | `delete_file` | `object` `"file"` | `object` `"file_deleted"` | an empty reply: `id` is the file requested |
 | `poll_file` | until the status is past `"uploaded"` | at once | until the `state` is past `"PROCESSING"` |
@@ -21,8 +21,9 @@ A Gemini file's `id` is its `name` without the `files/` prefix; the verbs take e
 Anthropic Files request sends the key, `anthropic-version` and the endpoint's `workspace_id`, and
 neither its `betas` nor its `user_profile_id`, which the Files reference does not name. A reply
 without a field the provider's reference requires is a [`FileCallError`](@ref), never a result
-with the field made up: a page without OpenAI's `data` or `has_more`, a delete reply without the
-deleted file's id.
+with the field made up: a page without OpenAI's `data` or `has_more`, an OpenAI file whose `filename`
+or `purpose` is null, a delete reply without the deleted file's id or, on OpenAI, whose `object` is not
+`"file"`.
 
 ## Request Type
 

@@ -46,6 +46,9 @@ _files_url(service)::String = _api_base_url(service) * FILES_PATH
 _files_url(::_AnthropicEndpoint)::String = ANTHROPIC_BASE_URL * FILES_PATH
 _files_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * "/files"
 _files_upload_url(::Type{GEMINIServiceEndpoint})::String = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+# An endpoint routed to Gemini's wire without an upload address of its own has none to send the bytes to.
+_files_upload_url(service) =
+    throw(ArgumentError("upload_file: $(_service_name(service)) speaks Gemini's Files wire and names no upload address"))
 _file_url(service, file_id::String)::String =
     _files_url(service) * "/" * _uripart(_file_id(_files_wire(service), file_id))
 

@@ -748,3 +748,21 @@ end
         @test (f, last(filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m)))) == (f, :cancel)
     end
 end
+
+# Refuted if: an endpoint on Gemini's Files wire without an upload address of its own fails other than by
+# naming that, or sends anything.
+struct _GeminiWireNoUpload <: UniLM.ServiceEndpoint end
+UniLM._files_wire(::_GeminiWireNoUpload) = UniLM._GeminiFiles()
+UniLM.auth_header(::_GeminiWireNoUpload) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::_GeminiWireNoUpload) = Set([:files])
+@testset "an endpoint on Gemini's Files wire without an upload address: a FileCallError naming it" begin
+    path = tempname() * ".txt"
+    write(path, "hello")
+    try
+        r = upload_file(path; service=_GeminiWireNoUpload())
+        @test r isa FileCallError && r.cause isa ArgumentError &&
+              r.cause.msg == "upload_file: _GeminiWireNoUpload speaks Gemini's Files wire and names no upload address"
+    finally
+        rm(path; force=true)
+    end
+end

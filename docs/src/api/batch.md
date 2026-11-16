@@ -6,9 +6,9 @@ provider's Batch rates — half its standard ones on every model each page lists
 [`estimated_cost`](@ref) prices a batch result at them.
 
 - [`create_batch`](@ref)`(requests; service)` takes the requests as `custom_id => Chat` pairs and
-  sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests, uploaded
-  with purpose `"batch"`, then the batch; Anthropic a Message Batch of Messages requests; Gemini inline
-  `generateContent` requests to `batchGenerateContent`. OpenAI's own file-based form,
+  sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests to one
+  model, uploaded with purpose `"batch"`, then the batch; Anthropic a Message Batch of Messages
+  requests; Gemini inline `generateContent` requests to `batchGenerateContent`. OpenAI's own file-based form,
   `create_batch(input_file_id, endpoint)`, runs any endpoint its Batch API serves.
 - [`batch_results`](@ref) reads the results of an ended batch as the results [`chatrequest!`](@ref)
   returns — an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) per custom id —,

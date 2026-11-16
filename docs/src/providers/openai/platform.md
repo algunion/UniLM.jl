@@ -431,9 +431,10 @@ throw `ArgumentError` here; [`delete_file`](@ref) removes a batch's files.
 A batch of chat requests needs no file of yours: [`create_batch`](@ref)`(requests)` takes them as
 `custom_id => Chat` pairs, writes the input file — one `/v1/chat/completions` line per request, its
 `body` the one [`chatrequest!`](@ref) sends —, uploads it with the purpose `"batch"` and creates the
-batch, `metadata` and `output_expires_after` as above. A streamed `Chat`, an empty or repeated custom id
-and a `Chat` for another endpoint are refused with an `ArgumentError` before anything is sent; should the
-create fail after the upload, the file stays, under the purpose `"batch"`. [`batch_results`](@ref) reads
+batch, `metadata` and `output_expires_after` as above. A streamed `Chat`, an empty or repeated custom id,
+a `Chat` for another endpoint and `Chat`s for two models (one input file, one model, as above) are refused
+with an `ArgumentError` before anything is sent; should the create fail after the upload, the file stays,
+under the purpose `"batch"`. [`batch_results`](@ref) reads
 the output file's lines, then the error file's, and returns each request's result by its custom id: a
 200 is the [`LLMSuccess`](@ref) `chatrequest!` returns for its body, its usage naming the tier
 `"batch"`, so [`estimated_cost`](@ref) bills it at the Batch rates ([Cost and usage](@ref openai_cost));

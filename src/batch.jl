@@ -245,8 +245,12 @@ function _batch_expiry(seconds::Integer)::Dict{Symbol,Any}
 end
 
 # The requests as OpenAI's input file: one line per request, its custom id and the Chat Completions body the
-# Chat's encoder builds.
+# Chat's encoder builds. "Each input file can only include requests to a single model"
+# (https://developers.openai.com/api/docs/guides/batch).
 function _batch_input(::_OpenAIBatches, service, requests, metadata, output_expires_after)
+    models = unique(chat.model for (_, chat) in requests)
+    length(models) == 1 || throw(ArgumentError("create_batch: an OpenAI batch's input file holds requests to a " *
+        "single model; the requests name $(join(repr.(models), ", ")): create one batch per model"))
     io = IOBuffer()
     for (id, chat) in requests
         println(io, JSON.json(Dict("custom_id" => String(id), "method" => "POST", "url" => CHAT_COMPLETIONS_PATH,
@@ -383,7 +387,8 @@ Chats as its own Chat requests, encoded as [`chatrequest!`](@ref) encodes them:
 
 - OpenAI: a JSONL file of `/v1/chat/completions` requests, uploaded with purpose `"batch"` (one more
   request, which leaves the file in place should the create fail), then the batch;
-  `metadata` and `output_expires_after` are its create's options.
+  `metadata` and `output_expires_after` are its create's options. One model per batch: "each input file
+  can only include requests to a single model".
 - Anthropic: a Message Batch whose requests' `params` are the Messages bodies. A custom id is 1 to 64
   letters, digits, hyphens and underscores; fast mode (`service_tier="fast"`) is not batched. The
   endpoint's `betas` go in the `anthropic-beta` header (e.g. `"output-300k-2026-03-24"`, which raises

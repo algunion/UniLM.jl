@@ -296,6 +296,18 @@ end
     @test occursin("delete_file", _batch_refused(() -> delete_batch("batch_1"; service=_OAB)).msg)
 end
 
+# OpenAI's Batch guide: "each input file can only include requests to a single model".
+# Refuted if: Chats for two models are uploaded instead of refused before any request, or the refusal does not
+# name the models.
+@testset "create_batch(requests) on OpenAI: one model per batch, refused before any request" begin
+    c(model) = Chat(service=_OAB, model=model, messages=[Message(Val(:user), "q")])
+    e, seen = _with_scripted((_, _) -> _json(500, "{}")) do
+        _batch_refused(() -> create_batch(["a" => c("gpt-6-luna"), "b" => c("gpt-6-sol"), "c" => c("gpt-6-luna")]))
+    end
+    @test e isa ArgumentError && isempty(seen)
+    e isa ArgumentError && @test occursin("single model", e.msg) && occursin("\"gpt-6-luna\", \"gpt-6-sol\"", e.msg)
+end
+
 _batch_oa_reply(text; model="gpt-6-luna-2026-09-14") = Dict("id" => "chatcmpl-1", "object" => "chat.completion",
     "model" => model, "service_tier" => "default",
     "choices" => [Dict("index" => 0, "message" => Dict("role" => "assistant", "content" => text), "finish_reason" => "stop")],

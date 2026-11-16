@@ -142,3 +142,50 @@ end
                 "/v1/fine_tuning/jobs?metadata%5B$_HOSTILE_ENC%5D=$_HOSTILE_ENC",
                 "/v1/fine_tuning/jobs"]
 end
+
+@testset "Fine-tuning API — checkpoint permissions: create, list and delete" begin
+    ck = "ft:gpt-4.1-mini:org:x:ckpt-step-10"
+    enc = "ft%3Agpt-4.1-mini%3Aorg%3Ax%3Ackpt-step-10"
+    perm = """{"object":"checkpoint.permission","id":"cp_1","created_at":1,"project_id":"proj_1"}"""
+    page = """{"object":"list","data":[$perm],"first_id":"cp_1","last_id":"cp_1","has_more":false}"""
+    deleted = """{"object":"checkpoint.permission","id":"cp_1","deleted":true}"""
+    rs, seen = _with_scripted((n, _) -> _json(200, n <= 3 ? page : deleted)) do
+        [create_fine_tuning_checkpoint_permission(ck, ["proj_1", "proj_2"]; service=URLProbe),
+         list_fine_tuning_checkpoint_permissions(ck; project_id="proj_1", limit=5, after="cp_0", order="ascending",
+                                                 service=URLProbe),
+         list_fine_tuning_checkpoint_permissions(_HOSTILE_ID; service=URLProbe),
+         delete_fine_tuning_checkpoint_permission(ck, _HOSTILE_ID; service=URLProbe)]
+    end
+    @test [(s.method, s.target) for s in seen] == [
+        ("POST", "/v1/fine_tuning/checkpoints/$enc/permissions"),
+        ("GET", "/v1/fine_tuning/checkpoints/$enc/permissions?limit=5&after=cp_0&project_id=proj_1&order=ascending"),
+        ("GET", "/v1/fine_tuning/checkpoints/$_HOSTILE_ENC/permissions"),
+        ("DELETE", "/v1/fine_tuning/checkpoints/$enc/permissions/$_HOSTILE_ENC")]
+    @test JSON.parse(seen[1].body; dicttype=Dict{String,Any}) == Dict("project_ids" => ["proj_1", "proj_2"])
+    @test rs[1] isa FineTuningListSuccess && rs[1].response.data[1]["project_id"] == "proj_1" && !rs[1].response.has_more
+    @test rs[2] isa FineTuningListSuccess && rs[3] isa FineTuningListSuccess
+    @test rs[4] isa FineTuningDeleteSuccess && rs[4].id == "cp_1" && rs[4].deleted
+    # A delete counts when its record names what it deleted and says "deleted": true; a list needs its page.
+    for body in ("""{"deleted":true}""", """{"id":"cp_1","deleted":false}""", """{"id":"cp_1"}""", "{}")
+        @test _answered(() -> delete_fine_tuning_checkpoint_permission(ck, "cp_1"; service=URLProbe), 200; body) isa
+              FineTuningCallError
+    end
+    @test _answered(() -> create_fine_tuning_checkpoint_permission(ck, ["p"]; service=URLProbe), 200; body="{}") isa
+          FineTuningCallError
+    # The reference asks for an admin key; a project key's refusal is the family's typed failure.
+    r = _answered(() -> list_fine_tuning_checkpoint_permissions(ck; service=URLProbe), 403;
+                  body="""{"error":{"message":"admin key required"}}""", headers=["x-request-id" => "req_cp"])
+    @test r isa FineTuningFailure && r.status == 403 && r.request_id == "req_cp"
+    err = try list_fine_tuning_checkpoint_permissions(ck; order="newest", service=SeamProbe); nothing catch e; e end
+    @test err isa ArgumentError && occursin("\"ascending\"", err.msg) && occursin("\"descending\"", err.msg)
+    calls = (kw -> create_fine_tuning_checkpoint_permission(ck, ["p"]; kw...),
+             kw -> list_fine_tuning_checkpoint_permissions(ck; kw...),
+             kw -> delete_fine_tuning_checkpoint_permission(ck, "cp_1"; kw...))
+    for call in calls
+        @test _seam_timeout(call((; service=SeamProbe, config=_TINY_DEADLINE)), FineTuningCallError)
+        @test_throws ArgumentError call((; service=AZUREServiceEndpoint))
+        tok = CancelToken(); cancel!(tok)
+        r, seen = _with_scripted(() -> call((; service=URLProbe, cancel=tok)), (_, _) -> _json(200, "{}"))
+        @test isempty(seen) && r isa FineTuningCallError && r.cause isa UniLMCancelled
+    end
+end

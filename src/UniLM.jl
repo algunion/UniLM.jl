@@ -486,6 +486,7 @@ export
     FineTuningList,
     FineTuningSuccess,
     FineTuningListSuccess,
+    FineTuningDeleteSuccess,
     FineTuningFailure,
     FineTuningCallError,
     WandbIntegration,
@@ -496,7 +497,10 @@ export
     resume_fine_tuning_job,
     list_fine_tuning_jobs,
     list_fine_tuning_events,
-    list_fine_tuning_checkpoints
+    list_fine_tuning_checkpoints,
+    create_fine_tuning_checkpoint_permission,
+    list_fine_tuning_checkpoint_permissions,
+    delete_fine_tuning_checkpoint_permission
 
 # ─── Webhooks ─────────────────────────────────────────────────────────────────
 export

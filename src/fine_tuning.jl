@@ -22,7 +22,8 @@ end
     FineTuningList
 
 A page of records from [`list_fine_tuning_jobs`](@ref), [`list_fine_tuning_events`](@ref),
-or [`list_fine_tuning_checkpoints`](@ref); `data` holds the raw JSON entries and
+[`list_fine_tuning_checkpoints`](@ref), [`list_fine_tuning_checkpoint_permissions`](@ref) or
+[`create_fine_tuning_checkpoint_permission`](@ref); `data` holds the raw JSON entries and
 `has_more` signals that further pages are available.
 """
 @kwdef struct FineTuningList
@@ -35,6 +36,8 @@ end
 @kwdef struct FineTuningSuccess <: LLMRequestResponse; response::FineTuningJob; end
 "Successful list result wrapping a [`FineTuningList`](@ref)."
 @kwdef struct FineTuningListSuccess <: LLMRequestResponse; response::FineTuningList; end
+"Successful [`delete_fine_tuning_checkpoint_permission`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of the permission `id`."
+@kwdef struct FineTuningDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Fine-tuning API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct FineTuningFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
 "Fine-tuning API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
@@ -281,6 +284,93 @@ function list_fine_tuning_checkpoints(id::String; limit::Union{Int,Nothing}=noth
     try
         _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/checkpoints", limit, after),
             auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(FineTuningCallError, e)
+    end
+end
+
+# ─── Checkpoint permissions ───────────────────────────────────────────────────
+# Sharing a fine-tuned model checkpoint with other projects of the organization. OpenAI's reference
+# says each of these endpoints "requires an admin API key"; with a project key OpenAI refuses the
+# call, which returns that refusal as a `FineTuningFailure`.
+
+const _FT_CHECKPOINTS_PATH = "/v1/fine_tuning/checkpoints"
+_ft_permissions_url(service, checkpoint::String) =
+    _api_base_url(service) * _FT_CHECKPOINTS_PATH * "/" * _uripart(checkpoint) * "/permissions"
+
+"""
+    create_fine_tuning_checkpoint_permission(checkpoint, project_ids; service=OPENAIServiceEndpoint)
+
+Share the fine-tuned model checkpoint `checkpoint` (e.g. `"ft:gpt-4.1-mini:org:custom:ckpt-step-10"`)
+with the projects `project_ids`; the result is a `FineTuningListSuccess` of the permissions made.
+
+The reference says this endpoint requires an admin API key: set `OPENAI_API_KEY` to one for the call.
+With a project key OpenAI refuses it, a `FineTuningFailure`. Takes `config` and `cancel` as
+[`cancel_fine_tuning_job`](@ref) does.
+"""
+function create_fine_tuning_checkpoint_permission(checkpoint::String, project_ids::Vector{String};
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        _ft_list_resp(_http("POST", _ft_permissions_url(service, checkpoint), auth_header(service),
+            JSON.json(Dict(:project_ids => project_ids)); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(FineTuningCallError, e)
+    end
+end
+
+"""
+    list_fine_tuning_checkpoint_permissions(checkpoint; project_id=nothing, limit=nothing, after=nothing,
+                                            order=nothing, service=OPENAIServiceEndpoint)
+
+List the permissions of the fine-tuned model checkpoint `checkpoint`, a page at a time (`limit`,
+`after`), only those of `project_id` when given, in `order` `"ascending"` or `"descending"` (OpenAI's
+default; another order is an `ArgumentError`). Needs an admin API key, as
+[`create_fine_tuning_checkpoint_permission`](@ref) does.
+"""
+function list_fine_tuning_checkpoint_permissions(checkpoint::String; project_id::Union{String,Nothing}=nothing,
+    limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, order::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :fine_tuning, "Fine-tuning API")
+    isnothing(order) || order in ("ascending", "descending") || throw(ArgumentError(
+        "list_fine_tuning_checkpoint_permissions takes order \"ascending\" or \"descending\" (got $(repr(order)))"))
+    cfg = _resolve_config(config); t0 = time_ns()
+    query = String[]
+    isnothing(project_id) || push!(query, "project_id=$(_uripart(project_id))")
+    isnothing(order) || push!(query, "order=$(_uripart(order))")
+    try
+        _ft_list_resp(_http("GET", _ft_page(_ft_permissions_url(service, checkpoint), limit, after, query),
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)))
+    catch e
+        e isa InterruptException && rethrow()
+        _callerr(FineTuningCallError, e)
+    end
+end
+
+"""
+    delete_fine_tuning_checkpoint_permission(checkpoint, permission_id; service=OPENAIServiceEndpoint)
+
+Delete the permission `permission_id` of the fine-tuned model checkpoint `checkpoint`: a
+[`FineTuningDeleteSuccess`](@ref) when OpenAI's record names the permission and says `"deleted": true`,
+the `FineTuningCallError` otherwise. Needs an admin API key, as
+[`create_fine_tuning_checkpoint_permission`](@ref) does.
+"""
+function delete_fine_tuning_checkpoint_permission(checkpoint::String, permission_id::String;
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing)
+    validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
+    try
+        resp = _http("DELETE", _ft_permissions_url(service, checkpoint) * "/" * _uripart(permission_id),
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
+        resp.status == 200 || return _failure(FineTuningFailure, resp)
+        d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+        FineTuningDeleteSuccess(id=_reply_required(d, "id", String, "Fine-tuning API"), deleted=_confirm_deleted(d))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)

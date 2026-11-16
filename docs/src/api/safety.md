@@ -2,7 +2,9 @@
 
 Read the safety case behind a `safety.warning_issued` or `safety.deactivation_issued` webhook and
 the project safety alert behind a `safety.alert.created` one (the `:safety` capability), and check
-an image, audio or PDF file for OpenAI's provenance signals (`:content_provenance`). OpenAI only.
+an image, audio or PDF file for OpenAI's provenance signals (`:content_provenance`): "Images: PNG,
+JPEG, WebP, and GIF. Audio: MP3, Opus, AAC, FLAC, WAV, and PCM. Documents: PDF."
+([content provenance](https://developers.openai.com/api/docs/guides/content-provenance)). OpenAI only.
 
 ## Objects
 

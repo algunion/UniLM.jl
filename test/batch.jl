@@ -237,18 +237,8 @@ end
     @test (@test_logs (:warn, r"Batch API rates") on(nov, d1)) ≈ 1000 * 0.10 / 1e6
 end
 
-# ── A batch endpoint speaking provider wire W, served by `_with_scripted` ──
+# ── A batch endpoint speaking provider wire W, served by `_with_scripted` (BatchProbe, platform_seam_fixtures.jl) ──
 # Its Chats encode and its replies decode as the provider's do; its batch paths hang from the scripted server.
-struct BatchProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._batch_wire(::Type{BatchProbe{W}}) where {W} = W()
-UniLM._batch_root(::Type{<:BatchProbe}) = _url_probe_base[]
-UniLM._resolve_base_url(::Type{<:BatchProbe}) = _url_probe_base[]
-UniLM.auth_header(::Type{<:BatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{<:BatchProbe}) = Set([:chat, :batch, :files])
-UniLM.default_model(::Type{<:BatchProbe}) = "probe-default"
-_batch_probe(W, E) = (@eval UniLM.encode_request(::Type{BatchProbe{$W}}, c::Chat) = UniLM.encode_request($E, c);
-                      @eval UniLM.decode_response(::Type{BatchProbe{$W}}, r::HTTP.Response) = UniLM.decode_response($E, r);
-                      BatchProbe{W})
 const _OAB = _batch_probe(UniLM._OpenAIBatches, OPENAIServiceEndpoint)
 _batch_refused(f) = try f(); nothing catch e; e end
 _batch_targets(seen) = [(s.method, s.target) for s in seen]

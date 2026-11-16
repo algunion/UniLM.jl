@@ -408,12 +408,7 @@ const _GEMINI_FILE = """{"name":"files/rvbxh1rsu85u","displayName":"w.txt","mime
     end
 end
 
-# An endpoint that speaks Files wire `W`, served by `_with_scripted`.
-struct FilesProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._files_wire(::Type{FilesProbe{W}}) where {W} = W()
-UniLM._files_url(::Type{<:FilesProbe}) = _url_probe_base[] * "/v1/files"
-UniLM.auth_header(::Type{<:FilesProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{<:FilesProbe}) = Set([:files])
+# `FilesProbe{W}` (platform_seam_fixtures.jl) speaks Files wire `W`, served by `_with_scripted`.
 const _AF = FilesProbe{UniLM._AnthropicFiles}
 
 # Anthropic's upload: a form with the file and `expires_in_seconds` (3600 to 7776000), no purpose; its
@@ -572,13 +567,7 @@ UniLM.provider_capabilities(::_AnthropicFilesAt) = Set([:files])
     end
 end
 
-# A Gemini endpoint whose Files requests `_with_scripted` serves.
-struct GeminiFilesProbe <: UniLM.ServiceEndpoint end
-UniLM._files_wire(::Type{GeminiFilesProbe}) = UniLM._GeminiFiles()
-UniLM._files_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/v1beta/files"
-UniLM._files_upload_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/upload/v1beta/files"
-UniLM.auth_header(::Type{GeminiFilesProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{GeminiFilesProbe}) = Set([:files, :file_registration])
+# `GeminiFilesProbe` (platform_seam_fixtures.jl): a Gemini endpoint whose Files requests `_with_scripted` serves.
 const _GF = GeminiFilesProbe
 
 # Gemini's resumable upload (https://ai.google.dev/gemini-api/docs/files): a `start` POST with the key,

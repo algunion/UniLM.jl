@@ -14,11 +14,7 @@ _ml_fixture(name::AbstractString) = read(joinpath(@__DIR__, "fixtures", "models"
 _ml_page(name::AbstractString) = JSON.parse(_ml_fixture(name); dicttype=Dict{String,Any})
 const _ML_CFG = RequestConfig(max_attempts=1, total_deadline=30.0)
 
-# An endpoint that lists through provider wire `W`, served by `_with_scripted`.
-struct ListingProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._model_listing(::Type{ListingProbe{W}}) where {W} = W()
-UniLM._models_url(::Type{<:ListingProbe}) = _url_probe_base[] * "/v1/models"
-UniLM.auth_header(::Type{<:ListingProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+# `ListingProbe{W}` (platform_seam_fixtures.jl) lists through provider wire `W`, served by `_with_scripted`.
 
 # An endpoint type of the caller's own that declares no capabilities: the documented way to reach an
 # OpenAI-compatible server UniLM does not ship.
@@ -322,7 +318,6 @@ const _ML_ONE = Dict(
     UniLM._OpenAIModels => """{"id":"gpt-6-luna","object":"model","created":1789406102,"owned_by":"system","shutdown_date":null}""",
     UniLM._AnthropicModels => """{"type":"model","id":"claude-opus-4-5-20251101","display_name":"Claude Opus 4.5","created_at":"2025-11-24T00:00:00Z","max_input_tokens":200000,"max_tokens":64000,"capabilities":{"batch":{"supported":true}}}""",
     UniLM._GeminiModels => """{"name":"models/gemini-3.8-flash","version":"3.0","displayName":"Gemini 3.8 Flash","inputTokenLimit":1048576,"outputTokenLimit":65536,"supportedGenerationMethods":["generateContent","countTokens"],"thinking":true}""")
-UniLM.provider_capabilities(::Type{<:ListingProbe}) = Set([:models, :fine_tuning])
 _ml_get(service, id, respond::Function; config=_ML_CFG, cancel=nothing) =
     _with_scripted(() -> retrieve_model(id; service, config, cancel), respond)
 

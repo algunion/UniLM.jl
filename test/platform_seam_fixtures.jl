@@ -116,3 +116,53 @@ _answered(call::Function, status::Int; body::AbstractString="{}",
 # single path segment / query value; unescaped it adds segments, a query and a fragment.
 const _HOSTILE_ID = "a b/../c?x=1#f"
 const _HOSTILE_ENC = "a%20b%2F..%2Fc%3Fx%3D1%23f"
+
+# ── Provider-wire probes at the scripted endpoint ────────────────────────────
+# Each speaks one provider's wire for a verb family, with its paths under `_url_probe_base`.
+
+# Files wire `W`.
+struct FilesProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._files_wire(::Type{FilesProbe{W}}) where {W} = W()
+UniLM._files_url(::Type{<:FilesProbe}) = _url_probe_base[] * "/v1/files"
+UniLM.auth_header(::Type{<:FilesProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:FilesProbe}) = Set([:files])
+
+# Gemini's Files API, its resumable uploads and its registration.
+struct GeminiFilesProbe <: UniLM.ServiceEndpoint end
+UniLM._files_wire(::Type{GeminiFilesProbe}) = UniLM._GeminiFiles()
+UniLM._files_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/v1beta/files"
+UniLM._files_upload_url(::Type{GeminiFilesProbe}) = _url_probe_base[] * "/upload/v1beta/files"
+UniLM.auth_header(::Type{GeminiFilesProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{GeminiFilesProbe}) = Set([:files, :file_registration])
+
+# Model listing (and lookup) wire `W`.
+struct ListingProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._model_listing(::Type{ListingProbe{W}}) where {W} = W()
+UniLM._models_url(::Type{<:ListingProbe}) = _url_probe_base[] * "/v1/models"
+UniLM.auth_header(::Type{<:ListingProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:ListingProbe}) = Set([:models, :fine_tuning])
+
+# An endpoint that counts tokens as `service` counts (its wire, its encoder, its headers).
+struct _CountAt <: UniLM.ServiceEndpoint
+    service::UniLM.ServiceEndpointSpec
+end
+UniLM.provider_capabilities(s::_CountAt) = UniLM.provider_capabilities(s.service)
+UniLM._token_counting(s::_CountAt, request) = UniLM._token_counting(s.service, request)
+UniLM.encode_request(s::_CountAt, chat::Chat) = UniLM.encode_request(s.service, chat)
+UniLM.encode_agentic(s::_CountAt, r::Respond) = UniLM.encode_agentic(s.service, r)
+UniLM._count_headers(w::UniLM._TokenCounting, s::_CountAt) = UniLM._count_headers(w, s.service)
+UniLM._count_url(::UniLM._AnthropicCount, ::_CountAt, ::Chat) = _url_probe_base[] * "/count"
+UniLM._count_url(::UniLM._GeminiCount, ::_CountAt, ::Chat) = _url_probe_base[] * "/count"
+UniLM._count_url(::UniLM._ResponsesCount, ::_CountAt, ::Respond) = _url_probe_base[] * "/count"
+
+# Batch wire `W`: `_batch_probe(W, E)` makes its Chats encode and its replies decode as endpoint `E`'s do.
+struct BatchProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._batch_wire(::Type{BatchProbe{W}}) where {W} = W()
+UniLM._batch_root(::Type{<:BatchProbe}) = _url_probe_base[]
+UniLM._resolve_base_url(::Type{<:BatchProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{<:BatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:BatchProbe}) = Set([:chat, :batch, :files])
+UniLM.default_model(::Type{<:BatchProbe}) = "probe-default"
+_batch_probe(W, E) = (@eval UniLM.encode_request(::Type{BatchProbe{$W}}, c::Chat) = UniLM.encode_request($E, c);
+                      @eval UniLM.decode_response(::Type{BatchProbe{$W}}, r::HTTP.Response) = UniLM.decode_response($E, r);
+                      BatchProbe{W})

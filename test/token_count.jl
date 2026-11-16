@@ -5,18 +5,8 @@
 
 using UniLM: _AnthropicCount, _GeminiCount, _ResponsesCount
 
-# An endpoint that counts as `service` counts (its wire, its encoder, its headers), at a local server.
-struct _CountAt <: UniLM.ServiceEndpoint
-    service::UniLM.ServiceEndpointSpec
-end
-UniLM.provider_capabilities(s::_CountAt) = UniLM.provider_capabilities(s.service)
-UniLM._token_counting(s::_CountAt, request) = UniLM._token_counting(s.service, request)
-UniLM.encode_request(s::_CountAt, chat::Chat) = UniLM.encode_request(s.service, chat)
-UniLM.encode_agentic(s::_CountAt, r::Respond) = UniLM.encode_agentic(s.service, r)
-UniLM._count_headers(w::UniLM._TokenCounting, s::_CountAt) = UniLM._count_headers(w, s.service)
-UniLM._count_url(::_AnthropicCount, ::_CountAt, ::Chat) = _url_probe_base[] * "/count"
-UniLM._count_url(::_GeminiCount, ::_CountAt, ::Chat) = _url_probe_base[] * "/count"
-UniLM._count_url(::_ResponsesCount, ::_CountAt, ::Respond) = _url_probe_base[] * "/count"
+# `_CountAt(service)` (platform_seam_fixtures.jl) counts as `service` counts (its wire, its encoder, its
+# headers), at a local server.
 
 const _TC_CFG = RequestConfig(max_attempts=1, total_deadline=30.0)
 _tc_chat(service; model="claude-haiku-5-5", kw...) =

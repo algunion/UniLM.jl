@@ -681,7 +681,7 @@ Four kinds of work go on at OpenAI after the call that starts them returns:
 
 | Job | Started by | Read back by | Final statuses | Stopped by | Webhook events |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| a vector-store file batch | `create_file_batch` | `poll_file_batch`, every 2 s for at most 300 s | `completed`, `failed`, `cancelled` | — (OpenAI's cancel is not wrapped) | — |
+| a vector-store file batch | `create_file_batch` | `poll_file_batch`, every 2 s for at most 300 s | `completed`, `failed`, `cancelled` | `cancel_file_batch` | — |
 | a batch | `create_batch` | `poll_batch`, every 10 s for at most 86,400 s | `completed`, `failed`, `cancelled`, `expired` | `cancel_batch` | `batch.*` |
 | a fine-tuning job | `create_fine_tuning_job` | `retrieve_fine_tuning_job`, called by you | `succeeded`, `failed`, `cancelled` | `cancel_fine_tuning_job` (paused by `pause_fine_tuning_job`) | `fine_tuning.job.*` |
 | a background response | `respond(…; background=true)` | `get_response`, called by you | any but `queued` and `in_progress` | `cancel_response` | `response.*` |

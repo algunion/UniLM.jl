@@ -41,20 +41,13 @@ function _interactions_reject_unmapped(r::Respond)
         "unset them or send the request to an OpenAI Responses service"))
 end
 
-# The largest max_output_tokens an interaction takes without background execution, by exact
-# model id: Gemini 4 Argon answers more with HTTP 400 "max_output_tokens greater than 65536 is
-# not yet supported with background=false" (https://ai.google.dev/gemini-api/docs/long-decode;
-# observed 2026-10-22), and in the background decodes up to its 1M-token context.
-const _INTERACTIONS_SYNC_OUTPUT_LIMITS = Dict{String,Int}("gemini-4-argon" => 65_536)
-
-function _interactions_validate_output_limit(r::Respond)::Nothing
-    limit = get(_INTERACTIONS_SYNC_OUTPUT_LIMITS, r.model, nothing)
-    isnothing(limit) || isnothing(r.max_output_tokens) || r.max_output_tokens <= limit || r.background === true ||
-        throw(ArgumentError("$(r.model) takes max_output_tokens above $limit only in the background " *
-            "(long decode, https://ai.google.dev/gemini-api/docs/long-decode): set background=true, or " *
-            "lower max_output_tokens (got $(r.max_output_tokens))"))
-    nothing
-end
+# A max_output_tokens above one request's output cap goes as given, with or without background
+# execution: without it, Google's long-decode page gives such a REST request "65,536 tokens per
+# streaming hop (or non-streaming hop on `gemini-4-hydrogen`), or 32,768 per non-streaming hop on
+# `gemini-4-carbon` and `gemini-4-argon`. Loop with `continuation_token`"
+# (https://ai.google.dev/gemini-api/docs/long-decode), which `_continued_reply` does. Argon, Carbon
+# and Hydrogen took max_output_tokens=70000 with background unset, Argon streamed too (HTTP 200,
+# observed 2026-11-16), where Argon had answered HTTP 400 on 2026-10-22.
 
 # Background execution "requires `store=True` (the default) so the server can store the
 # interaction while you poll or stream results. Passing `background=True` with `store=False`
@@ -84,7 +77,6 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     _gemini_refuse_cache_options(r.prompt_cache_options)
     _interactions_reject_unmapped(r)
     _gemini_validate_sampling(r.model, r.temperature, r.top_p)
-    _interactions_validate_output_limit(r)
     _interactions_validate_background(r)
     input = _interactions_input(r.input, r.model)
     _interactions_validate_last_step(r.model, input)

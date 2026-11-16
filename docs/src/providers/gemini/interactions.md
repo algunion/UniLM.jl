@@ -306,7 +306,8 @@ token is to be passed "back unchanged in CreateInteraction to continue decoding"
 such an interaction itself, with the request Google's SDK sends: the token, and for a stored
 interaction the one that issued it as `previous_interaction_id` and no `input` ("the server already has
 it"), or with `store=false` the whole request again. It sends at most
-`max(8, cld(max_output_tokens, 32_768) + 1)` requests (8 without `max_output_tokens`), each with the
+`max(8, cld(max_output_tokens, 32_768) + 1)` requests (8 without `max_output_tokens`; on
+`gemini-4-hydrogen`, whose unstreamed hop is 65,536, a bound with room to spare), each with the
 whole `RequestConfig` budget, and returns one interaction: the last request's id, which continues the
 conversation, its status and tier; the steps of every request in order, a later one's leading
 `user_input` steps dropped; and the usage of all of them summed, since "each continuation hop
@@ -337,13 +338,15 @@ cancel_response(id; service=GEMINIServiceEndpoint)
 
 A background request needs a stored interaction — "Passing `background=True` with `store=False`
 returns a `400` error" ([background execution](https://ai.google.dev/gemini-api/docs/background-execution))
-— so `respond` refuses the pair before sending it ([Limits and refusals](@ref gemini_limits)). Gemini 4 Argon writes
-more than 65,536 output tokens only in the background: Google's limit with `background: false` is
-"65,536 tokens. Values greater than 65,536 return a 400 error", and a background request takes "Your
-`max_output_tokens`, up to 1,048,576 minus your input"
-([long decode](https://ai.google.dev/gemini-api/docs/long-decode)), so UniLM refuses a larger
-`max_output_tokens` on `gemini-4-argon` without `background=true`. A background interaction read
-right after it was created has answered `403` (`permission_denied`) for a few seconds before it
+— so `respond` refuses the pair before sending it ([Limits and refusals](@ref gemini_limits)). A background
+request takes "Your `max_output_tokens`, up to 1,048,576 minus your input", and one without `background`
+over REST stops at "65,536 tokens per streaming hop (or non-streaming hop on `gemini-4-hydrogen`), or
+32,768 per non-streaming hop on `gemini-4-carbon` and `gemini-4-argon`. Loop with `continuation_token`"
+([long decode](https://ai.google.dev/gemini-api/docs/long-decode)), which an unstreamed `respond` does
+([Long generations](@ref gemini_interactions_long_decode)), so a larger `max_output_tokens` goes as given
+either way: Gemini 4 Argon, Carbon and Hydrogen took `max_output_tokens=70000` with `background` unset
+(HTTP 200, observed on 16 November 2026), where Argon had answered HTTP 400 on 22 October. A background
+interaction read right after it was created has answered `403` (`permission_denied`) for a few seconds before it
 became readable (observed on 20 August 2026; Google's pages do not mention it): retry such a read in
 your poll before taking it for a permission error.
 

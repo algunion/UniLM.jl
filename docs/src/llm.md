@@ -634,8 +634,8 @@ build a `Respond` with keywords, which name each field.
     `gemma-4-26b-a4b-it` and the image models `gemini-3.1-flash-lite-image`,
     `gemini-3-pro-image`, `gemini-3.1-flash-image` and `gemini-2.5-flash-image`; Gemini
     ignores them on later models, so for any other id they throw, as on native Chat and
-    `GEMINIOpenAIServiceEndpoint`), `max_output_tokens` (above 65,536 on
-    `gemini-4-argon` only with `background=true`), `stream`, `text` (its format becomes
+    `GEMINIOpenAIServiceEndpoint`), `max_output_tokens` (above a request's output cap, an
+    unstreamed interaction is continued in hops), `stream`, `text` (its format becomes
     the top-level `response_format`; `verbosity` is rejected), `store`,
     `previous_response_id`, `background` (with `store=false` it is rejected: Google answers
     that with HTTP 400), `reasoning` (effort and automatic summaries

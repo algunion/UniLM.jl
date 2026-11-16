@@ -436,8 +436,8 @@ HTTP read timeout to 20 minutes"
 `chatrequest!` or `respond` call to a model whose id starts `gemini-4-`, on either endpoint, takes
 `request_timeout`, `stream_idle_timeout` and `total_deadline` of 1200 seconds while no
 `RequestConfig` of yours is set in any channel; one you set replaces them as a whole
-([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer needs a background
-request ([Background requests](@ref gemini_background)).
+([Timeouts & Retries](@ref timeouts_guide)). On the Interactions API, a long answer is continued in hops,
+or runs as a background request ([Background requests](@ref gemini_background)).
 
 ## [Prompt caching](@id gemini_caching)
 

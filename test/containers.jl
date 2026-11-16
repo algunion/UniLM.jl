@@ -54,13 +54,6 @@ end
     end
 end
 
-@testset "delete_container reports success only when the service confirms the delete" begin
-    del(body) = _answered(() -> delete_container("cntr_1"; service=URLProbe), 200; body)
-    @test del("""{"id": "cntr_1", "deleted": true}""") == UniLM.ContainerDeleteSuccess(id="cntr_1", deleted=true)
-    @test del("""{"id": "cntr_1"}""") isa UniLM.ContainerCallError
-    @test del("""{"id": "cntr_1", "deleted": false}""") isa UniLM.ContainerCallError
-end
-
 @testset "Containers API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_container("cntr_x"; service=URLProbe), 404; headers=["x-request-id" => "req_cntr"])
     @test r isa UniLM.ContainerFailure && r.request_id == "req_cntr"
@@ -88,4 +81,33 @@ end
     finally
         rm(cpath; force=true)
     end
+end
+
+@testset "delete_container reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_container("cntr_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "cntr_1", "object": "container.deleted", "deleted": true}""") ==
+          UniLM.ContainerDeleteSuccess(id="cntr_1", deleted=true)
+    @test del("""{"id": "cntr_1", "object": "container.deleted"}""") isa UniLM.ContainerCallError
+    @test del("""{"id": "cntr_1", "object": "container.deleted", "deleted": false}""") isa UniLM.ContainerCallError
+end
+
+@testset "containers: a reply without what OpenAI's reference requires is a call error, never filled in" begin
+    # A list without data or has_more is not an empty last page.
+    lst(body) = _answered(() -> list_containers(; service=URLProbe), 200; body)
+    @test lst("{}") isa ContainerCallError
+    @test lst("""{"object": "list", "data": []}""") isa ContainerCallError
+    @test lst("""{"object": "list", "has_more": false}""") isa ContainerCallError
+    ok = lst("""{"object": "list", "data": [{"id": "cntr_1", "status": "running", "name": "a"}], "has_more": false}""")
+    @test ok isa ContainerListSuccess && [c["id"] for c in ok.response.data] == ["cntr_1"] && !ok.response.has_more
+    # A container without its status.
+    @test _answered(() -> retrieve_container("cntr_1"; service=URLProbe), 200;
+                    body="""{"id": "cntr_1", "name": "a"}""") isa ContainerCallError
+    @test _answered(() -> create_container(; name="a", service=URLProbe), 200;
+                    body="""{"id": "cntr_1", "name": "a"}""") isa ContainerCallError
+    # A deletion record without its id, or naming another kind of object.
+    del(body) = _answered(() -> delete_container("cntr_1"; service=URLProbe), 200; body)
+    @test del("""{"object": "container.deleted", "deleted": true}""") isa ContainerCallError
+    @test del("""{"id": "cntr_1", "deleted": true}""") isa ContainerCallError
+    @test del("""{"id": "cntr_1", "object": "container.file.deleted", "deleted": true}""") isa ContainerCallError
+    @test del("""{"id": "cntr_2", "object": "container.deleted", "deleted": true}""").id == "cntr_2"
 end

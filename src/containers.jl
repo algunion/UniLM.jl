@@ -57,7 +57,9 @@ end
 "Containers API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
 @kwdef struct ContainerCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
-_parse_container(d::AbstractDict) = ContainerObject(id=d["id"], status=get(d, "status", nothing), name=get(d, "name", nothing), raw=Dict{String,Any}(d))
+# OpenAI's reference requires a container's `status`: a reply without it is malformed (a
+# KeyError, the verb's *CallError), not one whose status is unknown.
+_parse_container(d::AbstractDict) = ContainerObject(id=d["id"], status=d["status"], name=get(d, "name", nothing), raw=Dict{String,Any}(d))
 _parse_container_file(d::AbstractDict) = ContainerFileObject(id=d["id"], container_id=d["container_id"], path=d["path"],
     bytes=get(d, "bytes", nothing), source=get(d, "source", nothing), created_at=get(d, "created_at", nothing), raw=Dict{String,Any}(d))
 _cont_resp(resp) = resp.status == 200 ?
@@ -129,7 +131,8 @@ function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{Strin
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-        ContainerListSuccess(response=ContainerList(data=Vector{Dict{String,Any}}(get(data, "data", [])), has_more=get(data, "has_more", false), raw=data))
+        page, has_more = _vs_page(data)
+        ContainerListSuccess(response=ContainerList(data=Vector{Dict{String,Any}}(page), has_more=has_more, raw=data))
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)
@@ -151,8 +154,7 @@ function delete_container(id::String; service::ServiceEndpointSpec=OPENAIService
         resp = _http("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
         resp.status == 200 || return _failure(ContainerFailure, resp)
-        d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-        ContainerDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
+        _vs_deletion(ContainerDeleteSuccess, JSON.parse(resp.body; dicttype=Dict{String,Any}), "container.deleted")
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)

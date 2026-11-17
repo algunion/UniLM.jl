@@ -16,6 +16,9 @@ const _OPERATION_SHAPES = (("fileSearchStores", nothing, "operations", nothing),
 # Where an upload sends its bytes (discovery's media.uploadToFileSearchStore); a function so tests can route an
 # endpoint to a local server.
 _gemini_upload_root(::Type{GEMINIServiceEndpoint})::String = "https://generativelanguage.googleapis.com/upload/v1beta"
+# An endpoint that declares File Search stores without an upload address of its own has nowhere to send the bytes.
+_gemini_upload_root(service) = throw(ArgumentError(
+    "upload_to_file_search_store: $(_service_name(service)) names no Gemini upload address"))
 
 # A document's or an operation's name, which the API gives whole: a call names it whole.
 function _gemini_nested_name(name::AbstractString, shapes::Tuple, what::String)::String

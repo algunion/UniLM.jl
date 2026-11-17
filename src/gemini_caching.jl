@@ -29,6 +29,8 @@ const _CACHE_SHAPE = ("cachedContents", nothing)
 # The API's address; a function of the endpoint, so tests can route one to a local server. A resource's URL
 # escapes each segment of its name.
 _gemini_api_root(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE
+# An endpoint that declares a Gemini resource capability without an address of its own has nowhere to send it.
+_gemini_api_root(service) = throw(ArgumentError("$(_service_name(service)) names no Gemini API address"))
 _gemini_path(name::AbstractString)::String = join((_uripart(s) for s in split(name, '/')), '/')
 _gemini_url(service, name::AbstractString, suffix::String="")::String =
     _gemini_api_root(service) * "/" * _gemini_path(name) * suffix

@@ -43,6 +43,8 @@ const LOCAL = Set{String}([
 
 const UNRECORDABLE = Set{String}([
     "generate_image", "edit_image", "speak", "transcribe", "translate", "moderate",
+    "create_voice", "list_voices", "get_voice", "delete_voice", "create_voice_consent", "list_voice_consents",
+    "get_voice_consent", "update_voice_consent", "delete_voice_consent",
     "upload_file", "list_files", "retrieve_file", "delete_file", "file_content", "poll_file", "register_files",
     "create_upload", "add_upload_part", "complete_upload", "cancel_upload",
     "create_vector_store", "retrieve_vector_store", "list_vector_stores", "delete_vector_store",

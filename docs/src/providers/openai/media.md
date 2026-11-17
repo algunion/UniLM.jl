@@ -286,6 +286,24 @@ and the usage, here a duration. A `response_format` of `"text"`, `"srt"` or `"vt
 text, which `raw` does not hold; subtitles, timestamps and speaker labels come from models OpenAI
 deprecated, which "will shut down on **February 26, 2027**" with `/v1/audio/translations`
 ([transcription](https://developers.openai.com/api/docs/guides/transcription#existing-integrations-with-deprecated-models)).
+A `verbose_json` reply's segments and words (`timestamp_granularities`, on `whisper-1`) and a
+`diarized_json` reply's speaker segments (`gpt-4o-transcribe-diarize`, with `known_speaker_names` and
+`known_speaker_references` for up to four known speakers) are typed: the result's `segments`
+([`TranscriptSegment`](@ref)) and `words` ([`TranscriptWord`](@ref)). `include = ["logprobs"]` adds
+the tokens' log probabilities to `raw` (`gpt-transcribe` returned them on 17 November 2026), and
+`chunking_strategy` is `"auto"` or a [`TranscriptionVAD`](@ref), sent as one JSON field, the form
+OpenAI reads.
+
+`stream = true` streams the transcript: `transcribe` returns a `Task`, and a `callback(chunk, close)`
+gets each `transcript.text.delta` as text, and each segment of a streamed diarization as a
+`TranscriptSegment`; the result is the `transcript.text.done` event's, `raw` that event with its usage
+([Audio API](@ref audio_api)). OpenAI ends the stream with `data: [DONE]`; `whisper-1` does not stream
+and is refused.
+
+```julia
+task = transcribe("ferry.wav"; stream=true, callback=(chunk, _) -> chunk isa String && print(chunk))
+fetch(task)
+```
 The default model is `gpt-transcribe` on OpenAI, and on an endpoint of your own that declares
 `:audio` or `:transcription`; an endpoint that declares its capabilities without either cannot
 transcribe: `transcribe` throws `ArgumentError` before any request
@@ -332,6 +350,18 @@ already cancelled sends nothing, and a cancel ends the call at once with an `Aud
 `cause` is a [`UniLMCancelled`](@ref). `transcribe` is one HTTP request, sent again after a
 transient status, as a `Chat` is, the whole file each time ([Timeouts & Retries](@ref timeouts_retries));
 its results are typed as a platform verb's are ([Platform APIs](@ref openai_platform_shared)).
+
+OpenAI's custom voices are managed by [`create_voice`](@ref) and [`delete_voice`](@ref) on
+`/v1/audio/voices`, and the speakers' consent recordings by [`create_voice_consent`](@ref),
+[`list_voice_consents`](@ref), [`get_voice_consent`](@ref), [`update_voice_consent`](@ref) and
+[`delete_voice_consent`](@ref) on `/v1/audio/voice_consents`
+([custom voices](https://developers.openai.com/api/docs/guides/custom-voices)). A voice from a
+`prompt` is made for any organization (one was on 17 November 2026), but OpenAI supports it "only in
+Live, not in Realtime or the speech endpoint", and a Realtime session refused it: "Prompt-based voices
+are not supported by the Realtime API". A voice from a recording and its consent are "limited to
+eligible customers": without that access the consent and audio-sample routes answer HTTP 404 "Your
+organization does not have access to this endpoint", a [`VoiceFailure`](@ref). OpenAI lists and looks up
+no voices; `list_voices` and `get_voice` serve Gemini's ([Custom voices](@ref audio_voices)).
 
 UniLM prices none of them: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a
 `SpeechSuccess` and a `TranscriptionSuccess`. OpenAI bills `gpt-transcribe` at "\$0.0045 / minute",
@@ -462,7 +492,14 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | a transcription keyword with `<`, `>` or a line break | `Transcription keywords cannot contain <, >, or line breaks`: OpenAI "rejects the entire request when it encounters one of these characters" ([file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)) | the keyword without them |
 | a transcription `response_format` other than `"json"`, `"text"`, `"srt"`, `"verbose_json"`, `"vtt"` and `"diarized_json"` | `response_format must be one of`: the formats of OpenAI's transcriptions | one of them |
 | a transcription `temperature` outside 0 to 1 | `temperature must be between 0 and 1` | a value in the range |
-| `transcribe` on an endpoint that declares no capabilities, or declares them without `:audio` or `:transcription`: of the endpoints UniLM ships, every one but `OPENAIServiceEndpoint`, `OllamaEndpoint` and `GenericOpenAIEndpoint` (`MistralEndpoint()` included), among them `AZUREServiceEndpoint`, `GEMINIOpenAIServiceEndpoint` and `DeepSeekEndpoint` | `Audio API is not supported by`: the endpoint has no transcription route | `OPENAIServiceEndpoint` |
+| a transcription `include` other than `["logprobs"]`, or `timestamp_granularities` other than `"word"` and `"segment"` | `include takes one or more of`, `timestamp_granularities takes one or more of`: OpenAI answered `include[]=bogus` with HTTP 400 "Input should be 'logprobs'" | the documented values |
+| `timestamp_granularities` without `response_format="verbose_json"` on OpenAI | `OpenAI returns timestamp_granularities only with response_format="verbose_json"`: with `json`, `gpt-transcribe` answered without timestamps (2026-11-17) | `verbose_json`, on `whisper-1` |
+| `stream=true` on `whisper-1` | `whisper-1 does not stream`: "Streaming is not supported for the whisper-1 model and will be ignored" | `gpt-transcribe` |
+| a `chunking_strategy` other than `"auto"` and a `TranscriptionVAD`, or a VAD threshold outside 0 to 1 | `chunking_strategy is "auto" or a TranscriptionVAD`, `threshold is a sensitivity from 0.0 to 1.0`: OpenAI answered a threshold of 7 with HTTP 400 | one of them |
+| `known_speaker_names` without one reference each, more than four, or a reference that is neither a data URL nor a file | `go together, one reference per name`, `1 to 4`, `is neither` | a name and a 2–10 s clip per speaker |
+| `diarization`, `mode` or `source_text` on an OpenAI-wire service | `options of Gemini's transcription`: speaker labels on OpenAI come from `gpt-4o-transcribe-diarize` | `response_format="diarized_json"` on that model, or `service=GEMINIServiceEndpoint` |
+| a transcription `callback` without `stream=true` | `a callback runs on a stream only` | `stream=true` |
+| `transcribe` on an endpoint that declares no capabilities, or declares them without `:audio` or `:transcription`: of the endpoints UniLM ships, every one but `OPENAIServiceEndpoint`, `GEMINIServiceEndpoint`, `OllamaEndpoint` and `GenericOpenAIEndpoint` (`MistralEndpoint()` included), among them `AZUREServiceEndpoint`, `GEMINIOpenAIServiceEndpoint` and `DeepSeekEndpoint` | `Audio API is not supported by`: the endpoint has no transcription route | `OPENAIServiceEndpoint` |
 | `translate` with a blank `language` | `translate needs a target language` | a language code, such as `"fr"` |
 | `translate` with a file that is not 16-bit PCM WAV, or that holds no samples | `cannot translate`, `holds no audio samples`: a translation session takes 24 kHz PCM16, which UniLM makes from a 16-bit PCM WAV file only | a 16-bit PCM WAV file, as `ffmpeg -i in.m4a -c:a pcm_s16le out.wav` makes |
 | `realtime_connect`, `translate` or `speak` on another endpoint that declares its capabilities (`speak` but on `GEMINIServiceEndpoint`, which speaks through Gemini TTS, and `speak` and `translate` but on `OllamaEndpoint`, which serves them through its audio routes), and `mint_realtime_secret` on one that declares them without `:realtime` | `is not supported by`, `supports only OPENAIServiceEndpoint`, `has no speech route`: the Realtime WebSocket is served by `api.openai.com`, and another endpoint's key must not be sent there | `OPENAIServiceEndpoint` |

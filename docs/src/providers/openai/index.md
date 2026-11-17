@@ -38,7 +38,8 @@ Main.ProviderFacts.at_a_glance(:openai)
 | [read back, delete or cancel a stored response](@ref openai_stored_responses) | `get_response`, `delete_response`, `cancel_response` | the stored response, or its removal |
 | [know what a call cost](@ref openai_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
 | [generate or edit images](@ref openai_images) | `generate_image`, `edit_image` | images from OpenAI's Images API |
-| [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, audio from text |
+| [transcribe or synthesize speech](@ref openai_audio) | `transcribe`, `speak` | text from audio, streamed when asked; audio from text |
+| [make or delete a custom voice](@ref openai_audio) | `create_voice`, `delete_voice`, and the voice-consent verbs | a `Voice`, a `VoiceConsent` |
 | [hold a Realtime session](@ref timeout_realtime) | `realtime_connect` | a WebSocket session of OpenAI's Realtime API |
 | [answer from my own files](@ref retrieval_guide) | `file_search` over a vector store | answers grounded in your files, and the chunks they came from |
 | [upload files, run batches, moderate content](@ref openai_platform_page) | `upload_file`, `create_batch`, `moderate` and the other platform verbs | OpenAI's platform APIs |

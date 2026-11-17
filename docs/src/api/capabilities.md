@@ -67,7 +67,8 @@ has_capability
 | `:conversations` | Conversations API |
 | `:moderation` | Moderations API |
 | `:audio` | OpenAI's Audio API route, which serves [`transcribe`](@ref): OpenAI, Ollama and generic servers (implies `:transcription`); on Ollama also [`translate`](@ref) |
-| `:transcription` | Transcription ([`transcribe`](@ref)); implied by `:audio`, so an endpoint of your own may declare either |
+| `:transcription` | Transcription ([`transcribe`](@ref)); implied by `:audio`, so an endpoint of your own may declare either; native Gemini transcribes through `generateContent` |
+| `:voices` | Custom voices ([`create_voice`](@ref) and the verbs beside it): OpenAI and native Gemini |
 | `:speech` | Speech ([`speak`](@ref)): an OpenAI Realtime session, Gemini TTS on `GEMINIServiceEndpoint`, or Ollama's speech route on `OllamaEndpoint` |
 | `:batch` | Batch APIs ([`create_batch`](@ref), [`batch_results`](@ref) and the other batch verbs): OpenAI, Anthropic and native Gemini |
 | `:fine_tuning` | Fine-tuning API |

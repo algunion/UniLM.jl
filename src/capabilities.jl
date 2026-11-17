@@ -17,7 +17,9 @@ Standard capability symbols include:
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
 - Files ([`upload_file`](@ref) and its family): `:files` (OpenAI, Anthropic, Gemini); Gemini's
   [`register_files`](@ref): `:file_registration`
-- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
+- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`; native Gemini transcribes
+  through `generateContent`
+- Custom voices ([`create_voice`](@ref) and the verbs beside it): `:voices` (OpenAI, native Gemini)
 - Translation ([`translate`](@ref)): `:realtime` (OpenAI's Realtime translation sessions); on Ollama,
   `:audio` (its translation route)
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
@@ -34,7 +36,7 @@ Standard capability symbols include:
 - Skills ([`create_skill`](@ref) and the verbs beside it): `:skills` (OpenAI, Anthropic)
 - Stored Chat Completions ([`list_chat_completions`](@ref) and the verbs beside it): `:stored_completions` (OpenAI)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :skills, :stored_completions])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :skills, :stored_completions, :voices])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])

@@ -103,8 +103,11 @@ Extended Voice Library ID, a custom Voice design ID (`voice_...`), or a Voice re
 (`voice_...`, or optional stateless `voicekey_...`)"
 ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)):
 one of the 30 studio voices that page lists goes as a prebuilt voice, any other as the request's
-`voice`. The Extended Voice Library's hundreds of voices are listed by `GET /v1beta/voices`, not by
-UniLM, so a voice is sent as given, and Gemini answers a name it does not have.
+`voice`. The Extended Voice Library's hundreds of voices are listed by `GET /v1beta/voices`, which
+[`list_voices`](@ref) reads, each a [`Voice`](@ref) whose `id` (such as `"achernar"` or
+`"am-et-assistant-1"`) `speak` takes; [`create_voice`](@ref) designs or replicates one of your own
+([Custom voices](@ref audio_voices)). A voice is sent as given, and Gemini answers a name it does not
+have.
 UniLM asks for 24 kHz, 16-bit mono PCM and returns a [`SpeechSuccess`](@ref): a WAV file with
 `response_format="wav"`, the default, which UniLM wraps in a 44-byte header, or the samples with
 `"pcm"` (`content_type` `"audio/pcm"`). Speech is not recorded, so its output here is quoted from a
@@ -129,7 +132,24 @@ the speech style, `speech_metadata.style`: "emotions, delivery style, prosody, p
 ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)).
 `instructions` become that style, and the pace is part of it (`"speaking slowly"`): Gemini TTS has
 no speed, so any `speed` is refused, as are a blank `voice`, a format other than `"wav"` and `"pcm"`
-and an empty input ([Limits and refusals](@ref gemini_limits)).
+and an empty input ([Limits and refusals](@ref gemini_limits)). `language` is the BCP-47 tag the
+text is read in (`speechConfig.languageCode`; Gemini answered `"xx-ZZ"` with HTTP 400 "Invalid
+language_code").
+
+A dialogue reads several voices in one request: [`SpeechTurn`](@ref)s as `input` and each speaker's
+voice in `speakers`. Each turn is a part with its speaker and style in `speech_metadata`, as the
+guide asks — "pass one `part` per speaker turn with `speech_metadata.speaker`" — and the voices go
+as `multiSpeakerVoiceConfig`:
+
+```julia
+s = speak([SpeechTurn("Joe", "Is the bridge open?"), SpeechTurn("Jane", "From Monday morning."; style="reassuring")];
+          service=GEMINIServiceEndpoint, speakers=["Joe" => "Puck", "Jane" => "Kore"], language="en-US")
+```
+
+A turn whose speaker has no voice in `speakers`, a speaker named twice, and a dialogue with a
+`voice` or `instructions` are refused before the request. The guide's limits say multi-speaker
+speech "supports up to 2 speakers using prebuilt voices"; Gemini spoke three speakers, and a
+designed voice beside a prebuilt one, on 17 November 2026, so UniLM refuses neither.
 
 A reply whose candidate did not finish with `STOP` — `MAX_TOKENS`, `SAFETY`, … — or that has no
 candidate, a blocked prompt, is an [`AudioFailure`](@ref) with `status` 200 and the reply as
@@ -138,11 +158,30 @@ cancel are an [`AudioCallError`](@ref). Speech is not priced: [`token_usage`](@r
 [`estimated_cost`](@ref) throw for a `SpeechSuccess`. `speak` refuses `GEMINIOpenAIServiceEndpoint`,
 whose wire has no speech route.
 
-[`transcribe`](@ref) refuses both endpoints: neither has the `transcription` capability. Google serves
-transcription with a model of its own, `gemini-3.5-transcribe`
-([transcribe](https://ai.google.dev/gemini-api/docs/transcribe)), which UniLM does not wrap. To get
-the words of a clip, send it as an `AudioAttachment` and ask for them, as
-[Attachments](@ref gemini_media) does. The verbs every provider shares are on [Audio API](@ref audio_api).
+[`transcribe`](@ref) with `service=GEMINIServiceEndpoint` sends the audio file inline to Google's
+transcription model, `gemini-3.5-transcribe` unless `model` names another, in one generateContent
+request ([transcribe](https://ai.google.dev/gemini-api/docs/transcribe)), retried after a transient
+status as speech is. Its options go in `generationConfig.audioTranscriptionConfig`: `languages` (BCP-47
+codes such as `"en-US"`) as `languageCodes`, `keywords` (up to 1,000) as `customVocabulary`,
+`diarization = true`, `timestamp_granularities = ["word"]` as `wordTimestamp`, `mode` (`"verbatim"`
+or `"smart"`) and, in smart mode, `source_text`. Each part of the reply is one speaker turn, a
+[`TranscriptSegment`](@ref) labelled `"spk:0"`, `"spk:1"`, …; the words are
+[`TranscriptWord`](@ref)s with their speaker and their offsets in seconds:
+
+```julia
+r = transcribe("call.wav"; service=GEMINIServiceEndpoint, diarization=true, timestamp_granularities=["word"])
+r isa TranscriptionSuccess && foreach(w -> println(w.speaker, " ", w.start_time, " ", w.text), r.words)
+```
+
+Gemini rejects custom vocabulary beside diarization or word timestamps (HTTP 400 "custom_vocabulary
+is incompatible with diarization.", 17 November 2026) and smart mode beside either; those, and the
+options Gemini's transcription does not take (`prompt`, `temperature`, `response_format`, `include`,
+`chunking_strategy`, known speakers, `stream`), throw `ArgumentError` before any request. The
+Interactions API takes the same options as `transcription_config` and returned the same transcript;
+UniLM uses generateContent, which stores nothing. Transcription is not priced: [`token_usage`](@ref)
+throws for a [`TranscriptionSuccess`](@ref), whose `raw["usageMetadata"]` keeps Gemini's count.
+`GEMINIOpenAIServiceEndpoint` has no transcription. The verbs every provider shares are on
+[Audio API](@ref audio_api).
 
 ## [Embeddings](@id gemini_embeddings)
 

@@ -164,7 +164,7 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   lifecycle verb: files ([`register_files`](@ref) included), uploads, vector stores,
   conversations, stored chat completions, containers, batches ([`batch_results`](@ref), [`delete_batch`](@ref) and
   [`update_batch`](@ref) included), fine-tuning, webhook endpoints, safety cases and alerts,
-  content provenance checks,
+  content provenance checks, custom voices and voice consents ([`create_voice`](@ref) and the verbs beside it),
   [`moderate`](@ref), [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),
   [`mint_realtime_secret`](@ref) and the Responses lifecycle operations
   ([`get_response`](@ref) and the others). The exception is [`realtime_connect`](@ref):

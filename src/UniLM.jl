@@ -91,6 +91,7 @@ include("conversations.jl")
 include("chat_store.jl")
 include("moderations.jl")
 include("audio.jl")
+include("voices.jl")
 include("batch.jl")
 include("anthropic_batch.jl")
 include("gemini_batch.jl")
@@ -516,16 +517,40 @@ export
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export
     SpeechRequest,
+    SpeechTurn,
     SpeechSuccess,
     TranscriptionRequest,
+    TranscriptionVAD,
     TranscriptionSuccess,
+    TranscriptSegment,
+    TranscriptWord,
     AudioFailure,
     AudioCallError,
     speak,
     save_audio,
     transcribe,
     translate,
-    transcript_text
+    transcript_text,
+    Voice,
+    VoiceList,
+    VoiceConsent,
+    VoiceConsentList,
+    VoiceSuccess,
+    VoiceListSuccess,
+    VoiceConsentSuccess,
+    VoiceConsentListSuccess,
+    VoiceDeleteSuccess,
+    VoiceFailure,
+    VoiceCallError,
+    create_voice,
+    list_voices,
+    get_voice,
+    delete_voice,
+    create_voice_consent,
+    list_voice_consents,
+    get_voice_consent,
+    update_voice_consent,
+    delete_voice_consent
 
 # ─── Batch API ────────────────────────────────────────────────────────────────
 export

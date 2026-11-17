@@ -7,7 +7,7 @@ using UniLM
 Google makes the Gemini models and serves them through two native APIs, both of which
 `GEMINIServiceEndpoint` speaks: generateContent, which a `Chat` reaches through `chatrequest!` and
 `tool_loop!`, and the Interactions API, which `respond` and the `tool_loop` that takes an input or a
-`Respond` reach. Image generation and speech go through generateContent too.
+`Respond` reach. Image generation, speech and transcription go through generateContent too.
 `GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint. Both embed text
 ([Embeddings](@ref gemini_embeddings)). `GEMINIServiceEndpoint` speaks Gemini's Files API ([Files](@ref gemini_files)) and Batch API
 ([Batches](@ref gemini_batches)) too, counts tokens ([Token counts](@ref gemini_token_counts)), makes the
@@ -17,7 +17,8 @@ API, managed agents such as Deep Research, music and video generation — none i
 verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
 ([Background requests](@ref gemini_background)). `speak` reads aloud through Gemini TTS, and
-`transcribe` refuses both endpoints ([Audio](@ref gemini_audio)). Google's Decisions API, which `ask` speaks through
+`transcribe` writes down speech through Gemini Transcribe ([Audio](@ref gemini_audio)); the voice verbs
+design, list and delete the voices `speak` reads with ([Custom voices](@ref audio_voices)). Google's Decisions API, which `ask` speaks through
 `GEMINIServiceEndpoint`, has an entry of its own: [Gemini Decisions API](@ref gemini_decisions_start).
 
 ```@eval
@@ -40,6 +41,8 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [send a long prompt's start once](@ref gemini_caching) | `create_cache(chat; ttl)`, then a `Chat` with `cached_content` | the cached tokens read at the cache-hit rate |
 | [generate or edit an image](@ref gemini_images) | `generate_image`, `edit_image` with `service=GEMINIServiceEndpoint` | an `ImageSuccess` holding the image |
 | [read text aloud](@ref gemini_audio) | `speak(text; service=GEMINIServiceEndpoint)` | 24 kHz speech as WAV or PCM |
+| [transcribe a recording](@ref gemini_audio) | `transcribe(path; service=GEMINIServiceEndpoint)` | the transcript, its speaker turns and word timestamps when asked |
+| [design, list or delete a voice](@ref audio_voices) | `create_voice`, `list_voices`, `get_voice`, `delete_voice` with `service=GEMINIServiceEndpoint` | a `Voice` whose `id` `speak` reads with |
 | [store files for 48 hours](@ref gemini_files) | `upload_file(path; service=GEMINIServiceEndpoint)`, `poll_file`, `list_files`, `delete_file`, `register_files` | a `FileObject` for each file, its `uri` in `raw` |
 | [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIServiceEndpoint` (or `GEMINIOpenAIServiceEndpoint`) | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
@@ -85,6 +88,8 @@ text ([Reasoning](@ref gemini_reasoning)).
 | server-side state, hosted tools, background requests | Interactions | `respond`, `tool_loop` | the default at the top of this page |
 | image generation and editing | generateContent | `generate_image`, `edit_image` | `gemini-nano-banana-2.1` |
 | speech | generateContent | `speak` | `gemini-3.8-flash-tts` |
+| transcription | generateContent | `transcribe` | `gemini-3.5-transcribe` |
+| custom voices | Voices (`/v1beta/voices`) | `create_voice`, `list_voices`, `get_voice`, `delete_voice` | the latest voice design model, unless `model` names one |
 | embeddings | models (`embedContent`, `batchEmbedContents`), or OpenAI-compatible | `embeddingrequest!` with `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint` | `gemini-embedding-2` |
 | file storage | Files | `upload_file`, `poll_file`, `list_files`, `delete_file`, `register_files` | — |
 | many generateContent requests at half price | Batch (`batchGenerateContent`) | `create_batch`, `batch_results` on `Chat`s | the default at the top of this page |

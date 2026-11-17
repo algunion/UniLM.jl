@@ -37,7 +37,7 @@ Pkg.add("UniLM")
 ## Language models
 
 A `Chat` holds a conversation and `chatrequest!` sends it; `respond` sends one request of a provider's agentic
-API; embeddings, images, speech, transcription and fill-in-the-middle completion have verbs of their own, on the
+API; embeddings, images, speech, transcription, custom voices and fill-in-the-middle completion have verbs of their own, on the
 providers that serve them. Each provider has an entry of its own — its setup, first call, options, limits and
 failures —, which its name opens:
 

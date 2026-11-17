@@ -2962,9 +2962,10 @@ create_voice(; name=nothing, prompt=nothing, audio_sample=nothing, consent=nothi
              model=nothing, script_hint=nothing, base_voice=nothing, store=nothing, language=nothing, region=nothing,
              accent=nothing, persona=nothing, context=nothing, gender=nothing, pitch=nothing, description=nothing,
              service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> VoiceSuccess | VoiceFailure | VoiceCallError
-list_voices(; service, limit=nothing, after=nothing, type=nothing, language=nothing, region=nothing, accent=nothing,
-            gender=nothing, pitch=nothing, persona=nothing, context=nothing, search=nothing, config, cancel)   # Gemini only
-retrieve_voice(voice_id; service, config, cancel)   # Gemini only (stored voices)
+list_voices(; service=GEMINIServiceEndpoint, limit=nothing, after=nothing, type=nothing, language=nothing,
+            region=nothing, accent=nothing, gender=nothing, pitch=nothing, persona=nothing, context=nothing,
+            search=nothing, config, cancel)   # Gemini only
+retrieve_voice(voice_id; service=GEMINIServiceEndpoint, config, cancel)   # Gemini only (stored voices)
 delete_voice(voice_id; service, config, cancel) -> VoiceDeleteSuccess | VoiceFailure | VoiceCallError
 create_voice_consent(recording; name, language, service, config, cancel)   # OpenAI only, as are the four below
 list_voice_consents(; limit=nothing, after=nothing, service, config, cancel)
@@ -2982,8 +2983,9 @@ with a `prompted` (`input`, `base_voice`) or `replicated` (`source_audio`, `cons
 voice, `store` true unless set (`store = false` returns a `key`), `name` as `display_name`, and `model`,
 `language`, `region`, `accent`, `persona`, `context`, `gender`, `pitch` (low/medium/high) and `description`. Options
 a service does not take throw `ArgumentError` before I/O. `list_voices` (page_size ≤ 1000, page_token, repeated
-filters) and `retrieve_voice` are Gemini's: OpenAI throws `ArgumentError` naming `GEMINIServiceEndpoint`; the consent
-verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record (`object` `"audio.voice.deleted"`, or
+filters) and `retrieve_voice` are Gemini's, their default service: OpenAI throws `ArgumentError` naming
+`GEMINIServiceEndpoint`; the consent verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record
+(`object` `"audio.voice.deleted"`, or
 `"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers `{}` (the id requested). Each verb is
 one bounded attempt, never retried, capability `:voices`. A Gemini voice's `id` (`voice_…`, or a catalog id such as
 `"achernar"`) and `key` are what `speak` takes as `voice`; on OpenAI `speak` sends a custom voice's `voice_…` id as

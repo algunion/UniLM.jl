@@ -340,7 +340,7 @@ _filter_values(v::AbstractString)::Vector{String} = [String(v)]
 _filter_values(v::AbstractVector{<:AbstractString})::Vector{String} = String.(v)
 
 """
-    list_voices(; service=GEMINIServiceEndpoint-only, limit=nothing, after=nothing, type=nothing, language=nothing,
+    list_voices(; service=GEMINIServiceEndpoint, limit=nothing, after=nothing, type=nothing, language=nothing,
                 region=nothing, accent=nothing, gender=nothing, pitch=nothing, persona=nothing, context=nothing,
                 search=nothing) -> VoiceListSuccess | VoiceFailure | VoiceCallError
 
@@ -351,11 +351,11 @@ prebuilt catalog (the 30 studio voices and the Extended Voice Library), each a [
 of strings (a voice matching any of them): `type` (`"prebuilt"`, `"prompted"`, `"replicated"`),
 `language` (BCP-47 tags), `region`, `accent`, `gender`, `pitch`, `persona` and `context`; `search`
 matches display names and descriptions ([voice library](https://ai.google.dev/gemini-api/docs/speech-generation#voice-library)).
-OpenAI's API lists no voices: `service = OPENAIServiceEndpoint` (the default of the voice verbs)
-throws `ArgumentError` naming `GEMINIServiceEndpoint`, as does a `limit` outside 1–1,000.
+OpenAI's API lists no voices: `service = OPENAIServiceEndpoint` throws `ArgumentError` naming
+`GEMINIServiceEndpoint`, as does a `limit` outside 1–1,000.
 $_CANCEL_DOC
 """
-function list_voices(; service::ServiceEndpointSpec=OPENAIServiceEndpoint, limit::Union{Int,Nothing}=nothing,
+function list_voices(; service::ServiceEndpointSpec=GEMINIServiceEndpoint, limit::Union{Int,Nothing}=nothing,
                      after::Union{AbstractString,Nothing}=nothing, type=nothing, language=nothing, region=nothing,
                      accent=nothing, gender=nothing, pitch=nothing, persona=nothing, context=nothing,
                      search::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
@@ -378,14 +378,14 @@ function list_voices(; service::ServiceEndpointSpec=OPENAIServiceEndpoint, limit
 end
 
 """
-    retrieve_voice(voice_id; service=OPENAIServiceEndpoint) -> VoiceSuccess | VoiceFailure | VoiceCallError
+    retrieve_voice(voice_id; service=GEMINIServiceEndpoint) -> VoiceSuccess | VoiceFailure | VoiceCallError
 
 A stored custom voice of Gemini's (`voice_…`), with its preview for a designed voice. Gemini looks up
 stored voices only: a prebuilt voice's id answers HTTP 404. OpenAI's API has no voice lookup:
 `service = OPENAIServiceEndpoint` throws `ArgumentError` naming `GEMINIServiceEndpoint`.
 $_CANCEL_DOC
 """
-function retrieve_voice(voice_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+function retrieve_voice(voice_id::AbstractString; service::ServiceEndpointSpec=GEMINIServiceEndpoint,
                         config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :voices, "Voices API")
     wire = _gemini_voices_wire(_voices_wire(service), "retrieve_voice")

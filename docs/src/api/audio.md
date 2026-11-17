@@ -355,8 +355,8 @@ voice from a recording needs the speaker's consent ([`create_voice_consent`](@re
 404 "Your organization does not have access to this endpoint" from both, a [`VoiceFailure`](@ref).
 Untested: the organization the live tests run under gets that 404, so no live run has made a voice from
 a recording or seen a consent verb succeed; those success paths are built from OpenAI's reference and
-tested offline only, against scripted replies. OpenAI's API lists and looks up no voices, so `list_voices` and `retrieve_voice` on it throw
-`ArgumentError` naming `GEMINIServiceEndpoint`. The Realtime API takes a custom voice as an object,
+tested offline only, against scripted replies. OpenAI's API lists and looks up no voices, so `list_voices` and
+`retrieve_voice` default to `GEMINIServiceEndpoint`, and on OpenAI throw `ArgumentError` naming it. The Realtime API takes a custom voice as an object,
 `{"id": "voice_…"}` (a plain string answered "Supported values are: 'alloy', …"), and so `speak`
 on OpenAI sends a `voice_…` id
 ([custom voices](https://developers.openai.com/api/docs/guides/custom-voices)).

@@ -170,6 +170,16 @@ end
     @test isempty(seen3)
 end
 
+@testset "list_voices and retrieve_voice default to Gemini, the one service that has them" begin
+    # A cancelled token sends nothing: each call reaches its exchange only when its default service has the verb.
+    tok = cancel!(CancelToken())
+    withenv("GEMINI_API_KEY" => "k") do
+        for r in (list_voices(; cancel=tok), retrieve_voice("voice_1"; cancel=tok))
+            @test r isa VoiceCallError && r.cause isa UniLMCancelled
+        end
+    end
+end
+
 @testset "delete_voice: OpenAI's deletion record, Gemini's empty reply" begin
     d, seen = _with_scripted((_, _) -> _json(200, """{"id":"voice_6afc","object":"audio.voice.deleted","deleted":true}""")) do
         delete_voice(_HOSTILE_ID; service=_OAVoices)

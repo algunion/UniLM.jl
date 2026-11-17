@@ -63,6 +63,8 @@ const UNRECORDABLE = Set{String}([
     "list_container_files", "retrieve_container_file", "container_file_content", "delete_container_file",
     "create_conversation", "retrieve_conversation", "update_conversation", "delete_conversation",
     "add_conversation_items", "list_conversation_items", "retrieve_conversation_item", "delete_conversation_item",
+    "list_chat_completions", "get_chat_completion", "update_chat_completion", "delete_chat_completion",
+    "list_chat_completion_messages",
     "realtime_connect", "realtime_send", "realtime_receive", "mint_realtime_secret",
     # the MCP client and the tools it makes, which call its server; an MCP server's transport
     "mcp_connect", "mcp_disconnect!", "mcp_tools", "mcp_tools_respond", "call_tool", "list_tools!",

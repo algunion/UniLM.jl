@@ -47,16 +47,18 @@ These calls are not recorded, so their output on this page is quoted from dated 
 - **Cost.** The results carry no usage: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for
   them. What OpenAI charges for storage and containers is on its
   [pricing page](https://developers.openai.com/api/docs/pricing). A batch's requests are the exception:
-  [`batch_results`](@ref) returns each as a Chat result, priced at the Batch rates ([Batches](@ref openai_batch)).
+  [`batch_results`](@ref) returns each as a Chat or an embeddings result, priced at the Batch rates
+  ([Batches](@ref openai_batch)).
 - **Deletes.** A delete that OpenAI answers with a deletion record — of a file, a vector store, a
   container, a conversation, a checkpoint permission or a webhook endpoint — counts only when the
   record says `"deleted": true`: a reply without it, or with `false`, is the call error, the object
   being in place as far as UniLM can tell. The
-  record of a vector store, a container, a file in either, a checkpoint permission or a webhook
-  endpoint must also carry the `id` it deleted (the requested one is not put in its place) and name
-  what it deleted as its `object` — `"vector_store.deleted"`, `"vector_store.file.deleted"`,
-  `"container.deleted"`, `"container.file.deleted"`, `"checkpoint.permission"` or
-  `"webhook_endpoint.deleted"`; one without them, or naming another kind, is the call error.
+  record of a vector store, a container, a file in either, a checkpoint permission, a webhook
+  endpoint or a stored chat completion must also carry the `id` it deleted (the requested one is not put
+  in its place) and name what it deleted as its `object` — `"vector_store.deleted"`,
+  `"vector_store.file.deleted"`, `"container.deleted"`, `"container.file.deleted"`,
+  `"checkpoint.permission"`, `"webhook_endpoint.deleted"` or `"chat.completion.deleted"`; one without
+  them, or naming another kind, is the call error.
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
   carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it, a
@@ -64,7 +66,7 @@ These calls are not recorded, so their output on this page is quoted from dated 
   requires: a reply without them is the call error, never an empty last page or a status read as
   unknown.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
-  `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
+  `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:stored_completions`, `:containers`, `:batch`,
   `:fine_tuning`, `:moderation`, `:webhooks`, `:safety`, `:content_provenance`, `:transcription`
   (which `:audio` implies) or `:realtime` —, all
   of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
@@ -467,6 +469,32 @@ results isa BatchResultsSuccess || error("the results were not read: $results")
 # [("one", "ok", "batch", 1.55e-6), ("two", "ok", "batch", 1.55e-6)]
 ```
 
+A batch of embeddings goes the same way: [`create_batch`](@ref)`(requests)` takes `custom_id => Embeddings`
+pairs, each line a `/v1/embeddings` request whose `body` is the one [`embeddingrequest!`](@ref) sends —
+a text or a vector of them —, to one model, and at most 50,000 inputs across the batch: "`/v1/embeddings`
+batches are also restricted to a maximum of 50,000 embedding inputs across all requests in the batch" (more are
+refused before anything is sent). [`batch_results`](@ref) returns each request's result as
+`embeddingrequest!` returns it: an [`EmbeddingSuccess`](@ref) whose usage names the tier `"batch"`, an
+[`EmbeddingFailure`](@ref) for an error status, an [`EmbeddingCallError`](@ref) for a request without a
+response or a reply that holds no vectors. The pricing page lists no Batch price for the embedding models,
+and the Batch guide gives a "50% cost discount compared to synchronous APIs" on every endpoint it batches,
+`/v1/embeddings` among them, so [`estimated_cost`](@ref) bills a batched embedding at half its model's rate.
+A success holds a stand-in `Embeddings` with the vectors (one empty text per vector, its model the reply's);
+with the requests, `batch_results(id; requests)`, a copy of its request filled with them, the request
+unchanged.
+
+```julia
+small(x) = Embeddings(x; model="text-embedding-3-small", dimensions=8)
+requests = ["one" => small("alpha"), "two" => small(["beta", "gamma"])]
+batch = create_batch(requests)
+done = poll_batch(batch.response.id; interval=30)
+results = batch_results(batch.response.id; requests)
+[(id, r.usage.service_tier, embedding_vectors(r)) for (id, r) in results.results]
+# A batch of these two requests, sent on 17 November 2026 with curl, completed in about 2 minutes; its output
+# file held one line per request, `response.body` the /v1/embeddings reply: one 8-dimension vector for "one",
+# two for "two", and usage prompt_tokens 1 and 2.
+```
+
 ## [Fine-tuning](@id openai_fine_tuning)
 
 "OpenAI is winding down the fine-tuning platform. The platform is no longer accessible to new
@@ -761,6 +789,11 @@ requests — are OpenAI's to check, and UniLM checks none of them. These are ref
 | a `poll_batch`, `poll_file_batch` or `poll_file` `interval` that is not a finite number above 0 | `interval must be a finite number of seconds > 0` | a pause in seconds |
 | a `create_batch` `output_expires_after` outside 3600–2592000 seconds | `output_expires_after is the seconds after`: the Batch API's bounds | a number of seconds in them |
 | `delete_batch` or `update_batch` | `OpenAI's Batch API has no delete`, `has no update` | `cancel_batch`, and `delete_file` for its files |
+| a `create_batch` of `Embeddings` holding more than 50,000 inputs across its requests | `an OpenAI batch of embeddings holds at most 50000 inputs`: the Batch guide's limit | several batches |
+| a `create_batch` of both `Chat`s and `Embeddings` | `a batch holds one kind of request` | one batch of each |
+| a `create_batch` `display_name` | `display_name names a Gemini batch`: OpenAI's batches have no name | `metadata` |
+| a stored-completions `metadata` (`list_chat_completions`, `update_chat_completion`) of more than 16 pairs, with a key longer than 64 characters, or with a value that is not a string of at most 512 characters | `metadata holds at most 16 key-value pairs`, `a metadata key has at most 64 characters`, `metadata keys and values are strings`: the reference's bounds | metadata within them ([Stored completions](@ref openai_stored_completions)) |
+| a `list_chat_completions` or `list_chat_completion_messages` `order` other than `"asc"` and `"desc"` | `order is "asc" or "desc"` | one of them |
 | a poll `timeout` that is `NaN`, not above 0, or finite and above 10⁹ seconds | `timeout must not be NaN`, `timeout must be > 0 seconds`, `timeout must be at most`: `Inf` is the way to wait without bound | a number of seconds, or `Inf` |
 | `code_interpreter` `file_ids` with a container id | `code_interpreter file_ids go inside an auto container`: a container made beforehand holds the files it was made with or given | `create_container(; file_ids)` or `add_container_file` |
 | `code_interpreter` `file_ids` beside a container `Dict` that names `file_ids` | `code_interpreter file_ids given twice`: the files would be sent twice | one of the two |

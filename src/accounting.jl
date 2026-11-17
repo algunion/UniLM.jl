@@ -297,7 +297,8 @@ surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref
 A Chat or Embeddings result whose usage names the tier `"batch"` — a request of a batch, as
 [`batch_results`](@ref) returns it — is billed at its provider's Batch rates: on OpenAI half of every rate of
 the models its pricing page's Batch table lists (a cache read bills as batch input where the table gives no
-cached-input price) and of its embedding models, which the Batch guide's "50% cost discount" covers; on Anthropic half of every rate, the cache, region and long-prompt multipliers stacking; on native
+cached-input price) and of its embedding models, which the Batch guide's "50% cost discount" covers; on
+Anthropic half of every rate, the cache, region and long-prompt multipliers stacking; on native
 Gemini half of every rate, except a cache hit on the models whose Batch table keeps its standard price
 (`gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview`, the
 `gemini-2.5-` models). A model the page gives no Batch price for is estimated at the standard rates, with

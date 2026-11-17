@@ -10,20 +10,27 @@ and `gemini-2.5-flash-lite`) — and [`estimated_cost`](@ref) prices a batch res
 - [`create_batch`](@ref)`(requests; service)` takes the requests as `custom_id => Chat` pairs and
   sends each provider its own form of them: OpenAI a JSONL file of Chat Completions requests to one
   model, uploaded with purpose `"batch"`, then the batch; Anthropic a Message Batch of Messages
-  requests; Gemini inline `generateContent` requests to `batchGenerateContent`. OpenAI's own file-based form,
+  requests; Gemini inline `generateContent` requests to `batchGenerateContent`. It takes
+  `custom_id => Embeddings` pairs too, on OpenAI (a JSONL file of `/v1/embeddings` requests to one model,
+  at most 50,000 inputs across them) and Gemini (inline `embedContent` requests of one input each to
+  `asyncBatchEmbedContent`); a batch holds one kind of request. OpenAI's own file-based form,
   `create_batch(input_file_id, endpoint)`, runs any endpoint its Batch API serves.
 - [`batch_results`](@ref) reads the results of an ended batch as the results [`chatrequest!`](@ref)
   returns — an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) per custom id —,
-  decoded by the provider's own decoder, each success's usage at the tier `"batch"`. On OpenAI it
-  reads a `/v1/chat/completions` batch alone: another endpoint's is a `BatchCallError` naming
+  decoded by the provider's own decoder, each success's usage at the tier `"batch"`; a batch of
+  embeddings as the results [`embeddingrequest!`](@ref) returns — an [`EmbeddingSuccess`](@ref),
+  [`EmbeddingFailure`](@ref) or [`EmbeddingCallError`](@ref) —, billed at half the standard rate. On OpenAI
+  it reads a `/v1/chat/completions` or `/v1/embeddings` batch: another endpoint's is a `BatchCallError` naming
   [`file_content`](@ref)`(output_file_id)`, which reads its output file as OpenAI writes it. Given the
   pairs that created the batch, `batch_results(id; service, requests)`, each result is the one
   `chatrequest!` returns for its request's `Chat`: a success's `self` is a copy of that `Chat` with the
   reply appended (the `Chat` passed is not changed), a failure's the `Chat` itself; without them, a
-  stand-in `Chat` without messages.
+  stand-in `Chat` without messages. An embeddings success holds a copy of its request filled with the
+  vectors, or, without the requests, a stand-in `Embeddings` holding them.
 - [`retrieve_batch`](@ref), [`list_batches`](@ref), [`cancel_batch`](@ref) and [`poll_batch`](@ref)
   run on all three; [`delete_batch`](@ref) on Anthropic and Gemini; [`update_batch`](@ref) (a batch's
-  priority) on Gemini.
+  priority) on Gemini, a batch of embeddings included; `create_batch(requests; display_name)` names a Gemini
+  batch.
 
 Each verb first checks that its `service` has the `:batch` capability, which
 `OPENAIServiceEndpoint`, `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` declare.
@@ -87,6 +94,14 @@ if norway isa LLMSuccess
     push!(norway.self, Message(Val(:user), "And its population?"))
     chatrequest!(norway.self)
 end
+
+# A batch of embeddings (OpenAI or Gemini): one input per request on Gemini
+docs = ["refunds" => Embeddings("Refunds take 5 days."; service=GEMINIServiceEndpoint, task=:document),
+        "shipping" => Embeddings("Shipping is free in the EU."; service=GEMINIServiceEndpoint, task=:document)]
+eb = create_batch(docs)
+poll_batch(eb.response.id; service=GEMINIServiceEndpoint, interval=30)
+vectors = batch_results(eb.response.id; service=GEMINIServiceEndpoint, requests=docs)
+Dict(id => embedding_vectors(r) for (id, r) in vectors.results if r isa EmbeddingSuccess)
 
 # OpenAI's file-based form: upload a JSONL request file, then create a batch from it
 upload = upload_file("requests.jsonl", "batch")

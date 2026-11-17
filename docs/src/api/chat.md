@@ -133,6 +133,31 @@ tool_loop
 to_tool
 ```
 
+## [Stored Chat Completions](@id stored_completions_api)
+
+A Chat Completion sent with `store=true` (a [`Chat`](@ref)'s `store`) is kept by OpenAI, and these verbs
+read and manage it on endpoints that declare `:stored_completions` (OpenAI): list the stored completions
+(by model, metadata, page and order), read one — its reply decoded as [`chatrequest!`](@ref) decodes it —
+and its input messages, set its metadata, and delete it ([Stored completions](@ref openai_stored_completions)).
+
+```@docs
+StoredCompletion
+StoredCompletionList
+StoredCompletionMessage
+StoredCompletionMessageList
+StoredCompletionSuccess
+StoredCompletionListSuccess
+StoredCompletionMessageListSuccess
+StoredCompletionDeleteSuccess
+StoredCompletionFailure
+StoredCompletionCallError
+list_chat_completions
+get_chat_completion
+update_chat_completion
+delete_chat_completion
+list_chat_completion_messages
+```
+
 ## Model Constants
 
 ```@example chat_api

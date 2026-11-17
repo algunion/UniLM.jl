@@ -8,8 +8,8 @@ Google makes the Gemini models and serves them through two native APIs, both of 
 `GEMINIServiceEndpoint` speaks: generateContent, which a `Chat` reaches through `chatrequest!` and
 `tool_loop!`, and the Interactions API, which `respond` and the `tool_loop` that takes an input or a
 `Respond` reach. Image generation and speech go through generateContent too.
-`GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint, which UniLM uses for
-embeddings. `GEMINIServiceEndpoint` speaks Gemini's Files API ([Files](@ref gemini_files)) and Batch API
+`GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint. Both embed text
+([Embeddings](@ref gemini_embeddings)). `GEMINIServiceEndpoint` speaks Gemini's Files API ([Files](@ref gemini_files)) and Batch API
 ([Batches](@ref gemini_batches)) too, and counts tokens ([Token counts](@ref gemini_token_counts)). Of
 Google's other APIs — the Live API, explicit context caching, managed agents such as Deep Research,
 music and video generation — none is available. The
@@ -25,7 +25,7 @@ Main.ProviderFacts.at_a_glance(:gemini)
 
 | I want to… | Use | You get |
 | :--- | :--- | :--- |
-| [choose between the APIs](@ref gemini_apis) | `chatrequest!`, `respond`, or `GEMINIOpenAIServiceEndpoint` for embeddings | the API that serves the job |
+| [choose between the APIs](@ref gemini_apis) | `chatrequest!`, `respond`, `embeddingrequest!` | the API that serves the job |
 | [make a first call](@ref gemini_first_call) | `chatrequest!(chat)` | an `LLMSuccess`: the reply, its usage and the model that served it |
 | [hold a conversation](@ref gemini_conversations) | `push!` a message, then `chatrequest!` again | each reply appended to the `Chat` and sent back as it arrived |
 | [stream a reply](@ref gemini_streaming) | `stream=true` and a `callback` | the text as it arrives, then the whole message |
@@ -38,10 +38,10 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [generate or edit an image](@ref gemini_images) | `generate_image`, `edit_image` with `service=GEMINIServiceEndpoint` | an `ImageSuccess` holding the image |
 | [read text aloud](@ref gemini_audio) | `speak(text; service=GEMINIServiceEndpoint)` | 24 kHz speech as WAV or PCM |
 | [store files for 48 hours](@ref gemini_files) | `upload_file(path; service=GEMINIServiceEndpoint)`, `poll_file`, `list_files`, `delete_file`, `register_files` | a `FileObject` for each file, its `uri` in `raw` |
-| [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIOpenAIServiceEndpoint` | one vector per input |
+| [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIServiceEndpoint` (or `GEMINIOpenAIServiceEndpoint`) | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
 | [know what a call cost](@ref gemini_cost) | `estimated_cost`, `cumulative_cost` | USD estimates from the reported usage |
-| [run many requests at half price](@ref gemini_batches) | `create_batch(["id" => chat, …])`, then `batch_results` | a batch of generateContent requests, and each one's result by its custom id |
+| [run many requests at half price](@ref gemini_batches) | `create_batch(["id" => chat, …])` or `create_batch(["id" => embeddings, …])`, then `batch_results` | a batch of generateContent or embedContent requests, and each one's result by its custom id |
 | [list the models my key can use](@ref gemini_models) | `list_models(service=GEMINIServiceEndpoint)`, `retrieve_model(id; service)` | each model's token limits and generation methods |
 | [count a request's input tokens](@ref gemini_token_counts) | `count_tokens(chat)` | the input tokens the request would bill, without running it |
 | [handle a failure](@ref gemini_failures) | the result's type | the status or the exception, never an empty success |
@@ -82,9 +82,10 @@ text ([Reasoning](@ref gemini_reasoning)).
 | server-side state, hosted tools, background requests | Interactions | `respond`, `tool_loop` | the default at the top of this page |
 | image generation and editing | generateContent | `generate_image`, `edit_image` | `gemini-nano-banana-2.1` |
 | speech | generateContent | `speak` | `gemini-3.8-flash-tts` |
-| embeddings | OpenAI-compatible | `embeddingrequest!` with `GEMINIOpenAIServiceEndpoint` | `gemini-embedding-2` |
+| embeddings | models (`embedContent`, `batchEmbedContents`), or OpenAI-compatible | `embeddingrequest!` with `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint` | `gemini-embedding-2` |
 | file storage | Files | `upload_file`, `poll_file`, `list_files`, `delete_file`, `register_files` | — |
 | many generateContent requests at half price | Batch (`batchGenerateContent`) | `create_batch`, `batch_results` on `Chat`s | the default at the top of this page |
+| many embeddings at half price | Batch (`asyncBatchEmbedContent`) | `create_batch`, `batch_results` on `Embeddings` | `gemini-embedding-2` |
 | input token counts | models (`countTokens`) | `count_tokens` on a `Chat` | the default at the top of this page |
 | the model listing | models | `list_models` | — |
 
@@ -346,6 +347,10 @@ names meets only the other rules.
 | an `aspect_ratio` or a `resolution` outside Gemini's lists, or a resolution the model does not render | `Gemini aspect_ratio must be one of`, `must be one of` | a value the [Image generation](@ref gemini_images) section lists |
 | `speak` with a blank `voice`, any `speed`, a `response_format` other than `"wav"` and `"pcm"`, or an empty input | `Gemini TTS takes a voice by name or id`, `has no speed control`, `response_format must be "wav"`, `speak needs text to read`: Gemini TTS has these formats, and no speed | a voice's name or id, the pace in `instructions`, `"wav"` or `"pcm"`, some text ([Audio](@ref gemini_audio)) |
 | an `EmbeddingInput` with an image or a sound clip, on `GEMINIOpenAIServiceEndpoint` | `takes text only`: the compatible wire carries text | the text alone ([Embeddings](@ref gemini_embeddings)) |
+| an `EmbeddingInput` with an image or a sound clip, on `GEMINIServiceEndpoint` | `UniLM sends text to Gemini's embedContent` | the text alone ([Embeddings](@ref gemini_embeddings)) |
+| an `Embeddings` request with a `user`, on `GEMINIServiceEndpoint` | `Gemini's embedContent takes no end-user id` | no `user` |
+| more than 100 inputs in one `Embeddings` request, on `GEMINIServiceEndpoint` | `Gemini's batchEmbedContents takes at most 100 inputs`: the API answers 101 with HTTP 400 | requests of up to 100 inputs, or a batch |
+| a `task` other than `:none` for `gemini-embedding-001` on `GEMINIOpenAIServiceEndpoint` | `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only`: the compatible wire has no task type | `GEMINIServiceEndpoint`, which sends the task as its task type |
 | `speak` through `GEMINIOpenAIServiceEndpoint` | `GEMINIOpenAIServiceEndpoint has no speech route` | the service `GEMINIServiceEndpoint` |
 
 ## [When something fails](@id gemini_failures)

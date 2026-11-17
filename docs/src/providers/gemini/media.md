@@ -126,13 +126,15 @@ the words of a clip, send it as an `AudioAttachment` and ask for them, as
 
 ## [Embeddings](@id gemini_embeddings)
 
-UniLM embeds text with Gemini through `GEMINIOpenAIServiceEndpoint`, on Google's OpenAI-compatible
-`/v1beta/openai/embeddings`; `GEMINIServiceEndpoint` has no embeddings, and Google's native
-embedding methods are not wrapped. The default model is `gemini-embedding-2`, which takes "Input
-token limit 8,192" and an output dimension that is "Flexible, supports: 128 - 3072, Recommended: 768,
-1536, 3072"
+UniLM embeds text with Gemini on both endpoints. `GEMINIServiceEndpoint` sends Google's own embedding
+methods ([embeddings reference](https://ai.google.dev/api/embeddings)): `models/{model}:embedContent` for
+one input, `models/{model}:batchEmbedContents` for a vector of them, up to 100 — the API answered 101 with
+HTTP 400 "at most 100 requests can be in one batch" on 17 November 2026, and UniLM refuses more before the
+request. `GEMINIOpenAIServiceEndpoint` sends Google's OpenAI-compatible `/v1beta/openai/embeddings`. The
+default model of both is `gemini-embedding-2`, which takes "Input token limit 8,192" and an output
+dimension that is "Flexible, supports: 128 - 3072, Recommended: 768, 1536, 3072"
 ([Gemini Embedding 2](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-2)); UniLM sends
-`dimensions` unchecked.
+`dimensions` unchecked (the native API answered 4000 with HTTP 400, naming the range it takes, 1 to 3072).
 
 ```@example gemini
 emb = Embeddings(["How long do refunds take?", "Is shipping free within the EU?"];
@@ -152,10 +154,57 @@ Gemini Embedding 2 also auto-normalizes truncated dimensions (e.g., 768, 1536)";
 `gemini-embedding-001` "you must manually normalize non-3072 dimensions"
 ([embeddings](https://ai.google.dev/gemini-api/docs/embeddings)).
 
-The endpoint takes text: an `EmbeddingInput` with an image or a sound clip is refused before the
-request ([Limits and refusals](@ref gemini_limits)). Its reply carries no `usage`, so `result.usage` is
-`nothing` and [`estimated_cost`](@ref) gives `0.0`, with one warning per model, though Google lists
-a "Text input price" for the model ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). The
+The same request on `GEMINIServiceEndpoint` goes to `batchEmbedContents`, one request per text, each
+naming its model:
+
+```julia
+emb = Embeddings(["How long do refunds take?", "Is shipping free within the EU?"];
+                 service=GEMINIServiceEndpoint, task=:search_query, dimensions=768)
+result = embeddingrequest!(emb)
+length.(embedding_vectors(result)), result.usage.prompt_tokens
+```
+
+On `GEMINIServiceEndpoint`, `gemini-embedding-2` reads its task from the text too: a `taskType` or a
+`title` sent beside it left its vector unchanged on 17 November 2026, so UniLM sends neither and writes the
+prompt. `gemini-embedding-001` takes the task as its `taskType` instead ("For `gemini-embedding-001`, you
+can specify the `task_type` in the `embedContent` method"), with no prompt in the text:
+
+| `task` | `taskType` |
+| :--- | :--- |
+| `:search_query` | `RETRIEVAL_QUERY` |
+| `:document` | `RETRIEVAL_DOCUMENT`, with an `EmbeddingInput`'s `title` as `title` |
+| `:question_answering` | `QUESTION_ANSWERING` |
+| `:fact_checking` | `FACT_VERIFICATION` |
+| `:code_retrieval` | `CODE_RETRIEVAL_QUERY` |
+| `:classification` | `CLASSIFICATION` |
+| `:clustering` | `CLUSTERING` |
+| `:sentence_similarity` | `SEMANTIC_SIMILARITY` |
+| `:none`, or none | no task type |
+
+A title beside any other task is refused before the request: the API answered one with HTTP 400 "the model
+does not support the title parameter unless the task_type is RETRIEVAL_DOCUMENT". The OpenAI-compatible
+endpoint has no task field, so there `gemini-embedding-001` takes `task = :none` or none. UniLM sends
+`taskType`, `title` and `outputDimensionality` at the request's top level, as the REST examples of Google's
+embeddings guide do, though the API's discovery document marks them deprecated in favour of
+`embedContentConfig`: on 17 November 2026 `gemini-embedding-001` ignored all three inside
+`embedContentConfig` (its vector came back with 3072 dimensions, unchanged by the task) and honoured them at
+the top, and `gemini-embedding-2` honoured `outputDimensionality` in both places.
+`embedContentConfig`'s other options are not sent: `autoTruncate` would "silently truncate the input
+content if it's longer than the maximum sequence length", and UniLM returns no vector of part of an input;
+`documentOcr` and `audioTrackExtraction` apply to documents and video, which UniLM does not embed. An
+`Embeddings`' `user` has no field there and is refused.
+
+The native reply carries `usageMetadata` for `gemini-embedding-2`, whose `promptTokenCount` is the result's
+`usage`, priced at the model's row as on the compatible endpoint; `gemini-embedding-001`'s replies carried
+none on 17 November 2026, so its result is estimated at `0.0`, with one warning per model. A reply without
+the vectors it owes is an [`EmbeddingCallError`](@ref), never zeros. Many requests at half price go in a
+batch ([Batches of embeddings](@ref gemini_embedding_batches)).
+
+Both endpoints take text: an `EmbeddingInput` with an image or a sound clip is refused before the
+request ([Limits and refusals](@ref gemini_limits)), though `gemini-embedding-2` embeds images, audio,
+video and PDFs, which UniLM does not send it. The compatible endpoint's reply carries no `usage`, so
+`result.usage` is `nothing` and [`estimated_cost`](@ref) gives `0.0`, with one warning per model, though
+Google lists a "Text input price" for the model ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). That
 reply leaves the index out of its first row, which UniLM reads as row 0. `gemini-embedding-001` is
 served until its shutdown on "May 14, 2028", with `gemini-embedding-2` the replacement Google names
 ([deprecations](https://ai.google.dev/gemini-api/docs/deprecations)), and "The embedding spaces

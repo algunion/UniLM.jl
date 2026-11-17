@@ -2201,7 +2201,8 @@ One item for [`Embeddings`](@ref), embedded as one vector: a text, an image, a s
 with an image or a sound clip — one of them per item on an [`OllamaEndpoint`](@ref), which refuses an
 item holding both before any request; a service that embeds text only refuses media. `title` names the
 document a text comes from; it is used by the `:document` task of models with task prompts
-(EmbeddingGemma, `gemini-embedding-2`) and refused with any other task or model. Images and audio go
+(EmbeddingGemma, `gemini-embedding-2`), and of `gemini-embedding-001` on [`GEMINIServiceEndpoint`](@ref) as
+its `title`, and refused with any other task or model. Images and audio go
 only to an `OllamaEndpoint` (Ollama's `/api/embed` takes them for models that see or hear, such as
 `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip as one item on Ollama
 0.40.6). Ollama passes an item's image and clip to the model in a random order, which is why an item
@@ -2375,11 +2376,12 @@ end
 
 Create an embedding request for one or more texts. `model=""` resolves to the service's
 default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
-`gemini-embedding-2` for `GEMINIOpenAIServiceEndpoint` —, and any other service needs an
-explicit `model` (`ArgumentError` otherwise). DeepSeek and Azure do not serve embeddings
+`gemini-embedding-2` for `GEMINIServiceEndpoint` and `GEMINIOpenAIServiceEndpoint` —, and any other
+service needs an explicit `model` (`ArgumentError` otherwise). DeepSeek and Azure do not serve embeddings
 through UniLM: [`embeddingrequest!`](@ref) refuses them with an `ArgumentError` before any
 I/O, whatever the model, as it refuses every endpoint whose declared capabilities lack
-`:embeddings`. Embeddings work with OpenAI, `GEMINIOpenAIServiceEndpoint`, Ollama,
+`:embeddings`. Embeddings work with OpenAI, `GEMINIServiceEndpoint` (Gemini's own `embedContent`, and
+`batchEmbedContents` for up to 100 inputs), `GEMINIOpenAIServiceEndpoint`, Ollama,
 `GenericOpenAIEndpoint` (Mistral included) and custom endpoints that declare `:embeddings` or no
 capabilities.
 
@@ -2416,7 +2418,9 @@ side, with each item's `title`), `:classification`, `:clustering`, `:sentence_si
 `task = :none` to send the text as is. Without a task an EmbeddingGemma request is an `ArgumentError`;
 `gemini-embedding-2` takes none, its text then sent as is (Google's
 [embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-2) recommends
-the prompts for text); any other model takes `task = :none` or none. EmbeddingGemma's `dimensions` are
+the prompts for text); any other model takes `task = :none` or none. On `GEMINIServiceEndpoint`,
+`gemini-embedding-001` takes the task as its `taskType` instead (`:search_query` → `RETRIEVAL_QUERY`,
+`:document` → `RETRIEVAL_DOCUMENT` with the item's `title`, …), its text sent as is. EmbeddingGemma's `dimensions` are
 768 (default), 512, 256 or 128. Through an
 [`OllamaEndpoint`](@ref), an EmbeddingGemma 2 request carries the model's trained 8,192-token window
 (`num_ctx` and `num_batch`) unless the endpoint sets either (EmbeddingGemma v1 reads 2,048 tokens); with

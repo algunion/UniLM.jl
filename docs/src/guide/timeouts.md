@@ -264,8 +264,8 @@ Automatic retries apply to the inference verbs — `chatrequest!`,
 only before the first callback fires) —, to `moderate`, which is free and changes nothing when
 it is sent again, to [`retrieve_model`](@ref) and [`count_tokens`](@ref), and to
 [`delete_model`](@ref) on an Ollama server. Every other verb makes a single bounded attempt and
-`max_attempts` has no effect on it: the platform and lifecycle verbs (batch, container, conversation, file,
-fine-tuning, upload, vector-store, realtime, and the Responses lifecycle operations), including
+`max_attempts` has no effect on it: the platform and lifecycle verbs (batch, container, conversation, stored
+chat completion, file, fine-tuning, upload, vector-store, realtime, and the Responses lifecycle operations), including
 `upload_file` — a create is never retried, because a POST that timed out or drew a gateway 5xx
 may already have stored the file —, `delete_model` on OpenAI, which deletes a fine-tuned model,
 and speech and translation over a Realtime session (`speak`,

@@ -116,6 +116,7 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
 ├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreFileListSuccess · VectorStoreContentSuccess · VectorStoreSearchSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
 ├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
+├─ Stored completions StoredCompletionSuccess · StoredCompletionListSuccess · StoredCompletionMessageListSuccess · StoredCompletionDeleteSuccess · StoredCompletionFailure · StoredCompletionCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError

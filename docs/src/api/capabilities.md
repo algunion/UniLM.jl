@@ -56,7 +56,7 @@ has_capability
 | `:tools` | Tool / function calling |
 | `:streaming` | Server-sent-event token streaming (`stream=true`) |
 | `:json_output` | JSON / structured output (`response_format`) |
-| `:embeddings` | Embeddings API |
+| `:embeddings` | Embeddings API ([`embeddingrequest!`](@ref)), and batches of embeddings beside `:batch` (OpenAI and native Gemini) |
 | `:images` | Image generation |
 | `:image_edits` | Image editing |
 | `:fim` | FIM (fill-in-the-middle) completion |
@@ -80,6 +80,7 @@ has_capability
 | `:webhooks` | Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): OpenAI |
 | `:safety` | Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): OpenAI |
 | `:content_provenance` | Content provenance checks ([`check_content_provenance`](@ref)): OpenAI |
+| `:stored_completions` | Stored Chat Completions ([`list_chat_completions`](@ref) and the verbs beside it): OpenAI |
 
 ## Capabilities by Provider
 

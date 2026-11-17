@@ -18,8 +18,9 @@ call, its options, limits and failures, on its own pages.
 ## [Language models](@id home_llm)
 
 A [`Chat`](@ref) holds a conversation and [`chatrequest!`](@ref) sends it; [`respond`](@ref) sends one request
-of a provider's agentic API; embeddings, images, speech, transcription and fill-in-the-middle completion have
-verbs of their own, on the providers that serve them. Choose your provider below: its name opens its entry.
+of a provider's agentic API; embeddings, images, speech, transcription, custom voices and fill-in-the-middle
+completion have verbs of their own, on the providers that serve them. Choose your provider below: its name opens
+its entry.
 [Language models](@ref llm_start) maps the concepts every provider shares.
 
 ```@eval

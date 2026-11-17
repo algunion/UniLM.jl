@@ -265,14 +265,16 @@ only before the first callback fires) —, to `moderate`, which is free and chan
 it is sent again, to [`retrieve_model`](@ref) and [`count_tokens`](@ref), and to
 [`delete_model`](@ref) on an Ollama server. Every other verb makes a single bounded attempt and
 `max_attempts` has no effect on it: the platform and lifecycle verbs (batch, container, conversation, stored
-chat completion, file, fine-tuning, upload, vector-store, voice, realtime, and the Responses lifecycle operations), including
+chat completion, file, fine-tuning, upload, vector-store, skill, voice, context cache, File Search store, realtime,
+and the Responses lifecycle operations), including
 `upload_file` — a create is never retried, because a POST that timed out or drew a gateway 5xx
 may already have stored the file —, `delete_model` on OpenAI, which deletes a fine-tuned model,
 and speech and translation over a Realtime session (`speak`,
 `translate`), since a retry after the session's `response.create` or its audio may bill a second
 response, and a session's audio cannot be resumed. The polling
-helpers [`poll_batch`](@ref), [`poll_file_batch`](@ref) and [`poll_file`](@ref) instead poll through
-retryable statuses and per-attempt timeouts until their own wall-clock `timeout`.
+helpers [`poll_batch`](@ref), [`poll_file_batch`](@ref), [`poll_file`](@ref) and
+[`poll_file_search_operation`](@ref) instead poll through retryable statuses and per-attempt timeouts until
+their own wall-clock `timeout`.
 
 `max_attempts` (default 3) caps the total attempts. All attempts of a request share
 its single `total_deadline`, timeouts and retries alike:

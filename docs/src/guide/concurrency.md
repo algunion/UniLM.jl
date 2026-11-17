@@ -160,11 +160,15 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   [`prefix_complete`](@ref), [`ask`](@ref), [`ask_each`](@ref), [`list_models`](@ref),
   [`retrieve_model`](@ref), [`delete_model`](@ref), [`count_tokens`](@ref),
   [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref), Ollama's model calls,
-  [`poll_batch`](@ref), [`poll_file_batch`](@ref), [`poll_file`](@ref), and every platform and
+  [`poll_batch`](@ref), [`poll_file_batch`](@ref), [`poll_file`](@ref),
+  [`poll_file_search_operation`](@ref), and every platform and
   lifecycle verb: files ([`register_files`](@ref) included), uploads, vector stores,
-  conversations, stored chat completions, containers, batches ([`batch_results`](@ref), [`delete_batch`](@ref) and
+  conversations, stored chat completions, containers, skills ([`create_skill`](@ref) and the verbs beside it),
+  batches ([`batch_results`](@ref), [`delete_batch`](@ref) and
   [`update_batch`](@ref) included), fine-tuning, webhook endpoints, safety cases and alerts,
   content provenance checks, custom voices and voice consents ([`create_voice`](@ref) and the verbs beside it),
+  Gemini context caches ([`create_cache`](@ref) and the verbs beside it), File Search stores
+  ([`create_file_search_store`](@ref) and the verbs beside it),
   [`moderate`](@ref), [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),
   [`mint_realtime_secret`](@ref) and the Responses lifecycle operations
   ([`get_response`](@ref) and the others). The exception is [`realtime_connect`](@ref):

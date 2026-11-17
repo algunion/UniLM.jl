@@ -119,15 +119,19 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Stored completions StoredCompletionSuccess · StoredCompletionListSuccess · StoredCompletionMessageListSuccess · StoredCompletionDeleteSuccess · StoredCompletionFailure · StoredCompletionCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
+├─ Voices             VoiceSuccess · VoiceListSuccess · VoiceConsentSuccess · VoiceConsentListSuccess · VoiceDeleteSuccess · VoiceFailure · VoiceCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · FineTuningFailure · FineTuningCallError
 ├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
 ├─ Safety             SafetyCaseSuccess · SafetyAlertSuccess · ProvenanceCheckSuccess · SafetyFailure · SafetyCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerFileListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Skills             SkillSuccess · SkillListSuccess · SkillVersionSuccess · SkillVersionListSuccess · SkillDeleteSuccess · SkillFailure · SkillCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ├─ Model listings     ModelListSuccess · ModelSuccess · ModelDeleteSuccess · ModelListFailure · ModelListCallError
 ├─ Token counts       TokenCountSuccess · TokenCountFailure · TokenCountCallError
+├─ Context caches     CacheSuccess · CacheListSuccess · CacheDeleteSuccess · CacheFailure · CacheCallError
+├─ File Search        FileSearchStoreSuccess · FileSearchStoreListSuccess · FileSearchDocumentSuccess · FileSearchDocumentListSuccess · FileSearchOperationSuccess · FileSearchDeleteSuccess · FileSearchFailure · FileSearchCallError
 ├─ Ollama models      OllamaSuccess · OllamaFailure · OllamaCallError
 └─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```

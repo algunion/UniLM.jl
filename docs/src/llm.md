@@ -1189,7 +1189,7 @@ SvgOptions(; model, effort=nothing)                         # SvgOptions() or Sv
     quality::Union{String,Nothing} = nothing                # OpenAI
     input_fidelity::Union{String,Nothing} = nothing         # OpenAI: "high","low"
     background::Union{String,Nothing} = nothing             # OpenAI
-    output_format::Union{String,Nothing} = nothing          # OpenAI
+    output_format::Union{String,Nothing} = nothing          # OpenAI; Gemini: "jpeg"
     safety_identifier::Union{String,Nothing} = nothing      # both, as on ImageGeneration (an OpenAI form field)
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini; unset, the edit keeps the input's ratio
     resolution::Union{String,Nothing} = nothing             # Gemini
@@ -1464,8 +1464,11 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   One. Failures of those APIs report all-zero usage.
 - **Both functions throw `ArgumentError` for result types outside the token-billed
   APIs** — audio, batch, container, conversation, file, fine-tuning, moderation, skill,
-  upload, vector-store, voice, realtime, webhook endpoint, safety and provenance. Those calls carry no token usage at all,
-  and a `0.0` would be indistinguishable from a genuinely free call. The requests of
+  upload, vector-store, voice, realtime, webhook endpoint, safety, provenance, context cache, File Search,
+  stored completion, model listing, token count and Ollama model. Those calls carry no token usage of their
+  own, and a `0.0` would be indistinguishable from a genuinely free call. A `StoredCompletionSuccess` throws
+  too, though its `StoredCompletion` holds a `usage`: that is the stored completion's, billed when
+  `chatrequest!` sent it and priced by `estimated_cost` on that call's `LLMSuccess`. The requests of
   a batch are Chat results: `batch_results` returns each as an `LLMSuccess` whose usage
   names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates
   (half the standard ones on every model a pricing page lists, but for a cache hit on the

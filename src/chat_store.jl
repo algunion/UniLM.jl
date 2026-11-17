@@ -212,9 +212,9 @@ end
 """
     get_chat_completion(id; service=OPENAIServiceEndpoint)
 
-The stored Chat Completion `id` (an [`LLMSuccess`](@ref)'s `raw` id, `chatcmpl-…`): `StoredCompletionSuccess` (a
-[`StoredCompletion`](@ref)), `StoredCompletionFailure` (HTTP 404 for one not stored, deleted, or not yet
-listed) or `StoredCompletionCallError`.
+The stored Chat Completion `id` (a stored completion's `id`, `chatcmpl-…`, as [`list_chat_completions`](@ref)
+lists it): `StoredCompletionSuccess` (a [`StoredCompletion`](@ref)), `StoredCompletionFailure` (HTTP 404 for one
+not stored, deleted, or not yet listed) or `StoredCompletionCallError`.
 
 $_STORE_CONFIG_DOC
 """

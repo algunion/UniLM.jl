@@ -56,6 +56,9 @@
   "UniLM.BatchCallError": [
     "/api/batch/"
   ],
+  "UniLM.BatchDeleteSuccess": [
+    "/api/batch/"
+  ],
   "UniLM.BatchFailure": [
     "/api/batch/"
   ],
@@ -66,6 +69,9 @@
     "/api/batch/"
   ],
   "UniLM.BatchObject": [
+    "/api/batch/"
+  ],
+  "UniLM.BatchResultsSuccess": [
     "/api/batch/"
   ],
   "UniLM.BatchSuccess": [
@@ -107,7 +113,16 @@
   "UniLM.ContainerDeleteSuccess": [
     "/api/containers/"
   ],
+  "UniLM.ContainerDomainSecret": [
+    "/api/containers/"
+  ],
   "UniLM.ContainerFailure": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerFileList": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerFileListSuccess": [
     "/api/containers/"
   ],
   "UniLM.ContainerFileObject": [
@@ -117,6 +132,15 @@
     "/api/containers/"
   ],
   "UniLM.ContainerListSuccess": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerNetworkAllowlist": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerNetworkDisabled": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerNetworkPolicy": [
     "/api/containers/"
   ],
   "UniLM.ContainerObject": [
@@ -231,6 +255,9 @@
     "/api/files/"
   ],
   "UniLM.FineTuningCallError": [
+    "/api/fine_tuning/"
+  ],
+  "UniLM.FineTuningDeleteSuccess": [
     "/api/fine_tuning/"
   ],
   "UniLM.FineTuningFailure": [
@@ -401,6 +428,9 @@
   "UniLM.MistralEndpoint": [
     "/api/endpoints/"
   ],
+  "UniLM.ModelDeleteSuccess": [
+    "/api/models/"
+  ],
   "UniLM.ModelListCallError": [
     "/api/models/"
   ],
@@ -408,6 +438,9 @@
     "/api/models/"
   ],
   "UniLM.ModelListSuccess": [
+    "/api/models/"
+  ],
+  "UniLM.ModelSuccess": [
     "/api/models/"
   ],
   "UniLM.ModerationCallError": [
@@ -479,6 +512,15 @@
   "UniLM.PromptCacheOptions": [
     "/api/responses/"
   ],
+  "UniLM.ProvenanceCheck": [
+    "/api/safety/"
+  ],
+  "UniLM.ProvenanceCheckSuccess": [
+    "/api/safety/"
+  ],
+  "UniLM.ProvenanceResult": [
+    "/api/safety/"
+  ],
   "UniLM.ProviderContent": [
     "/api/chat/"
   ],
@@ -545,6 +587,24 @@
   "UniLM.RoleUser": [
     "/api/chat/"
   ],
+  "UniLM.SafetyAlert": [
+    "/api/safety/"
+  ],
+  "UniLM.SafetyAlertSuccess": [
+    "/api/safety/"
+  ],
+  "UniLM.SafetyCallError": [
+    "/api/safety/"
+  ],
+  "UniLM.SafetyCase": [
+    "/api/safety/"
+  ],
+  "UniLM.SafetyCaseSuccess": [
+    "/api/safety/"
+  ],
+  "UniLM.SafetyFailure": [
+    "/api/safety/"
+  ],
   "UniLM.ScoreAnswer": [
     "/api/system_one/"
   ],
@@ -559,6 +619,9 @@
   ],
   "UniLM.ShellTool": [
     "/api/responses/"
+  ],
+  "UniLM.SkillReference": [
+    "/api/containers/"
   ],
   "UniLM.SpeechRequest": [
     "/api/audio/"
@@ -613,6 +676,15 @@
   ],
   "UniLM.TextFormatSpec": [
     "/api/responses/"
+  ],
+  "UniLM.TokenCountCallError": [
+    "/api/token_counting/"
+  ],
+  "UniLM.TokenCountFailure": [
+    "/api/token_counting/"
+  ],
+  "UniLM.TokenCountSuccess": [
+    "/api/token_counting/"
   ],
   "UniLM.TokenUsage": [
     "/api/accounting/"
@@ -680,6 +752,9 @@
   "UniLM.VectorStoreCallError": [
     "/api/vector_stores/"
   ],
+  "UniLM.VectorStoreContentSuccess": [
+    "/api/vector_stores/"
+  ],
   "UniLM.VectorStoreDeleteSuccess": [
     "/api/vector_stores/"
   ],
@@ -687,6 +762,18 @@
     "/api/vector_stores/"
   ],
   "UniLM.VectorStoreFileBatch": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileContent": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileEntry": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileList": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreFileListSuccess": [
     "/api/vector_stores/"
   ],
   "UniLM.VectorStoreFileObject": [
@@ -704,16 +791,58 @@
   "UniLM.VectorStoreObject": [
     "/api/vector_stores/"
   ],
+  "UniLM.VectorStoreSearchPage": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreSearchResult": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.VectorStoreSearchSuccess": [
+    "/api/vector_stores/"
+  ],
   "UniLM.VectorStoreSuccess": [
     "/api/vector_stores/"
   ],
   "UniLM.WEBHOOK_EVENTS": [
     "/api/webhooks/"
   ],
+  "UniLM.WandbIntegration": [
+    "/api/fine_tuning/"
+  ],
   "UniLM.WebSearchTool": [
     "/api/responses/"
   ],
+  "UniLM.WebhookEndpoint": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointCallError": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointDeleteSuccess": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointFailure": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointList": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointListSuccess": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointSuccess": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEndpointTest": [
+    "/api/webhooks/"
+  ],
   "UniLM.WebhookEvent": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookEventTypesSuccess": [
+    "/api/webhooks/"
+  ],
+  "UniLM.WebhookTestSuccess": [
     "/api/webhooks/"
   ],
   "UniLM.add_azure_deploy_name!": [
@@ -749,6 +878,9 @@
   "UniLM.auth_header": [
     "/api/endpoints/"
   ],
+  "UniLM.batch_results": [
+    "/api/batch/"
+  ],
   "UniLM.bounding_box": [
     "/api/system_one/"
   ],
@@ -761,6 +893,9 @@
   "UniLM.cancel_batch": [
     "/api/batch/"
   ],
+  "UniLM.cancel_file_batch": [
+    "/api/vector_stores/"
+  ],
   "UniLM.cancel_fine_tuning_job": [
     "/api/fine_tuning/"
   ],
@@ -772,6 +907,9 @@
   ],
   "UniLM.chatrequest!": [
     "/api/chat/"
+  ],
+  "UniLM.check_content_provenance": [
+    "/api/safety/"
   ],
   "UniLM.choice": [
     "/api/system_one/"
@@ -794,11 +932,17 @@
   "UniLM.configuration_update": [
     "/api/responses/"
   ],
+  "UniLM.container_file_content": [
+    "/api/containers/"
+  ],
   "UniLM.conversation_id": [
     "/api/conversations/"
   ],
   "UniLM.count_input_tokens": [
     "/api/responses/"
+  ],
+  "UniLM.count_tokens": [
+    "/api/token_counting/"
   ],
   "UniLM.create_batch": [
     "/api/batch/"
@@ -812,6 +956,9 @@
   "UniLM.create_file_batch": [
     "/api/vector_stores/"
   ],
+  "UniLM.create_fine_tuning_checkpoint_permission": [
+    "/api/fine_tuning/"
+  ],
   "UniLM.create_fine_tuning_job": [
     "/api/fine_tuning/"
   ],
@@ -820,6 +967,9 @@
   ],
   "UniLM.create_vector_store": [
     "/api/vector_stores/"
+  ],
+  "UniLM.create_webhook_endpoint": [
+    "/api/webhooks/"
   ],
   "UniLM.cumulative_cost": [
     "/api/accounting/"
@@ -845,7 +995,13 @@
   "UniLM.default_model": [
     "/api/endpoints/"
   ],
+  "UniLM.delete_batch": [
+    "/api/batch/"
+  ],
   "UniLM.delete_container": [
+    "/api/containers/"
+  ],
+  "UniLM.delete_container_file": [
     "/api/containers/"
   ],
   "UniLM.delete_conversation": [
@@ -857,6 +1013,9 @@
   "UniLM.delete_file": [
     "/api/files/"
   ],
+  "UniLM.delete_fine_tuning_checkpoint_permission": [
+    "/api/fine_tuning/"
+  ],
   "UniLM.delete_model": [
     "/api/ollama/"
   ],
@@ -865,6 +1024,12 @@
   ],
   "UniLM.delete_vector_store": [
     "/api/vector_stores/"
+  ],
+  "UniLM.delete_vector_store_file": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.delete_webhook_endpoint": [
+    "/api/webhooks/"
   ],
   "UniLM.edit_image": [
     "/api/images/"
@@ -989,14 +1154,23 @@
   "UniLM.list_batches": [
     "/api/batch/"
   ],
+  "UniLM.list_container_files": [
+    "/api/containers/"
+  ],
   "UniLM.list_containers": [
     "/api/containers/"
   ],
   "UniLM.list_conversation_items": [
     "/api/conversations/"
   ],
+  "UniLM.list_file_batch_files": [
+    "/api/vector_stores/"
+  ],
   "UniLM.list_files": [
     "/api/files/"
+  ],
+  "UniLM.list_fine_tuning_checkpoint_permissions": [
+    "/api/fine_tuning/"
   ],
   "UniLM.list_fine_tuning_checkpoints": [
     "/api/fine_tuning/"
@@ -1022,8 +1196,17 @@
   "UniLM.list_tools!": [
     "/api/mcp/"
   ],
+  "UniLM.list_vector_store_files": [
+    "/api/vector_stores/"
+  ],
   "UniLM.list_vector_stores": [
     "/api/vector_stores/"
+  ],
+  "UniLM.list_webhook_endpoints": [
+    "/api/webhooks/"
+  ],
+  "UniLM.list_webhook_event_types": [
+    "/api/webhooks/"
   ],
   "UniLM.load_model": [
     "/api/ollama/"
@@ -1082,11 +1265,17 @@
   "UniLM.parse_webhook": [
     "/api/webhooks/"
   ],
+  "UniLM.pause_fine_tuning_job": [
+    "/api/fine_tuning/"
+  ],
   "UniLM.ping": [
     "/api/mcp/"
   ],
   "UniLM.poll_batch": [
     "/api/batch/"
+  ],
+  "UniLM.poll_file": [
+    "/api/files/"
   ],
   "UniLM.poll_file_batch": [
     "/api/vector_stores/"
@@ -1127,6 +1316,9 @@
   "UniLM.refusals": [
     "/api/responses/"
   ],
+  "UniLM.register_files": [
+    "/api/files/"
+  ],
   "UniLM.register_prompt!": [
     "/api/mcp/"
   ],
@@ -1151,10 +1343,16 @@
   "UniLM.response_status": [
     "/api/responses/"
   ],
+  "UniLM.resume_fine_tuning_job": [
+    "/api/fine_tuning/"
+  ],
   "UniLM.retrieve_batch": [
     "/api/batch/"
   ],
   "UniLM.retrieve_container": [
+    "/api/containers/"
+  ],
+  "UniLM.retrieve_container_file": [
     "/api/containers/"
   ],
   "UniLM.retrieve_conversation": [
@@ -1172,8 +1370,26 @@
   "UniLM.retrieve_fine_tuning_job": [
     "/api/fine_tuning/"
   ],
+  "UniLM.retrieve_model": [
+    "/api/models/"
+  ],
+  "UniLM.retrieve_safety_alert": [
+    "/api/safety/"
+  ],
+  "UniLM.retrieve_safety_case": [
+    "/api/safety/"
+  ],
   "UniLM.retrieve_vector_store": [
     "/api/vector_stores/"
+  ],
+  "UniLM.retrieve_vector_store_file": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.retrieve_webhook_endpoint": [
+    "/api/webhooks/"
+  ],
+  "UniLM.rotate_webhook_endpoint_secret": [
+    "/api/webhooks/"
   ],
   "UniLM.running_models": [
     "/api/ollama/"
@@ -1189,6 +1405,9 @@
   ],
   "UniLM.score": [
     "/api/system_one/"
+  ],
+  "UniLM.search_vector_store": [
+    "/api/vector_stores/"
   ],
   "UniLM.serve": [
     "/api/mcp/"
@@ -1207,6 +1426,9 @@
   ],
   "UniLM.system_one_protocol": [
     "/api/system_one/"
+  ],
+  "UniLM.test_webhook_endpoint": [
+    "/api/webhooks/"
   ],
   "UniLM.text": [
     "/api/results/"
@@ -1262,8 +1484,20 @@
   "UniLM.update!": [
     "/api/chat/"
   ],
+  "UniLM.update_batch": [
+    "/api/batch/"
+  ],
   "UniLM.update_conversation": [
     "/api/conversations/"
+  ],
+  "UniLM.update_vector_store": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.update_vector_store_file": [
+    "/api/vector_stores/"
+  ],
+  "UniLM.update_webhook_endpoint": [
+    "/api/webhooks/"
   ],
   "UniLM.upload_file": [
     "/api/files/"
@@ -1273,6 +1507,9 @@
   ],
   "UniLM.usage_details": [
     "/api/responses/"
+  ],
+  "UniLM.vector_store_file_content": [
+    "/api/vector_stores/"
   ],
   "UniLM.vector_store_id": [
     "/api/vector_stores/"
@@ -1325,6 +1562,9 @@
   "agentic_tools": [
     "/guide/agentic/"
   ],
+  "anthropic_batches": [
+    "/providers/anthropic/caching/"
+  ],
   "anthropic_caching": [
     "/providers/anthropic/caching/"
   ],
@@ -1341,6 +1581,9 @@
     "/providers/anthropic/caching/"
   ],
   "anthropic_failures": [
+    "/providers/anthropic/caching/"
+  ],
+  "anthropic_files": [
     "/providers/anthropic/caching/"
   ],
   "anthropic_first_call": [
@@ -1378,6 +1621,9 @@
   ],
   "anthropic_structured_output": [
     "/providers/anthropic/requests/"
+  ],
+  "anthropic_token_counts": [
+    "/providers/anthropic/caching/"
   ],
   "anthropic_tools": [
     "/providers/anthropic/requests/"
@@ -1781,6 +2027,9 @@
   "gemini_background": [
     "/providers/gemini/interactions/"
   ],
+  "gemini_batches": [
+    "/providers/gemini/generate_content/"
+  ],
   "gemini_caching": [
     "/providers/gemini/generate_content/"
   ],
@@ -1833,6 +2082,9 @@
     "/providers/gemini/media/"
   ],
   "gemini_failures": [
+    "/providers/gemini/"
+  ],
+  "gemini_files": [
     "/providers/gemini/"
   ],
   "gemini_finish_reasons": [
@@ -1911,6 +2163,9 @@
     "/providers/gemini/generate_content/"
   ],
   "gemini_structured_output": [
+    "/providers/gemini/generate_content/"
+  ],
+  "gemini_token_counts": [
     "/providers/gemini/generate_content/"
   ],
   "gemini_tools": [
@@ -2291,6 +2546,9 @@
   "models_api": [
     "/api/models/"
   ],
+  "models_lookup": [
+    "/api/models/"
+  ],
   "moderations_api": [
     "/api/moderations/"
   ],
@@ -2660,8 +2918,14 @@
   "openai_retrieval_cleanup": [
     "/providers/openai/retrieval/"
   ],
+  "openai_retrieval_search": [
+    "/providers/openai/retrieval/"
+  ],
   "openai_retrieval_store": [
     "/providers/openai/retrieval/"
+  ],
+  "openai_safety": [
+    "/providers/openai/platform/"
   ],
   "openai_setup": [
     "/providers/openai/"
@@ -2710,6 +2974,9 @@
   ],
   "retrieval_guide": [
     "/providers/openai/retrieval/"
+  ],
+  "safety_api": [
+    "/api/safety/"
   ],
   "semantic_algorithms_providers": [
     "/guide/semantic_algorithms/"
@@ -2932,6 +3199,9 @@
   ],
   "timeouts_see_also": [
     "/guide/timeouts/"
+  ],
+  "token_counting_api": [
+    "/api/token_counting/"
   ],
   "tool_calling_calls": [
     "/guide/tool_calling/"

@@ -753,13 +753,7 @@ end
 
 # ── Batches of embeddings ── OpenAI's /v1/embeddings batches and Gemini's asyncBatchEmbedContent; the replies are
 # the shapes the APIs returned on 2026-11-17.
-# A batch endpoint speaking wire W that embeds too, its paths under the scripted server.
-struct EmbedBatchProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._batch_wire(::Type{EmbedBatchProbe{W}}) where {W} = W()
-UniLM._batch_root(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
-UniLM._resolve_base_url(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
-UniLM.auth_header(::Type{<:EmbedBatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{<:EmbedBatchProbe}) = Set([:batch, :embeddings, :files])
+# A batch endpoint speaking wire W that embeds too: EmbedBatchProbe (platform_seam_fixtures.jl).
 const _OEB = EmbedBatchProbe{UniLM._OpenAIBatches}
 const _GEB = EmbedBatchProbe{UniLM._GeminiBatches}
 _oa_small(x; kw...) = Embeddings(x; service=_OEB, model="text-embedding-3-small", kw...)

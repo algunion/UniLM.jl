@@ -1,11 +1,7 @@
 # Stored Chat Completions (src/chat_store.jl): list, get, update, delete and the input messages of the Chat
 # Completions OpenAI stored. The replies are the shapes the API returned on 2026-11-17.
 
-# The stored-completions wire at the scripted endpoint, and at a dead port.
-struct StoreProbe <: UniLM.ServiceEndpoint end
-UniLM._resolve_base_url(::Type{StoreProbe}) = _url_probe_base[]
-UniLM.auth_header(::Type{StoreProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{StoreProbe}) = Set([:stored_completions])
+# The stored-completions wire at a dead port (at the scripted endpoint: StoreProbe, platform_seam_fixtures.jl).
 struct StoreSeamProbe <: UniLM.ServiceEndpoint end
 UniLM._resolve_base_url(::Type{StoreSeamProbe}) = "http://127.0.0.1:1"
 UniLM.auth_header(::Type{StoreSeamProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]

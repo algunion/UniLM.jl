@@ -20,7 +20,8 @@ UniLM.auth_header(::Type{_CEGeminiSpeech}) = ["x-goog-api-key" => "t", "Content-
 
 const _CE_WAV = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")   # 16-bit PCM
 
-# Every verb that sends a request from the platform, lifecycle, model lookup, token counting and audio files.
+# Every verb that sends a request from the platform, lifecycle, model lookup, token counting, audio, skills,
+# Gemini caching, File Search, stored completion, embeddings and voices files, and the image verbs (streamed here).
 const _CE_VERBS = (
     upload_file, list_files, retrieve_file, delete_file, file_content, poll_file, register_files,
     create_upload, add_upload_part, complete_upload, cancel_upload,
@@ -42,7 +43,18 @@ const _CE_VERBS = (
     retrieve_safety_case, retrieve_safety_alert, check_content_provenance,
     retrieve_model, delete_model, count_tokens,
     moderate, speak, transcribe, translate, mint_realtime_secret,
-    get_response, delete_response, list_input_items, cancel_response, compact_response, count_input_tokens)
+    get_response, delete_response, list_input_items, cancel_response, compact_response, count_input_tokens,
+    create_skill, list_skills, retrieve_skill, update_skill, delete_skill, skill_content, create_skill_version,
+    list_skill_versions, retrieve_skill_version, delete_skill_version,
+    generate_image, edit_image,
+    create_cache, retrieve_cache, list_caches, update_cache, delete_cache,
+    create_file_search_store, retrieve_file_search_store, list_file_search_stores, delete_file_search_store,
+    upload_to_file_search_store, import_to_file_search_store, retrieve_file_search_operation,
+    poll_file_search_operation, list_file_search_documents, retrieve_file_search_document, delete_file_search_document,
+    list_chat_completions, get_chat_completion, update_chat_completion, delete_chat_completion,
+    list_chat_completion_messages, embeddingrequest!,
+    create_voice, list_voices, get_voice, delete_voice, create_voice_consent, list_voice_consents, get_voice_consent,
+    update_voice_consent, delete_voice_consent)
 
 # Each method of those verbs, and each wire a verb speaks, as (label, the family's call error,
 # kw -> the call with keywords `kw`). Every call is valid, so only the token decides whether it is
@@ -57,6 +69,14 @@ function _ce_rows(file::String)
                                      "GEMINI_API_KEY" => "g-local", "OPENAI_API_KEY" => "sk-local")
     hi = [Message(Val(:user), "hi")]
     af, gf = FilesProbe{UniLM._AnthropicFiles}, GeminiFilesProbe
+    osk, ask = SkillsProbe{UniLM._OpenAISkills}, SkillsProbe{UniLM._AnthropicSkills}
+    skill = mkpath(joinpath(mktempdir(), "ce-skill"))
+    write(joinpath(skill, "SKILL.md"), "---\nname: ce-skill\ndescription: Says hi\n---\nSay hi.\n")
+    fs, store, doc = FileSearchProbe, "fileSearchStores/s1", "fileSearchStores/s1/documents/d1"
+    oeb, geb = EmbedBatchProbe{UniLM._OpenAIBatches}, EmbedBatchProbe{UniLM._GeminiBatches}
+    oe() = ["a" => Embeddings("hi"; service=oeb, model="text-embedding-3-small")]
+    ge() = ["a" => Embeddings("hi"; service=geb, model="gemini-embedding-2")]
+    oav, gv = VoicesProbe{UniLM._OpenAIVoices}, VoicesProbe{UniLM._GeminiVoices}
     Tuple{String,Type,Function}[
         ("upload_file(::FileUpload)", FileCallError,
          kw -> upload_file(FileUpload(file=file, purpose="batch", service=s); kw...)),
@@ -229,6 +249,89 @@ function _ce_rows(file::String)
         ("compact_response", ResponseCallError, kw -> compact_response(; model="m", input="hi", service=ep(), kw...)),
         ("count_input_tokens", ResponseCallError,
          kw -> count_input_tokens(; model="m", input="hi", service=ep(), kw...)),
+        ("create_skill, OpenAI", SkillCallError, kw -> create_skill(skill; service=osk, kw...)),
+        ("create_skill, Anthropic", SkillCallError, kw -> create_skill(skill; service=ask, kw...)),
+        ("list_skills, OpenAI", SkillCallError, kw -> list_skills(; service=osk, kw...)),
+        ("list_skills, Anthropic", SkillCallError, kw -> list_skills(; service=ask, kw...)),
+        ("retrieve_skill, OpenAI", SkillCallError, kw -> retrieve_skill("skill_1"; service=osk, kw...)),
+        ("retrieve_skill, Anthropic", SkillCallError, kw -> retrieve_skill("skill_1"; service=ask, kw...)),
+        # Anthropic has no default version: update_skill refuses it before any request.
+        ("update_skill, OpenAI", SkillCallError, kw -> update_skill("skill_1"; default_version=2, service=osk, kw...)),
+        ("delete_skill, OpenAI", SkillCallError, kw -> delete_skill("skill_1"; service=osk, kw...)),
+        ("delete_skill, Anthropic", SkillCallError, kw -> delete_skill("skill_1"; service=ask, kw...)),
+        ("skill_content, OpenAI", SkillCallError, kw -> skill_content("skill_1"; service=osk, kw...)),
+        ("skill_content, Anthropic", SkillCallError, kw -> skill_content("skill_1"; version="1", service=ask, kw...)),
+        ("create_skill_version, OpenAI", SkillCallError, kw -> create_skill_version("skill_1", skill; service=osk, kw...)),
+        ("create_skill_version, Anthropic", SkillCallError,
+         kw -> create_skill_version("skill_1", skill; service=ask, kw...)),
+        ("list_skill_versions, OpenAI", SkillCallError, kw -> list_skill_versions("skill_1"; service=osk, kw...)),
+        ("list_skill_versions, Anthropic", SkillCallError, kw -> list_skill_versions("skill_1"; service=ask, kw...)),
+        ("retrieve_skill_version, OpenAI", SkillCallError,
+         kw -> retrieve_skill_version("skill_1", "1"; service=osk, kw...)),
+        ("retrieve_skill_version, Anthropic", SkillCallError,
+         kw -> retrieve_skill_version("skill_1", "1"; service=ask, kw...)),
+        ("delete_skill_version, OpenAI", SkillCallError, kw -> delete_skill_version("skill_1", "1"; service=osk, kw...)),
+        ("delete_skill_version, Anthropic", SkillCallError,
+         kw -> delete_skill_version("skill_1", "1"; service=ask, kw...)),
+        ("generate_image, streamed", ImageCallError,
+         kw -> generate_image("p"; model="m", stream=true, service=s, kw...)),
+        ("edit_image, streamed", ImageCallError,
+         kw -> edit_image(ImageRef(file_id="file_1"), "p"; model="m", stream=true, service=s, kw...)),
+        ("create_cache", CacheCallError,
+         kw -> create_cache(Chat(service=CacheProbe, model="gemini-3.8-flash", messages=hi); kw...)),
+        ("retrieve_cache", CacheCallError, kw -> retrieve_cache("cachedContents/c1"; service=CacheProbe, kw...)),
+        ("list_caches", CacheCallError, kw -> list_caches(; service=CacheProbe, kw...)),
+        ("update_cache", CacheCallError, kw -> update_cache("cachedContents/c1"; ttl=60, service=CacheProbe, kw...)),
+        ("delete_cache", CacheCallError, kw -> delete_cache("cachedContents/c1"; service=CacheProbe, kw...)),
+        ("create_file_search_store", FileSearchCallError, kw -> create_file_search_store(; service=fs, kw...)),
+        ("retrieve_file_search_store", FileSearchCallError, kw -> retrieve_file_search_store(store; service=fs, kw...)),
+        ("list_file_search_stores", FileSearchCallError, kw -> list_file_search_stores(; service=fs, kw...)),
+        ("delete_file_search_store", FileSearchCallError, kw -> delete_file_search_store(store; service=fs, kw...)),
+        ("upload_to_file_search_store", FileSearchCallError,
+         kw -> upload_to_file_search_store(store, file; service=fs, kw...)),
+        ("import_to_file_search_store", FileSearchCallError,
+         kw -> import_to_file_search_store(store, "files/f1"; service=fs, kw...)),
+        ("retrieve_file_search_operation", FileSearchCallError,
+         kw -> retrieve_file_search_operation(store * "/operations/o1"; service=fs, kw...)),
+        ("poll_file_search_operation", FileSearchCallError,
+         kw -> poll_file_search_operation(store * "/operations/o1"; service=fs, kw...)),
+        ("list_file_search_documents", FileSearchCallError, kw -> list_file_search_documents(store; service=fs, kw...)),
+        ("retrieve_file_search_document", FileSearchCallError,
+         kw -> retrieve_file_search_document(doc; service=fs, kw...)),
+        ("delete_file_search_document", FileSearchCallError, kw -> delete_file_search_document(doc; service=fs, kw...)),
+        ("list_chat_completions", StoredCompletionCallError, kw -> list_chat_completions(; service=StoreProbe, kw...)),
+        ("get_chat_completion", StoredCompletionCallError,
+         kw -> get_chat_completion("chatcmpl-1"; service=StoreProbe, kw...)),
+        ("update_chat_completion", StoredCompletionCallError,
+         kw -> update_chat_completion("chatcmpl-1", Dict("k" => "v"); service=StoreProbe, kw...)),
+        ("delete_chat_completion", StoredCompletionCallError,
+         kw -> delete_chat_completion("chatcmpl-1"; service=StoreProbe, kw...)),
+        ("list_chat_completion_messages", StoredCompletionCallError,
+         kw -> list_chat_completion_messages("chatcmpl-1"; service=StoreProbe, kw...)),
+        ("embeddingrequest!, Gemini", EmbeddingCallError,
+         kw -> embeddingrequest!(Embeddings("hi"; service=GeminiEmbedProbe, model="gemini-embedding-2"); kw...)),
+        ("create_batch(embeddings), OpenAI", BatchCallError, kw -> create_batch(oe(); kw...)),
+        ("create_batch(embeddings), Gemini", BatchCallError, kw -> create_batch(ge(); kw...)),
+        ("batch_results(requests=embeddings), OpenAI", BatchCallError,
+         kw -> batch_results("batch_1"; service=oeb, requests=oe(), kw...)),
+        ("batch_results(requests=embeddings), Gemini", BatchCallError,
+         kw -> batch_results("batches/b1"; service=geb, requests=ge(), kw...)),
+        # A streamed transcription is a Task; its result is the call's.
+        ("transcribe(path), streamed", AudioCallError, kw -> fetch(transcribe(_CE_WAV; stream=true, service=s, kw...))),
+        ("transcribe(path), Gemini", AudioCallError, kw -> transcribe(_CE_WAV; service=GeminiTranscribeProbe, kw...)),
+        ("create_voice, OpenAI", VoiceCallError, kw -> create_voice(; name="n", prompt="p", service=oav, kw...)),
+        ("create_voice, Gemini", VoiceCallError, kw -> create_voice(; prompt="p", service=gv, kw...)),
+        # OpenAI's API has no voice listing or lookup, and only OpenAI keeps voice consents: refused before any request.
+        ("list_voices, Gemini", VoiceCallError, kw -> list_voices(; service=gv, kw...)),
+        ("get_voice, Gemini", VoiceCallError, kw -> get_voice("voice_1"; service=gv, kw...)),
+        ("delete_voice, OpenAI", VoiceCallError, kw -> delete_voice("voice_1"; service=oav, kw...)),
+        ("delete_voice, Gemini", VoiceCallError, kw -> delete_voice("voice_1"; service=gv, kw...)),
+        ("create_voice_consent", VoiceCallError,
+         kw -> create_voice_consent(_CE_WAV; name="n", language="en-US", service=oav, kw...)),
+        ("list_voice_consents", VoiceCallError, kw -> list_voice_consents(; service=oav, kw...)),
+        ("get_voice_consent", VoiceCallError, kw -> get_voice_consent("cons_1"; service=oav, kw...)),
+        ("update_voice_consent", VoiceCallError, kw -> update_voice_consent("cons_1"; name="n", service=oav, kw...)),
+        ("delete_voice_consent", VoiceCallError, kw -> delete_voice_consent("cons_1"; service=oav, kw...)),
     ]
 end
 
@@ -238,7 +341,7 @@ _ce_cancelled(r, ::Type{T}) where {T} =
     r isa T && isnothing(r.status) && r.cause isa UniLMCancelled && r.cause.source === :token
 
 @testset "every method of every platform, lifecycle and audio verb takes `cancel` as its last keyword" begin
-    @test length(_CE_VERBS) == 87
+    @test length(_CE_VERBS) == 130
     for f in _CE_VERBS, m in methods(f)
         named = filter(k -> !endswith(String(k), "..."), Base.kwarg_decl(m))
         @test (f, last(named)) == (f, :cancel)
@@ -265,7 +368,7 @@ end
                      sent(() -> with_cancel(() -> call((; cancel=CancelToken())), fired))))
              for (label, T, call) in _ce_rows(file)]
         end
-        @test length(results) == 122
+        @test length(results) == 182
         for (label, T, modes) in results, (mode, (r, n)) in modes
             @testset "$label, $mode" begin
                 if startswith(mode, "a live token")

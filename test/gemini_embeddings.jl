@@ -87,12 +87,7 @@ end
     @test estimated_cost(r) ≈ 1000 * 0.20 / 1e6
 end
 
-# Gemini's embeddings wire at the scripted endpoint.
-struct GeminiEmbedProbe <: UniLM.ServiceEndpoint end
-UniLM._embeddings_wire(::Type{GeminiEmbedProbe}) = UniLM._GeminiEmbeddings()
-UniLM.get_url(::Type{GeminiEmbedProbe}, e::Embeddings) = UniLM._gemini_embed_url(_url_probe_base[] * "/v1beta", e)
-UniLM.auth_header(::Type{GeminiEmbedProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{GeminiEmbedProbe}) = Set([:embeddings])
+# Gemini's embeddings wire at the scripted endpoint: GeminiEmbedProbe (platform_seam_fixtures.jl).
 
 # Refuted if: a request goes to another path or method, a reply's vectors are not filled in order, the usage is
 # lost, or a reply short of a vector fills zeros instead of being a call error.

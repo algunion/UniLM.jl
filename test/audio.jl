@@ -1373,15 +1373,7 @@ end
 
 # ─── Gemini transcription (generateContent on gemini-3.5-transcribe) ─────────
 
-# Gemini's transcription served by `_with_scripted`, held to Gemini's rules and default.
-struct GeminiTranscribeProbe <: UniLM.ServiceEndpoint end
-UniLM._transcription_wire(::Type{GeminiTranscribeProbe}) = UniLM._GeminiTranscriptionWire()
-UniLM._gemini_speech_base(::Type{GeminiTranscribeProbe}) = _url_probe_base[]
-UniLM.auth_header(::Type{GeminiTranscribeProbe}) = ["x-goog-api-key" => "test-key", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{GeminiTranscribeProbe}) = Set([:transcription])
-UniLM._check_transcription(::Type{GeminiTranscribeProbe}, t::UniLM.TranscriptionRequest) =
-    UniLM._check_transcription(GEMINIServiceEndpoint, t)
-UniLM._default_transcription_model(::Type{GeminiTranscribeProbe}) = UniLM._default_transcription_model(GEMINIServiceEndpoint)
+# Gemini's transcription is served by `_with_scripted` at GeminiTranscribeProbe (platform_seam_fixtures.jl).
 
 # A transcription reply as gemini-3.5-transcribe gave it (2026-11-17): one part per speaker turn.
 _gt_turn(text; speaker=nothing, words=nothing) = Dict{String,Any}("text" => text, "audioTranscription" => Dict{String,Any}(

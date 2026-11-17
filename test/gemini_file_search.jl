@@ -5,11 +5,6 @@ using UniLM: GEMINIServiceEndpoint
 using Test, HTTP, JSON, Dates
 
 # A Gemini endpoint whose File Search requests `_with_scripted` serves (platform_seam_fixtures.jl).
-struct FileSearchProbe <: UniLM.ServiceEndpoint end
-UniLM._gemini_api_root(::Type{FileSearchProbe}) = _url_probe_base[] * "/v1beta"
-UniLM._gemini_upload_root(::Type{FileSearchProbe}) = _url_probe_base[] * "/upload/v1beta"
-UniLM.auth_header(::Type{FileSearchProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{FileSearchProbe}) = Set([:file_search_stores])
 const _FS = FileSearchProbe
 
 # Replies as the API sent them on 2026-11-17.

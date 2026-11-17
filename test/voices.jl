@@ -1,13 +1,7 @@
 # ─── Custom voices: OpenAI's voices and voice consents, Gemini's Voices API ───
 # Included by test/audio.jl, whose helpers (`_SP_WAV`, `_mp_values`) it uses.
 
-# The voices wire `W` at the scripted endpoint.
-struct VoicesProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._voices_wire(::Type{VoicesProbe{W}}) where {W} = W()
-UniLM._voices_url(::Type{<:VoicesProbe}) = _url_probe_base[] * "/voices"
-UniLM._voice_consents_url(::Type{<:VoicesProbe}) = _url_probe_base[] * "/voice_consents"
-UniLM.auth_header(::Type{<:VoicesProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{<:VoicesProbe}) = Set([:voices])
+# Each voices wire at the scripted endpoint (VoicesProbe, platform_seam_fixtures.jl).
 const _OAVoices = VoicesProbe{UniLM._OpenAIVoices}
 const _GVoices = VoicesProbe{UniLM._GeminiVoices}
 

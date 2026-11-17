@@ -171,3 +171,62 @@ _batch_probe(W, E) = (@eval UniLM.encode_request(::Type{BatchProbe{$W}}, c::Chat
 const _OAB = _batch_probe(UniLM._OpenAIBatches, OPENAIServiceEndpoint)
 const _ANB = _batch_probe(UniLM._AnthropicBatches, ANTHROPICServiceEndpoint)
 const _GMB = _batch_probe(UniLM._GeminiBatches, GEMINIServiceEndpoint)
+
+# A batch endpoint speaking wire W that embeds too, its paths under the scripted server.
+struct EmbedBatchProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._batch_wire(::Type{EmbedBatchProbe{W}}) where {W} = W()
+UniLM._batch_root(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
+UniLM._resolve_base_url(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{<:EmbedBatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:EmbedBatchProbe}) = Set([:batch, :embeddings, :files])
+
+# Gemini's embeddings wire at the scripted endpoint.
+struct GeminiEmbedProbe <: UniLM.ServiceEndpoint end
+UniLM._embeddings_wire(::Type{GeminiEmbedProbe}) = UniLM._GeminiEmbeddings()
+UniLM.get_url(::Type{GeminiEmbedProbe}, e::Embeddings) = UniLM._gemini_embed_url(_url_probe_base[] * "/v1beta", e)
+UniLM.auth_header(::Type{GeminiEmbedProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{GeminiEmbedProbe}) = Set([:embeddings])
+
+# The stored-completions wire at the scripted endpoint.
+struct StoreProbe <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::Type{StoreProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{StoreProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{StoreProbe}) = Set([:stored_completions])
+
+# Skills wire `W` at the scripted endpoint.
+struct SkillsProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._skills_wire(::Type{SkillsProbe{W}}) where {W} = W()
+UniLM._skills_url(::Type{<:SkillsProbe}) = _url_probe_base[] * "/v1/skills"
+UniLM.auth_header(::Type{<:SkillsProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:SkillsProbe}) = Set([:skills])
+
+# A Gemini endpoint whose cache requests `_with_scripted` serves.
+struct CacheProbe <: UniLM.ServiceEndpoint end
+UniLM._gemini_api_root(::Type{CacheProbe}) = _url_probe_base[] * "/v1beta"
+UniLM.auth_header(::Type{CacheProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{CacheProbe}) = Set([:context_caching])
+
+# A Gemini endpoint whose File Search requests `_with_scripted` serves.
+struct FileSearchProbe <: UniLM.ServiceEndpoint end
+UniLM._gemini_api_root(::Type{FileSearchProbe}) = _url_probe_base[] * "/v1beta"
+UniLM._gemini_upload_root(::Type{FileSearchProbe}) = _url_probe_base[] * "/upload/v1beta"
+UniLM.auth_header(::Type{FileSearchProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{FileSearchProbe}) = Set([:file_search_stores])
+
+# The voices wire `W` at the scripted endpoint.
+struct VoicesProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._voices_wire(::Type{VoicesProbe{W}}) where {W} = W()
+UniLM._voices_url(::Type{<:VoicesProbe}) = _url_probe_base[] * "/voices"
+UniLM._voice_consents_url(::Type{<:VoicesProbe}) = _url_probe_base[] * "/voice_consents"
+UniLM.auth_header(::Type{<:VoicesProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:VoicesProbe}) = Set([:voices])
+
+# Gemini's transcription served by `_with_scripted`, held to Gemini's rules and default.
+struct GeminiTranscribeProbe <: UniLM.ServiceEndpoint end
+UniLM._transcription_wire(::Type{GeminiTranscribeProbe}) = UniLM._GeminiTranscriptionWire()
+UniLM._gemini_speech_base(::Type{GeminiTranscribeProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{GeminiTranscribeProbe}) = ["x-goog-api-key" => "test-key", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{GeminiTranscribeProbe}) = Set([:transcription])
+UniLM._check_transcription(::Type{GeminiTranscribeProbe}, t::UniLM.TranscriptionRequest) =
+    UniLM._check_transcription(GEMINIServiceEndpoint, t)
+UniLM._default_transcription_model(::Type{GeminiTranscribeProbe}) = UniLM._default_transcription_model(GEMINIServiceEndpoint)

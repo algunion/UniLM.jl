@@ -91,11 +91,7 @@ end
 end
 
 # ─── The cache verbs ─────────────────────────────────────────────────────────
-# A Gemini endpoint whose cache requests `_with_scripted` serves (platform_seam_fixtures.jl).
-struct CacheProbe <: UniLM.ServiceEndpoint end
-UniLM._gemini_api_root(::Type{CacheProbe}) = _url_probe_base[] * "/v1beta"
-UniLM.auth_header(::Type{CacheProbe}) = ["x-goog-api-key" => "t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{CacheProbe}) = Set([:context_caching])
+# Served by `_with_scripted` at CacheProbe (platform_seam_fixtures.jl).
 
 # A cache as the API answered its create, get and list on 2026-11-17.
 const _CACHE = """{"name": "cachedContents/4ekeqvr7x0ipkt1midsuw60if7fi9vuh0j0vyjit", "model": "models/gemini-3.8-flash",

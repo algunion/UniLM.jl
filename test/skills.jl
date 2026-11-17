@@ -1,12 +1,7 @@
 # test/skills.jl — the Skills family (create_skill and the verbs beside it) on each provider's wire, served by
 # `_with_scripted` (platform_seam_fixtures.jl).
 
-# Skills wire `W` at the scripted endpoint.
-struct SkillsProbe{W} <: UniLM.ServiceEndpoint end
-UniLM._skills_wire(::Type{SkillsProbe{W}}) where {W} = W()
-UniLM._skills_url(::Type{<:SkillsProbe}) = _url_probe_base[] * "/v1/skills"
-UniLM.auth_header(::Type{<:SkillsProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{<:SkillsProbe}) = Set([:skills])
+# OpenAI's Skills wire at the scripted endpoint (SkillsProbe, platform_seam_fixtures.jl).
 const _OS = SkillsProbe{UniLM._OpenAISkills}
 
 # A skill folder: its SKILL.md at the root, a file beside it and one in a subfolder.

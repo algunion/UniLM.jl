@@ -69,8 +69,18 @@
 - **Stored Chat Completions** (`:stored_completions`, OpenAI): `list_chat_completions`, `retrieve_chat_completion`,
   `update_chat_completion` (metadata), `delete_chat_completion`, `list_chat_completion_messages`, with typed
   `StoredCompletion*` pages and results.
+- **OpenAI `gpt-6.2-astra` and `gpt-6.2-sol` are priced and ruled** (OpenAI's pricing page of 2026-11-17, USD per
+  1M tokens): `gpt-6.2-astra` 8.00 input / 0.40 cached / 40.00 output, `gpt-6.2-sol` 2.00 / 0.10 / 10.00; cache
+  writes 1.25× input for 30 minutes and 2.5× for 12 hours; prompts over 272K input tokens bill 2× input and cache and
+  1.5× output; Batch half, Fast 2×, Ultrafast 3× through 2027-02-28 and 6× from 2027-03-01 (estimates switch at
+  00:00 UTC that day); no Flex price is listed and OpenAI answers `service_tier="flex"` with HTTP 400. Their request
+  rules are those of `gpt-6-astra` and `gpt-6.1-sol`: reasoning effort `"low"` to `"max"` on Responses and to
+  `"xhigh"` on Chat Completions, no sampling controls or log probabilities, function tools through the Responses API
+  only, `service_tier="ultrafast"` on Responses.
 
 ### Changed
+- The `"ultrafast"` refusal names every model that serves the tier: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-astra`
+  and `gpt-6.2-sol`.
 - Capabilities: native Gemini declares `:embeddings`, `:transcription`, `:voices`, `:context_caching` and
   `:file_search_stores`; OpenAI declares `:skills`, `:stored_completions` and `:voices`; Anthropic declares `:skills`.
 - `create_container`'s `skills` accepts any `AbstractVector{<:ContainerSkill}`; a `Vector{SkillReference}` still works.

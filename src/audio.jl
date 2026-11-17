@@ -143,11 +143,69 @@ function _speech_speed(r::_SpeechRules, speed::Real)::Float64
 end
 
 """
-    SpeechRequest(; input, service=OPENAIServiceEndpoint, model=nothing, voice=nothing,
-                  response_format="wav", speed=nothing, instructions=nothing)
+    SpeechTurn(speaker, text; style=nothing)
 
-A text-to-speech request; pass it to [`speak`](@ref). `input` is the text to read aloud. `model`
-and `voice` left `nothing` are the service's defaults:
+One turn of a dialogue that Gemini TTS reads in several voices: the `speaker`, a name the
+request's `speakers` gives a voice, the `text` the speaker reads, and the turn's delivery `style`
+(its `speechMetadata.style`, such as `"whispered urgently"`). A blank speaker or text throws
+`ArgumentError`. Give the turns to [`speak`](@ref) or [`SpeechRequest`](@ref) as `input`.
+"""
+struct SpeechTurn
+    speaker::String
+    text::String
+    style::Union{String,Nothing}
+    function SpeechTurn(speaker::AbstractString, text::AbstractString; style::Union{AbstractString,Nothing}=nothing)
+        isempty(strip(speaker)) && throw(ArgumentError("a speech turn names its speaker (got $(repr(speaker)))"))
+        isempty(strip(text)) && throw(ArgumentError("the speech turn of $(repr(speaker)) has no text"))
+        new(speaker, text, style)
+    end
+end
+
+# A dialogue's voices, by speaker; refused, with the speech wires that read one voice per request, before any
+# request. Gemini TTS: "Every turn in a multi-speaker request must explicitly include `speaker` inside
+# `speech_metadata` matching one of the configured speakers" (speech-generation guide). Its limits section says
+# multi-speaker generation "supports up to 2 speakers using prebuilt voices", yet three speakers and a designed
+# voice beside a prebuilt one were each spoken (HTTP 200, 2026-11-17): neither is refused here.
+function _dialogue_voices(::_SpeechWire, rules::_SpeechRules, _, _, _, _)
+    throw(ArgumentError("$(rules.provider) reads one voice per request: a dialogue in several voices (SpeechTurns " *
+        "with speakers) is Gemini TTS's: service=GEMINIServiceEndpoint ($(rules.docs))"))
+end
+function _dialogue_voices(wire::_GeminiSpeechWire, ::_SpeechRules, turns::Vector{SpeechTurn}, speakers, voice,
+                          instructions)::Vector{Pair{String,String}}
+    isnothing(voice) || throw(ArgumentError(
+        "a dialogue's voices are its speakers': speakers = [\"Joe\" => \"Puck\", \"Jane\" => \"Kore\"]; unset voice"))
+    isnothing(instructions) || throw(ArgumentError(
+        "a dialogue's delivery is each turn's style (SpeechTurn(speaker, text; style=…)); unset instructions"))
+    (isnothing(speakers) || isempty(speakers)) && throw(ArgumentError(
+        "a dialogue names each speaker's voice: speakers = [\"Joe\" => \"Puck\", \"Jane\" => \"Kore\"]"))
+    cast = Pair{String,String}[String(first(p)) => _speech_voice(wire, last(p)) for p in speakers]
+    names = first.(cast)
+    any(n -> isempty(strip(n)), names) && throw(ArgumentError("a speaker's name is blank"))
+    allunique(names) || throw(ArgumentError("each speaker is named once (got $(join(repr.(names), ", ")))"))
+    for t in turns
+        t.speaker in names || throw(ArgumentError(
+            "the turn of $(repr(t.speaker)) names no speaker in speakers ($(join(repr.(names), ", "))): every turn's " *
+            "speaker must be one of them"))
+    end
+    cast
+end
+
+# The language a speech wire reads in: Gemini TTS's `speechConfig.languageCode`, a BCP-47 tag (it answered
+# "xx-ZZ" with HTTP 400 "Invalid language_code", 2026-11-17); the other wires have no such field.
+_speech_language(::_GeminiSpeechWire, ::_SpeechRules, l::AbstractString)::String =
+    isempty(strip(l)) ? throw(ArgumentError("the speech language is blank: a BCP-47 tag such as \"fr-FR\"")) : String(l)
+_speech_language(::_SpeechWire, rules::_SpeechRules, ::AbstractString) = throw(ArgumentError(
+    "$(rules.provider) takes no speech language: it reads the text in the language it is written in; " *
+    "Gemini TTS takes one (service=GEMINIServiceEndpoint)"))
+_speech_language(::_SpeechWire, ::_SpeechRules, ::Nothing) = nothing
+
+"""
+    SpeechRequest(; input, service=OPENAIServiceEndpoint, model=nothing, voice=nothing,
+                  response_format="wav", speed=nothing, instructions=nothing, speakers=nothing, language=nothing)
+
+A text-to-speech request; pass it to [`speak`](@ref). `input` is the text to read aloud, or on
+Gemini a dialogue: a vector of [`SpeechTurn`](@ref)s, read in the voices `speakers` gives each speaker
+(below). `model` and `voice` left `nothing` are the service's defaults:
 
 | `service` | speaks through | default `model` | default `voice` | `voice` | `speed` |
 |:--|:--|:--|:--|:--|:--|
@@ -161,6 +219,24 @@ follow the session's instruction to read `input` word for word, on Gemini they a
 style (`speechMetadata.style`). Gemini TTS has no speed parameter: describe the pace in
 `instructions` (`"speaking slowly"`). Ollama takes neither: it answers non-empty `instructions` and
 any speed but 1 with HTTP 400.
+
+On Gemini, `language` is the BCP-47 tag the text is read in (`speechConfig.languageCode`, such as
+`"fr-FR"`; Gemini answers an unknown one with HTTP 400), and a dialogue reads several voices in one
+request ([speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation)):
+
+```julia
+speak([SpeechTurn("Joe", "How's it going today, Jane?"), SpeechTurn("Jane", "Not too bad!"; style="cheerful")];
+      service=GEMINIServiceEndpoint, speakers=["Joe" => "Puck", "Jane" => "Kore"])
+```
+
+Each turn is a part of its own with its speaker (`speechMetadata.speaker`) and style, and `speakers`
+becomes `multiSpeakerVoiceConfig`, each voice a prebuilt one or any other, as `voice` is; the
+request's `input` field holds the turns' texts, joined by line breaks, and its `voice` is `""`. Every
+turn's speaker must be one of `speakers`; a dialogue takes no `voice` (the speakers have theirs) and
+no `instructions` (each turn has its style). Google's guide says multi-speaker speech "supports up to
+2 speakers using prebuilt voices"; three speakers, and a designed voice beside a prebuilt one, were
+each spoken on 17 November 2026, so neither is refused. Other services read one voice and take no
+language: a dialogue, `speakers` or `language` there throws `ArgumentError`.
 
 Throws `ArgumentError`, before any request, for an empty `input`, a voice the Realtime session does
 not have or a blank Gemini or Ollama voice, a `response_format` other than `"wav"` or `"pcm"`, a
@@ -182,25 +258,39 @@ struct SpeechRequest
     response_format::String
     speed::Union{Float64,Nothing}
     instructions::Union{String,Nothing}
+    turns::Vector{SpeechTurn}
+    speakers::Vector{Pair{String,String}}
+    language::Union{String,Nothing}
     function SpeechRequest(service::ServiceEndpointSpec, model::Union{AbstractString,Nothing},
-                           input::AbstractString, voice::Union{AbstractString,Nothing},
+                           input::Union{AbstractString,AbstractVector{SpeechTurn}}, voice::Union{AbstractString,Nothing},
                            response_format::AbstractString, speed::Union{Real,Nothing},
-                           instructions::Union{AbstractString,Nothing})
+                           instructions::Union{AbstractString,Nothing}, speakers=nothing,
+                           language::Union{AbstractString,Nothing}=nothing)
         wire = _speech_wire(service)
         rules = _speech_rules(wire)
-        isempty(strip(input)) && throw(ArgumentError("speak needs text to read: input is empty"))
-        v = _speech_voice(wire, something(voice, rules.voice))
+        turns = input isa AbstractString ? SpeechTurn[] : collect(SpeechTurn, input)
+        text = input isa AbstractString ? String(input) : join((t.text for t in turns), "\n")
+        isempty(strip(text)) && throw(ArgumentError("speak needs text to read: input is empty"))
+        if input isa AbstractString
+            isnothing(speakers) || throw(ArgumentError(
+                "speakers give a dialogue's voices: pass input as SpeechTurns (SpeechTurn(speaker, text)), or unset speakers"))
+            v, cast = _speech_voice(wire, something(voice, rules.voice)), Pair{String,String}[]
+        else
+            v, cast = "", _dialogue_voices(wire, rules, turns, speakers, voice, instructions)
+        end
         response_format in _SPEECH_FORMATS || throw(ArgumentError(_speech_format_refusal(wire, response_format)))
-        _check_speech(wire, input, instructions)
-        new(service, _speech_model(wire, model), input, v, response_format,
-            isnothing(speed) ? nothing : _speech_speed(rules, speed), instructions)
+        _check_speech(wire, text, instructions)
+        new(service, _speech_model(wire, model), text, v, response_format,
+            isnothing(speed) ? nothing : _speech_speed(rules, speed), instructions, turns, cast,
+            _speech_language(wire, rules, language))
     end
 end
-SpeechRequest(; input::AbstractString, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+SpeechRequest(; input::Union{AbstractString,AbstractVector{SpeechTurn}}, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
               model::Union{AbstractString,Nothing}=nothing, voice::Union{AbstractString,Nothing}=nothing,
               response_format::AbstractString="wav", speed::Union{Real,Nothing}=nothing,
-              instructions::Union{AbstractString,Nothing}=nothing) =
-    SpeechRequest(service, model, input, voice, response_format, speed, instructions)
+              instructions::Union{AbstractString,Nothing}=nothing, speakers=nothing,
+              language::Union{AbstractString,Nothing}=nothing) =
+    SpeechRequest(service, model, input, voice, response_format, speed, instructions, speakers, language)
 
 "Successful [`speak`](@ref) result: `audio` holds a WAV file (`content_type` `\"audio/wav\"`) or the raw 16-bit little-endian mono samples at 24 kHz (`\"audio/pcm\"`). Save it with [`save_audio`](@ref)."
 @kwdef struct SpeechSuccess <: LLMRequestResponse
@@ -211,9 +301,10 @@ end
 """
     speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
     speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
-          speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
+          speed=nothing, instructions=nothing, speakers=nothing, language=nothing, config=nothing, cancel=nothing)
 
-Synthesize speech from text; the keywords build a [`SpeechRequest`](@ref).
+Synthesize speech from text, or on Gemini from a dialogue of [`SpeechTurn`](@ref)s read in the
+voices `speakers` names; the keywords build a [`SpeechRequest`](@ref).
 
 On `OPENAIServiceEndpoint` the speech comes from a Realtime API session
 (`wss://api.openai.com/v1/realtime`, `gpt-realtime-2.1-mini` unless `model` names another), the
@@ -276,12 +367,14 @@ function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing,
         _callerr(AudioCallError, e)
     end
 end
-speak(input::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+speak(input::Union{AbstractString,AbstractVector{SpeechTurn}}; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
       model::Union{AbstractString,Nothing}=nothing, voice::Union{AbstractString,Nothing}=nothing,
       response_format::AbstractString="wav", speed::Union{Real,Nothing}=nothing,
-      instructions::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
+      instructions::Union{AbstractString,Nothing}=nothing, speakers=nothing,
+      language::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
       cancel::Union{Nothing,CancelToken}=nothing) =
-    speak(SpeechRequest(service, model, input, voice, response_format, speed, instructions); config, cancel)
+    speak(SpeechRequest(service, model, input, voice, response_format, speed, instructions, speakers, language);
+          config, cancel)
 
 # Where a request goes; throws ArgumentError, before any I/O, for a service the wire cannot reach.
 function _speech_target(::_RealtimeSpeechWire, s::SpeechRequest)::String
@@ -369,21 +462,39 @@ _gemini_speech_base(::Type{GEMINIServiceEndpoint}) = GEMINI_NATIVE_BASE
 _gemini_speech_url(service, model::String)::String =
     _gemini_speech_base(service) * "/models/" * _uripart(model) * ":generateContent"
 
+# Gemini 3.8 TTS reads `text` verbatim; a delivery direction is the part's speech style, and in a dialogue the
+# part's speaker is the turn's.
+function _gemini_speech_part(text::String, speaker::Union{String,Nothing}, style::Union{String,Nothing})
+    part = Dict{Symbol,Any}(:text => text)
+    meta = Dict{Symbol,Any}()
+    isnothing(speaker) || (meta[:speaker] = speaker)
+    isnothing(style) || (meta[:style] = style)
+    isempty(meta) || (part[:speechMetadata] = meta)
+    part
+end
+
+# VoiceConfig holds `prebuiltVoiceConfig`, "The configuration for the prebuilt voice to use", or `voice`, which
+# takes a prebuilt voice's name, a stored voice's id (`voice_…`) and a replication key (`voicekey_…`)
+# (https://ai.google.dev/api/generate-content#VoiceConfig): a studio voice keeps the prebuilt form, and every other
+# voice goes as `voice`.
+_gemini_voice_config(voice::String) = voice in _GEMINI_SPEECH.voices ?
+    Dict(:prebuiltVoiceConfig => Dict(:voiceName => voice)) : Dict(:voice => voice)
+
 function _gemini_speech_body(s::SpeechRequest)::String
-    part = Dict{Symbol,Any}(:text => s.input)
-    # Gemini 3.8 TTS reads `text` verbatim; a delivery direction is the part's speech style.
-    isnothing(s.instructions) || (part[:speechMetadata] = Dict(:style => s.instructions))
-    # VoiceConfig holds `prebuiltVoiceConfig`, "The configuration for the prebuilt voice to use", or
-    # `voice`, which takes a prebuilt voice's name, a stored voice's id (`voice_…`) and a replication key
-    # (`voicekey_…`) (https://ai.google.dev/api/generate-content#VoiceConfig): a studio voice keeps the
-    # prebuilt form, and every other voice goes as `voice`.
-    voice = s.voice in _GEMINI_SPEECH.voices ? Dict(:prebuiltVoiceConfig => Dict(:voiceName => s.voice)) :
-                                                Dict(:voice => s.voice)
+    dialogue = !isempty(s.turns)
+    parts = dialogue ? [_gemini_speech_part(t.text, t.speaker, t.style) for t in s.turns] :
+                       [_gemini_speech_part(s.input, nothing, s.instructions)]
+    # A dialogue's voices are its MultiSpeakerVoiceConfig, "mutually exclusive with the voice_config field".
+    speech = dialogue ?
+        Dict{Symbol,Any}(:multiSpeakerVoiceConfig => Dict(:speakerVoiceConfigs =>
+            [Dict(:speaker => name, :voiceConfig => _gemini_voice_config(v)) for (name, v) in s.speakers])) :
+        Dict{Symbol,Any}(:voiceConfig => _gemini_voice_config(s.voice))
+    isnothing(s.language) || (speech[:languageCode] = s.language)
     JSON.json(Dict(
-        :contents => [Dict(:role => "user", :parts => [part])],
+        :contents => [Dict(:role => "user", :parts => parts)],
         :generationConfig => Dict(
             :responseModalities => ["AUDIO"],
-            :speechConfig => Dict(:voiceConfig => voice),
+            :speechConfig => speech,
             # Raw 16-bit PCM at 24 kHz: Gemini 3.8 TTS answers WAV unless asked, and UniLM writes
             # its own header.
             :responseFormat => Dict(:audio => Dict(:mimeType => "AUDIO_L16", :sampleRate => _SPEECH_RATE)))))
@@ -1094,7 +1205,7 @@ function _flush_transcript!(cb, s::_TranscriptStream, close_ref)::Nothing
 end
 
 _streamed_transcription(s::_TranscriptStream)::TranscriptionSuccess =
-    TranscriptionSuccess(text=s.done["text"], raw=s.done, segments=copy(s.segments))
+    (done = s.done::Dict{String,Any}; TranscriptionSuccess(text=done["text"], raw=done, segments=copy(s.segments)))
 
 _cancelled_transcription(ctl::_StreamCtl, t0::UInt64)::AudioCallError =
     (c = _stop_cause(ctl, t0); AudioCallError(error=sprint(showerror, c), cause=c))

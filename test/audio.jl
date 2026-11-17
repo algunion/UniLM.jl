@@ -1482,3 +1482,75 @@ end
     end
     @test ok isa TranscriptionSuccess && length(seen) == 2 && seen[1].body == seen[2].body
 end
+
+# ─── Gemini speech: a dialogue in several voices, a language ─────────────────
+
+@testset "speak on Gemini: a dialogue reads each turn in its speaker's voice" begin
+    pcm = _sp_pcm(Int16[5, 6])
+    turns = [SpeechTurn("Joe", "Hello Jane."), SpeechTurn("Jane", "Hi Joe."; style="cheerful")]
+    r, seen = _with_scripted((_, _) -> _json(200, _sp_gemini_reply(_sp_inline("audio/l16", pcm)))) do
+        speak(turns; service=GeminiSpeechProbe, speakers=["Joe" => "Puck", "Jane" => "voice_abc123"], language="en-US")
+    end
+    @test r isa SpeechSuccess && r.audio == _sp_wav(pcm)
+    body = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test body["contents"] == [Dict("role" => "user", "parts" => [
+        Dict("text" => "Hello Jane.", "speechMetadata" => Dict("speaker" => "Joe")),
+        Dict("text" => "Hi Joe.", "speechMetadata" => Dict("speaker" => "Jane", "style" => "cheerful"))])]
+    # A studio voice in its prebuilt form, any other as `voice`; never a single voiceConfig beside them.
+    @test body["generationConfig"]["speechConfig"] == Dict("languageCode" => "en-US", "multiSpeakerVoiceConfig" =>
+        Dict("speakerVoiceConfigs" => [
+            Dict("speaker" => "Joe", "voiceConfig" => Dict("prebuiltVoiceConfig" => Dict("voiceName" => "Puck"))),
+            Dict("speaker" => "Jane", "voiceConfig" => Dict("voice" => "voice_abc123"))]))
+    @test body["generationConfig"]["responseFormat"] == Dict("audio" => Dict("mimeType" => "AUDIO_L16", "sampleRate" => 24000))
+    req = SpeechRequest(input=turns, service=GEMINIServiceEndpoint, speakers=Dict("Joe" => "Puck", "Jane" => "Kore"))
+    @test (req.input, req.voice, req.turns, Dict(req.speakers), req.language) ==
+          ("Hello Jane.\nHi Joe.", "", turns, Dict("Joe" => "Puck", "Jane" => "Kore"), nothing)
+    # Three speakers were spoken (HTTP 200, 2026-11-17), though the guide says up to two: not refused.
+    three = [turns; SpeechTurn("Ann", "And me.")]
+    @test length(SpeechRequest(input=three, service=GEMINIServiceEndpoint,
+                               speakers=["Joe" => "Puck", "Jane" => "Kore", "Ann" => "Leda"]).speakers) == 3
+    # One voice in a language.
+    _, seen2 = _with_scripted((_, _) -> _json(200, _sp_gemini_reply(_sp_inline("audio/l16", pcm)))) do
+        speak("Bonjour."; service=GeminiSpeechProbe, voice="Kore", language="fr-FR")
+    end
+    @test JSON.parse(only(seen2).body)["generationConfig"]["speechConfig"] ==
+          Dict("voiceConfig" => Dict("prebuiltVoiceConfig" => Dict("voiceName" => "Kore")), "languageCode" => "fr-FR")
+    # Without a language or a dialogue the request is the one Gemini speech always sent.
+    _, seen3 = _with_scripted((_, _) -> _json(200, _sp_gemini_reply(_sp_inline("audio/l16", pcm)))) do
+        speak("Hi."; service=GeminiSpeechProbe)
+    end
+    @test JSON.parse(only(seen3).body; dicttype=Dict{String,Any}) == _sp_gemini_body()
+end
+
+@testset "speak: a dialogue or a language a service cannot read is refused before any request" begin
+    refusal(f) = try f(); nothing catch x; x end
+    turns = [SpeechTurn("Joe", "Hello."), SpeechTurn("Jane", "Hi.")]
+    cast = ["Joe" => "Puck", "Jane" => "Kore"]
+    gemini(; kw...) = refusal(() -> SpeechRequest(; service=GEMINIServiceEndpoint, kw...))
+    for (e, says) in ((gemini(input=turns), "names each speaker's voice"),
+                      (gemini(input=turns, speakers=Pair{String,String}[]), "names each speaker's voice"),
+                      (gemini(input=turns, speakers=cast, voice="Kore"), "unset voice"),
+                      (gemini(input=turns, speakers=cast, instructions="calm"), "unset instructions"),
+                      (gemini(input=turns, speakers=["Joe" => "Puck"]), "the turn of \"Jane\" names no speaker"),
+                      (gemini(input=turns, speakers=["Joe" => "Puck", "Joe" => "Kore", "Jane" => "Leda"]), "named once"),
+                      (gemini(input=turns, speakers=["Joe" => "Puck", "Jane" => " "]), "Gemini TTS takes a voice"),
+                      (gemini(input=turns, speakers=[" " => "Puck", "Joe" => "Kore", "Jane" => "Leda"]), "name is blank"),
+                      (gemini(input="Hi.", speakers=cast), "pass input as SpeechTurns"),
+                      (gemini(input="Hi.", language=" "), "the speech language is blank"),
+                      (refusal(() -> SpeechTurn(" ", "Hi.")), "names its speaker"),
+                      (refusal(() -> SpeechTurn("Joe", "  ")), "has no text"))
+        @test e isa ArgumentError && occursin(says, e.msg)
+    end
+    # The Realtime session and Ollama read one voice and take no language.
+    (e1, e2, e3, e4), seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        (refusal(() -> speak(turns; service=SpeechWSProbe, speakers=cast)),
+         refusal(() -> speak(turns; service=OllamaEndpoint(base_url=_url_probe_base[]), model="phonon", speakers=cast)),
+         refusal(() -> speak("Hi."; service=SpeechWSProbe, language="en-US")),
+         refusal(() -> speak("Hi."; service=OllamaEndpoint(base_url=_url_probe_base[]), model="phonon", language="en")))
+    end
+    @test isempty(seen)
+    @test e1 isa ArgumentError && occursin("OpenAI Realtime reads one voice per request", e1.msg)
+    @test e2 isa ArgumentError && occursin("Ollama reads one voice per request", e2.msg)
+    @test e3 isa ArgumentError && occursin("OpenAI Realtime takes no speech language", e3.msg)
+    @test e4 isa ArgumentError && occursin("Ollama takes no speech language", e4.msg)
+end

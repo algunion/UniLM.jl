@@ -488,6 +488,7 @@ export
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export
     SpeechRequest,
+    SpeechTurn,
     SpeechSuccess,
     TranscriptionRequest,
     TranscriptionVAD,

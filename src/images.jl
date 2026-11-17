@@ -250,13 +250,16 @@ Parsed response from the Image Generation API.
 - `usage::Union{Dict{String,Any},Nothing}`: Token usage information under the Images API's
   keys (`input_tokens`, `output_tokens`, `total_tokens`, and their details); Gemini's
   `usageMetadata` is mapped to them as on Gemini Chat, its thinking counted as output and
-  as `reasoning_tokens`
+  as `reasoning_tokens`, its tokens by modality as the details' `text_tokens` and
+  `image_tokens`. [`image_usage`](@ref) reads it typed; a streamed call's is its completed event's
 - `svg_usage::Union{Dict{String,Any},Nothing}`: an OpenAI SVG's "Token usage for SVG authoring,
   separate from image rendering usage" (`input_tokens`, `output_tokens`, `reasoning_tokens`,
   `total_tokens` and the author `model`), as the reply sends it; `nothing` for any other image.
   OpenAI bills these tokens at "the authoring model's rate", which [`estimated_cost`](@ref) leaves
   out of an image's estimate, with a warning
-- `raw::Dict{String,Any}`: Complete raw JSON response
+- `raw::Dict{String,Any}`: Complete raw JSON response; for a streamed call, the stream's completed
+  event, which holds the image's `size`, `quality`, `background` and `output_format` as an unstreamed
+  reply does
 """
 @kwdef struct ImageResponse
     created::Int64
@@ -291,10 +294,6 @@ One partial image of a streamed OpenAI image generation or edit, as the `callbac
     created_at::Int64
     raw::Dict{String,Any}
 end
-
-# The bytes stay reachable through the field; printing them would flood the REPL.
-Base.show(io::IO, p::PartialImage) =
-    print(io, "PartialImage(", p.index, ", ", p.output_format, ", ", p.size, ", ", length(p.bytes), " bytes)")
 
 
 # ─── Result Types ─────────────────────────────────────────────────────────────
@@ -622,12 +621,6 @@ struct ImageRef
 end
 
 JSON.lower(r::ImageRef) = isnothing(r.file_id) ? Dict(:image_url => r.image_url) : Dict(:file_id => r.file_id)
-
-# A data URL holds a whole image: shown by its length, not printed into the REPL.
-Base.show(io::IO, r::ImageRef) = isnothing(r.file_id) ?
-    print(io, "ImageRef(image_url=", repr(first(something(r.image_url), 48)), length(something(r.image_url)) > 48 ?
-          "…, $(length(something(r.image_url))) characters)" : ")") :
-    print(io, "ImageRef(file_id=", repr(r.file_id), ")")
 
 """
     ImageEdit(; image, prompt, service=OPENAIServiceEndpoint, model="", kwargs...)

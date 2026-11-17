@@ -1104,3 +1104,33 @@ end
     @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(with_svg; model="img", pricing=rows)) ≈ priced
     @test (@test_logs estimated_cost(plain; model="img", pricing=rows)) ≈ priced
 end
+
+@testset "OpenAI image edits — output_compression and moderation are form fields, checked as on a generation" begin
+    # The edit reference: output_compression, "The compression level (0-100%)" of a webp or jpeg, and moderation, "low"
+    # or "auto". On 2026-11-17 a multipart edit with moderation=bogus and one with output_compression=999 were HTTP 400
+    # naming the field (invalid_value, integer_above_max_value), where a made-up field is "Unknown parameter".
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="webp", output_compression=40, moderation="low"))
+        @test occursin("name=\"output_compression\"\r\n\r\n40\r\n", form) && occursin("name=\"moderation\"\r\n\r\nlow\r\n", form)
+        bare = _edit_form(ImageEdit(image=path, prompt="p"))
+        @test !occursin("name=\"output_compression\"", bare) && !occursin("name=\"moderation\"", bare)
+        # As on a generation: SVG and GIF output take no output_compression, refused before anything is sent.
+        for (kw, words) in ((; output_format="svg", output_compression=50) => ("output_compression", "SVG"),
+                            (; output_format="gif", output_compression=50) => ("output_compression", "GIF"))
+            thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+                _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, kw...))
+            end
+            @test thrown isa ArgumentError && all(w -> occursin(w, thrown.msg), words) && isempty(seen)
+        end
+    finally
+        rm(path; force=true)
+    end
+    # Gemini has neither: OpenAI-only fields, refused naming Gemini and the field.
+    for (field, value) in (:output_compression => 50, :moderation => "low")
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
+    end
+end

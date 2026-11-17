@@ -25,7 +25,7 @@ _sc_refused(f) = try f(); nothing catch e; e end
     @test has_capability(OPENAIServiceEndpoint, :stored_completions)
     for s in (GEMINIServiceEndpoint, ANTHROPICServiceEndpoint, GEMINIOpenAIServiceEndpoint, AZUREServiceEndpoint)
         @test !has_capability(s, :stored_completions)
-        for call in (() -> list_chat_completions(; service=s), () -> get_chat_completion("c"; service=s),
+        for call in (() -> list_chat_completions(; service=s), () -> retrieve_chat_completion("c"; service=s),
                      () -> update_chat_completion("c", Dict("k" => "v"); service=s),
                      () -> delete_chat_completion("c"; service=s), () -> list_chat_completion_messages("c"; service=s))
             @test _sc_refused(call) isa ArgumentError
@@ -82,17 +82,17 @@ end
         @test r isa StoredCompletionCallError && r.cause isa Exception
     end
     for body in (Dict("id" => "c"), _sc_item(model=nothing), _sc_item(choices=nothing))
-        @test _answered(() -> get_chat_completion("c"; service=StoreProbe), 200; body=JSON.json(body)) isa StoredCompletionCallError
+        @test _answered(() -> retrieve_chat_completion("c"; service=StoreProbe), 200; body=JSON.json(body)) isa StoredCompletionCallError
     end
 end
 
 @testset "get, update and delete a stored completion; read its input messages" begin
     g, gseen = _with_scripted((_, _) -> _json(200, JSON.json(_sc_item()))) do
-        get_chat_completion(_HOSTILE_ID; service=StoreProbe)
+        retrieve_chat_completion(_HOSTILE_ID; service=StoreProbe)
     end
     @test g isa StoredCompletionSuccess && g.response.id == "chatcmpl-1" && g.response.message.content == "Red"
     @test _sc_targets(gseen) == [("GET", "/v1/chat/completions/$_HOSTILE_ENC")]
-    nf = _answered(() -> get_chat_completion("chatcmpl-x"; service=StoreProbe), 404;
+    nf = _answered(() -> retrieve_chat_completion("chatcmpl-x"; service=StoreProbe), 404;
                    body="{\"error\":{\"message\":\"Completion chatcmpl-x not found\",\"code\":\"not_found\"}}",
                    headers=["x-request-id" => "req_404"])
     @test nf isa StoredCompletionFailure && nf.status == 404 && nf.request_id == "req_404"
@@ -144,14 +144,14 @@ end
 
 @testset "Stored Chat Completions: config and cancel reach every verb" begin
     for call in (cfg -> list_chat_completions(; service=StoreSeamProbe, config=cfg),
-                 cfg -> get_chat_completion("c"; service=StoreSeamProbe, config=cfg),
+                 cfg -> retrieve_chat_completion("c"; service=StoreSeamProbe, config=cfg),
                  cfg -> update_chat_completion("c", Dict("k" => "v"); service=StoreSeamProbe, config=cfg),
                  cfg -> delete_chat_completion("c"; service=StoreSeamProbe, config=cfg),
                  cfg -> list_chat_completion_messages("c"; service=StoreSeamProbe, config=cfg))
         @test _seam_timeout(call(_TINY_DEADLINE), StoredCompletionCallError)
     end
     r, seen = _with_scripted((_, _) -> _json(200, JSON.json(_sc_item()))) do
-        get_chat_completion("c"; service=StoreProbe, cancel=cancel!(CancelToken()))
+        retrieve_chat_completion("c"; service=StoreProbe, cancel=cancel!(CancelToken()))
     end
     @test r isa StoredCompletionCallError && r.cause isa UniLMCancelled && isempty(seen)
 end

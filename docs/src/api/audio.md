@@ -319,9 +319,9 @@ service; an endpoint declares them with the capability `:voices`.
 |:--|:--|:--|
 | [`create_voice`](@ref) | a prompt voice (`prompt`), or one from a recording (`audio_sample` and `consent`) | a designed voice (`prompt`), or a replicated one (`audio_sample` and `consent_audio`) |
 | [`list_voices`](@ref) | none: `ArgumentError` | the project's voices, then the prebuilt catalog, filtered |
-| [`get_voice`](@ref) | none: `ArgumentError` | a stored voice |
+| [`retrieve_voice`](@ref) | none: `ArgumentError` | a stored voice |
 | [`delete_voice`](@ref) | yes | a stored voice |
-| [`create_voice_consent`](@ref), [`list_voice_consents`](@ref), [`get_voice_consent`](@ref), [`update_voice_consent`](@ref), [`delete_voice_consent`](@ref) | the speaker's consent recordings | none: the consent recording goes with the replicated voice |
+| [`create_voice_consent`](@ref), [`list_voice_consents`](@ref), [`retrieve_voice_consent`](@ref), [`update_voice_consent`](@ref), [`delete_voice_consent`](@ref) | the speaker's consent recordings | none: the consent recording goes with the replicated voice |
 
 ```julia
 # Gemini: design a voice, read with it, delete it
@@ -340,7 +340,7 @@ reply carries a WAV preview (`raw["sample_audio"]`) and its token usage, which U
 a replicated voice made with `store = false` is not stored and comes back as a `key`
 (`voicekey_…`, seven days), which `speak` takes as its voice. The catalog's prebuilt voices list by
 their ids (`"achernar"`, `"am-et-assistant-1"`, …), and `speak` took both kinds by id on 17 November
-2026; `get_voice` reads stored voices only (a prebuilt id is a 404). A designed voice was read in a
+2026; `retrieve_voice` reads stored voices only (a prebuilt id is a 404). A designed voice was read in a
 dialogue beside a prebuilt one. Untested: no live run has replicated a voice (`audio_sample` with
 `consent_audio`), made one with `store = false` or edited a `base_voice`; those requests are built from
 Gemini's [voice replication](https://ai.google.dev/gemini-api/docs/voice-replication) and
@@ -355,7 +355,7 @@ voice from a recording needs the speaker's consent ([`create_voice_consent`](@re
 404 "Your organization does not have access to this endpoint" from both, a [`VoiceFailure`](@ref).
 Untested: the organization the live tests run under gets that 404, so no live run has made a voice from
 a recording or seen a consent verb succeed; those success paths are built from OpenAI's reference and
-tested offline only, against scripted replies. OpenAI's API lists and looks up no voices, so `list_voices` and `get_voice` on it throw
+tested offline only, against scripted replies. OpenAI's API lists and looks up no voices, so `list_voices` and `retrieve_voice` on it throw
 `ArgumentError` naming `GEMINIServiceEndpoint`. The Realtime API takes a custom voice as an object,
 `{"id": "voice_…"}` (a plain string answered "Supported values are: 'alloy', …"), and so `speak`
 on OpenAI sends a `voice_…` id
@@ -380,11 +380,11 @@ VoiceFailure
 VoiceCallError
 create_voice
 list_voices
-get_voice
+retrieve_voice
 delete_voice
 create_voice_consent
 list_voice_consents
-get_voice_consent
+retrieve_voice_consent
 update_voice_consent
 delete_voice_consent
 ```

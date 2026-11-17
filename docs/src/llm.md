@@ -2964,11 +2964,11 @@ create_voice(; name=nothing, prompt=nothing, audio_sample=nothing, consent=nothi
              service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> VoiceSuccess | VoiceFailure | VoiceCallError
 list_voices(; service, limit=nothing, after=nothing, type=nothing, language=nothing, region=nothing, accent=nothing,
             gender=nothing, pitch=nothing, persona=nothing, context=nothing, search=nothing, config, cancel)   # Gemini only
-get_voice(voice_id; service, config, cancel)        # Gemini only (stored voices)
+retrieve_voice(voice_id; service, config, cancel)   # Gemini only (stored voices)
 delete_voice(voice_id; service, config, cancel) -> VoiceDeleteSuccess | VoiceFailure | VoiceCallError
 create_voice_consent(recording; name, language, service, config, cancel)   # OpenAI only, as are the four below
 list_voice_consents(; limit=nothing, after=nothing, service, config, cancel)
-get_voice_consent(consent_id; service, config, cancel)
+retrieve_voice_consent(consent_id; service, config, cancel)
 update_voice_consent(consent_id; name, service, config, cancel)
 delete_voice_consent(consent_id; service, config, cancel)
 ```
@@ -2982,7 +2982,7 @@ with a `prompted` (`input`, `base_voice`) or `replicated` (`source_audio`, `cons
 voice, `store` true unless set (`store = false` returns a `key`), `name` as `display_name`, and `model`,
 `language`, `region`, `accent`, `persona`, `context`, `gender`, `pitch` (low/medium/high) and `description`. Options
 a service does not take throw `ArgumentError` before I/O. `list_voices` (page_size ≤ 1000, page_token, repeated
-filters) and `get_voice` are Gemini's: OpenAI throws `ArgumentError` naming `GEMINIServiceEndpoint`; the consent
+filters) and `retrieve_voice` are Gemini's: OpenAI throws `ArgumentError` naming `GEMINIServiceEndpoint`; the consent
 verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record (`object` `"audio.voice.deleted"`, or
 `"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers `{}` (the id requested). Each verb is
 one bounded attempt, never retried, capability `:voices`. A Gemini voice's `id` (`voice_…`, or a catalog id such as
@@ -3472,7 +3472,7 @@ Every exported symbol (590), grouped by area:
 
 **Conversations**: `ConversationObject`, `ConversationItem`, `ConversationItemList`, `ConversationSuccess`, `ConversationItemSuccess`, `ConversationItemListSuccess`, `ConversationDeleteSuccess`, `ConversationFailure`, `ConversationCallError`, `create_conversation`, `retrieve_conversation`, `update_conversation`, `delete_conversation`, `add_conversation_items`, `list_conversation_items`, `retrieve_conversation_item`, `delete_conversation_item`, `conversation_id`
 
-**Stored Chat Completions**: `StoredCompletion`, `StoredCompletionList`, `StoredCompletionMessage`, `StoredCompletionMessageList`, `StoredCompletionSuccess`, `StoredCompletionListSuccess`, `StoredCompletionMessageListSuccess`, `StoredCompletionDeleteSuccess`, `StoredCompletionFailure`, `StoredCompletionCallError`, `list_chat_completions`, `get_chat_completion`, `update_chat_completion`, `delete_chat_completion`, `list_chat_completion_messages`
+**Stored Chat Completions**: `StoredCompletion`, `StoredCompletionList`, `StoredCompletionMessage`, `StoredCompletionMessageList`, `StoredCompletionSuccess`, `StoredCompletionListSuccess`, `StoredCompletionMessageListSuccess`, `StoredCompletionDeleteSuccess`, `StoredCompletionFailure`, `StoredCompletionCallError`, `list_chat_completions`, `retrieve_chat_completion`, `update_chat_completion`, `delete_chat_completion`, `list_chat_completion_messages`
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
@@ -3480,7 +3480,7 @@ Every exported symbol (590), grouped by area:
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 
-**Audio**: `SpeechRequest`, `SpeechTurn`, `TranscriptionRequest`, `TranscriptionVAD`, `SpeechSuccess`, `TranscriptionSuccess`, `TranscriptSegment`, `TranscriptWord`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`, `Voice`, `VoiceList`, `VoiceConsent`, `VoiceConsentList`, `VoiceSuccess`, `VoiceListSuccess`, `VoiceConsentSuccess`, `VoiceConsentListSuccess`, `VoiceDeleteSuccess`, `VoiceFailure`, `VoiceCallError`, `create_voice`, `list_voices`, `get_voice`, `delete_voice`, `create_voice_consent`, `list_voice_consents`, `get_voice_consent`, `update_voice_consent`, `delete_voice_consent`
+**Audio**: `SpeechRequest`, `SpeechTurn`, `TranscriptionRequest`, `TranscriptionVAD`, `SpeechSuccess`, `TranscriptionSuccess`, `TranscriptSegment`, `TranscriptWord`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`, `Voice`, `VoiceList`, `VoiceConsent`, `VoiceConsentList`, `VoiceSuccess`, `VoiceListSuccess`, `VoiceConsentSuccess`, `VoiceConsentListSuccess`, `VoiceDeleteSuccess`, `VoiceFailure`, `VoiceCallError`, `create_voice`, `list_voices`, `retrieve_voice`, `delete_voice`, `create_voice_consent`, `list_voice_consents`, `retrieve_voice_consent`, `update_voice_consent`, `delete_voice_consent`
 
 **Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchResultsSuccess`, `BatchDeleteSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`, `batch_results`, `delete_batch`, `update_batch`
 

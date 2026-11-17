@@ -250,7 +250,7 @@ A completion sent with `store=true` is kept by OpenAI under `/v1/chat/completion
 | verb | OpenAI operation | result |
 |:--|:--|:--|
 | [`list_chat_completions`](@ref)`(; model, metadata, after, limit, order)` | `GET /v1/chat/completions` | a page of [`StoredCompletion`](@ref)s |
-| [`get_chat_completion`](@ref)`(id)` | `GET /v1/chat/completions/{id}` | the [`StoredCompletion`](@ref) |
+| [`retrieve_chat_completion`](@ref)`(id)` | `GET /v1/chat/completions/{id}` | the [`StoredCompletion`](@ref) |
 | [`update_chat_completion`](@ref)`(id, metadata)` | `POST /v1/chat/completions/{id}` | the completion with its new metadata |
 | [`delete_chat_completion`](@ref)`(id)` | `DELETE /v1/chat/completions/{id}` | the confirmed delete |
 | [`list_chat_completion_messages`](@ref)`(id; after, limit, order)` | `GET /v1/chat/completions/{id}/messages` | a page of the request's input messages |
@@ -264,7 +264,7 @@ A completion sent with `store=true` is kept by OpenAI under `/v1/chat/completion
   any request (`ArgumentError`); the `metadata` filter of `list_chat_completions` sends each pair as
   `metadata[key]=value`.
 - A completion is listed, and read, only once OpenAI has stored it, and that can take long: on 17 November
-  2026 completions sent with `store=true` were still unknown to `get_chat_completion` (HTTP 404) and
+  2026 completions sent with `store=true` were still unknown to `retrieve_chat_completion` (HTTP 404) and
   unlisted more than 90 minutes later on `gpt-6-luna` (sent with `metadata`), and 14 minutes later on
   `gpt-5.4-nano` (sent without), while a Responses API response stored by the same key was read back at
   once — so the organization does not run under Zero Data Retention, which would treat `store` as `false`

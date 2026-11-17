@@ -43,8 +43,8 @@ const LOCAL = Set{String}([
 
 const UNRECORDABLE = Set{String}([
     "generate_image", "edit_image", "speak", "transcribe", "translate", "moderate",
-    "create_voice", "list_voices", "get_voice", "delete_voice", "create_voice_consent", "list_voice_consents",
-    "get_voice_consent", "update_voice_consent", "delete_voice_consent",
+    "create_voice", "list_voices", "retrieve_voice", "delete_voice", "create_voice_consent", "list_voice_consents",
+    "retrieve_voice_consent", "update_voice_consent", "delete_voice_consent",
     "upload_file", "list_files", "retrieve_file", "delete_file", "file_content", "poll_file", "register_files",
     "create_upload", "add_upload_part", "complete_upload", "cancel_upload",
     "create_vector_store", "retrieve_vector_store", "list_vector_stores", "delete_vector_store",
@@ -67,7 +67,7 @@ const UNRECORDABLE = Set{String}([
     "create_skill_version", "list_skill_versions", "retrieve_skill_version", "delete_skill_version",
     "create_conversation", "retrieve_conversation", "update_conversation", "delete_conversation",
     "add_conversation_items", "list_conversation_items", "retrieve_conversation_item", "delete_conversation_item",
-    "list_chat_completions", "get_chat_completion", "update_chat_completion", "delete_chat_completion",
+    "list_chat_completions", "retrieve_chat_completion", "update_chat_completion", "delete_chat_completion",
     "list_chat_completion_messages",
     "realtime_connect", "realtime_send", "realtime_receive", "mint_realtime_secret",
     # the MCP client and the tools it makes, which call its server; an MCP server's transport

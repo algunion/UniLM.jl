@@ -17,7 +17,7 @@ _voice_consents_url(service)::String = _api_base_url(service) * "/v1/audio/voice
 """
     Voice
 
-A voice [`speak`](@ref) can use, as [`create_voice`](@ref), [`get_voice`](@ref) and
+A voice [`speak`](@ref) can use, as [`create_voice`](@ref), [`retrieve_voice`](@ref) and
 [`list_voices`](@ref) return it:
 - `id`: the voice's id, which `speak` takes as `voice` on the service that made it — OpenAI's
   `voice_…`; Gemini's `voice_…` for a stored custom voice, and a prebuilt voice's catalog id (such
@@ -77,11 +77,11 @@ end
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
-"Successful [`create_voice`](@ref)/[`get_voice`](@ref) result wrapping a [`Voice`](@ref)."
+"Successful [`create_voice`](@ref)/[`retrieve_voice`](@ref) result wrapping a [`Voice`](@ref)."
 @kwdef struct VoiceSuccess <: LLMRequestResponse; response::Voice; end
 "Successful [`list_voices`](@ref) result wrapping a [`VoiceList`](@ref)."
 @kwdef struct VoiceListSuccess <: LLMRequestResponse; response::VoiceList; end
-"Successful [`create_voice_consent`](@ref)/[`get_voice_consent`](@ref)/[`update_voice_consent`](@ref) result wrapping a [`VoiceConsent`](@ref)."
+"Successful [`create_voice_consent`](@ref)/[`retrieve_voice_consent`](@ref)/[`update_voice_consent`](@ref) result wrapping a [`VoiceConsent`](@ref)."
 @kwdef struct VoiceConsentSuccess <: LLMRequestResponse; response::VoiceConsent; end
 "Successful [`list_voice_consents`](@ref) result wrapping a [`VoiceConsentList`](@ref)."
 @kwdef struct VoiceConsentListSuccess <: LLMRequestResponse; response::VoiceConsentList; end
@@ -378,17 +378,17 @@ function list_voices(; service::ServiceEndpointSpec=OPENAIServiceEndpoint, limit
 end
 
 """
-    get_voice(voice_id; service=OPENAIServiceEndpoint) -> VoiceSuccess | VoiceFailure | VoiceCallError
+    retrieve_voice(voice_id; service=OPENAIServiceEndpoint) -> VoiceSuccess | VoiceFailure | VoiceCallError
 
 A stored custom voice of Gemini's (`voice_…`), with its preview for a designed voice. Gemini looks up
 stored voices only: a prebuilt voice's id answers HTTP 404. OpenAI's API has no voice lookup:
 `service = OPENAIServiceEndpoint` throws `ArgumentError` naming `GEMINIServiceEndpoint`.
 $_CANCEL_DOC
 """
-function get_voice(voice_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-                   config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
+function retrieve_voice(voice_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+                        config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :voices, "Voices API")
-    wire = _gemini_voices_wire(_voices_wire(service), "get_voice")
+    wire = _gemini_voices_wire(_voices_wire(service), "retrieve_voice")
     _voice_call(d -> VoiceSuccess(response=_parse_voice(wire, d)), "GET", _voices_url(service) * "/" * _uripart(voice_id),
                 auth_header(service), nothing, config, cancel)
 end
@@ -471,14 +471,16 @@ function list_voice_consents(; limit::Union{Int,Nothing}=nothing, after::Union{A
 end
 
 """
-    get_voice_consent(consent_id; service=OPENAIServiceEndpoint) -> VoiceConsentSuccess | VoiceFailure | VoiceCallError
+    retrieve_voice_consent(consent_id; service=OPENAIServiceEndpoint)
+        -> VoiceConsentSuccess | VoiceFailure | VoiceCallError
 
 An OpenAI voice consent by id. $_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
-function get_voice_consent(consent_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-                           config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
-    _consents_service(service, "get_voice_consent")
+function retrieve_voice_consent(consent_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+                                config::Union{Nothing,RequestConfig}=nothing,
+                                cancel::Union{Nothing,CancelToken}=nothing)
+    _consents_service(service, "retrieve_voice_consent")
     _voice_call(d -> VoiceConsentSuccess(response=_parse_voice_consent(d)), "GET",
                 _voice_consents_url(service) * "/" * _uripart(consent_id), auth_header(service), nothing, config, cancel)
 end

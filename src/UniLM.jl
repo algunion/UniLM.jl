@@ -415,7 +415,7 @@ export
     StoredCompletionFailure,
     StoredCompletionCallError,
     list_chat_completions,
-    get_chat_completion,
+    retrieve_chat_completion,
     update_chat_completion,
     delete_chat_completion,
     list_chat_completion_messages
@@ -544,11 +544,11 @@ export
     VoiceCallError,
     create_voice,
     list_voices,
-    get_voice,
+    retrieve_voice,
     delete_voice,
     create_voice_consent,
     list_voice_consents,
-    get_voice_consent,
+    retrieve_voice_consent,
     update_voice_consent,
     delete_voice_consent
 

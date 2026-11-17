@@ -42,7 +42,7 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [generate or edit an image](@ref gemini_images) | `generate_image`, `edit_image` with `service=GEMINIServiceEndpoint` | an `ImageSuccess` holding the image |
 | [read text aloud](@ref gemini_audio) | `speak(text; service=GEMINIServiceEndpoint)` | 24 kHz speech as WAV or PCM |
 | [transcribe a recording](@ref gemini_audio) | `transcribe(path; service=GEMINIServiceEndpoint)` | the transcript, its speaker turns and word timestamps when asked |
-| [design, list or delete a voice](@ref audio_voices) | `create_voice`, `list_voices`, `get_voice`, `delete_voice` with `service=GEMINIServiceEndpoint` | a `Voice` whose `id` `speak` reads with |
+| [design, list or delete a voice](@ref audio_voices) | `create_voice`, `list_voices`, `retrieve_voice`, `delete_voice` with `service=GEMINIServiceEndpoint` | a `Voice` whose `id` `speak` reads with |
 | [store files for 48 hours](@ref gemini_files) | `upload_file(path; service=GEMINIServiceEndpoint)`, `poll_file`, `list_files`, `delete_file`, `register_files` | a `FileObject` for each file, its `uri` in `raw` |
 | [embed text](@ref gemini_embeddings) | `embeddingrequest!` with `service=GEMINIServiceEndpoint` (or `GEMINIOpenAIServiceEndpoint`) | one vector per input |
 | [pay less, or get answers sooner](@ref gemini_request_options) | `service_tier="flex"` or `"priority"` | the tier the reply reports, priced at its rates |
@@ -89,7 +89,7 @@ text ([Reasoning](@ref gemini_reasoning)).
 | image generation and editing | generateContent | `generate_image`, `edit_image` | `gemini-nano-banana-2.1` |
 | speech | generateContent | `speak` | `gemini-3.8-flash-tts` |
 | transcription | generateContent | `transcribe` | `gemini-3.5-transcribe` |
-| custom voices | Voices (`/v1beta/voices`) | `create_voice`, `list_voices`, `get_voice`, `delete_voice` | the latest voice design model, unless `model` names one |
+| custom voices | Voices (`/v1beta/voices`) | `create_voice`, `list_voices`, `retrieve_voice`, `delete_voice` | the latest voice design model, unless `model` names one |
 | embeddings | models (`embedContent`, `batchEmbedContents`), or OpenAI-compatible | `embeddingrequest!` with `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint` | `gemini-embedding-2` |
 | file storage | Files | `upload_file`, `poll_file`, `list_files`, `delete_file`, `register_files` | — |
 | many generateContent requests at half price | Batch (`batchGenerateContent`) | `create_batch`, `batch_results` on `Chat`s | the default at the top of this page |

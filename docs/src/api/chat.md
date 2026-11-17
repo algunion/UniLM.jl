@@ -152,7 +152,7 @@ StoredCompletionDeleteSuccess
 StoredCompletionFailure
 StoredCompletionCallError
 list_chat_completions
-get_chat_completion
+retrieve_chat_completion
 update_chat_completion
 delete_chat_completion
 list_chat_completion_messages

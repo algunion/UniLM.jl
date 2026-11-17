@@ -987,7 +987,7 @@ end
     listed = page isa StoredCompletionListSuccess ? page.response.data : StoredCompletion[]
     isempty(listed) && error("no stored Chat Completion to read: the listing answered a $(nameof(typeof(page))) with none")
     c = only(listed)
-    got = get_chat_completion(c.id)
+    got = retrieve_chat_completion(c.id)
     @test got isa StoredCompletionSuccess && got.response.id == c.id && got.response.message.role == "assistant"
     msgs = list_chat_completion_messages(c.id; order="asc", limit=10)
     @test msgs isa StoredCompletionMessageListSuccess && !isempty(msgs.response.data)

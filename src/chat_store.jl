@@ -10,7 +10,7 @@
     StoredCompletion
 
 A Chat Completion OpenAI stored — one sent with `store=true` ([`Chat`](@ref)'s `store`) — as
-[`get_chat_completion`](@ref), [`update_chat_completion`](@ref) and [`list_chat_completions`](@ref) return it:
+[`retrieve_chat_completion`](@ref), [`update_chat_completion`](@ref) and [`list_chat_completions`](@ref) return it:
 
 - `id::String`, `model::String` (the model that served it) and `created::Int` (Unix seconds);
 - `metadata::Dict{String,String}`: its metadata, empty when it has none;
@@ -81,7 +81,7 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
-"Successful [`get_chat_completion`](@ref) / [`update_chat_completion`](@ref) result wrapping a [`StoredCompletion`](@ref)."
+"Successful [`retrieve_chat_completion`](@ref) / [`update_chat_completion`](@ref) result wrapping a [`StoredCompletion`](@ref)."
 @kwdef struct StoredCompletionSuccess <: LLMRequestResponse; response::StoredCompletion; end
 "Successful [`list_chat_completions`](@ref) result wrapping a [`StoredCompletionList`](@ref)."
 @kwdef struct StoredCompletionListSuccess <: LLMRequestResponse; response::StoredCompletionList; end
@@ -183,7 +183,7 @@ Another `order`, or metadata past the reference's bounds (16 pairs, 64-character
 an `ArgumentError` before any request.
 
 A completion is listed, and read, only once OpenAI has stored it: on 2026-11-17 completions sent with
-`store=true` were still unknown (HTTP 404) to [`get_chat_completion`](@ref), and unlisted, 90 minutes later. A
+`store=true` were still unknown (HTTP 404) to [`retrieve_chat_completion`](@ref), and unlisted, 90 minutes later. A
 completion's id is its reply's, which an [`LLMSuccess`](@ref) does not keep: find one by the `metadata` it
 was sent with.
 
@@ -210,7 +210,7 @@ function list_chat_completions(; model::Union{String,Nothing}=nothing,
 end
 
 """
-    get_chat_completion(id; service=OPENAIServiceEndpoint)
+    retrieve_chat_completion(id; service=OPENAIServiceEndpoint)
 
 The stored Chat Completion `id` (a stored completion's `id`, `chatcmpl-…`, as [`list_chat_completions`](@ref)
 lists it): `StoredCompletionSuccess` (a [`StoredCompletion`](@ref)), `StoredCompletionFailure` (HTTP 404 for one
@@ -218,7 +218,7 @@ not stored, deleted, or not yet listed) or `StoredCompletionCallError`.
 
 $_STORE_CONFIG_DOC
 """
-function get_chat_completion(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+function retrieve_chat_completion(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :stored_completions, _STORE_CAP)
     _store_call(d -> StoredCompletionSuccess(response=_stored_completion(d)), "GET",

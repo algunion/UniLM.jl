@@ -51,10 +51,10 @@ const _CE_VERBS = (
     create_file_search_store, retrieve_file_search_store, list_file_search_stores, delete_file_search_store,
     upload_to_file_search_store, import_to_file_search_store, retrieve_file_search_operation,
     poll_file_search_operation, list_file_search_documents, retrieve_file_search_document, delete_file_search_document,
-    list_chat_completions, get_chat_completion, update_chat_completion, delete_chat_completion,
+    list_chat_completions, retrieve_chat_completion, update_chat_completion, delete_chat_completion,
     list_chat_completion_messages, embeddingrequest!,
-    create_voice, list_voices, get_voice, delete_voice, create_voice_consent, list_voice_consents, get_voice_consent,
-    update_voice_consent, delete_voice_consent)
+    create_voice, list_voices, retrieve_voice, delete_voice, create_voice_consent, list_voice_consents,
+    retrieve_voice_consent, update_voice_consent, delete_voice_consent)
 
 # Each method of those verbs, and each wire a verb speaks, as (label, the family's call error,
 # kw -> the call with keywords `kw`). Every call is valid, so only the token decides whether it is
@@ -300,8 +300,8 @@ function _ce_rows(file::String)
          kw -> retrieve_file_search_document(doc; service=fs, kw...)),
         ("delete_file_search_document", FileSearchCallError, kw -> delete_file_search_document(doc; service=fs, kw...)),
         ("list_chat_completions", StoredCompletionCallError, kw -> list_chat_completions(; service=StoreProbe, kw...)),
-        ("get_chat_completion", StoredCompletionCallError,
-         kw -> get_chat_completion("chatcmpl-1"; service=StoreProbe, kw...)),
+        ("retrieve_chat_completion", StoredCompletionCallError,
+         kw -> retrieve_chat_completion("chatcmpl-1"; service=StoreProbe, kw...)),
         ("update_chat_completion", StoredCompletionCallError,
          kw -> update_chat_completion("chatcmpl-1", Dict("k" => "v"); service=StoreProbe, kw...)),
         ("delete_chat_completion", StoredCompletionCallError,
@@ -323,13 +323,13 @@ function _ce_rows(file::String)
         ("create_voice, Gemini", VoiceCallError, kw -> create_voice(; prompt="p", service=gv, kw...)),
         # OpenAI's API has no voice listing or lookup, and only OpenAI keeps voice consents: refused before any request.
         ("list_voices, Gemini", VoiceCallError, kw -> list_voices(; service=gv, kw...)),
-        ("get_voice, Gemini", VoiceCallError, kw -> get_voice("voice_1"; service=gv, kw...)),
+        ("retrieve_voice, Gemini", VoiceCallError, kw -> retrieve_voice("voice_1"; service=gv, kw...)),
         ("delete_voice, OpenAI", VoiceCallError, kw -> delete_voice("voice_1"; service=oav, kw...)),
         ("delete_voice, Gemini", VoiceCallError, kw -> delete_voice("voice_1"; service=gv, kw...)),
         ("create_voice_consent", VoiceCallError,
          kw -> create_voice_consent(_CE_WAV; name="n", language="en-US", service=oav, kw...)),
         ("list_voice_consents", VoiceCallError, kw -> list_voice_consents(; service=oav, kw...)),
-        ("get_voice_consent", VoiceCallError, kw -> get_voice_consent("cons_1"; service=oav, kw...)),
+        ("retrieve_voice_consent", VoiceCallError, kw -> retrieve_voice_consent("cons_1"; service=oav, kw...)),
         ("update_voice_consent", VoiceCallError, kw -> update_voice_consent("cons_1"; name="n", service=oav, kw...)),
         ("delete_voice_consent", VoiceCallError, kw -> delete_voice_consent("cons_1"; service=oav, kw...)),
     ]

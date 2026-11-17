@@ -133,7 +133,7 @@ end
     end
 end
 
-@testset "list_voices and get_voice on Gemini; OpenAI has neither" begin
+@testset "list_voices and retrieve_voice on Gemini; OpenAI has neither" begin
     page = """{"voices":[{"id":"achernar","type":"prebuilt","display_name":"Achernar","language_code":"en-US","gender":"female"},
                          $(_G_VOICE)],"next_page_token":"EY5O"}"""
     r, seen = _with_scripted((_, _) -> _json(200, page)) do
@@ -149,16 +149,16 @@ end
     end
     @test last_page isa VoiceListSuccess && isempty(last_page.response.data) && !last_page.response.has_more
     g, seen2 = _with_scripted((_, _) -> _json(200, _G_VOICE)) do
-        get_voice(_HOSTILE_ID; service=_GVoices)
+        retrieve_voice(_HOSTILE_ID; service=_GVoices)
     end
     @test g isa VoiceSuccess && g.response.id == "voice_yqke"
     @test only(seen2).method == "GET" && only(seen2).target == "/voices/" * _HOSTILE_ENC
     nf, _ = _with_scripted((_, _) -> _json(404, "{\"error\":{\"code\":404,\"status\":\"NOT_FOUND\"}}")) do
-        get_voice("Puck"; service=_GVoices)
+        retrieve_voice("Puck"; service=_GVoices)
     end
     @test nf isa VoiceFailure && nf.status == 404
     _, seen3 = _with_scripted((_, _) -> _json(200, "{}")) do
-        for f in (() -> list_voices(; service=_OAVoices), () -> get_voice("voice_x"; service=_OAVoices))
+        for f in (() -> list_voices(; service=_OAVoices), () -> retrieve_voice("voice_x"; service=_OAVoices))
             e = _vrefusal(f)
             @test e isa ArgumentError && occursin("OpenAI's API has no voice", e.msg) && occursin("GEMINIServiceEndpoint", e.msg)
         end
@@ -213,7 +213,7 @@ end
     @test only(seen2).method == "GET" && only(seen2).target == "/voice_consents?limit=1&after=cons_0"
     (g, u, d), seen3 = _with_scripted((n, _) -> _json(200, n == 3 ?
             """{"object":"audio.voice_consent","id":"cons_1234","deleted":true}""" : _OA_CONSENT)) do
-        (get_voice_consent(_HOSTILE_ID; service=_OAVoices), update_voice_consent("cons_1234"; name="Jane", service=_OAVoices),
+        (retrieve_voice_consent(_HOSTILE_ID; service=_OAVoices), update_voice_consent("cons_1234"; name="Jane", service=_OAVoices),
          delete_voice_consent("cons_1234"; service=_OAVoices))
     end
     @test g isa VoiceConsentSuccess && u isa VoiceConsentSuccess

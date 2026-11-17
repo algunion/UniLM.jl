@@ -170,7 +170,7 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
                 @test startswith(id, "voice_") && v.response.type == "prompted" && haskey(v.response.raw, "sample_audio")
                 s = speak("Hello."; service=GEMINIServiceEndpoint, voice=id)
                 @test s isa SpeechSuccess
-                g = get_voice(id; service=GEMINIServiceEndpoint)
+                g = retrieve_voice(id; service=GEMINIServiceEndpoint)
                 @test g isa VoiceSuccess && g.response.id == id
             end
             page = list_voices(; service=GEMINIServiceEndpoint, type="prebuilt", limit=3)
@@ -183,7 +183,7 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
             if v isa VoiceSuccess
                 d = delete_voice(v.response.id; service=GEMINIServiceEndpoint)
                 @test d isa VoiceDeleteSuccess && d.id == v.response.id
-                gone = get_voice(v.response.id; service=GEMINIServiceEndpoint)
+                gone = retrieve_voice(v.response.id; service=GEMINIServiceEndpoint)
                 @test gone isa VoiceFailure && gone.status == 404
             end
         end

@@ -354,7 +354,7 @@ its results are typed as a platform verb's are ([Platform APIs](@ref openai_plat
 
 OpenAI's custom voices are managed by [`create_voice`](@ref) and [`delete_voice`](@ref) on
 `/v1/audio/voices`, and the speakers' consent recordings by [`create_voice_consent`](@ref),
-[`list_voice_consents`](@ref), [`get_voice_consent`](@ref), [`update_voice_consent`](@ref) and
+[`list_voice_consents`](@ref), [`retrieve_voice_consent`](@ref), [`update_voice_consent`](@ref) and
 [`delete_voice_consent`](@ref) on `/v1/audio/voice_consents`
 ([custom voices](https://developers.openai.com/api/docs/guides/custom-voices)). A voice from a
 `prompt` is made for any organization (one was on 17 November 2026), but OpenAI supports it "only in
@@ -362,7 +362,7 @@ Live, not in Realtime or the speech endpoint", and a Realtime session refused it
 are not supported by the Realtime API". A voice from a recording and its consent are "limited to
 eligible customers": without that access the consent and audio-sample routes answer HTTP 404 "Your
 organization does not have access to this endpoint", a [`VoiceFailure`](@ref). OpenAI lists and looks up
-no voices; `list_voices` and `get_voice` serve Gemini's ([Custom voices](@ref audio_voices)).
+no voices; `list_voices` and `retrieve_voice` serve Gemini's ([Custom voices](@ref audio_voices)).
 
 UniLM prices none of them: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a
 `SpeechSuccess` and a `TranscriptionSuccess`. OpenAI bills `gpt-transcribe` at "\$0.0045 / minute",

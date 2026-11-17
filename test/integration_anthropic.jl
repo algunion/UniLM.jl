@@ -395,4 +395,49 @@ end
     end
 end
 
+@testset "Anthropic Skills — a skill and a second version, read, listed, a version's zip; the old version and the skill deleted" begin
+    # Free: the Skills API bills no tokens. Everything made here is deleted, the skill (with its versions) in a `finally`.
+    a = ANTHROPICServiceEndpoint
+    name = "unilm-live-" * string(rand(UInt32); base=36)
+    function skill_dir(version)
+        dir = mkpath(joinpath(mktempdir(), name))
+        write(joinpath(dir, "SKILL.md"), "---\nname: $name\ndescription: Replies with the word pong (version $version). " *
+                                         "Use it when asked to ping.\n---\nReply with the single word pong.\n")
+        write(joinpath(dir, "notes.txt"), "UniLM live skill, version $version\n")
+        dir
+    end
+    s = create_skill(skill_dir(1); display_name="UniLM live skill", service=a)
+    @info "Anthropic create_skill live" result = (s isa SkillSuccess ? s.response.raw : s)
+    @test s isa SkillSuccess
+    if s isa SkillSuccess
+        id = s.response.id
+        try
+            @test (s.response.name, s.response.description, s.response.default_version) == ("UniLM live skill", nothing, nothing)
+            @test s.response.raw["source"] == Dict("type" => "custom") && abs(s.response.created_at - time()) < 600
+            first_version = s.response.latest_version
+            v = create_skill_version(id, skill_dir(2); service=a)
+            @test v isa SkillVersionSuccess && (v.response.skill_id, v.response.name) == (id, name)
+            @test v.response.version == v.response.id != first_version && occursin("version 2", v.response.description)
+            r = retrieve_skill(id; service=a)
+            @test r isa SkillSuccess && r.response.latest_version == v.response.version
+            latest = retrieve_skill_version(id, "latest"; service=a)
+            @test latest isa SkillVersionSuccess && latest.response.version == v.response.version
+            versions = list_skill_versions(id; service=a)   # newest first
+            @test versions isa SkillVersionListSuccess && [x.version for x in versions.response.data] == [v.response.version, first_version]
+            listed = list_skills(; source="custom", limit=1000, service=a)
+            @test listed isa SkillListSuccess && any(x -> x.id == id, listed.response.data)
+            zip = skill_content(id; version=v.response.version, service=a)
+            @info "Anthropic skill_content live" result = (zip isa FileContentSuccess ? length(zip.content) : zip)
+            @test zip isa FileContentSuccess && zip.content[1:4] == b"PK\x03\x04"
+            d = delete_skill_version(id, first_version; service=a)
+            @test d isa SkillDeleteSuccess && d.id == first_version
+        finally
+            del = delete_skill(id; service=a)
+            @test del isa SkillDeleteSuccess && del.id == id
+        end
+        gone = retrieve_skill(id; service=a)
+        @test gone isa SkillFailure && gone.status == 404
+    end
+end
+
 end  # if ANTHROPIC_API_KEY

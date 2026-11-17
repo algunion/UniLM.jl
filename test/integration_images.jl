@@ -173,6 +173,62 @@ end
     @test UniLM._sniff_image_mime(bytes) == "image/png" && _png_size(bytes) == (1024, 640)
 end
 
+@testset "OpenAI images — a streamed generation hands its partial images to the callback, its usage to the result" begin
+    # partial_images=1 at quality low and the smallest size; "the final image may be sent before the full number of
+    # partial images are generated": on 2026-11-17 such a stream on gpt-image-2.6-flare sent none (450 output tokens).
+    partials = PartialImage[]
+    r = generate_image(ImageGeneration(prompt="a red circle on white", size="1024x640", quality="low", stream=true,
+                                       partial_images=1); callback=p -> push!(partials, p))
+    @test r isa ImageSuccess
+    @info "OpenAI streamed image live usage" partials = length(partials) usage = r.response.usage
+    @test r.response.raw["type"] == "image_generation.completed"
+    bytes = base64decode(only(image_data(r)))
+    @test UniLM._sniff_image_mime(bytes) == "image/png" && _png_size(bytes) == (1024, 640)
+    @test length(partials) <= 1
+    for p in partials
+        @test p.index == 0 && UniLM._sniff_image_mime(p.bytes) == "image/png" && p.size == "1024x640"
+    end
+    u = image_usage(r)
+    @test u.output_tokens > 0 && u.input_text_tokens > 0 && u.input_image_tokens == 0
+    @test (u.input_tokens, u.output_tokens) == (token_usage(r).prompt_tokens, token_usage(r).completion_tokens)
+end
+
+@testset "OpenAI image edits — a streamed multipart edit, its output_compression and moderation form fields" begin
+    # A 16x16 PNG edited at quality low and the smallest size, to a JPEG at compression 50, moderation low.
+    partials = PartialImage[]
+    fixture = joinpath(@__DIR__, "fixtures", "openai_images", "edit-16.png")
+    r = edit_image(fixture, "Fill the square with blue."; model="gpt-image-2.6-flare", size="1024x640", quality="low",
+                   output_format="jpeg", output_compression=50, moderation="low", stream=true, partial_images=1,
+                   callback=p -> push!(partials, p))
+    @test r isa ImageSuccess
+    @info "OpenAI streamed image edit live usage" partials = length(partials) usage = r.response.usage
+    @test (r.response.raw["type"], r.response.raw["output_format"]) == ("image_edit.completed", "jpeg")
+    @test UniLM._sniff_image_mime(base64decode(only(image_data(r)))) == "image/jpeg"
+    @test length(partials) <= 1 && all(p -> p.index == 0 && p.output_format == "jpeg", partials)
+    @test image_usage(r).input_image_tokens > 0
+end
+
+@testset "OpenAI image edits — by reference: an uploaded file id and a data URL, as the JSON edit" begin
+    # The fixture uploaded for vision, and the markup fixture as a data URL; the file is deleted after.
+    dir = joinpath(@__DIR__, "fixtures", "openai_images")
+    up = upload_file(joinpath(dir, "edit-16.png"), "vision")
+    @test up isa FileSuccess
+    if up isa FileSuccess
+        try
+            data = "data:image/png;base64," * base64encode(read(joinpath(dir, "markup-16.png")))
+            r = edit_image([ImageRef(file_id=up.response.id), ImageRef(image_url=data)], "Combine the two squares.";
+                           model="gpt-image-2.6-flare", size="1024x640", quality="low")
+            @test r isa ImageSuccess
+            @info "OpenAI image edit by reference live usage" usage = get(r.response.raw, "usage", nothing)
+            bytes = base64decode(only(image_data(r)))
+            @test UniLM._sniff_image_mime(bytes) == "image/png" && _png_size(bytes) == (1024, 640)
+            @test image_usage(r).input_image_tokens > 0
+        finally
+            @test delete_file(up.response.id) isa FileDeleteSuccess
+        end
+    end
+end
+
 end
 
 if !haskey(ENV, "GEMINI_API_KEY")
@@ -217,6 +273,29 @@ end
     @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
     @test _gemini_image_counts(token_usage(r)) == _gemini_image_counts(UniLM._gemini_usage(r.response.raw["usageMetadata"]))
     @test token_usage(r).prompt_tokens > 0                # the input image is counted as input
+end
+
+@testset "Gemini images — output_format and delivery in responseFormat.image, the usage typed" begin
+    # On 2026-11-17 gemini-nano-banana-2.1 answered delivery "uri" with the image inline (a JPEG): either is the result's
+    # image. A recitation refusal is asked again, up to three times in all, as in the 1K testset above.
+    r = nothing
+    for attempt in 1:3
+        r = generate_image(ImageGeneration(service=GEMINIServiceEndpoint,
+                                           prompt="three small blue squares in a row on a light grey background",
+                                           output_format="jpeg", delivery="uri"))
+        r isa ImageCallError && occursin("IMAGE_RECITATION", r.error) || break
+        @info "Gemini image: a recitation refusal" attempt error = r.error
+    end
+    @test r isa ImageSuccess
+    if r isa ImageSuccess
+        img = only(r.response.data)
+        @info "Gemini image (responseFormat) live usage" delivered = isnothing(img.url) ? "inline" : "uri" usage = r.response.usage
+        @test !isnothing(img.b64_json) || !isnothing(img.url)
+        isnothing(img.b64_json) || @test UniLM._sniff_image_mime(base64decode(img.b64_json)) == "image/jpeg"
+        u = image_usage(r)
+        @test u.output_image_tokens >= 1120 && u.input_text_tokens > 0 && u.input_image_tokens == 0
+        @test u.output_text_tokens == u.output_tokens - u.output_image_tokens
+    end
 end
 
 end

@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.35.0
+
+### Breaking
+- **`TranscriptionSuccess` gains `segments` and `words`** (`Vector{TranscriptSegment}`, `Vector{TranscriptWord}`,
+  empty unless the reply carries them). The two-argument constructor still builds; two results compare unequal
+  under `==` even when they hold the same transcript, as Vector fields compare by identity in the default `==`.
+- **`SpeechRequest` gains `turns` and `speakers`** (Vector fields, empty unless set), so two requests built from the
+  same arguments compare unequal under `==`/`isequal` and hash differently.
+- **Positional constructors of `ImageGeneration` and `ImageEdit` gain trailing fields**: `ImageGeneration` takes
+  `stream`, `partial_images` and `delivery` (17 → 20 arguments), `ImageEdit` `output_compression`, `moderation`,
+  `stream`, `partial_images` and `delivery` (19 → 24). Keyword construction is unaffected.
+- **`BatchResultsSuccess.results` can hold embeddings results** (`EmbeddingSuccess`, `EmbeddingFailure`,
+  `EmbeddingCallError`) beside the Chat results; code that matched the old exact element type must widen it.
+
+### Added
+- **Skills on OpenAI and Anthropic** (`:skills`): `create_skill`, `create_skill_version`, `list_skills`,
+  `list_skill_versions`, `retrieve_skill`, `retrieve_skill_version`, `update_skill` (OpenAI's default version),
+  `skill_content` (the zip), `delete_skill`, `delete_skill_version`, with `SkillObject`, `SkillVersionObject`, typed
+  pages and results; `SkillReference(skill)` and `SkillReference(version)`. A skill folder's hidden entries (any name
+  under it starting with `.`, such as `.env`, `.git/` or `.DS_Store`) are not uploaded, and OpenAI's 500-file limit
+  counts the files sent. `create_container(; skills)` takes
+  `InlineSkill(zip; name, description)` beside `SkillReference` (abstract `ContainerSkill`); more than 50 MiB of zip
+  across a container's inline skills throws `ArgumentError` before the request. Loading a skill into an Anthropic
+  Messages request is not available yet.
+- **Transcription options and streaming on OpenAI:** `include`, `timestamp_granularities`, `chunking_strategy`
+  (`"auto"` or `TranscriptionVAD`), `known_speaker_names`/`known_speaker_references`, and `stream=true`, which returns
+  a Task whose callback gets text deltas and diarized `TranscriptSegment`s. Replies decode `TranscriptSegment` and
+  `TranscriptWord`. Options OpenAI ignores are refused before the request (`timestamp_granularities` without
+  `verbose_json`, `stream` on `whisper-1`).
+- **Transcription on Gemini:** `transcribe` on `GEMINIServiceEndpoint` (generateContent, default
+  `gemini-3.5-transcribe`, with `diarization`, `mode` and `source_text`); Gemini declares `:transcription`.
+- **Gemini speech dialogues and language:** `speak` takes `SpeechTurn` input with `speakers`, and `language`.
+- **Custom voices** (`:voices`, OpenAI and Gemini): `create_voice`, `delete_voice`, `list_voices` and `get_voice`
+  (Gemini only; OpenAI has no such routes and they throw `ArgumentError`), and
+  OpenAI's `create_voice_consent`, `list_voice_consents`, `get_voice_consent`, `update_voice_consent`,
+  `delete_voice_consent`, with the `Voice*` types. `speak` on OpenAI sends a custom voice id to the Realtime session as
+  `{"id": …}` (the session itself refuses voices made from a prompt).
+- **Streamed images on OpenAI:** `stream=true` with `partial_images` (0–3) on generations and edits; each partial
+  image reaches the verb's `callback` as a `PartialImage`, and the call returns the same `ImageSuccess`, priced as
+  unstreamed. `n` other than 1, GIF or SVG output, `stream` on Gemini and a `callback` without `stream` throw
+  `ArgumentError` before the request.
+- **Image edits by reference:** `ImageRef` names an uploaded file id or an image URL for an OpenAI edit's images,
+  mask and markup, sent as the JSON edit. `ImageEdit` takes `output_compression` and `moderation`.
+- **Image token usage:** `image_usage(result)` returns an `ImageUsage` (text and image input tokens, output tokens) on
+  OpenAI and Gemini.
+- **Gemini image output:** `output_format="jpeg"` and `delivery` (`"inline"`, `"uri"`) in
+  `generationConfig.responseFormat.image`; a `fileData` reply part becomes an `ImageObject` with its `url`.
+- **Gemini context caches** (`:context_caching`): `create_cache(chat; ttl, expire_time, display_name)` stores a Chat's
+  messages and tools; `retrieve_cache`, `list_caches`, `update_cache` (expiration), `delete_cache`, with
+  `CacheObject`, `CacheList` and results. `Chat` gains `cached_content` (a cache's name, id or `CacheObject`): native
+  Gemini sends `cachedContent`, the OpenAI-compatible endpoint `extra_body.google.cached_content`; a system message,
+  `tools` or `tool_choice` beside it, a Gemini 4 model, and every other endpoint throw `ArgumentError` before the
+  request. Cache hits price at the cache-hit rate; hourly storage is listed in the docs, not in `estimated_cost`.
+- **Gemini File Search stores** (`:file_search_stores`): `create_file_search_store`, `retrieve_file_search_store`,
+  `list_file_search_stores`, `delete_file_search_store`, `upload_to_file_search_store`,
+  `import_to_file_search_store`, `retrieve_file_search_operation`, `poll_file_search_operation`,
+  `list_file_search_documents`, `retrieve_file_search_document`, `delete_file_search_document`; and
+  `gemini_file_search(stores; top_k, metadata_filter)`, the hosted tool an Interactions request (`respond`) searches
+  them with. A generateContent `Chat` cannot carry the tool yet.
+- **Native Gemini embeddings:** `embeddingrequest!` on `GEMINIServiceEndpoint` (`embedContent` for one input,
+  `batchEmbedContents` for up to 100; default `gemini-embedding-2`; usage priced from `usageMetadata`);
+  gemini-embedding-001 takes `task` as its `taskType`, with a document's title.
+- **Embedding batches:** `create_batch` takes `custom_id => Embeddings` pairs on OpenAI (`/v1/embeddings`) and Gemini
+  (`asyncBatchEmbedContent`); `batch_results` returns `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` at
+  the tier `"batch"` (OpenAI embedding models bill at half in a batch), and with `requests=` filled copies of the
+  requests. `create_batch(requests; display_name)` on Gemini.
+- **Stored Chat Completions** (`:stored_completions`, OpenAI): `list_chat_completions`, `get_chat_completion`,
+  `update_chat_completion` (metadata), `delete_chat_completion`, `list_chat_completion_messages`, with typed
+  `StoredCompletion*` pages and results.
+
+### Changed
+- Capabilities: native Gemini declares `:embeddings`, `:transcription`, `:voices`, `:context_caching` and
+  `:file_search_stores`; OpenAI declares `:skills`, `:stored_completions` and `:voices`; Anthropic declares `:skills`.
+- `create_container`'s `skills` accepts any `AbstractVector{<:ContainerSkill}`; a `Vector{SkillReference}` still works.
+- `update_batch` on a Gemini embedding batch goes to `updateEmbedContentBatch`.
+- Gemini's `prompt_cache_options` refusal names `create_cache` and `cached_content`.
+- Gemini image `usage` gains `text_tokens`/`image_tokens` details when Gemini lists tokens by modality; a GIF edit
+  refuses `output_compression`; Gemini `output_format` other than `"jpeg"` is refused with a new message.
+- `Chat` has a 39th field, `cached_content` (last); 38-argument positional construction still works.
+
 ## 0.34.0
 
 ### Breaking

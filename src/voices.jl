@@ -252,7 +252,7 @@ function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)::Func
     isnothing(opts.base_voice) || throw(ArgumentError("$verb: a base_voice goes with a prompt, not an audio_sample"))
     isnothing(consent_audio) && throw(ArgumentError("$verb: Gemini replicates a voice from an audio_sample and " *
         "the speaker's consent recording: pass consent_audio"))
-    sample =_voice_audio_file(verb, "audio_sample", value)
+    sample = _voice_audio_file(verb, "audio_sample", value)
     consent = _voice_audio_file(verb, "consent_audio", consent_audio)
     voice["type"] = "replicated"
     () -> request(merge(voice, Dict{String,Any}("replicated" => Dict{String,Any}(

@@ -1379,3 +1379,44 @@ end
         @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("stream", err.msg) && occursin("whole", err.msg)
     end
 end
+
+# ── image_usage: an image result's usage, typed, on both providers ──────────────────────────────────
+
+@testset "image_usage types an image result's usage on OpenAI and Gemini, the text and image tokens apart" begin
+    # OpenAI's ImageGenUsage and ImagesUsage: input_tokens_details {text_tokens, image_tokens} (required) and
+    # output_tokens_details {image_tokens, text_tokens}; the edit on OpenAI's page: 640 image and 26 text tokens.
+    reply(usage) = ImageSuccess(response=UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(
+        Dict("created" => 1, "data" => [Dict("b64_json" => "QQ==")], "usage" => usage))))))
+    full = reply(Dict("input_tokens" => 666, "output_tokens" => 107, "total_tokens" => 773,
+                      "input_tokens_details" => Dict("text_tokens" => 26, "image_tokens" => 640),
+                      "output_tokens_details" => Dict("image_tokens" => 100, "text_tokens" => 7)))
+    @test image_usage(full) == ImageUsage(input_tokens=666, output_tokens=107, total_tokens=773, input_text_tokens=26,
+                                          input_image_tokens=640, output_image_tokens=100, output_text_tokens=7)
+    @test image_usage(full) == image_usage(full.response)
+    u, t = image_usage(full), token_usage(full)
+    @test (u.input_tokens, u.output_tokens, u.total_tokens) == (t.prompt_tokens, t.completion_tokens, t.total_tokens)
+    # A split the reply does not give is nothing, not a zero.
+    bare = image_usage(reply(Dict("input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)))
+    @test bare == ImageUsage(input_tokens=11, output_tokens=22, total_tokens=33)
+    @test all(isnothing, (bare.input_text_tokens, bare.input_image_tokens, bare.output_image_tokens, bare.output_text_tokens))
+    # A reply without usage, and a failure, have none.
+    @test isnothing(image_usage(ImageSuccess(response=ImageResponse(created=1, data=ImageObject[], raw=Dict{String,Any}()))))
+    @test isnothing(image_usage(ImageFailure(response="{}", status=400))) && isnothing(image_usage(ImageCallError(error="x")))
+    # Gemini's usageMetadata: the input by modality (promptTokensDetails), the output's image tokens
+    # (candidatesTokensDetails IMAGE) and the rest of the output, its text and thinking, which Google prices apart.
+    meta = Dict("promptTokenCount" => 1131, "candidatesTokenCount" => 1263, "thoughtsTokenCount" => 450,
+                "totalTokenCount" => 2844,
+                "promptTokensDetails" => [Dict("modality" => "TEXT", "tokenCount" => 11),
+                                          Dict("modality" => "IMAGE", "tokenCount" => 1120)],
+                "candidatesTokensDetails" => [Dict("modality" => "IMAGE", "tokenCount" => 1120)])
+    gemini = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("inlineData" => Dict("mimeType" => "image/jpeg", "data" => "/9j/"))]))], "usageMetadata" => meta)
+    g = ImageSuccess(response=UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(gemini)))))
+    @test image_usage(g) == ImageUsage(input_tokens=1131, output_tokens=1713, total_tokens=2844, input_text_tokens=11,
+                                       input_image_tokens=1120, output_image_tokens=1120, output_text_tokens=593)
+    @test token_usage(g) == UniLM._gemini_usage(meta)
+    # Without the per-modality lists, Gemini gives no split.
+    delete!(meta, "promptTokensDetails"); delete!(meta, "candidatesTokensDetails")
+    g2 = ImageSuccess(response=UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(gemini)))))
+    @test image_usage(g2) == ImageUsage(input_tokens=1131, output_tokens=1713, total_tokens=2844)
+end

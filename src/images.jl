@@ -367,6 +367,61 @@ image_data(r::ImageResponse)::Vector{String} =
 image_data(r::ImageSuccess) = image_data(r.response)
 image_data(r::Union{ImageFailure,ImageCallError}) = throw(LLMResultError(r))
 
+"""
+    ImageUsage
+
+The token usage of an image result, typed, as [`image_usage`](@ref) reads it on OpenAI and on Gemini.
+
+# Fields
+- `input_tokens::Int`, `output_tokens::Int`, `total_tokens::Int`: the counts [`token_usage`](@ref)
+  reads; Gemini's thinking is output, as on Gemini Chat
+- `input_text_tokens`, `input_image_tokens::Union{Int,Nothing}`: the input's text and image tokens —
+  OpenAI's `input_tokens_details`, Gemini's `promptTokensDetails` by modality
+- `output_image_tokens`, `output_text_tokens::Union{Int,Nothing}`: the output's image tokens and the
+  rest — OpenAI's `output_tokens_details`; on Gemini the `IMAGE` count of `candidatesTokensDetails`,
+  and the other output tokens, text and thinking, which Google prices apart from image output
+
+A split the reply does not give is `nothing`, not a zero that would read as none.
+"""
+@kwdef struct ImageUsage
+    input_tokens::Int
+    output_tokens::Int
+    total_tokens::Int
+    input_text_tokens::Union{Int,Nothing} = nothing
+    input_image_tokens::Union{Int,Nothing} = nothing
+    output_image_tokens::Union{Int,Nothing} = nothing
+    output_text_tokens::Union{Int,Nothing} = nothing
+end
+
+"""
+    image_usage(r::ImageResponse) -> Union{ImageUsage,Nothing}
+    image_usage(r::ImageSuccess) -> Union{ImageUsage,Nothing}
+
+The usage of an image result as an [`ImageUsage`](@ref) — on OpenAI, streamed or not, and on Gemini —
+read from `r.usage`. `nothing` when the reply reported no usage, and for an [`ImageFailure`](@ref)
+or [`ImageCallError`](@ref).
+
+```julia
+result = edit_image("room.png", "Add a window"; quality="low")
+u = image_usage(result)
+u.input_image_tokens, u.input_text_tokens, u.output_tokens
+```
+"""
+function image_usage(r::ImageResponse)::Union{ImageUsage,Nothing}
+    u = r.usage
+    isnothing(u) && return nothing
+    t = _input_output_usage(u)
+    detail(group, key) = (g = get(u, group, nothing); v = g isa AbstractDict ? get(g, key, nothing) : nothing;
+                          v isa Integer ? Int(v) : nothing)
+    ImageUsage(input_tokens=t.prompt_tokens, output_tokens=t.completion_tokens, total_tokens=t.total_tokens,
+               input_text_tokens=detail("input_tokens_details", "text_tokens"),
+               input_image_tokens=detail("input_tokens_details", "image_tokens"),
+               output_image_tokens=detail("output_tokens_details", "image_tokens"),
+               output_text_tokens=detail("output_tokens_details", "text_tokens"))
+end
+image_usage(r::ImageSuccess) = image_usage(r.response)
+image_usage(::Union{ImageFailure,ImageCallError})::Nothing = nothing
+
 # What `showerror(::LLMResultError)` reports for an image result.
 _llm_result_status(r::Union{ImageFailure,ImageCallError}) = r.status
 _llm_result_body(r::ImageFailure) = r.response
@@ -1227,9 +1282,22 @@ end
 # Gemini Chat counts it (`_gemini_usage`).
 function _gemini_image_usage(u)::Union{Dict{String,Any},Nothing}
     t = _gemini_usage(u)
-    isnothing(t) && return nothing
+    (isnothing(t) || !(u isa AbstractDict)) && return nothing
+    input = Dict{String,Any}("cached_tokens" => t.cached_tokens)
+    output = Dict{String,Any}("reasoning_tokens" => t.reasoning_tokens)
+    # The splits OpenAI's details give, where Gemini lists its tokens by modality: the input's text and image,
+    # and the output's image; the rest of the output is its text and thinking.
+    prompt = get(u, "promptTokensDetails", nothing)
+    if prompt isa AbstractVector
+        input["text_tokens"] = _modality_tokens(prompt, "TEXT", "tokenCount")
+        input["image_tokens"] = _modality_tokens(prompt, "IMAGE", "tokenCount")
+    end
+    candidates = get(u, "candidatesTokensDetails", nothing)
+    if candidates isa AbstractVector
+        image = _modality_tokens(candidates, "IMAGE", "tokenCount")
+        output["image_tokens"] = image
+        output["text_tokens"] = t.completion_tokens - image
+    end
     Dict{String,Any}("input_tokens" => t.prompt_tokens, "output_tokens" => t.completion_tokens,
-                     "total_tokens" => t.total_tokens,
-                     "input_tokens_details" => Dict{String,Any}("cached_tokens" => t.cached_tokens),
-                     "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => t.reasoning_tokens))
+                     "total_tokens" => t.total_tokens, "input_tokens_details" => input, "output_tokens_details" => output)
 end

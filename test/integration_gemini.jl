@@ -505,39 +505,43 @@ end
     @info "Gemini native embeddings" tokens = r.usage.prompt_tokens + r2.usage.prompt_tokens cost = estimated_cost(r) + estimated_cost(r2)
 end
 
-@testset "Gemini batches — embeddings: create (named), update the priority, run to the end, read at the batch rate, delete" begin
-    # Two gemini-embedding-2 requests of one word each (USD ~1e-7); a batch of 2026-11-17 succeeded in about 90 seconds,
-    # and the poll gives it ten minutes. The batch is deleted (cancelled first if the poll gave up).
-    requests = ["a" => Embeddings("alpha"; service=GEMINIServiceEndpoint, dimensions=128),
-                "b" => Embeddings("beta"; service=GEMINIServiceEndpoint, task=:clustering, dimensions=128)]
-    created = create_batch(requests; display_name="unilm-live-embeddings")
-    @test created isa BatchSuccess
-    if created isa BatchSuccess
-        id = created.response.id
-        @test created.response.raw["metadata"]["displayName"] == "unilm-live-embeddings"
-        @test endswith(created.response.raw["metadata"]["@type"], ".EmbedContentBatch")
-        done = false
-        try
-            up = update_batch(id; priority=5, service=GEMINIServiceEndpoint)      # on updateEmbedContentBatch
-            @test up isa BatchSuccess && up.response.raw["priority"] == "5"
-            seconds = @elapsed (ended = poll_batch(id; service=GEMINIServiceEndpoint, interval=15.0, timeout=600.0))
-            done = ended isa BatchSuccess && ended.response.status == "BATCH_STATE_SUCCEEDED"
-            @test done
-            if done
-                r = batch_results(id; service=GEMINIServiceEndpoint, requests)
-                @test r isa BatchResultsSuccess && first.(r.results) == ["a", "b"]
-                for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
-                    @test x isa EmbeddingSuccess && length(x.embeddings.embeddings) == 128 && x.embeddings.input == Dict(requests)[cid].input
-                    x isa EmbeddingSuccess || continue
-                    standard = EmbeddingSuccess(embeddings=x.embeddings, raw=x.raw, usage=UniLM._standard_tier(x.usage))
-                    @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
-                end
-                @info "Gemini embedding batch" id seconds
-            end
-        finally
-            done || cancel_batch(id; service=GEMINIServiceEndpoint)
-            @test delete_batch(id; service=GEMINIServiceEndpoint) isa BatchDeleteSuccess
+# As for the Chat batches above, the gate waits for no embedding batch: each run leaves one 2-request batch named
+# "unilm-gate-embeddings" (its own name and custom ids, so it is never read as the Chat gate's) and reads the newest
+# succeeded one an earlier run left; a run that finds none fails. A run bills two gemini-embedding-2 requests of one
+# word each at the Batch rate (USD ~1e-7).
+@testset "Gemini batches — embeddings: create (named), update the priority; the results of a batch an earlier run left, at the batch rate" begin
+    # The same requests every run, so the batch read is checked against the requests that made it.
+    gate() = ["unilm-gate-alpha" => Embeddings("alpha"; service=GEMINIServiceEndpoint, dimensions=128),
+              "unilm-gate-beta" => Embeddings("beta"; service=GEMINIServiceEndpoint, task=:clustering, dimensions=128)]
+    left = create_batch(gate(); display_name="unilm-gate-embeddings")
+    @test left isa BatchSuccess
+    mine = left isa BatchSuccess ? left.response.id : nothing
+    if left isa BatchSuccess
+        @test left.response.raw["metadata"]["displayName"] == "unilm-gate-embeddings"
+        @test endswith(left.response.raw["metadata"]["@type"], ".EmbedContentBatch")
+        up = update_batch(mine; priority=5, service=GEMINIServiceEndpoint)      # on updateEmbedContentBatch
+        @test up isa BatchSuccess && up.response.raw["priority"] == "5"
+    end
+    page = list_batches(; limit=100, service=GEMINIServiceEndpoint)
+    @test page isa BatchListSuccess
+    named(b) = b.id != mine && b.status == "BATCH_STATE_SUCCEEDED" &&
+               get(get(b.raw, "metadata", Dict()), "displayName", nothing) == "unilm-gate-embeddings"
+    earlier = page isa BatchListSuccess ?
+        sort(filter(named, page.response.data); by=b -> b.raw["metadata"]["createTime"], rev=true) : BatchObject[]
+    @test !isempty(earlier)
+    if !isempty(earlier)
+        b = first(earlier)
+        requests = gate()
+        r = batch_results(b.id; service=GEMINIServiceEndpoint, requests)
+        @test r isa BatchResultsSuccess && first.(r.results) == ["unilm-gate-alpha", "unilm-gate-beta"]
+        for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
+            @test x isa EmbeddingSuccess && length(x.embeddings.embeddings) == 128 && x.embeddings.input == Dict(requests)[cid].input
+            x isa EmbeddingSuccess || continue
+            standard = EmbeddingSuccess(embeddings=x.embeddings, raw=x.raw, usage=UniLM._standard_tier(x.usage))
+            @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
         end
+        r isa BatchResultsSuccess && @info "Gemini gate embedding batch" read = b.id left = mine cost = sum(
+            (estimated_cost(x) for (_, x) in r.results if x isa EmbeddingSuccess); init=0.0)
     end
 end
 

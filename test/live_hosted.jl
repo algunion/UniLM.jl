@@ -13,8 +13,8 @@
 # variable check catches. Not listed: the Ollama and MCP suites, which need local servers.
 # Two needs on state an earlier run left, each failing its test when unmet:
 # - OpenAI's Chat and embeddings Batch API tests (integration.jl), Anthropic's Message Batches test
-#   (integration_anthropic.jl) and Gemini's Chat batch test (integration_gemini.jl) each read a batch an earlier run
-#   left (rolling: a run leaves one);
+#   (integration_anthropic.jl) and Gemini's Chat and embeddings batch tests (integration_gemini.jl) each read a batch an
+#   earlier run left (rolling: a run leaves one);
 # - the stored Chat Completions test (integration.jl) reads the oldest completion OpenAI lists, so it needs one listed.
 
 using Test, HTTP, JSON, UniLM   # the suites call HTTP and JSON, as under test/runtests.jl

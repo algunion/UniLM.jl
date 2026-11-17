@@ -271,7 +271,9 @@ connector support" ([connectors and MCP](https://developers.openai.com/api/docs/
 with HTTP 400, "Built-in MCP connector 'gdrive' (connector_id) is not supported with this model. Remove the
 connector tool or use a supported remote MCP integration.", while `gpt-5.4-mini` listed the connector's tools.
 Use `authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
-string or object forms.
+string or object forms. Shown (and inside a shown `Respond`), the tool prints `authorization` and
+the values of credential headers (`Authorization`, `X-Api-Key`, `Api-Key`, `Cookie`, …) redacted;
+the request sends them as given.
 """
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
@@ -296,6 +298,15 @@ function JSON.lower(t::MCPTool)
     !isnothing(t.headers) && (d[:headers] = t.headers)
     !isnothing(t.tunnel_id) && (d[:tunnel_id] = t.tunnel_id)
     return d
+end
+
+# The token and the credential headers are the MCP server's keys, and the default field dump printed them (and
+# so did a Respond holding the tool) wherever it was echoed or logged: shown redacted, as the endpoints' and the
+# MCP transport's keys are. The request body still sends them as given.
+function Base.show(io::IO, t::MCPTool)
+    shown(f::Symbol, v) = f === :authorization && v isa String ? _redact_api_key(v) :
+        f === :headers && v isa AbstractDict ? _redacted_headers([string(k) => string(x) for (k, x) in v]) : v
+    print(io, "MCPTool(", join((string(f, "=", repr(shown(f, getfield(t, f)))) for f in fieldnames(MCPTool)), ", "), ")")
 end
 
 """

@@ -779,6 +779,8 @@ end
     headers::Union{AbstractDict, Nothing} = nothing
     tunnel_id::Union{String, Nothing} = nothing
 end
+# Shown (alone or inside a shown Respond), authorization and the values of credential headers read redacted
+# ("ya29…[redacted]"); the request body sends them as given.
 
 # action, moderation, partial_images, input_fidelity, complexity, frame_count, frame_duration_ms
 # and svg are validated at construction (ArgumentError; the frame fields only with output_format

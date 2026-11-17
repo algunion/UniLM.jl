@@ -146,6 +146,20 @@ end
         @test !haskey(lowered, :headers)
     end
 
+    @testset "show redacts the OAuth token and the credential headers; the body keeps them" begin
+        # The token and the headers are the MCP server's credentials: printed in full, a REPL echo or a logged
+        # request (a Respond holding the tool) handed them out.
+        t = MCPTool(server_label="crm", server_url="https://mcp.example", authorization="ya29.SECRET-OAUTH",
+                    headers=Dict("X-Api-Key" => "SECRET-HDR", "X-Trace" => "t-42"))
+        for s in (repr(t), sprint(show, MIME("text/plain"), t), repr(Respond(input="hi", tools=[t])))
+            @test !occursin("SECRET", s)
+            @test occursin("authorization=\"ya29…[redacted]\"", s) && occursin("\"X-Api-Key\" => \"SECR…[redacted]\"", s)
+            @test occursin("\"X-Trace\" => \"t-42\"", s) && occursin("server_label=\"crm\"", s)
+        end
+        @test JSON.lower(t)[:authorization] == "ya29.SECRET-OAUTH" && JSON.lower(t)[:headers]["X-Api-Key"] == "SECRET-HDR"
+        @test occursin("authorization=nothing", repr(MCPTool(server_label="x")))
+    end
+
     @testset "mcp_tool convenience" begin
         t = mcp_tool("my-server", "https://example.com"; allowed_tools=["fn1"])
         @test t isa MCPTool

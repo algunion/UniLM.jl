@@ -384,7 +384,8 @@ There UniLM is an OpenAI-compatible client and no more:
 
 - **No default model, no Anthropic rules.** A `Chat` without `model` throws `ArgumentError`. Only the
   checks every `Chat` gets run, its constructor's among them (a `temperature` from 0 to 2, `n` of 1, …):
-  every field the `Chat` sets is sent, `temperature` and `reasoning_effort` included, and no row of
+  every field the `Chat` sets but Gemini's `cached_content` (refused) is sent, `temperature` and
+  `reasoning_effort` included, and no row of
   [Limits and refusals](@ref anthropic_limits) applies. Anthropic ignores most fields it does not
   support, `response_format`, `reasoning_effort` and a tool's `strict` among them, and joins every system
   message into the top-level `system` prompt.

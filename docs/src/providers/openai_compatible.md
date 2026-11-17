@@ -11,8 +11,9 @@ transcription routes as OpenAI-compatible ones, and a hosted service of another 
 OpenAI-compatible API is reached the same way, with `GenericOpenAIEndpoint(base_url, key)`. The rules
 on this page are that endpoint's; the facts marked as Mistral's are Mistral's alone. UniLM holds no
 rule of Mistral's or of any other service: it sends every field a request sets as it is, under its own
-name but for those [First call](@ref openai_compatible_first_call) lists, and sends the requests of the
-capabilities the table below lists without knowing whether the service serves them. A
+name but for those [First call](@ref openai_compatible_first_call) lists — a `Chat`'s `cached_content`,
+Gemini's, is refused ([Limits and refusals](@ref openai_compatible_limits)) —, and sends the requests
+of the capabilities the table below lists without knowing whether the service serves them. A
 verb that needs a capability the table lists as not available refuses the endpoint, and so does `ask`;
 `respond`, which takes `responses` or `agentic`, and `transcribe`, which takes `transcription` or
 `audio`, are sent. Of Mistral's API, UniLM does not use the Agents and Conversations APIs, OCR or the
@@ -261,8 +262,9 @@ that reference does not list. The concepts every provider shares are on
 
 UniLM checks no limit of a service: a request longer than the model's context, or one the service
 cannot serve, is the service's error ([When something fails](@ref openai_compatible_failures)). Every
-field goes out as it is set; the checks every request gets still hold, such as a `temperature` from 0 to
-2, though Mistral's error glossary gives "`temperature` outside 0 to 1 range" as a cause of HTTP 400
+field but a `Chat`'s `cached_content`, Gemini's, goes out as it is set; the checks every request gets
+still hold, such as a `temperature` from 0 to 2, though Mistral's error glossary gives "`temperature`
+outside 0 to 1 range" as a cause of HTTP 400
 ([error glossary](https://docs.mistral.ai/resources/error-glossary)). `respond` sends a `Respond` to
 `/v1/responses`, its `seed` among its fields, while Mistral's API reference lists no Responses route. It
 refuses before anything is sent what the table below lists; the verbs of the capabilities the table at
@@ -272,6 +274,7 @@ the top of this page lists as not available refuse the endpoint too.
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the model's name ([Models](@ref openai_compatible_models)) |
 | a `transcribe` call without a `model` | `has no default transcription model` | the model's name, such as `voxtral-mini-latest` |
+| a `Chat` with a `cached_content` | `cached_content names a Gemini context cache, which GenericOpenAIEndpoint does not read`: a context cache is Gemini's ([`create_cache`](@ref)) | unset `cached_content`, or send the `Chat` to `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint` |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
 | an `Embeddings` request with a `title`, for a model other than EmbeddingGemma and gemini-embedding-2 | `has no task prompts, so a title has nowhere to go` | no title |
 | an `Embeddings` request with a `task` other than `:none`, for a model other than EmbeddingGemma and gemini-embedding-2 | `UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only` | `task = :none`, with the model's own prefix in the text |

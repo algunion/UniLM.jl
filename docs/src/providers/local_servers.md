@@ -9,7 +9,8 @@ yours, through an OpenAI-compatible API, and `GenericOpenAIEndpoint` speaks it: 
 base URL, a `Chat` goes to `/v1/chat/completions`, an `Embeddings` request to `/v1/embeddings`,
 `respond` to `/v1/responses`, `fim_complete` to `/v1/completions` and `transcribe` to
 `/v1/audio/transcriptions`. UniLM is an OpenAI-compatible client there: it holds no rule of any server,
-sends every field a request sets as it is, under the name the request gives it — LM Studio's chat
+sends every field a request sets but a `Chat`'s `cached_content`, Gemini's, as it is, under the name
+the request gives it — LM Studio's chat
 reference lists the cap as `max_tokens`
 ([chat completions](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)), while vLLM
 takes `max_completion_tokens` and deprecates `max_tokens` "in favor of the max_completion_tokens field"
@@ -262,6 +263,7 @@ capabilities the table at the top of this page lists as not available refuse the
 | :--- | :--- | :--- |
 | a `Chat`, `Respond`, `Embeddings` or FIM request without a `model` | `model must be specified`: the endpoint has no default model | the name the server serves the model under |
 | a `transcribe` call without a `model` | `has no default transcription model` | the name the server serves the model under |
+| a `Chat` with a `cached_content` | `cached_content names a Gemini context cache, which GenericOpenAIEndpoint does not read`: a context cache is Gemini's ([`create_cache`](@ref)) | unset `cached_content` |
 | an `Embeddings` item holding an image or a sound clip | `takes text only` | the item's text alone |
 | an EmbeddingGemma request without a `task` | `expects a task prompt` | a [task](@ref ollama_embeddings), or `task = :none` where the server writes the prompts |
 | an EmbeddingGemma request with a `dimensions` other than 768, 512, 256 and 128 | `returns 768, 512, 256, 128 dimensions`: the sizes the model was trained for | one of them |

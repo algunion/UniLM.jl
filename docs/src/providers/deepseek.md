@@ -331,16 +331,17 @@ DeepSeek's models take a context of "1M" tokens and generate at most "384K"
 ([Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/)), a request's `max_tokens`
 "between 1 and 384K (393216)"
 ([Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion)). UniLM checks none of
-these limits, and no rule of DeepSeek's: every field a `Chat` sets goes out as it is — `user`,
-`max_tokens`, a JSON Schema format, the prompt-cache fields —, `max_completion_tokens` under DeepSeek's
-name `max_tokens` ([Reasoning](@ref deepseek_reasoning)), and DeepSeek's answer is the check
-([When something fails](@ref deepseek_failures)). It refuses before anything is sent what the table
-below lists, and the checks every `Chat` gets, such as a `temperature` from 0 to 2 or an `n` of 1;
-the verbs of the capabilities the table at the top of this page lists as not available refuse the
-endpoint too.
+these limits, and no rule of DeepSeek's: every field a `Chat` sets but Gemini's `cached_content` goes
+out as it is — `user`, `max_tokens`, a JSON Schema format, the prompt-cache fields —,
+`max_completion_tokens` under DeepSeek's name `max_tokens` ([Reasoning](@ref deepseek_reasoning)),
+and DeepSeek's answer is the check ([When something fails](@ref deepseek_failures)). It refuses
+before anything is sent what the table below lists, and the checks every `Chat` gets, such as a
+`temperature` from 0 to 2 or an `n` of 1; the verbs of the capabilities the table at the top of this
+page lists as not available refuse the endpoint too.
 
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
+| a `Chat` with a `cached_content` | `cached_content names a Gemini context cache, which DeepSeekEndpoint does not read`: a context cache is Gemini's ([`create_cache`](@ref)); DeepSeek caches on its own ([Prompt caching](@ref deepseek_caching)) | unset `cached_content`, or send the `Chat` to `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint` |
 | a `reasoning_effort` outside the eight this endpoint takes, such as `"extreme"` | `reasoning_effort must be one of`: this endpoint takes `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` and `"ultra"`, DeepSeek's names ([Reasoning](@ref deepseek_reasoning)) | one of them |
 | `prefix_complete` on a `Chat` without messages | `Chat must not be empty for prefix completion`: there is no turn to continue | the conversation, then the assistant's prefix |
 | `prefix_complete` on a `Chat` whose last message is not the assistant's | `Last message must be role=assistant for prefix completion`: DeepSeek continues the last message, which must be the assistant's | push the prefix as an assistant message |

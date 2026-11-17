@@ -235,11 +235,13 @@ A deployment's quota sets its tokens and requests per minute
 ([quotas and limits](https://learn.microsoft.com/en-us/azure/foundry/openai/quotas-limits)), and a
 request past them meets HTTP 429 ([When something fails](@ref azure_failures)). UniLM checks no limit
 of Azure's, and none of the per-model rules it applies on its native endpoint for the GPT models:
-every field a `Chat` sets goes out as it is — `max_tokens` keeps its name, `user` is sent,
-`service_tier` and `reasoning_effort` are not checked — and Azure's answer is the check. It refuses
-nothing of Azure's own before sending, only the checks every `Chat` gets, such as a `temperature` from
-0 to 2 or an `n` of 1; the verbs of the capabilities the table at the top of this page lists as not
-available refuse the endpoint.
+every field a `Chat` sets but `cached_content` goes out as it is — `max_tokens` keeps its name, `user`
+is sent, `service_tier` and `reasoning_effort` are not checked — and Azure's answer is the check. It
+refuses nothing of Azure's own before sending, only the checks every `Chat` gets, such as a
+`temperature` from 0 to 2 or an `n` of 1, and a `cached_content`, a Gemini context cache Azure does not
+read (`cached_content names a Gemini context cache, which AZUREServiceEndpoint does not read`: unset
+it, or send the `Chat` to a Gemini endpoint); the verbs of the capabilities the table at the top of
+this page lists as not available refuse the endpoint.
 
 ## [Prompt caching](@id azure_caching)
 
@@ -248,8 +250,8 @@ discount on input token pricing for Standard deployment types and up to 100% dis
 tokens for Provisioned deployment types"
 ([prompt caching](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/prompt-caching)).
 The reply's `prompt_tokens_details.cached_tokens` becomes `usage.cached_tokens`, billed at the cached
-rate ([Cost and usage](@ref azure_cost)). The cache fields go out as they are set, and Azure answers
-them:
+rate ([Cost and usage](@ref azure_cost)). The cache fields below go out as they are set, and Azure
+answers them; Gemini's `cached_content` is refused before sending ([Limits and refusals](@ref azure_limits)):
 
 - `prompt_cache_key`: on the GPT-5.6 models and later, "reuse the same key for requests that share
   long, common prompt prefixes".

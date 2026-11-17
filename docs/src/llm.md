@@ -2785,9 +2785,9 @@ end
     speaker::Union{String,Nothing} = nothing        # Gemini, with diarization
 end
 
-transcribe(t::TranscriptionRequest; config=nothing, cancel=nothing, callback=nothing)
+transcribe(t::TranscriptionRequest; config=nothing, callback=nothing, cancel=nothing)
     -> TranscriptionSuccess | AudioFailure | AudioCallError    # a Task yielding one when t.stream
-transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, callback=nothing, kwargs...)
+transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, callback=nothing, cancel=nothing, kwargs...)
     # callback(chunk::Union{String,TranscriptSegment}, close::Ref{Bool}) on a stream
 transcript_text(r::TranscriptionSuccess) -> String
 ```

@@ -1093,8 +1093,8 @@ retried as unstreamed while no callback has run; an error the stream itself carr
 `transcript.text.done`, a gap longer than `stream_idle_timeout`, a timeout and a cancel are an
 `AudioCallError`. A `callback` without `stream = true` throws `ArgumentError`.
 """
-function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing,
-                    cancel::Union{Nothing,CancelToken}=nothing, callback=nothing)
+function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)
     # An endpoint that declares `:audio` transcribes too (`has_capability`), as does one that declares
     # `:transcription` alone.
     validate_capability(t.service, :transcription, "Audio API")
@@ -1130,8 +1130,8 @@ function _transcribe(::_OpenAITranscriptionWire, t::TranscriptionRequest, cfg::R
                          _failure(AudioFailure, resp)
 end
 transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-           cancel::Union{Nothing,CancelToken}=nothing, callback=nothing, kwargs...) =
-    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config, cancel, callback)
+           callback=nothing, cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
+    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config, callback, cancel)
 
 # A 200 transcription or translation reply: the JSON object `{"text": …}`, with its segments and words when it
 # has them (verbose_json, diarized_json), or the bare text.

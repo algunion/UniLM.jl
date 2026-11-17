@@ -173,13 +173,15 @@ function _refuse_voice_options(verb::String, provider::String, opts::NamedTuple,
     nothing
 end
 
-# Exactly one way to make a voice: from a description (`prompt`) or from a recording (`audio_sample`).
-function _voice_source(verb::String, prompt, audio_sample)::Symbol
+# Exactly one way to make a voice: from a description (`prompt`) or from a recording (`audio_sample`, a path); the
+# way, and the prompt or the path.
+function _voice_source(verb::String, prompt, audio_sample)::Pair{Symbol,String}
     isnothing(prompt) == isnothing(audio_sample) && throw(ArgumentError(
         "$verb: give a prompt (a voice designed from a description) or an audio_sample (a voice replicated from a " *
         "recording), one of the two"))
-    isnothing(prompt) || isempty(strip(prompt)) && throw(ArgumentError("$verb: the prompt is blank"))
-    isnothing(prompt) ? :sample : :prompt
+    isnothing(audio_sample) || return :sample => String(audio_sample)
+    isempty(strip(prompt)) && throw(ArgumentError("$verb: the prompt is blank"))
+    :prompt => String(prompt)
 end
 
 # OpenAI's CreateVoicePromptRequest (JSON: type "prompt", name 1–256 characters, prompt and script_hint 1–2000, not
@@ -188,16 +190,16 @@ function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)
     verb = "create_voice"
     _refuse_voice_options(verb, "OpenAI", opts, (:consent_audio, :base_voice, :store, first.(_GEMINI_VOICE_FIELDS)...),
         "those are Gemini's (service=GEMINIServiceEndpoint)")
-    source = _voice_source(verb, opts.prompt, opts.audio_sample)
+    source, value = _voice_source(verb, opts.prompt, opts.audio_sample)
     name = something(opts.name, "")
     1 <= length(name) <= 256 || throw(ArgumentError("$verb: OpenAI names a voice with 1 to 256 characters (got $(length(name)))"))
     if source === :prompt
         isnothing(opts.consent) || throw(ArgumentError("$verb: a consent goes with an audio_sample, not a prompt"))
-        length(opts.prompt) <= 2000 || throw(ArgumentError("$verb: OpenAI takes a prompt of at most 2000 characters"))
+        length(value) <= 2000 || throw(ArgumentError("$verb: OpenAI takes a prompt of at most 2000 characters"))
         hint = opts.script_hint
         isnothing(hint) || (!isempty(strip(hint)) && length(hint) <= 2000) || throw(ArgumentError(
             "$verb: the script_hint is 1 to 2000 characters and not blank"))
-        body = Dict{String,Any}("type" => "prompt", "name" => name, "prompt" => opts.prompt)
+        body = Dict{String,Any}("type" => "prompt", "name" => name, "prompt" => value)
         isnothing(hint) || (body["script_hint"] = hint)
         isnothing(opts.model) || (body["model"] = opts.model)
         return auth_header(service), JSON.json(body)
@@ -207,7 +209,7 @@ function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)
     isempty(strip(consent)) && throw(ArgumentError(
         "$verb: a voice from an audio_sample names its speaker's consent recording: consent = \"cons_…\" " *
         "(create_voice_consent makes one)"))
-    sample = _voice_audio_file(verb, "audio_sample", opts.audio_sample; max=_VOICE_AUDIO_MAX)
+    sample = _voice_audio_file(verb, "audio_sample", value; max=_VOICE_AUDIO_MAX)
     isnothing(opts.model) || throw(ArgumentError("$verb: OpenAI takes a model for a prompt voice only"))
     fields = Pair{String,Any}["type" => "audio_sample", "name" => name, "consent" => consent,
         "audio_sample" => HTTP.Multipart(basename(sample), IOBuffer(read(sample)), _mime_for(sample))]
@@ -222,7 +224,7 @@ function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)
     verb = "create_voice"
     _refuse_voice_options(verb, "Gemini", opts, (:consent, :script_hint),
         "Gemini takes the consent recording itself (consent_audio) and no script hint")
-    source = _voice_source(verb, opts.prompt, opts.audio_sample)
+    source, value = _voice_source(verb, opts.prompt, opts.audio_sample)
     isnothing(opts.pitch) || opts.pitch in _VOICE_PITCHES || throw(ArgumentError(
         "$verb: pitch is \"low\", \"medium\" or \"high\" (got $(repr(opts.pitch)))"))
     voice = Dict{String,Any}()
@@ -232,20 +234,21 @@ function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)
         v = getfield(opts, kw)
         isnothing(v) || (voice[field] = v)
     end
+    consent_audio = opts.consent_audio
     if source === :prompt
-        isnothing(opts.consent_audio) || throw(ArgumentError("$verb: consent_audio goes with an audio_sample, not a prompt"))
+        isnothing(consent_audio) || throw(ArgumentError("$verb: consent_audio goes with an audio_sample, not a prompt"))
         voice["type"] = "prompted"
-        voice["prompted"] = Dict{String,Any}("input" => opts.prompt,
+        voice["prompted"] = Dict{String,Any}("input" => value,
             (isnothing(opts.base_voice) ? () : ("base_voice" => opts.base_voice,))...)
     else
         isnothing(opts.base_voice) || throw(ArgumentError("$verb: a base_voice goes with a prompt, not an audio_sample"))
-        isnothing(opts.consent_audio) && throw(ArgumentError(
+        isnothing(consent_audio) && throw(ArgumentError(
             "$verb: Gemini replicates a voice from an audio_sample and the speaker's consent recording: pass consent_audio"))
-        audio(path, what) = (p = _voice_audio_file(verb, what, path);
+        audio(path::AbstractString, what::String) = (p = _voice_audio_file(verb, what, path);
             Dict{String,Any}("mime_type" => _mime_for(p), "data" => base64encode(read(p))))
         voice["type"] = "replicated"
-        voice["replicated"] = Dict{String,Any}("source_audio" => audio(opts.audio_sample, "audio_sample"),
-                                               "consent_audio" => audio(opts.consent_audio, "consent_audio"))
+        voice["replicated"] = Dict{String,Any}("source_audio" => audio(value, "audio_sample"),
+                                               "consent_audio" => audio(consent_audio, "consent_audio"))
     end
     auth_header(service), JSON.json(Dict{String,Any}("store" => something(opts.store, true), "voice" => voice))
 end
@@ -318,12 +321,12 @@ function create_voice(; name::Union{AbstractString,Nothing}=nothing, prompt::Uni
                 config, cancel)
 end
 
-# OpenAI's API has no voice listing or lookup: its custom voices are created and deleted only.
-function _refuse_openai_voice_read(::_OpenAIVoices, verb::String)
-    throw(ArgumentError("$verb: OpenAI's API has no voice $(verb == "list_voices" ? "listing" : "lookup") (its custom " *
-        "voices are created and deleted only); Gemini's Voices API has one: service=GEMINIServiceEndpoint"))
-end
-_refuse_openai_voice_read(::_GeminiVoices, ::String) = nothing
+# The wire of a verb only Gemini's Voices API serves: OpenAI's API has no voice listing or lookup (its custom voices
+# are created and deleted only).
+_gemini_voices_wire(wire::_GeminiVoices, ::String)::_GeminiVoices = wire
+_gemini_voices_wire(::_OpenAIVoices, verb::String) = throw(ArgumentError(
+    "$verb: OpenAI's API has no voice $(verb == "list_voices" ? "listing" : "lookup") (its custom voices are created " *
+    "and deleted only); Gemini's Voices API has one: service=GEMINIServiceEndpoint"))
 
 # A list filter's values: one string, or several (Gemini matches any of them).
 _filter_values(::Nothing)::Vector{String} = String[]
@@ -352,8 +355,7 @@ function list_voices(; service::ServiceEndpointSpec=OPENAIServiceEndpoint, limit
                      search::Union{AbstractString,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :voices, "Voices API")
-    wire = _voices_wire(service)
-    _refuse_openai_voice_read(wire, "list_voices")
+    wire = _gemini_voices_wire(_voices_wire(service), "list_voices")
     isnothing(limit) || 1 <= limit <= 1000 || throw(ArgumentError(
         "list_voices: Gemini's page holds 1 to 1000 voices (got limit=$limit)"))
     query = String[]
@@ -380,8 +382,7 @@ $_CANCEL_DOC
 function get_voice(voice_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
                    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :voices, "Voices API")
-    wire = _voices_wire(service)
-    _refuse_openai_voice_read(wire, "get_voice")
+    wire = _gemini_voices_wire(_voices_wire(service), "get_voice")
     _voice_call(d -> VoiceSuccess(response=_parse_voice(wire, d)), "GET", _voices_url(service) * "/" * _uripart(voice_id),
                 auth_header(service), nothing, config, cancel)
 end

@@ -25,8 +25,14 @@ ContainerNetworkPolicy
 ContainerNetworkDisabled
 ContainerNetworkAllowlist
 ContainerDomainSecret
+ContainerSkill
 SkillReference
+InlineSkill
 ```
+
+A container's skills are made with the [Skills API](@ref skills_api): [`SkillReference`](@ref) takes the
+[`SkillObject`](@ref) or [`SkillVersionObject`](@ref) it returns, and [`skill_content`](@ref) downloads
+the zip an [`InlineSkill`](@ref) sends.
 
 ## Result Types
 
@@ -60,6 +66,11 @@ delete_container_file
 result = create_container(name="my-sandbox", memory_limit="4g",
                           network_policy=ContainerNetworkAllowlist(["pypi.org"]))
 result isa ContainerSuccess && println("Created: ", result.response.id)
+
+# One that loads a skill made with create_skill, and another from its zip, named and described
+# as the zip's SKILL.md names and describes it
+with_skills = create_container(name="skilled", skills=[SkillReference("skill_abc123"; version=2),
+                               InlineSkill("csv-sum.zip"; name="csv-sum", description="Sums a CSV column.")])
 
 # Retrieve, list by name, add files (a local path, or an uploaded file's id)
 container = retrieve_container("cntr-abc123")

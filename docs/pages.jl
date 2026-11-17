@@ -111,6 +111,7 @@
             "Fine-tuning" => "api/fine_tuning.md",
             "Moderations" => "api/moderations.md",
             "Containers" => "api/containers.md",
+            "Skills" => "api/skills.md",
             "Uploads" => "api/uploads.md",
             "Webhooks" => "api/webhooks.md",
             "Safety & Provenance" => "api/safety.md",

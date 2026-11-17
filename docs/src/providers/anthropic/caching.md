@@ -335,6 +335,35 @@ delete_file(up.response.id; service=ANTHROPICServiceEndpoint)
 # FileDeleteSuccess("file_01YLNcm6NoeziqXvw8FX4zaY", true, "file_deleted")
 ```
 
+## [Skills](@id anthropic_skills)
+
+The endpoint's `skills` capability: the [Skills API](@ref skills_api) verbs reach Anthropic's Skills API
+(`/v1/skills`), with the key, `anthropic-version` and the endpoint's `workspace_id`, and neither its
+`betas` nor its `user_profile_id`: the API "is out of beta and needs no beta header", and the
+`skills-2025-10-02` beta would select its earlier response shapes
+([Skills guide](https://platform.claude.com/docs/en/build-with-claude/skills-guide)).
+[`create_skill`](@ref)`(path; display_name, service=ANTHROPICServiceEndpoint)` uploads a skill folder,
+whose root holds its SKILL.md, or a `.zip` of it; `display_name`, one line of at most 255 characters,
+is the skill's label, Anthropic's SKILL.md `name` without one. The [`SkillObject`](@ref) holds the
+label as `name`, and the `latest_version_id` as `latest_version`; `source` and `updated_at` are in
+`raw`. A version is addressed by its id (`"skver_…"`), which is its [`SkillVersionObject`](@ref)'s
+`version`, or `"latest"`; [`create_skill_version`](@ref) uploads the whole skill again,
+[`list_skill_versions`](@ref) lists the newest first, and [`skill_content`](@ref)`(id; version)`
+downloads a version's zip — Anthropic serves no zip of a skill without a version. There is no default
+version: `update_skill` and `create_skill_version`'s `default` are refused before anything is sent.
+[`delete_skill`](@ref) deletes the skill with its versions; [`delete_skill_version`](@ref) refuses a
+skill's only version. A Messages request loads skills into its code-execution container
+(`container.skills`), which a `Chat` does not send yet.
+
+```julia
+a = ANTHROPICServiceEndpoint
+s = create_skill("skills/csv-sum"; display_name="CSV sum", service=a)
+v = create_skill_version(s.response.id, "skills/csv-sum"; service=a)
+[x.version for x in list_skill_versions(s.response.id; service=a).response.data]   # newest first
+zip = skill_content(s.response.id; version=v.response.version, service=a)
+delete_skill(s.response.id; service=a)
+```
+
 ## [The OpenAI-compatible endpoint](@id anthropic_compatible)
 
 Anthropic also serves the OpenAI-compatible wire, at `https://api.anthropic.com/v1/chat/completions`,

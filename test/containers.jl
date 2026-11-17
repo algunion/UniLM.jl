@@ -260,3 +260,49 @@ end
         @test r isa ContainerCallError && r.cause isa UniLMCancelled && isempty(seen)
     end
 end
+
+# OpenAI's CreateContainerBody takes `skills` by reference or inline: an InlineSkillParam is a name, a description and
+# its zip as base64 (`source`: type base64, media_type application/zip); across a list's inline skills "decoded ZIP data
+# must total at most 50 MiB and Base64 text must total at most 70,254,592 characters" (OpenAI's API specification).
+# Refuted if: an inline skill goes in another shape or with other bytes, a reference beside it changes, what is no zip
+# is taken, or more than 50 MiB of zip reaches the endpoint.
+@testset "create_container: inline skills beside references, their zip base64-encoded; their limits" begin
+    ok = """{"id": "cntr_1", "object": "container", "status": "running", "name": "a"}"""
+    zip = UInt8[0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0xff, 0x0a]
+    path = joinpath(mktempdir(), "csv-sum.zip")
+    write(path, zip)
+    inline = InlineSkill(path; name="csv-sum", description="Sums a CSV column")
+    @test inline isa ContainerSkill && SkillReference("skill_abc") isa ContainerSkill
+    @test (inline.name, inline.description, inline.zip) == ("csv-sum", "Sums a CSV column", zip)
+    r, seen = _with_scripted(() -> create_container(; name="a", skills=[SkillReference("skill_abc"; version=2), inline],
+                                                     service=URLProbe), (_, _) -> _json(200, ok))
+    @test r isa ContainerSuccess
+    @test JSON.parse(only(seen).body)["skills"] ==
+          [Dict("type" => "skill_reference", "skill_id" => "skill_abc", "version" => "2"),
+           Dict("type" => "inline", "name" => "csv-sum", "description" => "Sums a CSV column",
+                "source" => Dict("type" => "base64", "media_type" => "application/zip", "data" => UniLM.Base64.base64encode(zip)))]
+    @test JSON.lower(InlineSkill(zip; name="n", description="d"))[:source][:data] == "UEsDBBQA/wo="
+    # Printed without its bytes.
+    @test repr(inline) == "InlineSkill(\"csv-sum\", 8 bytes)"
+    txt = joinpath(mktempdir(), "skill.txt")
+    write(txt, zip)
+    for (make, msg) in ((() -> InlineSkill(UInt8[0x50, 0x4b, 0x05, 0x06]; name="n", description="d"), "the bytes are no zip archive"),
+                        (() -> InlineSkill(UInt8[]; name="n", description="d"), "the bytes are no zip archive"),
+                        (() -> InlineSkill(txt; name="n", description="d"), "$txt is no .zip file"),
+                        (() -> InlineSkill(dirname(path); name="n", description="d"), "is no .zip file"))
+        e = try make(); nothing catch x; x end
+        @test e isa ArgumentError && occursin(msg, e.msg)
+    end
+    # 50 MiB of zip across the inline skills passes the check (a 70 MB body is more than the scripted endpoint
+    # reads), a byte more is refused before anything is sent.
+    half = vcat(zip, zeros(UInt8, 25 * 2^20 - length(zip)))
+    big = [InlineSkill(half; name="a", description="d"), InlineSkill(half; name="b", description="d")]
+    @test isnothing(UniLM._check_inline_skills([SkillReference("skill_abc"); big]))
+    push!(big, InlineSkill(zip[1:4]; name="c", description="d"))
+    e, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        try create_container(; name="a", skills=[SkillReference("skill_abc"); big], service=URLProbe); nothing catch x; x end
+    end
+    @test isempty(seen) && e isa ArgumentError && e.msg ==
+          "create_container: OpenAI takes at most 50 MiB (52428800 bytes) of zip data across a container's inline skills " *
+          "(got 52428804 bytes in 3); upload a large skill with create_skill and pass a SkillReference"
+end

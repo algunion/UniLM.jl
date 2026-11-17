@@ -61,6 +61,8 @@ const UNRECORDABLE = Set{String}([
     "retrieve_safety_case", "retrieve_safety_alert", "check_content_provenance",
     "create_container", "retrieve_container", "list_containers", "delete_container", "add_container_file",
     "list_container_files", "retrieve_container_file", "container_file_content", "delete_container_file",
+    "create_skill", "list_skills", "retrieve_skill", "update_skill", "delete_skill", "skill_content",
+    "create_skill_version", "list_skill_versions", "retrieve_skill_version", "delete_skill_version",
     "create_conversation", "retrieve_conversation", "update_conversation", "delete_conversation",
     "add_conversation_items", "list_conversation_items", "retrieve_conversation_item", "delete_conversation_item",
     "realtime_connect", "realtime_send", "realtime_receive", "mint_realtime_secret",

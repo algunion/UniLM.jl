@@ -9,8 +9,9 @@ every Messages API request is a `Chat`, sent by `chatrequest!` or `tool_loop!`. 
 `respond` and the `tool_loop` that takes an input or a `Respond` — refuse this endpoint before
 sending anything, and no verb of a capability the table below lists as not available sends a request
 through it. Of Anthropic's own API, UniLM wraps Messages, Message Batches, token counting, the model
-listing and the Files API: server tools (the tools Anthropic runs, such as web search), citations, a
-message's reference to an uploaded file and the request fields of beta features are not available.
+listing, the Files API and the Skills API: server tools (the tools Anthropic runs, such as web search,
+and the code-execution container that loads skills), citations, a message's reference to an uploaded
+file and the request fields of beta features are not available.
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:anthropic)
@@ -32,6 +33,7 @@ Main.ProviderFacts.at_a_glance(:anthropic)
 | [list the models my key can use](@ref anthropic_models) | `list_models(service=ANTHROPICServiceEndpoint)`, `retrieve_model(id; service)` | each model's token limits, capabilities and lifecycle dates |
 | [count a request's input tokens](@ref anthropic_token_counts) | `count_tokens(chat)` | the input tokens the request would bill, without running it |
 | [store files with Anthropic](@ref anthropic_files) | `upload_file(path; service=ANTHROPICServiceEndpoint)`, `list_files`, `retrieve_file`, `delete_file` | a `FileObject` for each file, on Anthropic's Files API |
+| [upload and version skills](@ref anthropic_skills) | `create_skill(folder; service=ANTHROPICServiceEndpoint)`, `create_skill_version`, `list_skills`, `skill_content`, `delete_skill` | a `SkillObject` for each skill and a `SkillVersionObject` for each version, on Anthropic's Skills API |
 | [handle a failure](@ref anthropic_failures) | the result's type | the status or the exception, never an empty success |
 
 ## [Setup](@id anthropic_setup)

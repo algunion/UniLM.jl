@@ -31,7 +31,7 @@ auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
 
 provider_capabilities(::Type{GEMINIServiceEndpoint}) =
     Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech, :system_one,
-         :files, :file_registration, :token_count, :batch])
+         :files, :file_registration, :token_count, :batch, :context_caching, :file_search_stores])
 
 # Google names Gemini 4 Hydrogen the successor to 3.8 Flash ("Change your model string from
 # `gemini-3.8-flash` to `gemini-4-hydrogen`",
@@ -78,19 +78,22 @@ function _gemini_validate_last_turn(model::String, contents::Vector{Dict{Symbol,
 end
 
 # Gemini caches repeated prompt prefixes implicitly, with no option to set
-# (https://ai.google.dev/gemini-api/docs/caching). Its explicit caching — cached contents, which
-# generateContent offers on Gemini 3 and 2.5 models — is an API of its own that UniLM does not
-# wrap, so a cache option has nowhere to go.
+# (https://ai.google.dev/gemini-api/docs/caching). Its explicit caching is a resource of its own — a
+# cache (cached content) made with `create_cache` (gemini_caching.jl), which a generateContent request
+# names in `cachedContent`, a Chat in `cached_content` — on Gemini 3 and 2.5 models; "The Interactions
+# API only supports implicit caching". A cache option has nowhere to go on either API.
 _gemini_refuse_cache_options(::Nothing) = nothing
 _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
     "Gemini takes no prompt_cache_options: it caches repeated prompt prefixes implicitly, with no option " *
-    "to set, and UniLM does not wrap its explicit caching (cached contents) " *
-    "(https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
+    "to set (https://ai.google.dev/gemini-api/docs/caching). To cache a prefix explicitly on generateContent, " *
+    "make a cache with create_cache and name it in a Chat's cached_content; the Interactions API caches " *
+    "implicitly only. Unset prompt_cache_options"))
 
 # An explicit-mode Chat's remedy (api.jl): no prompt_cache_options, which native Gemini refuses and the
 # OpenAI-compatible endpoint answers with HTTP 400 (encode_request(::Type{GEMINIOpenAIServiceEndpoint}, …)).
 _explicit_cache_remedy(::Type{GEMINIServiceEndpoint})::String =
-    "Gemini takes no prompt_cache_options, caching repeated prompt prefixes implicitly: unset prompt_cache_options"
+    "Gemini takes no prompt_cache_options, caching repeated prompt prefixes implicitly: unset prompt_cache_options, " *
+    "or make a cache with create_cache and name it in cached_content"
 _explicit_cache_remedy(::Type{GEMINIOpenAIServiceEndpoint})::String =
     "Gemini's OpenAI-compatible endpoint answers prompt_cache_options with HTTP 400: unset prompt_cache_options"
 
@@ -242,13 +245,29 @@ end
 const _GEMINI_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
     :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
     :max_tokens, :max_completion_tokens, :response_format, :reasoning_effort,
-    :safety_identifier, :seed, :store, :service_tier, :_cumulative_cost)
+    :safety_identifier, :seed, :store, :service_tier, :cached_content, :_cumulative_cost)
 const _GEMINI_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _GEMINI_CHAT_MAPPED_FIELDS))
+
+# A request that names a cache reads its system instruction, tools and tool config from the cache: generateContent,
+# and the compatible endpoint alike, answered one that also set a system message, tools or a tool_choice with HTTP
+# 400 "CachedContent can not be used with GenerateContent request setting system_instruction, tools or
+# tool_config." (observed 2026-11-17). The cache's model must be the request's, which only the API knows.
+function _gemini_check_cache_use(chat::Chat)::Nothing
+    isnothing(chat.cached_content) && return nothing
+    _gemini_explicit_cache_model(chat.model, "cached_content")
+    set = _set_fields("a system message" => any(m -> m.role == RoleSystem, chat.messages),
+                      "tools" => !isnothing(chat.tools), "tool_choice" => !isnothing(chat.tool_choice))
+    isempty(set) || throw(ArgumentError("cached_content: a cache holds the system instruction, tools and tool " *
+        "config of the requests that name it, and Gemini answers a request that names a cache and sets " *
+        "$(join(set, ", ", " or ")) with HTTP 400; put them in the Chat that create_cache caches, and remove them here"))
+    nothing
+end
 
 function _gemini_validate_chat(chat::Chat)
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
     isnothing(chat.n) || chat.n == 1 || throw(ArgumentError("Native Gemini Chat returns one candidate; n must be 1"))
     _gemini_refuse_cache_options(chat.prompt_cache_options)
+    _gemini_check_cache_use(chat)
     fields = Symbol[f for f in _GEMINI_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
     isempty(fields) || throw(ArgumentError(
         "Native Gemini Chat does not support field(s) $(join(fields, ", ")); use a supported option or GEMINIOpenAIServiceEndpoint"))
@@ -318,6 +337,7 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.store) || (body[:store] = chat.store)
     tier = _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini generateContent")
     isnothing(tier) || (body[:serviceTier] = tier)
+    isnothing(chat.cached_content) || (body[:cachedContent] = chat.cached_content)
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
 end
@@ -350,9 +370,16 @@ function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
     _gemini_compat_effort(chat.model, chat.reasoning_effort)
     _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini's OpenAI-compatible endpoint")
+    _gemini_check_cache_use(chat)
     _compat_audio_estimate(chat)
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
 end
+
+# A cache on this wire is `extra_body.google.cached_content`, "Gemini's general content cache"
+# (https://ai.google.dev/gemini-api/docs/openai#extra-body): the endpoint answered a request naming one with HTTP
+# 200, its cache hits in `prompt_tokens_details.cached_tokens`, streamed or not (observed 2026-11-17).
+_wire_cached_content(::Type{GEMINIOpenAIServiceEndpoint}, name::String)::Dict{Symbol,Any} =
+    Dict{Symbol,Any}(:google => Dict{Symbol,Any}(:cached_content => name))
 
 # Gemini 3 gives a function call's thought signature on this wire in the call's
 # `extra_content.google.thought_signature` and validates it when the call comes back: "Required and

@@ -19,7 +19,7 @@ const LOCAL = Set{String}([
     "MistralEndpoint", "choice", "score", "noul", "bounding_box", "@nl_str", "fork",
     "function_tool", "custom_tool", "web_search", "file_search", "code_interpreter", "computer_tool", "shell",
     "apply_patch_tool", "image_generation_tool", "mcp_tool", "gemini_code_execution", "gemini_google_search",
-    "gemini_url_context", "input_text", "input_image", "input_file", "configuration_update", "tool_result",
+    "gemini_url_context", "gemini_file_search", "input_text", "input_image", "input_file", "configuration_update", "tool_result",
     "mcp_approval_response", "json_object_format", "json_schema_format", "text_format", "tool_choice_allowed",
     "tool_choice_custom", "tool_choice_function", "tool_choice_hosted", "tool_choice_mcp", "to_tool",
     "realtime_event", "session_update", "input_audio_append", "response_create",
@@ -72,6 +72,12 @@ const UNRECORDABLE = Set{String}([
     "model_info", "pull_model", "running_models", "load_model", "unload_model", "delete_model",
     # the provider model lookup and token counts
     "retrieve_model", "count_tokens",
+    # Gemini context caches and File Search stores
+    "create_cache", "retrieve_cache", "list_caches", "update_cache", "delete_cache",
+    "create_file_search_store", "retrieve_file_search_store", "list_file_search_stores", "delete_file_search_store",
+    "upload_to_file_search_store", "import_to_file_search_store", "retrieve_file_search_operation",
+    "poll_file_search_operation", "list_file_search_documents", "retrieve_file_search_document",
+    "delete_file_search_document",
 ])
 
 # A fenced block: the block quote, list item and indentation markers before its fence (Documenter runs an executed

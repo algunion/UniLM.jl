@@ -23,6 +23,7 @@ which a `Chat` takes only as 1, the one candidate every request gets.
 | `temperature`, `top_p`, `stop`, `seed` | `generationConfig.temperature`, `topP`, `stopSequences`, `seed` | [Request options](@ref gemini_request_options) |
 | `safety_identifier`, `store`, `service_tier` | `labels.safety_identifier`, `store`, `serviceTier` | [Request options](@ref gemini_request_options) |
 | `stream` | the URL's `:streamGenerateContent?alt=sse` | [Streaming](@ref gemini_streaming) |
+| `cached_content` | `cachedContent` | [Context caching](@ref gemini_caching) |
 | `prompt_cache_options`, `moderation` and the other fields UniLM does not map | refused | [Limits and refusals](@ref gemini_limits) |
 
 ## [Reasoning](@id gemini_reasoning)
@@ -497,7 +498,7 @@ Google answers with an empty body; [`delete_batch`](@ref) removes a batch from t
 [`update_batch`](@ref) sets its `priority` — the one field the API updates ("The accepted fields are: *,
 priority") — so a batch with a higher one runs first.
 
-## [Prompt caching](@id gemini_caching)
+## [Context caching](@id gemini_caching)
 
 Gemini caches repeated prompt prefixes on its own: "Implicit caching is enabled by default for all
 Gemini 2.5 and newer models", and "We automatically pass on cost savings if your request hits
@@ -513,10 +514,73 @@ conversation each turn, so the next turn starts with the previous one's parts wh
 messages and the earlier turns stay as they were; on Gemini 4, "Gemini caches the full previous
 request only if the new request adds at least 2,050 tokens", and "For smaller additions, Gemini
 re-processes the last 2,050 tokens of the previous request at the standard input rate"
-([context caching](https://ai.google.dev/gemini-api/docs/caching)). Explicit caching — cached
-contents, created ahead and named in a request — is an API of its own that UniLM does not wrap, so
-`prompt_cache_options` has nowhere to go and is refused, on a `Chat` and a `Respond`
-([Limits and refusals](@ref gemini_limits)).
+([context caching](https://ai.google.dev/gemini-api/docs/caching)). `prompt_cache_options` has nowhere
+to go and is refused, on a `Chat` and a `Respond` ([Limits and refusals](@ref gemini_limits)).
+
+Explicit caching stores a prompt's start ahead, as a resource of its own, a cache, which a request then
+names: "can be manually enabled on Gemini 3 and 2.5 models, cost saving guarantee; not supported for
+Gemini 4 models". [`create_cache`](@ref)`(chat; ttl)` caches a `Chat`'s system messages, its other
+messages (attachments included), its `tools` and its `tool_choice` for its model; a `Chat` that sets
+`cached_content` — the cache's `name`, its id, or the [`CacheObject`](@ref) — sends it as
+`cachedContent`, and holds only what follows the cached start:
+
+```julia
+doc = read("handbook.txt", String)
+cache = create_cache(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+                          messages=[Message(Val(:system), "Answer from the handbook."), Message(Val(:user), doc)]);
+                     ttl=600).response
+chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", cached_content=cache,
+            messages=[Message(Val(:user), "How many days of leave?")])
+r = chatrequest!(chat)        # r.usage.cached_tokens == cache.total_tokens
+```
+
+- The cache holds the system instruction, the tools and the tool config: generateContent answered a
+  request that named a cache and set any of them with HTTP 400, "CachedContent can not be used with
+  GenerateContent request setting system_instruction, tools or tool_config" (17 November 2026), so a
+  `Chat` with `cached_content` and a system message, `tools` or a `tool_choice` throws `ArgumentError`
+  before the request. The cache's model must be the request's ("Cached content can be only used with
+  model it was created for"; the API answers another with HTTP 400), which only the API checks.
+- A Gemini 4 model takes no explicit cache: `create_cache` and a `Chat` with `cached_content` throw
+  `ArgumentError` for one (the API answered "Explicit caching is not supported for
+  models/gemini-4-hydrogen."). A cache below the model's minimum size is Gemini's HTTP 400: "Cached
+  content is too small. total_token_count=2, min_total_token_count=1024" on `gemini-3.8-flash`.
+- `create_cache` takes `ttl`, the cache's lifetime in seconds, or `expire_time`, a UTC `DateTime`, not
+  both; unset, "the TTL defaults to 1 hour". [`update_cache`](@ref) moves the expiration, "Changing anything
+  else about the cache isn't supported"; [`retrieve_cache`](@ref), [`list_caches`](@ref) and
+  [`delete_cache`](@ref) read and delete caches ([Gemini Context Caching & File Search](@ref gemini_caching_api)).
+  The cached contents are not returned: "It's not possible to retrieve or view cached content".
+- [`count_tokens`](@ref) of a `Chat` with `cached_content` counts the cache too: its reply's
+  `cachedContentTokenCount`, in `raw`, is the cached part of `input_tokens`. A batched `Chat`
+  ([Batches](@ref gemini_batches)) sends its `cachedContent` in its request.
+- `GEMINIOpenAIServiceEndpoint` sends `cached_content` as `extra_body.google.cached_content`, the field
+  Google's compatibility page names, with the same rules; every other endpoint refuses the field.
+
+A reply that read a cache counts the cache in `cached_tokens`, part of `prompt_tokens`, and bills it at
+the model's cache-hit rate ("Cache token count: The number of input tokens cached, billed at a reduced
+rate when included in subsequent prompts"); "Implicit caching doesn't apply when a request uses an
+explicit cache". A reply to a `gemini-3.8-flash` request with 8 tokens of its own after a cache of 9,557
+read `promptTokenCount` 9,565 and `cachedContentTokenCount` 9,557, and [`estimated_cost`](@ref) prices
+the 9,557 at \$0.075 and the 8 at \$0.75 per 1M tokens. A cache also bills its storage, by the hour, for
+its lifetime: "billed based on the TTL duration of cached token count". That is no call's bill, so
+`estimated_cost` and [`cumulative_cost`](@ref) leave it out; estimate it as the cache's `total_tokens` ×
+the hours it lives × the model's storage price. Per 1M tokens per hour
+([pricing](https://ai.google.dev/gemini-api/docs/pricing), 17 November 2026):
+
+| Model | Cache hits, per 1M tokens | Storage, per 1M tokens per hour |
+| :--- | :--- | :--- |
+| `gemini-3.8-flash`, `gemini-3.6-flash` | \$0.075 through 31 December 2026, then \$0.15 | \$0.50 through 31 December 2026, then \$1.00 |
+| `gemini-3.5-flash-lite` | \$0.03 | \$1.00 |
+| `gemini-3.1-flash-lite` | \$0.025, audio \$0.05 | \$1.00 |
+| `gemini-3.1-pro-preview` | \$0.20; \$0.40 for prompts over 200K tokens | \$4.50 |
+| `gemini-3-flash-preview` | \$0.05, audio \$0.10 | \$1.00 |
+| `gemini-robotics-er-2-preview` | \$0.10 through 31 December 2026, then \$0.20 | \$0.50 through 31 December 2026, then \$1.00 |
+| `gemini-2.5-pro` | \$0.125; \$0.25 for prompts over 200K tokens | \$4.50 |
+| `gemini-2.5-flash` | \$0.03, audio \$0.10 | \$1.00 |
+| `gemini-2.5-flash-lite` | \$0.01, audio \$0.03 | \$1.00 |
+
+The Gemini 4 models list no storage price ("Implicit caching only (explicit caching is not supported)").
+The page does not say whether making a cache bills its tokens as input; the create's reply reports no
+usage, so `estimated_cost` prices none.
 
 ## [Cost and usage](@id gemini_cost)
 

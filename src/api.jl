@@ -1486,6 +1486,16 @@ OpenAI options, omitted from the request when unset:
   `OPENAIServiceEndpoint`, `DeepSeekEndpoint` or `GEMINIOpenAIServiceEndpoint` stream requests
   `{"include_usage": true}`, so the streamed result carries token usage.
 
+Gemini option, omitted from the request when unset:
+- `cached_content::Union{String,Nothing}`: a Gemini context cache ([`create_cache`](@ref)) the
+  request reads as the start of its prompt, given by its name, `"cachedContents/<id>"`, its id or its
+  [`CacheObject`](@ref), and stored as the name; any other form throws `ArgumentError`. Native Gemini sends it as
+  `cachedContent`, `GEMINIOpenAIServiceEndpoint` as `extra_body.google.cached_content`, the field
+  Google's compatibility page documents. The cache holds the system instruction and the tools: both
+  answer a request that names a cache and has a system message, `tools` or a `tool_choice` with
+  HTTP 400, and Gemini 4 models take no explicit cache, so such a `Chat` throws `ArgumentError` when
+  encoded. Every other endpoint throws `ArgumentError` for it before any request.
+
 The constructor validates ranges and throws `ArgumentError` on a violation; among
 them, `n` must be `1` when set — a result carries a single choice — `top_logprobs`
 must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
@@ -1532,6 +1542,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
     moderation::Union{ModerationConfig,Nothing} = nothing
     prompt_cache_retention::Union{String,Nothing} = nothing  # OpenAI, deprecated: "in_memory" or "24h"
+    cached_content::Union{String,Nothing} = nothing          # Gemini: a context cache's name, cachedContents/<id>
     function Chat(
         service,
         model,
@@ -1570,9 +1581,11 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
         _cumulative_cost,
         prompt_cache_options=nothing,
         moderation=nothing,
-        prompt_cache_retention=nothing
+        prompt_cache_retention=nothing,
+        cached_content=nothing
     )
         model = _resolve_model(service, model)
+        cached_content = _cache_reference(cached_content)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
         isnothing(tools) || !isempty(tools) || (tools = nothing)   # no tools is no tool list
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
@@ -1635,7 +1648,8 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
             _cumulative_cost,
             prompt_cache_options,
             moderation,
-            prompt_cache_retention
+            prompt_cache_retention,
+            cached_content
         )
     end
 end
@@ -1658,8 +1672,15 @@ function JSON.lower(chat::Chat)
     # Not for other OpenAI-compatible servers, which may reject the field.
     chat.stream === true && isnothing(chat.stream_options) && _asks_stream_usage(chat.service) &&
         (d[:stream_options] = Dict(:include_usage => true))
+    isnothing(chat.cached_content) || (d[:extra_body] = _wire_cached_content(chat.service, chat.cached_content))
     return d
 end
+
+# A Gemini context cache on the Chat Completions wire: Gemini's OpenAI-compatible endpoint reads one from the
+# request's `extra_body` (gemini.jl); no other server reads one, so the field is refused, never dropped.
+_wire_cached_content(service, ::String) = throw(ArgumentError(
+    "cached_content names a Gemini context cache, which $(_service_name(service)) does not read: send the Chat " *
+    "to GEMINIServiceEndpoint or GEMINIOpenAIServiceEndpoint, or unset cached_content"))
 
 _asks_stream_usage(::Type{OPENAIServiceEndpoint}) = true
 _asks_stream_usage(::DeepSeekEndpoint) = true

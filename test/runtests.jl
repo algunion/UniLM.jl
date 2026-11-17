@@ -208,6 +208,14 @@ end
         include("interactions.jl")
     end
 
+    @testset "gemini context caching" begin
+        include("gemini_caching.jl")
+    end
+
+    @testset "gemini file search" begin
+        include("gemini_file_search.jl")
+    end
+
     @testset "current provider contracts" begin
         include("provider_compat.jl")
     end

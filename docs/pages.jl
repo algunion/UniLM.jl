@@ -102,6 +102,7 @@
             "Model Listings" => "api/models.md",
             "Token Counting" => "api/token_counting.md",
             "Audio" => "api/audio.md",
+            "Gemini Caching & File Search" => "api/gemini_caching.md",
         ],
         "API: OpenAI platform" => [
             "Files" => "api/files.md",

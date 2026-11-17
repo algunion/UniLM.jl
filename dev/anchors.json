@@ -86,6 +86,27 @@
   "UniLM.BoxQuestion": [
     "/api/system_one/"
   ],
+  "UniLM.CacheCallError": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheDeleteSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheFailure": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheList": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheListSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheObject": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.CacheSuccess": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.CallableTool": [
     "/api/chat/"
   ],
@@ -144,6 +165,9 @@
     "/api/containers/"
   ],
   "UniLM.ContainerObject": [
+    "/api/containers/"
+  ],
+  "UniLM.ContainerSkill": [
     "/api/containers/"
   ],
   "UniLM.ContainerSuccess": [
@@ -245,6 +269,45 @@
   "UniLM.FileObject": [
     "/api/files/"
   ],
+  "UniLM.FileSearchCallError": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchDeleteSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchDocumentList": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchDocumentListSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchDocumentObject": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchDocumentSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchFailure": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchOperation": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchOperationSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchStoreList": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchStoreListSuccess": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchStoreObject": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.FileSearchStoreSuccess": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.FileSearchTool": [
     "/api/responses/"
   ],
@@ -332,11 +395,20 @@
   "UniLM.ImageObject": [
     "/api/images/"
   ],
+  "UniLM.ImageRef": [
+    "/api/images/"
+  ],
   "UniLM.ImageResponse": [
     "/api/images/"
   ],
   "UniLM.ImageSuccess": [
     "/api/images/"
+  ],
+  "UniLM.ImageUsage": [
+    "/api/images/"
+  ],
+  "UniLM.InlineSkill": [
+    "/api/containers/"
   ],
   "UniLM.InputMessage": [
     "/api/responses/"
@@ -509,6 +581,9 @@
   "UniLM.OpenAIWireEndpoint": [
     "/api/endpoints/"
   ],
+  "UniLM.PartialImage": [
+    "/api/images/"
+  ],
   "UniLM.PromptCacheOptions": [
     "/api/responses/"
   ],
@@ -620,8 +695,41 @@
   "UniLM.ShellTool": [
     "/api/responses/"
   ],
+  "UniLM.SkillCallError": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillDeleteSuccess": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillFailure": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillList": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillListSuccess": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillObject": [
+    "/api/skills/"
+  ],
   "UniLM.SkillReference": [
     "/api/containers/"
+  ],
+  "UniLM.SkillSuccess": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillVersionList": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillVersionListSuccess": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillVersionObject": [
+    "/api/skills/"
+  ],
+  "UniLM.SkillVersionSuccess": [
+    "/api/skills/"
   ],
   "UniLM.SpeechRequest": [
     "/api/audio/"
@@ -629,8 +737,41 @@
   "UniLM.SpeechSuccess": [
     "/api/audio/"
   ],
+  "UniLM.SpeechTurn": [
+    "/api/audio/"
+  ],
   "UniLM.StdioTransport": [
     "/api/mcp/"
+  ],
+  "UniLM.StoredCompletion": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionCallError": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionDeleteSuccess": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionFailure": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionList": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionListSuccess": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionMessage": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionMessageList": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionMessageListSuccess": [
+    "/api/chat/"
+  ],
+  "UniLM.StoredCompletionSuccess": [
+    "/api/chat/"
   ],
   "UniLM.StreamState": [
     "/api/endpoints/"
@@ -704,10 +845,19 @@
   "UniLM.ToolUsage": [
     "/api/responses/"
   ],
+  "UniLM.TranscriptSegment": [
+    "/api/audio/"
+  ],
+  "UniLM.TranscriptWord": [
+    "/api/audio/"
+  ],
   "UniLM.TranscriptionRequest": [
     "/api/audio/"
   ],
   "UniLM.TranscriptionSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.TranscriptionVAD": [
     "/api/audio/"
   ],
   "UniLM.TypeSafeModelCard": [
@@ -802,6 +952,39 @@
   ],
   "UniLM.VectorStoreSuccess": [
     "/api/vector_stores/"
+  ],
+  "UniLM.Voice": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceCallError": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceConsent": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceConsentList": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceConsentListSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceConsentSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceDeleteSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceFailure": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceList": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceListSuccess": [
+    "/api/audio/"
+  ],
+  "UniLM.VoiceSuccess": [
+    "/api/audio/"
   ],
   "UniLM.WEBHOOK_EVENTS": [
     "/api/webhooks/"
@@ -947,6 +1130,9 @@
   "UniLM.create_batch": [
     "/api/batch/"
   ],
+  "UniLM.create_cache": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.create_container": [
     "/api/containers/"
   ],
@@ -956,17 +1142,32 @@
   "UniLM.create_file_batch": [
     "/api/vector_stores/"
   ],
+  "UniLM.create_file_search_store": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.create_fine_tuning_checkpoint_permission": [
     "/api/fine_tuning/"
   ],
   "UniLM.create_fine_tuning_job": [
     "/api/fine_tuning/"
   ],
+  "UniLM.create_skill": [
+    "/api/skills/"
+  ],
+  "UniLM.create_skill_version": [
+    "/api/skills/"
+  ],
   "UniLM.create_upload": [
     "/api/uploads/"
   ],
   "UniLM.create_vector_store": [
     "/api/vector_stores/"
+  ],
+  "UniLM.create_voice": [
+    "/api/audio/"
+  ],
+  "UniLM.create_voice_consent": [
+    "/api/audio/"
   ],
   "UniLM.create_webhook_endpoint": [
     "/api/webhooks/"
@@ -998,6 +1199,12 @@
   "UniLM.delete_batch": [
     "/api/batch/"
   ],
+  "UniLM.delete_cache": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.delete_chat_completion": [
+    "/api/chat/"
+  ],
   "UniLM.delete_container": [
     "/api/containers/"
   ],
@@ -1013,6 +1220,12 @@
   "UniLM.delete_file": [
     "/api/files/"
   ],
+  "UniLM.delete_file_search_document": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.delete_file_search_store": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.delete_fine_tuning_checkpoint_permission": [
     "/api/fine_tuning/"
   ],
@@ -1022,11 +1235,23 @@
   "UniLM.delete_response": [
     "/api/responses/"
   ],
+  "UniLM.delete_skill": [
+    "/api/skills/"
+  ],
+  "UniLM.delete_skill_version": [
+    "/api/skills/"
+  ],
   "UniLM.delete_vector_store": [
     "/api/vector_stores/"
   ],
   "UniLM.delete_vector_store_file": [
     "/api/vector_stores/"
+  ],
+  "UniLM.delete_voice": [
+    "/api/audio/"
+  ],
+  "UniLM.delete_voice_consent": [
+    "/api/audio/"
   ],
   "UniLM.delete_webhook_endpoint": [
     "/api/webhooks/"
@@ -1079,6 +1304,9 @@
   "UniLM.gemini_code_execution": [
     "/api/responses/"
   ],
+  "UniLM.gemini_file_search": [
+    "/api/responses/"
+  ],
   "UniLM.gemini_google_search": [
     "/api/responses/"
   ],
@@ -1111,6 +1339,12 @@
   ],
   "UniLM.image_generation_tool": [
     "/api/responses/"
+  ],
+  "UniLM.image_usage": [
+    "/api/images/"
+  ],
+  "UniLM.import_to_file_search_store": [
+    "/api/gemini_caching/"
   ],
   "UniLM.incomplete_details": [
     "/api/responses/"
@@ -1154,6 +1388,15 @@
   "UniLM.list_batches": [
     "/api/batch/"
   ],
+  "UniLM.list_caches": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.list_chat_completion_messages": [
+    "/api/chat/"
+  ],
+  "UniLM.list_chat_completions": [
+    "/api/chat/"
+  ],
   "UniLM.list_container_files": [
     "/api/containers/"
   ],
@@ -1165,6 +1408,12 @@
   ],
   "UniLM.list_file_batch_files": [
     "/api/vector_stores/"
+  ],
+  "UniLM.list_file_search_documents": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.list_file_search_stores": [
+    "/api/gemini_caching/"
   ],
   "UniLM.list_files": [
     "/api/files/"
@@ -1193,6 +1442,12 @@
   "UniLM.list_resources!": [
     "/api/mcp/"
   ],
+  "UniLM.list_skill_versions": [
+    "/api/skills/"
+  ],
+  "UniLM.list_skills": [
+    "/api/skills/"
+  ],
   "UniLM.list_tools!": [
     "/api/mcp/"
   ],
@@ -1201,6 +1456,12 @@
   ],
   "UniLM.list_vector_stores": [
     "/api/vector_stores/"
+  ],
+  "UniLM.list_voice_consents": [
+    "/api/audio/"
+  ],
+  "UniLM.list_voices": [
+    "/api/audio/"
   ],
   "UniLM.list_webhook_endpoints": [
     "/api/webhooks/"
@@ -1280,6 +1541,9 @@
   "UniLM.poll_file_batch": [
     "/api/vector_stores/"
   ],
+  "UniLM.poll_file_search_operation": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.prefix_complete": [
     "/api/completions/"
   ],
@@ -1349,6 +1613,12 @@
   "UniLM.retrieve_batch": [
     "/api/batch/"
   ],
+  "UniLM.retrieve_cache": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.retrieve_chat_completion": [
+    "/api/chat/"
+  ],
   "UniLM.retrieve_container": [
     "/api/containers/"
   ],
@@ -1367,6 +1637,15 @@
   "UniLM.retrieve_file_batch": [
     "/api/vector_stores/"
   ],
+  "UniLM.retrieve_file_search_document": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.retrieve_file_search_operation": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.retrieve_file_search_store": [
+    "/api/gemini_caching/"
+  ],
   "UniLM.retrieve_fine_tuning_job": [
     "/api/fine_tuning/"
   ],
@@ -1379,11 +1658,23 @@
   "UniLM.retrieve_safety_case": [
     "/api/safety/"
   ],
+  "UniLM.retrieve_skill": [
+    "/api/skills/"
+  ],
+  "UniLM.retrieve_skill_version": [
+    "/api/skills/"
+  ],
   "UniLM.retrieve_vector_store": [
     "/api/vector_stores/"
   ],
   "UniLM.retrieve_vector_store_file": [
     "/api/vector_stores/"
+  ],
+  "UniLM.retrieve_voice": [
+    "/api/audio/"
+  ],
+  "UniLM.retrieve_voice_consent": [
+    "/api/audio/"
   ],
   "UniLM.retrieve_webhook_endpoint": [
     "/api/webhooks/"
@@ -1420,6 +1711,9 @@
   ],
   "UniLM.shell": [
     "/api/responses/"
+  ],
+  "UniLM.skill_content": [
+    "/api/skills/"
   ],
   "UniLM.speak": [
     "/api/audio/"
@@ -1487,8 +1781,17 @@
   "UniLM.update_batch": [
     "/api/batch/"
   ],
+  "UniLM.update_cache": [
+    "/api/gemini_caching/"
+  ],
+  "UniLM.update_chat_completion": [
+    "/api/chat/"
+  ],
   "UniLM.update_conversation": [
     "/api/conversations/"
+  ],
+  "UniLM.update_skill": [
+    "/api/skills/"
   ],
   "UniLM.update_vector_store": [
     "/api/vector_stores/"
@@ -1496,11 +1799,17 @@
   "UniLM.update_vector_store_file": [
     "/api/vector_stores/"
   ],
+  "UniLM.update_voice_consent": [
+    "/api/audio/"
+  ],
   "UniLM.update_webhook_endpoint": [
     "/api/webhooks/"
   ],
   "UniLM.upload_file": [
     "/api/files/"
+  ],
+  "UniLM.upload_to_file_search_store": [
+    "/api/gemini_caching/"
   ],
   "UniLM.url_citations": [
     "/api/responses/"
@@ -1613,6 +1922,9 @@
   "anthropic_setup": [
     "/providers/anthropic/"
   ],
+  "anthropic_skills": [
+    "/providers/anthropic/caching/"
+  ],
   "anthropic_start": [
     "/providers/anthropic/"
   ],
@@ -1638,6 +1950,9 @@
     "/guide/attachments/"
   ],
   "audio_api": [
+    "/api/audio/"
+  ],
+  "audio_voices": [
     "/api/audio/"
   ],
   "azure_caching": [
@@ -2033,6 +2348,9 @@
   "gemini_caching": [
     "/providers/gemini/generate_content/"
   ],
+  "gemini_caching_api": [
+    "/api/gemini_caching/"
+  ],
   "gemini_compatible": [
     "/providers/gemini/media/"
   ],
@@ -2078,11 +2396,17 @@
   "gemini_decisions_testing": [
     "/decisions/gemini/"
   ],
+  "gemini_embedding_batches": [
+    "/providers/gemini/generate_content/"
+  ],
   "gemini_embeddings": [
     "/providers/gemini/media/"
   ],
   "gemini_failures": [
     "/providers/gemini/"
+  ],
+  "gemini_file_search": [
+    "/providers/gemini/interactions/"
   ],
   "gemini_files": [
     "/providers/gemini/"
@@ -2226,6 +2550,9 @@
     "/guide/image_generation/"
   ],
   "image_generation_see_also": [
+    "/guide/image_generation/"
+  ],
+  "image_generation_streaming": [
     "/guide/image_generation/"
   ],
   "images_api": [
@@ -2867,6 +3194,15 @@
   "openai_images": [
     "/providers/openai/media/"
   ],
+  "openai_images_by_reference": [
+    "/providers/openai/media/"
+  ],
+  "openai_images_streaming": [
+    "/providers/openai/media/"
+  ],
+  "openai_images_usage": [
+    "/providers/openai/media/"
+  ],
   "openai_limits": [
     "/providers/openai/models/"
   ],
@@ -2930,8 +3266,14 @@
   "openai_setup": [
     "/providers/openai/"
   ],
+  "openai_skills": [
+    "/providers/openai/platform/"
+  ],
   "openai_start": [
     "/providers/openai/"
+  ],
+  "openai_stored_completions": [
+    "/providers/openai/chat_completions/"
   ],
   "openai_stored_responses": [
     "/providers/openai/responses/"
@@ -2983,6 +3325,12 @@
   ],
   "semantic_algorithms_see_also": [
     "/guide/semantic_algorithms/"
+  ],
+  "skills_api": [
+    "/api/skills/"
+  ],
+  "stored_completions_api": [
+    "/api/chat/"
   ],
   "streaming_chat": [
     "/guide/streaming/"

@@ -92,8 +92,8 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
 # An explicit-mode Chat's remedy (api.jl): no prompt_cache_options, which native Gemini refuses and the
 # OpenAI-compatible endpoint answers with HTTP 400 (encode_request(::Type{GEMINIOpenAIServiceEndpoint}, …)).
 _explicit_cache_remedy(::Type{GEMINIServiceEndpoint})::String =
-    "Gemini takes no prompt_cache_options, caching repeated prompt prefixes implicitly: unset prompt_cache_options, " *
-    "or make a cache with create_cache and name it in cached_content"
+    "Gemini takes no prompt_cache_options, caching repeated prompt prefixes implicitly and a prefix explicitly in a " *
+    "cache made with create_cache and named in cached_content: unset prompt_cache_options"
 _explicit_cache_remedy(::Type{GEMINIOpenAIServiceEndpoint})::String =
     "Gemini's OpenAI-compatible endpoint answers prompt_cache_options with HTTP 400: unset prompt_cache_options"
 

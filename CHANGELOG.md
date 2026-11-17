@@ -32,9 +32,9 @@
 - **Transcription on Gemini:** `transcribe` on `GEMINIServiceEndpoint` (generateContent, default
   `gemini-3.5-transcribe`, with `diarization`, `mode` and `source_text`); Gemini declares `:transcription`.
 - **Gemini speech dialogues and language:** `speak` takes `SpeechTurn` input with `speakers`, and `language`.
-- **Custom voices** (`:voices`, OpenAI and Gemini): `create_voice`, `delete_voice`, `list_voices` and `get_voice`
-  (Gemini only; OpenAI has no such routes and they throw `ArgumentError`), and
-  OpenAI's `create_voice_consent`, `list_voice_consents`, `get_voice_consent`, `update_voice_consent`,
+- **Custom voices** (`:voices`, OpenAI and Gemini): `create_voice`, `delete_voice`, `list_voices` and `retrieve_voice`
+  (Gemini only, and their default service; OpenAI has no such routes and they throw `ArgumentError`), and
+  OpenAI's `create_voice_consent`, `list_voice_consents`, `retrieve_voice_consent`, `update_voice_consent`,
   `delete_voice_consent`, with the `Voice*` types. `speak` on OpenAI sends a custom voice id to the Realtime session as
   `{"id": …}` (the session itself refuses voices made from a prompt).
 - **Streamed images on OpenAI:** `stream=true` with `partial_images` (0–3) on generations and edits; each partial
@@ -66,7 +66,7 @@
   (`asyncBatchEmbedContent`); `batch_results` returns `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` at
   the tier `"batch"` (OpenAI embedding models bill at half in a batch), and with `requests=` filled copies of the
   requests. `create_batch(requests; display_name)` on Gemini.
-- **Stored Chat Completions** (`:stored_completions`, OpenAI): `list_chat_completions`, `get_chat_completion`,
+- **Stored Chat Completions** (`:stored_completions`, OpenAI): `list_chat_completions`, `retrieve_chat_completion`,
   `update_chat_completion` (metadata), `delete_chat_completion`, `list_chat_completion_messages`, with typed
   `StoredCompletion*` pages and results.
 
@@ -79,6 +79,15 @@
 - Gemini image `usage` gains `text_tokens`/`image_tokens` details when Gemini lists tokens by modality; a GIF edit
   refuses `output_compression`; Gemini `output_format` other than `"jpeg"` is refused with a new message.
 - `Chat` has a 39th field, `cached_content` (last); 38-argument positional construction still works.
+
+### Fixed
+- **No request follows an HTTP redirect.** HTTP.jl followed a 3xx by default and, when it led to another origin,
+  removed only `Authorization`, `Cookie` and `Proxy-Authorization`, so Gemini's `x-goog-api-key`, Azure's `api-key`,
+  `x-api-key` and an MCP server's custom headers reached the redirect's target. Every request, the Realtime
+  WebSocket and the MCP HTTP transport included, now returns the 3xx: the verb's `*Failure` with that status (an MCP
+  session and a Realtime connection throw). Error text now also masks `Cookie` values.
+- **`MCPTool` shows its `authorization` token and credential header values redacted**, and so does a `Respond`
+  holding one; the request body still sends them.
 
 ## 0.34.0
 

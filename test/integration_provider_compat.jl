@@ -76,6 +76,24 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test estimated_cost(fast) ≈ 6 * standard
     end
 
+    # First run (2026-11-17): each answered 13 input and 5 output tokens at effort "low", about $0.0003 for
+    # gpt-6.2-astra and $0.00008 for gpt-6.2-sol.
+    @testset "OpenAI GPT-6.2 Astra and Sol: effort low, their cheapest, accepted, and the reply priced by the row" begin
+        for model in ("gpt-6.2-astra", "gpt-6.2-sol")
+            r = respond("Reply with the single word OK."; model, reasoning=Reasoning(effort="low"), max_output_tokens=16)
+            @test r isa ResponseSuccess
+            r isa ResponseSuccess || continue
+            u = token_usage(r)
+            @info model r.response.model u.prompt_tokens u.completion_tokens u.cached_tokens u.service_tier cost = estimated_cost(r)
+            @test startswith(r.response.model, model)
+            @test r.response.raw["reasoning"]["effort"] == "low"
+            rates = DEFAULT_PRICING[model]
+            @test u.prompt_tokens > 0 && u.completion_tokens > 0 && u.service_tier == "default"
+            @test estimated_cost(r) ≈ (u.prompt_tokens - u.cached_tokens) * rates.input + u.cached_tokens * rates.cached_input +
+                                      u.completion_tokens * rates.output
+        end
+    end
+
     @testset "OpenAI default model: a respond that names none is served by gpt-6-sol" begin
         r = respond("Reply OK"; max_output_tokens=16)
         @test r isa ResponseSuccess

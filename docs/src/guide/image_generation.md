@@ -96,6 +96,7 @@ if result isa ImageSuccess
     r.usage                   # token usage Dict (token_usage(result) reads it)
 
     # Convenience accessors
+    image_usage(result)       # ImageUsage: the counts, the input's text and image tokens apart
     image_data(result)        # Vector{String}: each image's base64 data, else its URL
     save_image(image_data(result)[1], "sunset.png")
 end
@@ -158,18 +159,27 @@ For full control, build an [`ImageEdit`](@ref) and call `edit_image(e)`. `model`
 provider's default image model, resolved when the edit is sent. An empty vector of images, or an
 image, mask or markup path that is no file, throws `ArgumentError` before any request. Image editing needs the `:image_edits` capability: an endpoint that does not declare it,
 one that declares no capabilities included, throws `ArgumentError` before any request. The fields of an edit that one provider
-alone takes, such as a mask, are on its entry.
+alone takes, such as a mask, are on its entry; so are the images a provider takes by reference, an
+[`ImageRef`](@ref) in place of a path.
+
+## [Streaming](@id image_generation_streaming)
+
+A provider that streams images sends partial images while it makes one: set `stream=true`, and pass a
+`callback` to `generate_image` or `edit_image`, which receives each one as a [`PartialImage`](@ref), its
+index and its bytes. The call returns the same result an unstreamed one does, once the image arrives. A
+`callback` without `stream=true` throws `ArgumentError`, and so does `stream` on a provider that has no
+partial images to send; each entry says whether its provider streams.
 
 ## [Retry behaviour](@id image_generation_retries)
 
-`generate_image` and `edit_image` retry transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; the wait a reply asks for (its `retry-after-ms` header, else `Retry-After`) is a floor under the jittered wait. Override per call with `config=RequestConfig(...)`. Both take `cancel=` (default: the ambient `with_cancel` token); a cancelled call returns an `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref). Every `ImageFailure` and `ImageCallError` carries the provider's `request_id` when one was sent, and a call error its exception in `cause`.
+`generate_image` and `edit_image` retry transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; the wait a reply asks for (its `retry-after-ms` header, else `Retry-After`) is a floor under the jittered wait. A streamed call is sent again only before its reply's head arrives: after it, a partial image may have reached the callback. Override per call with `config=RequestConfig(...)`. Both take `cancel=` (default: the ambient `with_cancel` token); a cancelled call returns an `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref). Every `ImageFailure` and `ImageCallError` carries the provider's `request_id` when one was sent, and a call error its exception in `cause`.
 
 ## [See also](@id image_generation_see_also)
 
-- [`ImageGeneration`](@ref) — request configuration type
+- [`ImageGeneration`](@ref), [`ImageEdit`](@ref) — request configuration types
 - [`ImageResponse`](@ref) — response type
-- [`generate_image`](@ref) — request function
-- [`image_data`](@ref), [`save_image`](@ref) — accessor/utility functions
+- [`generate_image`](@ref), [`edit_image`](@ref) — request functions
+- [`image_data`](@ref), [`image_usage`](@ref), [`save_image`](@ref) — accessor/utility functions
 
 ## [On your provider](@id image_generation_providers)
 

@@ -8,7 +8,8 @@ using UniLM
 
 [`generate_image`](@ref) sends an [`ImageGeneration`](@ref) to OpenAI's Images API,
 `POST /v1/images/generations`, and [`edit_image`](@ref) an [`ImageEdit`](@ref) to
-`POST /v1/images/edits`, as `multipart/form-data` with each image, the mask and a markup as a file. Both
+`POST /v1/images/edits`, as `multipart/form-data` with each image, the mask and a markup as a file, or, for
+images given by reference, as JSON ([below](@ref openai_images_by_reference)). Both
 take `gpt-image-2.6-sunburst` unless the request names another `model` — "For new integrations, use
 GPT-Image-2.6 Sunburst or Flare", OpenAI's guide says; the request's `model`
 field stays `""` until the request is serialized, so `JSON.json(ig)` shows the model that goes.
@@ -27,12 +28,14 @@ which UniLM checks:
 - **`background`, `output_format`, `output_compression`**: `"transparent"`, `"opaque"` or
   `"auto"`, a transparent one with `"png"` or `"webp"`; the format `"png"`, the default,
   `"jpeg"`, `"webp"`, `"gif"` or `"svg"` (below); the compression from 0 to 100 of a JPEG or WebP,
-  which "defaults to 100".
+  which "defaults to 100". On a generation and an edit.
 - **`n`**: how many images one request makes, "between 1 and 10", which [`image_data`](@ref)
   lists in order.
 - **`moderation`**: `"auto"`, the default, or `"low"` "for less restrictive filtering": the
   filtering of the image models' prompts and images, a setting of the Images API and not the
-  Moderations API ([Moderation](@ref openai_moderation)).
+  Moderations API ([Moderation](@ref openai_moderation)). On a generation and an edit: on 17 November
+  2026 the API answered a multipart edit with `moderation=bogus`, and one with `output_compression=999`,
+  with HTTP 400 naming the field, where a made-up field is "Unknown parameter".
 - **`safety_identifier`**: "A stable identifier for an end user in your organization", for which
   OpenAI asks you to "Hash a username or email address to avoid sending identifying information";
   it takes the place of the deprecated `user`, which the image requests do not have, and UniLM
@@ -112,7 +115,7 @@ eu = token_usage(edited)
 
 ![The same lighthouse on a snowy winter night](../../assets/openai_lighthouse_winter.jpg)
 
-`image` is a path or a vector of paths, "up to 16 images", and `mask` the path of an image whose
+`image` is a path or a vector of paths, "up to 16 images" — or `ImageRef`s ([below](@ref openai_images_by_reference)) — and `mask` the path of an image whose
 transparent area marks what to change: "The image to edit and mask must be of the same format and
 size (less than 50MB in size)", and "The mask image must also contain an alpha channel"
 ([image generation](https://developers.openai.com/api/docs/guides/image-generation#mask-requirements)).
@@ -128,9 +131,64 @@ anything is sent, as are bytes that are no PNG. OpenAI's API specification state
 is no file is refused before anything is sent, as `upload_file` and `transcribe` refuse one
 ([Limits and refusals](@ref openai_media_limits)).
 
+### [Edits by reference](@id openai_images_by_reference)
+
+An image an edit names instead of uploading — an uploaded file's id, or `image_url`, "A fully qualified URL
+or base64-encoded data URL" — is an [`ImageRef`](@ref), exactly one of the two ("Exactly one of
+'image_url' or 'file_id' must be provided.", the API's HTTP 400 for both on 17 November 2026). An edit whose
+`image` is an `ImageRef`, or a vector of them, goes as the JSON edit: "Use `images` (array of
+`ImageRefParam`) instead of multipart `image` uploads"
+([Edit image](https://developers.openai.com/api/reference/resources/images/methods/edit)), its `mask` and
+`markup` by reference too, and its other fields as on a multipart edit, `svg` as its JSON object. A request
+is one form or the other, so an edit that mixes files and references is refused before anything is sent.
+Upload an image for it with [`upload_file`](@ref) and the purpose `"vision"`; an unknown file id is
+OpenAI's HTTP 404, "Files [...] were not found":
+
+```julia
+up = upload_file("lighthouse.jpg", "vision")
+up isa FileSuccess || error("the upload failed: $up")
+edited = edit_image(ImageRef(file_id=up.response.id), "Make it a winter night";
+                    size="1024x640", quality="low")
+delete_file(up.response.id)
+```
+
+### [Streaming](@id openai_images_streaming)
+
+With `stream=true` a generation or an edit streams: OpenAI sends up to `partial_images` partial images
+(0 to 3) while it makes the image, then the image, and the `callback` given to [`generate_image`](@ref) or
+[`edit_image`](@ref) receives each partial image as a [`PartialImage`](@ref), its `index` and its decoded
+`bytes`, as it arrives. The call returns when the image does, with the same [`ImageSuccess`](@ref) an
+unstreamed call returns — the image, its `created` time and its `usage`, priced as an unstreamed call's —
+and the stream's completed event as `result.response.raw`. "Note that the final image may be sent before
+the full number of partial images are generated if the full image is generated more quickly" (the
+reference): on 17 November 2026 a streamed generation at quality `"low"` on `gpt-image-2.6-flare` asked for
+one partial image and got none.
+
+```julia
+partials = PartialImage[]
+result = generate_image("A lighthouse on a rocky coast at dusk"; size="1024x640", quality="low",
+                        stream=true, partial_images=2, callback=p -> push!(partials, p))
+for p in partials
+    write("lighthouse_partial_$(p.index).png", p.bytes)
+end
+```
+
+OpenAI streams one image per request ("Streaming is only supported with n=1.", its HTTP 400 for `n=2` on
+17 November 2026), and "GIF output does not support streaming, partial images", nor does SVG output, so a
+stream with another `n` or with `output_format="gif"` or `"svg"` is refused before anything is sent, as are
+`partial_images` without `stream=true` and a `callback` without it. A streamed call is sent again after a
+transient status or a failure before the reply's head arrives, never after it: from there a partial image
+may have reached the callback, and another attempt would make, and bill, another image. What the callback
+throws ends the call with an `ImageCallError` carrying it as `cause`, and the time it runs does not count
+toward `stream_idle_timeout`.
+
+### [Usage, retries and failures](@id openai_images_usage)
+
 [`token_usage`](@ref) reads the reply's usage: the prompt's text tokens, and an edit's input image
 too, as input — 640 image and 26 text tokens in the edit above, by the `input_tokens_details` of its
-`response.usage` — and the image as output. UniLM does not price images:
+`response.usage` — and the image as output; [`image_usage`](@ref) gives the same counts with the input's
+text and image tokens and the output's image and text tokens apart, as an [`ImageUsage`](@ref). UniLM does
+not price images:
 [`estimated_cost`](@ref) throws `ArgumentError` for an `ImageSuccess` unless you pass `model=`, which
 it prices by a `pricing` row of your own. OpenAI bills `gpt-image-2.5-sunburst` text input at \$5,
 image input at \$8 and image output at \$30 per million tokens
@@ -380,8 +438,13 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | Refused | Why: the message's words | What to do |
 | :--- | :--- | :--- |
 | `aspect_ratio` or `resolution` on an image request | `the OpenAI Images API has no`: OpenAI sizes an image with one `WIDTHxHEIGHT`; those fields are Gemini's | `size="WIDTHxHEIGHT"` |
+| `delivery` on an image request | `the OpenAI Images API has no delivery`: OpenAI's image models return base64 data; the field is Gemini's | unset it |
+| `partial_images` outside 0 to 3, or without `stream=true`; a `callback` without `stream=true` (when the request is built; the callback in the verb) | `partial_images must be 0 to 3`, `partial_images come only on a stream`, `callback requires stream=true`: the reference's "Value must be between 0 and 3" (HTTP 400 for 9, 17 November 2026) | a count in the range, with `stream=true` |
+| `stream=true` with an `n` other than 1, or with `output_format="gif"` or `"svg"` | `OpenAI streams one image`, `GIF output takes no stream`, `SVG output does not stream`: "Streaming is only supported with n=1." (HTTP 400, 17 November 2026); GIF and SVG output do "not support streaming, partial images" | `n=1`, or no stream |
+| an edit whose images mix paths and `ImageRef`s (when it is built), or whose `mask` or `markup` is of the other kind than its images | `are all local files (paths) or all references`, `takes its mask by reference too`, `takes its mask as a file`: a multipart edit uploads files, the JSON edit references them | all files, or all `ImageRef`s ([Edits by reference](@ref openai_images_by_reference)) |
+| an `ImageRef` with both or neither of `file_id` and `image_url`, an empty `file_id`, or an `image_url` with no scheme or over 20,971,520 characters (when it is built) | `names exactly one of file_id and image_url`, `file_id is empty`, `names no scheme`, `takes at most 20971520 characters`: "Exactly one of 'image_url' or 'file_id' must be provided." (HTTP 400, 17 November 2026), and the reference's `maxLength` | one of the two; a larger image uploaded, by its file id |
 | a `safety_identifier` of no character or of more than 128 on an image request | `the OpenAI Images API takes a safety_identifier of 1 to 128 characters`: OpenAI reads an empty one as none, and its guide keeps it to 128 | a hash of your user's id: a SHA-256 hex digest is 64 characters |
-| `edit_image` with an empty vector of images | `an image edit needs at least one input image` | a path, or a vector of paths |
+| `edit_image` with an empty vector of images | `an image edit needs at least one input image` | a path, an `ImageRef`, or a vector of either |
 | `edit_image` with an image, a `mask` or a `markup` path that is no file | `image not found:`, `mask not found:`, `markup not found:` | the path of the file |
 | `edit_image` with both a `mask` and a `markup`, or `markup` bytes that are no PNG | `takes a mask or a markup, not both`, `these bytes are no PNG`: the markup "Cannot be combined with mask" and is "A transparent PNG" | one of the two; a PNG |
 | a `complexity` other than `"low"`, `"medium"` and `"high"`, a `frame_count` outside 2 to 16 or a `frame_duration_ms` under 20, on an image request or an `ImageGenerationTool` (when it is built) | `complexity must be`, `frame_count must be 2 to 16`, `frame_duration_ms must be at least 20`: the reference's values | a value in the range |

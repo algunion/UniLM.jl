@@ -30,6 +30,20 @@ end
     @test UniLM._remaining_s(RequestConfig(total_deadline=Inf), time_ns()) == Inf
 end
 
+@testset "a budget below one microsecond counts as spent, even with no clock tick elapsed" begin
+    # Back-to-back time_ns() reads can be identical, so elapsed == 0.0 is a real input.
+    @test UniLM._budget_left(1e-300, 0.0) == 0.0
+    @test UniLM._budget_left(1e-7, 0.0) == 0.0
+    @test UniLM._budget_left(1.0, 1.0 - 5e-7) == 0.0      # a sub-µs remainder after real time
+    @test UniLM._budget_left(1.0, 2.0) == 0.0             # overdrawn: floors at zero
+    @test UniLM._budget_left(1e-6, 0.0) == 1e-6           # one microsecond is still a budget
+    @test UniLM._budget_left(10.0, 1.0) == 9.0
+    @test UniLM._budget_left(Inf, 0.0) == Inf
+    @test UniLM._budget_left(Inf, 1e9) == Inf
+    # Through the config: no caller sees a value in (0, 1e-6).
+    @test UniLM._remaining_s(RequestConfig(total_deadline=1e-300), time_ns()) == 0.0
+end
+
 @testset "exception-chain walker finds nested causes; unwrap strips task layers" begin
     b = UniLM._DeadlineBreach(:request, 1.0)
     t = Threads.@spawn throw(b)

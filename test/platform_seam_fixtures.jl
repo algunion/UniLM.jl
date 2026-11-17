@@ -24,9 +24,9 @@ UniLM.provider_capabilities(::Type{SeamProbe}) = Set([:files, :images, :image_ed
     :stored_completions, :voices])
 UniLM.default_image_model(::Type{SeamProbe}) = "seam-probe-image"
 
-# total_deadline=1e-300 is > 0 (passes RequestConfig validation) yet so small that
-# max(total_deadline - elapsed, 0.0) == 0.0 for any realistic elapsed → deterministic
-# :deadline breach with no network I/O.
+# total_deadline=1e-300 is > 0 (passes RequestConfig validation) yet below the one-microsecond
+# minimum budget, so _remaining_s is 0.0 even when the clock has not ticked since the verb
+# read its origin (elapsed == 0.0) → deterministic :deadline breach with no network I/O.
 const _TINY_DEADLINE = UniLM.RequestConfig(total_deadline = 1e-300)
 
 # Every platform *CallError carries `error::String`. Short-circuits on the type check, so a

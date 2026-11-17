@@ -71,8 +71,23 @@ end
 
 _elapsed_s(t0::UInt64)::Float64 = (time_ns() - t0) / 1e9
 
-_remaining_s(cfg::RequestConfig, t0::UInt64)::Float64 =
-    cfg.total_deadline == Inf ? Inf : max(cfg.total_deadline - _elapsed_s(t0), 0.0)
+# The smallest budget a request is sent under. `time_ns()` advances in clock ticks, and
+# back-to-back reads are often identical (on Apple Silicon about three in four, with a
+# 41 ns step), so a verb that reads its origin and then its budget can measure zero
+# elapsed time: a deadline of a few nanoseconds then still looked positive, the request
+# went out, and the transport's handling of a ~0 timeout surfaced instead of the
+# deadline breach. No exchange completes in under a microsecond, so less counts as spent.
+const _MIN_BUDGET_S = 1e-6
+
+# Seconds left of `total_deadline` after `elapsed`: `Inf` when unbounded, otherwise 0.0
+# (breached) or at least `_MIN_BUDGET_S` — never a value in between.
+function _budget_left(total_deadline::Float64, elapsed::Float64)::Float64
+    total_deadline == Inf && return Inf
+    left = total_deadline - elapsed
+    return left < _MIN_BUDGET_S ? 0.0 : left
+end
+
+_remaining_s(cfg::RequestConfig, t0::UInt64)::Float64 = _budget_left(cfg.total_deadline, _elapsed_s(t0))
 
 # Walk an exception's wrapping chain looking for the first exception matching
 # `pred`. An exception delivered into a task mid-request can surface

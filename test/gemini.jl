@@ -41,7 +41,7 @@ end
     # :json_output — response_format maps to generationConfig.responseFormat (golden below)
     @test UniLM.provider_capabilities(GEMINIServiceEndpoint) ==
           Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits, :models, :speech, :system_one,
-               :files, :file_registration, :token_count, :batch, :context_caching, :file_search_stores])
+               :files, :file_registration, :token_count, :batch, :context_caching, :file_search_stores, :embeddings])
     @test has_capability(GEMINIServiceEndpoint, :json_output)
     # Gemini 4 Hydrogen, Google's named successor to 3.8 Flash ("Change your model string from
     # `gemini-3.8-flash` to `gemini-4-hydrogen`", ai.google.dev/gemini-api/docs/whats-new-gemini-4-hydrogen),

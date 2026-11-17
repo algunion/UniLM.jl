@@ -20,7 +20,8 @@ UniLM.auth_header(::Type{SeamProbe}) = ["Authorization" => "Bearer test", "Conte
 UniLM.provider_capabilities(::Type{SeamProbe}) = Set([:files, :images, :image_edits, :audio,
     :uploads, :conversations, :vector_stores, :batch, :containers, :moderation,
     :realtime, :speech, :fine_tuning, :system_one, :models, :token_count, :file_registration,
-    :webhooks, :safety, :content_provenance])
+    :webhooks, :safety, :content_provenance, :skills, :context_caching, :file_search_stores,
+    :stored_completions, :voices])
 UniLM.default_image_model(::Type{SeamProbe}) = "seam-probe-image"
 
 # total_deadline=1e-300 is > 0 (passes RequestConfig validation) yet so small that

@@ -483,7 +483,7 @@ end
 # ─── Request Functions ───────────────────────────────────────────────────────
 
 """
-    generate_image(ig::ImageGeneration; config=nothing, cancel=nothing, callback=nothing)
+    generate_image(ig::ImageGeneration; config=nothing, callback=nothing, cancel=nothing)
 
 Send an image-generation request: to OpenAI's Images API, or, for
 `service=GEMINIServiceEndpoint`, to Gemini's `models/{model}:generateContent`, asking
@@ -529,8 +529,8 @@ token) to make the call cancellable: once the token is cancelled it returns an
 `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything
 when the token was already cancelled, at once when mid-request (never retried).
 """
-function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing,
-                        cancel::Union{Nothing,CancelToken}=nothing, callback=nothing)
+function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
+                        cancel::Union{Nothing,CancelToken}=nothing)
     _check_callback(ig, callback)
     validate_capability(ig.service, :images, "Image Generation API")
     _check_image_request(ig.service, ig)
@@ -566,9 +566,9 @@ if result isa ImageSuccess
 end
 ```
 """
-function generate_image(prompt::String; config::Union{Nothing,RequestConfig}=nothing,
-                        cancel::Union{Nothing,CancelToken}=nothing, callback=nothing, kwargs...)
-    generate_image(ImageGeneration(; prompt=prompt, kwargs...); config, cancel, callback)
+function generate_image(prompt::String; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
+                        cancel::Union{Nothing,CancelToken}=nothing, kwargs...)
+    generate_image(ImageGeneration(; prompt=prompt, kwargs...); config, callback, cancel)
 end
 
 # The callback receives the partial images of a stream, and runs on nothing else: given without one, it
@@ -732,9 +732,9 @@ _edit_inputs(image) = image   # anything else fails the field's conversion, nami
 _by_reference(e::ImageEdit)::Bool = e.image isa Union{ImageRef,Vector{ImageRef}}
 
 """
-    edit_image(e::ImageEdit; config=nothing, cancel=nothing, callback=nothing) -> LLMRequestResponse
-    edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing,
-               callback=nothing, kwargs...)
+    edit_image(e::ImageEdit; config=nothing, callback=nothing, cancel=nothing) -> LLMRequestResponse
+    edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, callback=nothing,
+               cancel=nothing, kwargs...)
 
 Edit/extend image(s) under a text prompt — on OpenAI's Images API, or on Gemini's
 `generateContent` for `service=GEMINIServiceEndpoint`. Returns the same
@@ -758,8 +758,8 @@ call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as
 [`generate_image`](@ref): a cancelled call returns an `ImageCallError` whose `cause` is a
 [`UniLMCancelled`](@ref).
 """
-function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
-                    cancel::Union{Nothing,CancelToken}=nothing, callback=nothing)
+function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)
     _check_callback(e, callback)
     validate_capability(e.service, :image_edits, "Image Edits API")
     # An edit needs an input image: sent without one, Gemini would read the prompt alone as a
@@ -773,8 +773,8 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
 end
 edit_image(image, prompt::String; mask::Union{String,ImageRef,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing, callback=nothing, kwargs...) =
-    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config, cancel, callback)
+    callback=nothing, cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
+    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config, callback, cancel)
 
 
 # ─── The exchange, and the wire each service speaks ──────────────────────────

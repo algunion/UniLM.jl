@@ -1245,10 +1245,10 @@ throws `ArgumentError` at serialization.
 ### generate_image
 
 ```julia
-generate_image(ig::ImageGeneration; config=nothing, cancel=nothing, callback=nothing) -> ImageSuccess | ImageFailure | ImageCallError
-generate_image(prompt::String; config=nothing, cancel=nothing, callback=nothing, kwargs...) -> same   # convenience
-edit_image(e::ImageEdit; config=nothing, cancel=nothing, callback=nothing)                 -> same
-edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, callback=nothing, kwargs...)
+generate_image(ig::ImageGeneration; config=nothing, callback=nothing, cancel=nothing) -> ImageSuccess | ImageFailure | ImageCallError
+generate_image(prompt::String; config=nothing, callback=nothing, cancel=nothing, kwargs...) -> same   # convenience
+edit_image(e::ImageEdit; config=nothing, callback=nothing, cancel=nothing)                 -> same
+edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, callback=nothing, cancel=nothing, kwargs...)
 # callback(p::PartialImage) runs once per partial image of a stream (stream=true; ArgumentError without it)
 ```
 

@@ -58,7 +58,7 @@ function _batch_input(::_GeminiBatches, service, requests::AbstractVector{Pair{S
 end
 
 _create_batch(wire::_GeminiBatches, service, input, cfg, t0, tok) = _batch_object(wire,
-    _batch_send("POST", _batch_root(service) * "/v1beta/models/" * _uripart(input.model) * input.method,
+    _batch_send("POST", string(_batch_root(service), "/v1beta/models/", _uripart(input.model), input.method::String),
                 _batch_headers(service, true), cfg, t0, tok, input.body))
 
 # A batch reply: an Operation — the GenerateContentBatch in its `metadata`, and `done` with `response` or `error`

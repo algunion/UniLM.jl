@@ -182,8 +182,10 @@ page after that completion id (the previous page's `last_id`), and `limit` sizes
 Another `order`, or metadata past the reference's bounds (16 pairs, 64-character keys, 512-character values), is
 an `ArgumentError` before any request.
 
-A completion is listed, and read, some time after its request returns: on 2026-11-17 one was still unknown
-(HTTP 404) to [`get_chat_completion`](@ref) more than 15 minutes later.
+A completion is listed, and read, only once OpenAI has stored it: on 2026-11-17 completions sent with
+`store=true` were still unknown (HTTP 404) to [`get_chat_completion`](@ref), and unlisted, 90 minutes later. A
+completion's id is its reply's, which an [`LLMSuccess`](@ref) does not keep: find one by the `metadata` it
+was sent with.
 
 $_STORE_CONFIG_DOC
 """
@@ -193,12 +195,14 @@ function list_chat_completions(; model::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :stored_completions, _STORE_CAP)
-    query = _vs_list_query("list_chat_completions", "model" => model, "after" => after, "limit" => limit, "order" => order)
+    query::String = _vs_list_query("list_chat_completions", "model" => model, "after" => after, "limit" => limit,
+                                   "order" => order)
     if !isnothing(metadata)
         _store_metadata_arg("list_chat_completions", metadata)
         # The reference's deep-object filter, `metadata[k]=v`, its brackets encoded as every other query here.
-        pairs = ["metadata%5B$(_uripart(k))%5D=$(_uripart(metadata[k]))" for k in sort!(collect(keys(metadata)))]
-        isempty(pairs) || (query *= (isempty(query) ? "?" : "&") * join(pairs, "&"))
+        filters = String["metadata%5B$(_uripart(String(k)))%5D=$(_uripart(String(metadata[k])))"
+                         for k in sort!(collect(keys(metadata)))]
+        isempty(filters) || (query = string(query, isempty(query) ? "?" : "&", join(filters, "&")))
     end
     _store_call("GET", _store_url(service, query), service, config, cancel) do d
         StoredCompletionListSuccess(response=StoredCompletionList(; _store_page(_stored_completion, d)...))

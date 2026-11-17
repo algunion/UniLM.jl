@@ -366,7 +366,7 @@ through that accessor, never directly.
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
 - **Parameter validation**: the constructor validates at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` must be `1` (a result carries a single choice), `max_tokens` / `max_completion_tokens` ≥ 1, `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0], `top_logprobs` ∈ [0, 20], every `logit_bias` value ∈ [-100, 100], `reasoning_effort` ∈ {`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`} (on a `DeepSeekEndpoint` also `"ultra"`, which DeepSeek maps to `max`). Violations throw `ArgumentError`. An empty `tools` vector is stored as `nothing`; a `Vector{<:CallableTool}` is accepted and stored as its `Tool`s.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings, and the Gemini sampling rule and thinking-table rows, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
-- **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
+- **OpenAI per-model rules** (native endpoint; `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on GPT-6.2 Astra and Sol, GPT-6 Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on GPT-6.2, GPT-6 Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6.1-terra`, `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on GPT-6.2, GPT-6 Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on GPT-6.2 Astra and Sol, GPT-6 Astra and 6.1 Sol); anything else throws.
 - `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. A `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": a `Chat` with `mode="explicit"` throws `ArgumentError` when it is built, on every endpoint. `moderation` takes a [`ModerationConfig`](@ref).
 - `prompt_cache_retention` (`"in_memory"` or `"24h"`), which OpenAI's Chat Completions reference still lists and deprecates ("Use `prompt_cache_options.ttl` instead"): native OpenAI sends it, and throws `ArgumentError` for it on the GPT-6 and GPT-5.6 rows above (their cache lifetime is `prompt_cache_options`'s, as on `Respond`) and for any value but `"24h"` on `gpt-5.5` and `gpt-5.5-pro` (the API answered `"in_memory"` with HTTP 400, "This model is compatible only with 24h extended prompt caching"); Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and generic endpoints (Mistral among them) send it as given; native Gemini, Anthropic and Ollama throw `ArgumentError` for it (no such field).
 - `cached_content` names a Gemini context cache made with [`create_cache`](@ref): native Gemini sends it as `cachedContent`, `GEMINIOpenAIServiceEndpoint` as `extra_body.google.cached_content`; both throw `ArgumentError` when the `Chat` also has a system message, `tools` or a `tool_choice` (the cache holds them; the API answered HTTP 400) or a Gemini 4 model (no explicit caching); every other endpoint throws `ArgumentError` for it. A malformed name throws at construction.
@@ -644,7 +644,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     background::Union{Bool,Nothing} = nothing
     include::Union{Vector{String},Nothing} = nothing
     max_tool_calls::Union{Int64,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
+    service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol/gpt-6.2-astra/gpt-6.2-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
     prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, another value refused; refused on the gpt-6*/gpt-5.6* rule models)
@@ -898,8 +898,8 @@ caches are made with `create_cache` and named in a `Chat`'s `cached_content`); A
 endpoints send the object unchanged, the server's answer being the check. A `Chat` with
 `mode="explicit"` throws `ArgumentError` when it is built, whatever its endpoint (below).
 
-On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
-`gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
+On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`,
+`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
 snapshots), whose cache lifetime `prompt_cache_options` sets, and for any value but `"24h"` on `gpt-5.5`
 and `gpt-5.5-pro`, which the reference restricts to it (the API answered `"in_memory"` on `gpt-5.5` with
 HTTP 400); on other models UniLM sends it unchecked, beside `prompt_cache_options` when that is set too
@@ -1519,7 +1519,7 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
 
 The OpenAI, Anthropic and Gemini rows were verified October 22, 2026 (OpenAI's
 `gpt-5-search-api` October 25, 2026, `gpt-5.2-pro` October 26, 2026, `gpt-6-rosalind` and `gpt-6-astra-law`, a promotional
-price through at least December 31, 2026, November 2, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
+price through at least December 31, 2026, November 2, 2026, `gpt-6.2-astra` and `gpt-6.2-sol` November 17, 2026), the TypeSafe rows October 25, 2026 and the DeepSeek rows
 September 24, 2026 (its peak rates; off-peak hours bill half). The rows are standard short-context text rates; surcharges apply only where
 UniLM models the provider's, and multimodal rates (except OpenAI's and Gemini's audio rates) are not
 included. Of hosted-tool fees, OpenAI's are billed from the `tool_usage` a Responses result reports
@@ -1534,9 +1534,10 @@ included. A billed tier the provider's pricing page lists no price for
 the standard rates with one warning per model and tier. OpenAI estimates bill cache writes at 1.25× input
 (`"30m"`) or 2.5× (`"12h"`, `cache_write_extended_tokens`) on GPT-6 and GPT-5.6, a prompt
 over 272K input tokens at 2× the input and cache rates and 1.5× the output rate, and the
-billed tier's multiple of every rate (Flex 0.5×; Fast 2× on GPT-6, GPT-5.6, `gpt-5.4`,
-`gpt-5.4-mini` and `gpt-5.2`, 2.5× on `gpt-5.5`, 1.75× on GPT-4.1 and `o3`; Ultrafast 6× on
-Astra and 6.1 Sol; a reported `"priority"` is Fast); a tier the pricing page gives no price
+billed tier's multiple of every rate (Flex 0.5×, with no Flex price on GPT-6.2; Fast 2× on GPT-6, GPT-5.6, `gpt-5.4`,
+`gpt-5.4-mini` and `gpt-5.2`, 2.5× on `gpt-5.5`, 1.75× on GPT-4.1 and `o3`; Ultrafast 6× on GPT-6
+Astra and 6.1 Sol, and on GPT-6.2 Astra and Sol 3× through February 28, 2027 and 6× from 00:00 UTC on March 1, 2027
+(OpenAI's page: "starting March 1, 2027 (Pacific time)"); a reported `"priority"` is Fast); a tier the pricing page gives no price
 for is estimated at the standard rates with one warning per model and tier. Anthropic
 `prompt_tokens` include cache reads and writes (`cached_tokens` the reads,
 `cache_write_tokens` the writes and `cache_write_extended_tokens` the 1-hour ones), and its

@@ -886,12 +886,12 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
   `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
-  each model supports a subset (gpt-5.4-mini stops at `"xhigh"`). For `gpt-6-astra`,
-  `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
-  `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) the native OpenAI endpoint
-  checks the effort before the request: the Responses API takes `"low"` to `"max"` on GPT-6
-  Astra and GPT-6.1 Sol and
-  `"none"` to `"max"` on the others, so `"minimal"` (and `"none"` on Astra and 6.1 Sol)
+  each model supports a subset (gpt-5.4-mini stops at `"xhigh"`). For `gpt-6.2-astra`,
+  `gpt-6.2-sol`, `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`,
+  `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) the native OpenAI
+  endpoint checks the effort before the request: the Responses API takes `"low"` to `"max"` on
+  GPT-6.2 Astra and Sol, GPT-6 Astra and GPT-6.1 Sol and
+  `"none"` to `"max"` on the others, so `"minimal"` (and `"none"` on those four)
   throws `ArgumentError` pointing to `"low"`. Other models are checked by the server.
   Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
@@ -993,7 +993,8 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   `ArgumentError`
 - `service_tier::String`: on `OPENAIServiceEndpoint`, `"auto"`, `"default"`, `"flex"`,
   `"scale"`, `"fast"` (or its former name `"priority"`), or `"ultrafast"`, which OpenAI serves
-  for `gpt-6-astra` and `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI
+  for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` only; another value, or
+  `"ultrafast"` on another OpenAI
   model, throws `ArgumentError`. On Gemini Interactions (`GEMINIServiceEndpoint`),
   `"standard"`, `"flex"` or `"priority"`, as on native Gemini Chat; another value throws
   `ArgumentError`, `"deferred"` among them: the API answered it with HTTP 400 on 2026-10-26, a
@@ -1005,8 +1006,9 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
   (and their dated snapshots) the native endpoint throws `ArgumentError` for `"in_memory"`,
   which the API answered on `gpt-5.5` with HTTP 400 (2026-11-02), and UniLM sends the field
   unchecked on any model without a rule. OpenAI
-  deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`,
-  `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots),
+  deprecates the field: on `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`, `gpt-6.1-sol`,
+  `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna`
+  (and their dated snapshots),
   whose cache lifetime
   `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for any value
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
@@ -1033,7 +1035,7 @@ Gemini Interactions on `GEMINIServiceEndpoint`.
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
 efforts, sampling controls, `prompt_cache_retention`) to those GPT-6 and GPT-5.6 models, by
 exact id or a dated snapshot, before any request; other models are checked by the server.
-Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone, so `"ultrafast"` throws
+Ultrafast is served by `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` alone, so `"ultrafast"` throws
 `ArgumentError` on every other model, an unknown one included. See
 [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
 Build a `Respond` with keywords: the positional form takes all 33 fields in declaration

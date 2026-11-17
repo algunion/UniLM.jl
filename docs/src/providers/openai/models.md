@@ -55,6 +55,8 @@ run their examples, in its own words:
 
 | Model | OpenAI's description |
 | :--- | :--- |
+| `gpt-6.2-astra` | "Our most capable model for your hardest projects, from start to finish" ([GPT-6.2 Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra)) |
+| `gpt-6.2-sol` | "Our go-to model for everyday work, from coding to powering agents at scale" ([GPT-6.2 Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol)) |
 | `gpt-6-sol` | "built for complex coding and agentic workflows" ([GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)) |
 | `gpt-6.1-sol` | "Near-Astra performance for complex work at a lower cost" ([GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra)) |
 | `gpt-6.1-terra` | "A fast, efficient model for visual reasoning, precise computer use, and clear, natural writing" ([GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra)) |
@@ -83,8 +85,10 @@ The columns:
   model. Another is refused, and the message names the next effort up that the row lists, or `Respond`
   where only the Responses API takes it. OpenAI's reference for Chat Completions lists `"max"` among
   the efforts, but the API answered `"max"` with HTTP 400 when these rows were written, on
-  22 October 2026, and again on the default model on 25 October 2026, so their Chat Completions cells
-  end at `"xhigh"`.
+  22 October 2026, again on the default model on 25 October 2026, and on `gpt-6.2-astra` and
+  `gpt-6.2-sol` on 17 November 2026, so their Chat Completions cells end at `"xhigh"`. Those two
+  answered `"none"` and `"minimal"` with HTTP 400 on both APIs: "The API rejects requests that set
+  reasoning effort to `none`" (their model pages).
 - **Sampling and log probabilities at**: the efforts at which UniLM sends `temperature`, `top_p` and
   log probabilities, refusing them at the others; "—": at none. OpenAI's GPT-6 guide: "When reasoning
   effort is not `none`, remove `temperature`, `top_p`, and `top_logprobs`. For Chat Completions, also
@@ -108,7 +112,8 @@ The columns:
   defaults to `medium`", and "GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna also default to `medium` reasoning
   effort" ([reasoning](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode)); its pages
   name no default for GPT-6 Astra, whose response to a request that set none reported `reasoning.effort`
-  `"medium"` on 25 October 2026 (the evidence below).
+  `"medium"` on 25 October 2026, nor for GPT-6.2 Astra and Sol, whose responses reported `"medium"` on
+  17 November 2026 (the evidence below).
 
 !!! details "Evidence"
     Live requests of 25 October 2026, sent as raw HTTP. `gpt-6-astra` on the Responses API with no `reasoning` and `max_output_tokens=16`:
@@ -118,6 +123,20 @@ The columns:
     Only the default (1) value is supported."; with `reasoning={"effort": "low"}`, HTTP 400 on the
     Responses API, "Unsupported parameter: 'temperature' is not supported with this model."; at
     `reasoning_effort="none"`, HTTP 200 on Chat Completions.
+
+    Live requests of 17 November 2026, sent as raw HTTP, to `gpt-6.2-astra` and `gpt-6.2-sol` alike, each
+    with `max_output_tokens=16` (`max_completion_tokens=16` on Chat Completions). The Responses API with no
+    `reasoning`: HTTP 200, `reasoning.effort` `"medium"`; with `"low"`, `"medium"`, `"high"`,
+    `"xhigh"` and `"max"`: HTTP 200; with `"none"` or `"minimal"`: HTTP 400, "Supported values are:
+    'low', 'medium', 'high', 'xhigh', and 'max'.". Chat Completions with `"low"` and `"xhigh"`: HTTP 200;
+    with `"none"`, `"minimal"` or `"max"`: HTTP 400, "Supported values are: 'low', 'medium', 'high', and
+    'xhigh'.". At `"low"`: `temperature=0.5` on the Responses API, HTTP 400, "Unsupported parameter:
+    'temperature' is not supported with this model."; a function tool on Chat Completions, HTTP 400,
+    "Function tools with `reasoning_effort` are not supported for gpt-6.2-sol in /v1/chat/completions"
+    (each model's own id); `service_tier` `"ultrafast"` and `"fast"` on the Responses API, HTTP 200, the
+    response's `service_tier` the one asked for; `"ultrafast"` on Chat Completions, HTTP 400, "Invalid
+    `service_tier` argument"; `"flex"` on the Responses API, HTTP 400, "This model does not support
+    `service_tier=flex`. Use `background=true` with `background_options.completion_window` instead."
 
 `Reasoning` configures the reasoning of whatever model a `Respond` names: UniLM checks its effort per
 model only for the rows above, and sends it unchecked for a model no row names, OpenAI's answer being
@@ -294,9 +313,15 @@ row below is estimated at `0.0`, with one warning per model id: pass `estimated_
 that holds its row, or add the row to [`DEFAULT_PRICING`](@ref) ([Cost Tracking](@ref cost_guide)).
 
 The rows are OpenAI's list prices as checked on 25 October 2026 (`gpt-5.2-pro`'s on 26 October,
-`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November, `gpt-6-cyber`'s on 16 November); prices change,
-so check OpenAI's [pricing page](https://developers.openai.com/api/docs/pricing) before relying on an
-estimate.
+`gpt-6-rosalind`'s and `gpt-6-astra-law`'s on 2 November, `gpt-6-cyber`'s on 16 November, `gpt-6.2-astra`'s
+and `gpt-6.2-sol`'s on 17 November); prices change, so check OpenAI's
+[pricing page](https://developers.openai.com/api/docs/pricing) before relying on an estimate.
+For `gpt-6.2-astra` and `gpt-6.2-sol`, "Ultrafast costs 3 times the Standard rate through February 28,
+2027, and 6 times the Standard rate starting March 1, 2027 (Pacific time)": the estimate bills 6 times
+from 00:00 UTC on 1 March 2027, eight hours before OpenAI does, and so never below OpenAI's price in
+those hours. OpenAI lists no Flex price for them, and answered `service_tier="flex"` with HTTP 400 (the
+evidence in [Reasoning](@ref openai_reasoning)); a Flex tier reported for them would be estimated at the
+standard rates, with a warning.
 `gpt-6-astra-law`'s is a promotional price, "available at least through December 31, 2026", with no
 later price published yet. OpenAI lists `gpt-6-rosalind` at Standard rates alone, and "Access is limited
 to approved internal research through the trusted-access program"; `gpt-6-cyber` at Standard rates alone

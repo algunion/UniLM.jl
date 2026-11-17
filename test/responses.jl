@@ -1729,8 +1729,8 @@ end
     doc = string(@doc Respond)
     # The Responses reference on prompt_cache_retention.
     @test occursin("`gpt-5.5-pro`, and future models, only `24h` is supported", doc)
-    # Ultrafast is served by two models only, so it is not among the rules left to the server.
-    @test occursin("Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone", doc) &&
+    # Ultrafast is served by four models only, so it is not among the rules left to the server.
+    @test occursin("Ultrafast is served by `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` alone", doc) &&
           occursin("on every other model, an unknown one included", doc)
     @test !occursin("Ultrafast, `prompt_cache_retention`", doc)
 end

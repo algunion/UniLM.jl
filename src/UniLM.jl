@@ -519,6 +519,21 @@ export
     delete_batch,
     update_batch
 
+# ─── Gemini context caching ───────────────────────────────────────────────────
+export
+    CacheObject,
+    CacheList,
+    CacheSuccess,
+    CacheListSuccess,
+    CacheDeleteSuccess,
+    CacheFailure,
+    CacheCallError,
+    create_cache,
+    retrieve_cache,
+    list_caches,
+    update_cache,
+    delete_cache
+
 # ─── Fine-tuning API ──────────────────────────────────────────────────────────
 export
     FineTuningJob,

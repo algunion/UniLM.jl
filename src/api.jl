@@ -1488,8 +1488,8 @@ OpenAI options, omitted from the request when unset:
 
 Gemini option, omitted from the request when unset:
 - `cached_content::Union{String,Nothing}`: a Gemini context cache ([`create_cache`](@ref)) the
-  request reads as the start of its prompt, given by its name, `"cachedContents/<id>"`, or its id,
-  and stored as the name; any other form throws `ArgumentError`. Native Gemini sends it as
+  request reads as the start of its prompt, given by its name, `"cachedContents/<id>"`, its id or its
+  [`CacheObject`](@ref), and stored as the name; any other form throws `ArgumentError`. Native Gemini sends it as
   `cachedContent`, `GEMINIOpenAIServiceEndpoint` as `extra_body.google.cached_content`, the field
   Google's compatibility page documents. The cache holds the system instruction and the tools: both
   answer a request that names a cache and has a system message, `tools` or a `tool_choice` with

@@ -976,36 +976,23 @@ end
     end
 end
 
-# On 2026-11-17 this organization's stored completions read but did not change: a completion sent with store=true was
-# still unknown (HTTP 404, unlisted) 90 minutes later, on gpt-6-luna and gpt-5.4-nano, while a Responses API store read
-# back at once; a metadata update was answered HTTP 500 "server_error"; a delete was answered `"deleted": true` and left
-# the completion listed and readable minutes later, a second delete answering the same. So the gate stores none and
-# waits for none: it takes the oldest completion the listing shows, reads its reply and input messages, sends a metadata
-# update (the updated completion, or the HTTP 5xx the API answered) and a delete (the confirmed delete). USD 0 a run.
-@testset "Stored Chat Completions — the oldest listed: get, messages, metadata update, delete" begin
+# The gate only reads stored Chat Completions. On 2026-11-17 OpenAI did not apply writes to them: completions sent with
+# store=true were not readable 90 minutes later, a metadata update was answered HTTP 500, and a delete was answered
+# `"deleted": true` while the completion stayed readable. So this testset stores, updates and deletes nothing, and takes
+# no 5xx for a pass: it reads the oldest completion the listing shows and its input messages, and an empty listing fails
+# it. Update and delete are covered keyless (test/chat_store.jl). USD 0 a run.
+@testset "Stored Chat Completions — the oldest listed: get and its messages, read-only" begin
     page = list_chat_completions(; order="asc", limit=1)
     @test page isa StoredCompletionListSuccess
     listed = page isa StoredCompletionListSuccess ? page.response.data : StoredCompletion[]
-    @test length(listed) == 1
-    if length(listed) == 1
-        c = only(listed)
-        got = get_chat_completion(c.id)
-        @test got isa StoredCompletionSuccess && got.response.id == c.id && got.response.message.role == "assistant"
-        msgs = list_chat_completion_messages(c.id; order="asc", limit=10)
-        @test msgs isa StoredCompletionMessageListSuccess && !isempty(msgs.response.data)
-        marked = update_chat_completion(c.id, Dict("unilm_gate" => "deleting"))
-        @test (marked isa StoredCompletionSuccess && get(marked.response.metadata, "unilm_gate", nothing) == "deleting") ||
-              (marked isa StoredCompletionFailure && marked.status >= 500 && occursin("server_error", marked.response))
-        filtered = list_chat_completions(; metadata=Dict("unilm_gate" => "deleting"), model=c.model, limit=100)
-        @test filtered isa StoredCompletionListSuccess
-        d = delete_chat_completion(c.id)
-        @test d isa StoredCompletionDeleteSuccess && d.id == c.id
-        after = get_chat_completion(c.id)
-        @info "Stored completion read, updated and deleted" c.id c.model c.created messages = length(msgs.response.data) update = (
-            marked isa StoredCompletionFailure ? marked.status : "updated") filtered = (
-            filtered isa StoredCompletionListSuccess ? length(filtered.response.data) : nothing) read_after_delete = (
-            after isa StoredCompletionFailure ? after.status : typeof(after))
-    end
+    isempty(listed) && error("no stored Chat Completion to read: the listing answered a $(nameof(typeof(page))) with none")
+    c = only(listed)
+    got = get_chat_completion(c.id)
+    @test got isa StoredCompletionSuccess && got.response.id == c.id && got.response.message.role == "assistant"
+    msgs = list_chat_completion_messages(c.id; order="asc", limit=10)
+    @test msgs isa StoredCompletionMessageListSuccess && !isempty(msgs.response.data)
+    @info "Stored completion read" c.id c.model c.created messages = (
+        msgs isa StoredCompletionMessageListSuccess ? length(msgs.response.data) : typeof(msgs))
 end
 
 # OpenAI's queue held a batch for over an hour on 2026-11-16, so the gate waits for none: each run leaves one tagged

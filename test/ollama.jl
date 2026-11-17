@@ -257,13 +257,15 @@ end
                    :modalities => ["text"], :audio => Dict("voice" => "x"), :web_search_options => Dict(),
                    :prompt_cache_key => "k", :safety_identifier => "s",
                    :prompt_cache_options => PromptCacheOptions(mode="implicit"),
-                   :moderation => ModerationConfig(model="omni-moderation-latest"), :prompt_cache_retention => "24h")
+                   :moderation => ModerationConfig(model="omni-moderation-latest"), :prompt_cache_retention => "24h",
+                   :cached_content => "cachedContents/c1")
         err = try UniLM.encode_request(e, _ochat(e; f => v)); nothing catch x; x end
         @test err isa ArgumentError && occursin(String(f), err.msg)
     end
     @test Set(UniLM._OLLAMA_CHAT_UNMAPPED_FIELDS) == Set([:logit_bias, :user, :stream_options, :verbosity, :store,
         :metadata, :service_tier, :prediction, :modalities, :audio, :web_search_options,
-        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention])
+        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation, :prompt_cache_retention,
+        :cached_content])
     @test_throws ArgumentError chatrequest!(_ochat(e; user="u"))     # thrown before any network I/O
 end
 

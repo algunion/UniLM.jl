@@ -253,6 +253,7 @@ end
             :prompt_cache_options => PromptCacheOptions(mode="implicit", ttl="30m"),
             :moderation => ModerationConfig(model="omni-moderation-latest", input_mode="block"),
             :prompt_cache_retention => "24h",
+            :cached_content => "cachedContents/pin",
         )
         chat = Chat(; kwargs...)
         forked = fork(chat)

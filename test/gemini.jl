@@ -982,10 +982,10 @@ end
     @test [t["role"] for t in turns] == ["user", "model", "user"]
 end
 
-@testset "prompt_cache_options — Gemini caches prompts implicitly; its explicit caching is not wrapped" begin
+@testset "prompt_cache_options — Gemini caches prompts implicitly; its explicit caching is a cache a Chat names" begin
     # ai.google.dev/gemini-api/docs/caching: implicit caching is on for every Gemini 2.5 and newer
     # model with nothing to configure; explicit caching (cached contents) is a generateContent API
-    # of its own on Gemini 3 and 2.5 models, which UniLM does not wrap.
+    # of its own on Gemini 3 and 2.5 models, a cache a Chat names in cached_content.
     for pco in (PromptCacheOptions(ttl="5m"), PromptCacheOptions(ttl="1h"), PromptCacheOptions(ttl="30m"),
                 PromptCacheOptions(ttl="12h"), PromptCacheOptions(mode="implicit"))
         for f in (() -> encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, prompt_cache_options=pco)),
@@ -993,7 +993,7 @@ end
                                              Respond(service=GEMINIServiceEndpoint, input="x", prompt_cache_options=pco)))
             err = try f(); nothing catch e; e end
             @test err isa ArgumentError && occursin("prompt_cache_options", err.msg) && occursin("implicitly", err.msg) &&
-                  occursin("does not wrap its explicit caching", err.msg)
+                  occursin("create_cache", err.msg)
         end
     end
 end

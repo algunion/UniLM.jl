@@ -134,14 +134,22 @@ function JSON.lower(p::ContainerNetworkAllowlist)
 end
 
 """
+    ContainerSkill
+
+A skill [`create_container`](@ref) loads into the container: a [`SkillReference`](@ref) to a skill
+made with [`create_skill`](@ref), or an [`InlineSkill`](@ref), whose zip goes with the request.
+"""
+abstract type ContainerSkill end
+
+"""
     SkillReference(skill_id; version=nothing)
 
-A skill made with OpenAI's Skills API, for [`create_container`](@ref)'s `skills`: its id (1 to 64
-characters) and `version`, a positive integer (or its digits) or `"latest"`; without one, the
-skill's default version. Anything else is an `ArgumentError`. Sent as
+A skill made with OpenAI's Skills API ([`create_skill`](@ref)), for [`create_container`](@ref)'s
+`skills`: its id (1 to 64 characters) and `version`, a positive integer (or its digits) or
+`"latest"`; without one, the skill's default version. Anything else is an `ArgumentError`. Sent as
 `{"type": "skill_reference", "skill_id": …, "version": …}`.
 """
-struct SkillReference
+struct SkillReference <: ContainerSkill
     skill_id::String
     version::Union{String,Nothing}
     function SkillReference(skill_id::AbstractString; version::Union{AbstractString,Integer,Nothing}=nothing)
@@ -157,6 +165,51 @@ function JSON.lower(s::SkillReference)
     d = Dict{Symbol,Any}(:type => "skill_reference", :skill_id => s.skill_id)
     isnothing(s.version) || (d[:version] = s.version)
     d
+end
+
+"""
+    InlineSkill(zip; name, description)
+
+A skill sent with [`create_container`](@ref)'s request rather than made beforehand with
+[`create_skill`](@ref): `zip` is the path of a `.zip` of the skill's folder (its SKILL.md at the
+root), or the zip's bytes. Sent as `{"type": "inline", "name": …, "description": …, "source":
+{"type": "base64", "media_type": "application/zip", "data": …}}`, the zip base64-encoded. A path
+that is no `.zip` file, and bytes that do not start as a zip archive does (a local file header,
+`PK\\x03\\x04`), are an `ArgumentError`. Across a container's inline skills OpenAI takes at most 50 MiB
+of zip: `create_container` refuses more before sending. Printed, it shows its name and its size, not
+its bytes.
+"""
+struct InlineSkill <: ContainerSkill
+    name::String
+    description::String
+    zip::Vector{UInt8}
+    function InlineSkill(zip::AbstractVector{UInt8}; name::AbstractString, description::AbstractString)
+        length(zip) >= 4 && zip[begin:begin+3] == b"PK\x03\x04" || throw(ArgumentError(
+            "InlineSkill: the bytes are no zip archive, which starts with a local file header (PK\\x03\\x04); " *
+            "pass a .zip of the skill's folder"))
+        new(name, description, Vector{UInt8}(zip))
+    end
+end
+function InlineSkill(path::AbstractString; name::AbstractString, description::AbstractString)
+    isfile(path) && lowercase(splitext(path)[2]) == ".zip" || throw(ArgumentError(
+        "InlineSkill: $path is no .zip file; zip the skill's folder, or upload the folder with create_skill " *
+        "and pass a SkillReference"))
+    InlineSkill(read(path); name, description)
+end
+Base.show(io::IO, s::InlineSkill) = print(io, "InlineSkill(", repr(s.name), ", ", length(s.zip), " bytes)")
+JSON.lower(s::InlineSkill) = Dict{Symbol,Any}(:type => "inline", :name => s.name, :description => s.description,
+    :source => Dict{Symbol,Any}(:type => "base64", :media_type => "application/zip", :data => base64encode(s.zip)))
+
+# Across a list's inline skills "decoded ZIP data must total at most 50 MiB and Base64 text must total at most
+# 70,254,592 characters, including line breaks" (OpenAI's API specification, November 2026); UniLM's base64 has
+# no line breaks.
+function _check_inline_skills(skills::AbstractVector{<:ContainerSkill})::Nothing
+    inline = InlineSkill[s for s in skills if s isa InlineSkill]
+    bytes = sum(s -> length(s.zip), inline; init=0)
+    bytes <= 50 * 2^20 && sum(s -> 4 * cld(length(s.zip), 3), inline; init=0) <= 70_254_592 && return nothing
+    throw(ArgumentError("create_container: OpenAI takes at most 50 MiB ($(50 * 2^20) bytes) of zip data across a " *
+        "container's inline skills (got $bytes bytes in $(length(inline))); upload a large skill with create_skill " *
+        "and pass a SkillReference"))
 end
 
 "Successful Containers API result: a [`ContainerObject`](@ref) from create/retrieve, or the [`ContainerFileObject`](@ref) that [`add_container_file`](@ref) created or [`retrieve_container_file`](@ref) read."
@@ -190,9 +243,10 @@ _cont_resp(resp) = resp.status == 200 ?
 
 Create a container. `memory_limit` is `"1g"` (OpenAI's default), `"4g"`, `"16g"` or `"64g"`,
 another value an `ArgumentError` before anything is sent; `network_policy` a
-[`ContainerNetworkPolicy`](@ref), its outbound access; `skills` the
-[`SkillReference`](@ref)s of skills made with OpenAI's Skills API. Returns `ContainerSuccess`,
-`ContainerFailure`, or `ContainerCallError`.
+[`ContainerNetworkPolicy`](@ref), its outbound access; `skills` the [`ContainerSkill`](@ref)s it
+loads: [`SkillReference`](@ref)s to skills made with [`create_skill`](@ref), and
+[`InlineSkill`](@ref)s, more than 50 MiB of zip across them an `ArgumentError` before anything is
+sent. Returns `ContainerSuccess`, `ContainerFailure`, or `ContainerCallError`.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 
@@ -200,11 +254,13 @@ Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](
 """
 function create_container(; name::String, file_ids::Union{Vector{String},Nothing}=nothing,
     expires_after::Union{AbstractDict,Nothing}=nothing, memory_limit::Union{String,Nothing}=nothing,
-    network_policy::Union{ContainerNetworkPolicy,Nothing}=nothing, skills::Union{Vector{SkillReference},Nothing}=nothing,
+    network_policy::Union{ContainerNetworkPolicy,Nothing}=nothing,
+    skills::Union{AbstractVector{<:ContainerSkill},Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :containers, "Containers API")
     _check_memory_limit("create_container", memory_limit)
+    isnothing(skills) || _check_inline_skills(skills)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:name => name)

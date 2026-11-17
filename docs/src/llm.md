@@ -1411,7 +1411,7 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict): th
   One. Failures of those APIs report all-zero usage.
 - **Both functions throw `ArgumentError` for result types outside the token-billed
   APIs** — audio, batch, container, conversation, file, fine-tuning, moderation,
-  upload, vector-store, realtime, webhook endpoint, safety and provenance. Those calls carry no token usage at all,
+  upload, vector-store, voice, realtime, webhook endpoint, safety and provenance. Those calls carry no token usage at all,
   and a `0.0` would be indistinguishable from a genuinely free call. The requests of
   a batch are Chat results: `batch_results` returns each as an `LLMSuccess` whose usage
   names the tier `"batch"`, which `estimated_cost` bills at the provider's Batch rates
@@ -2711,7 +2711,15 @@ struct SpeechRequest                                # built by keyword: SpeechRe
     voice::String                                   # nothing → "marin" (OpenAI) / "Kore" (Gemini) / "" (Ollama: the model's own, not sent)
     response_format::String                         # "wav" (default) or "pcm": 16-bit mono PCM at 24 kHz
     speed::Union{Float64,Nothing}                   # OpenAI 0.25 … 1.5; Ollama 1 only; Gemini has none (describe the pace in instructions)
-    instructions::Union{String,Nothing}             # the delivery (tone, pace, accent)
+    instructions::Union{String,Nothing}             # the delivery (tone, pace, accent); not with a dialogue
+    turns::Vector{SpeechTurn}                       # Gemini dialogue: input given as SpeechTurns (input = their texts, voice = "")
+    speakers::Vector{Pair{String,String}}           # Gemini dialogue: speaker => voice (multiSpeakerVoiceConfig)
+    language::Union{String,Nothing}                 # Gemini only: BCP-47 speechConfig.languageCode
+end
+struct SpeechTurn                                   # SpeechTurn(speaker, text; style=nothing); blank speaker or text → ArgumentError
+    speaker::String                                 # one of the request's speakers
+    text::String
+    style::Union{String,Nothing}                    # the turn's speechMetadata.style
 end
 @kwdef struct SpeechSuccess <: LLMRequestResponse
     audio::Vector{UInt8}                            # a WAV file, or the raw samples
@@ -2720,7 +2728,8 @@ end
 
 speak(s::SpeechRequest; config=nothing, cancel=nothing) -> SpeechSuccess | AudioFailure | AudioCallError
 speak(input; service=OPENAIServiceEndpoint, model=nothing, voice=nothing, response_format="wav",
-      speed=nothing, instructions=nothing, config=nothing, cancel=nothing)
+      speed=nothing, instructions=nothing, speakers=nothing, language=nothing, config=nothing, cancel=nothing)
+    # input: a String, or on Gemini a Vector{SpeechTurn} with speakers = ["Joe" => "Puck", …]
 save_audio(r::SpeechSuccess, path)
 translate(path; language="en", source_language=nothing, model=nothing, service=OPENAIServiceEndpoint, config=nothing,
           cancel=nothing)
@@ -2729,20 +2738,57 @@ translate(path; language="en", source_language=nothing, model=nothing, service=O
     -> TranscriptionSuccess | AudioFailure | AudioCallError
 
 @kwdef struct TranscriptionRequest
-    service::ServiceEndpointSpec = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint   # OpenAI-wire routes, or GEMINIServiceEndpoint (generateContent)
     file::String                                    # a path; a missing file throws ArgumentError
     model::Union{String,Nothing} = nothing          # nothing: the service's default, resolved when sent
+                                                    #   ("gpt-transcribe"; Gemini "gemini-3.5-transcribe")
     language::Union{String,Nothing} = nothing
     prompt::Union{String,Nothing} = nothing
     response_format::Union{String,Nothing} = nothing   # json, text, srt, verbose_json, vtt, diarized_json
                                                        #   (Ollama 0.40.12+: json, text, verbose_json)
     temperature::Union{Float64,Nothing} = nothing      # 0 … 1 (Ollama: any finite number)
-    languages::Union{Vector{String},Nothing} = nothing # not with language
-    keywords::Union{Vector{String},Nothing} = nothing  # no <, > or line breaks
+    languages::Union{Vector{String},Nothing} = nothing # not with language (Gemini: BCP-47 languageCodes)
+    keywords::Union{Vector{String},Nothing} = nothing  # no <, > or line breaks (Gemini: customVocabulary, ≤ 1000)
+    include::Union{Vector{String},Nothing} = nothing   # ["logprobs"] (OpenAI)
+    timestamp_granularities::Union{Vector{String},Nothing} = nothing  # "word", "segment": OpenAI with verbose_json;
+                                                                      #   Gemini ["word"] only (wordTimestamp)
+    chunking_strategy::Union{String,TranscriptionVAD,Nothing} = nothing   # "auto" or server VAD (OpenAI)
+    known_speaker_names::Union{Vector{String},Nothing} = nothing       # ≤ 4, one reference each (OpenAI diarization)
+    known_speaker_references::Union{Vector{String},Nothing} = nothing  # data URLs, or paths sent as data URLs
+    stream::Bool = false                               # OpenAI-wire only; transcribe then returns a Task
+    diarization::Bool = false                          # Gemini only
+    mode::Union{String,Nothing} = nothing              # "verbatim" | "smart" (Gemini only)
+    source_text::Union{String,Nothing} = nothing       # Gemini, with mode = "smart"
+end
+struct TranscriptionVAD                             # TranscriptionVAD(; threshold, prefix_padding_ms, silence_duration_ms)
+    threshold::Union{Float64,Nothing}               # 0 … 1 (API default 0.5)
+    prefix_padding_ms::Union{Int,Nothing}           # ≥ 0 (300)
+    silence_duration_ms::Union{Int,Nothing}         # ≥ 0 (200)
+end
+@kwdef struct TranscriptionSuccess <: LLMRequestResponse
+    text::String
+    raw::Union{Dict{String,Any},Nothing} = nothing  # the JSON reply; a stream's transcript.text.done event; nothing for text
+    segments::Vector{TranscriptSegment} = TranscriptSegment[]   # verbose_json, diarized_json, streamed or Gemini turns
+    words::Vector{TranscriptWord} = TranscriptWord[]            # verbose_json words; Gemini word timestamps
+end
+@kwdef struct TranscriptSegment
+    text::String
+    start_time::Union{Float64,Nothing} = nothing    # seconds from the start of the audio
+    end_time::Union{Float64,Nothing} = nothing
+    speaker::Union{String,Nothing} = nothing        # OpenAI "A"/"B"/a known name; Gemini "spk:0"
+    id::Union{String,Int,Nothing} = nothing         # OpenAI "seg_0" (diarized) or an index (verbose_json)
+end
+@kwdef struct TranscriptWord
+    text::String
+    start_time::Union{Float64,Nothing} = nothing
+    end_time::Union{Float64,Nothing} = nothing
+    speaker::Union{String,Nothing} = nothing        # Gemini, with diarization
 end
 
-transcribe(t::TranscriptionRequest; config=nothing, cancel=nothing) -> TranscriptionSuccess | AudioFailure | AudioCallError
-transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, kwargs...)
+transcribe(t::TranscriptionRequest; config=nothing, cancel=nothing, callback=nothing)
+    -> TranscriptionSuccess | AudioFailure | AudioCallError    # a Task yielding one when t.stream
+transcribe(path::String; model=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, callback=nothing, kwargs...)
+    # callback(chunk::Union{String,TranscriptSegment}, close::Ref{Bool}) on a stream
 transcript_text(r::TranscriptionSuccess) -> String
 ```
 
@@ -2755,7 +2801,12 @@ models are conversational; OpenAI notes instructions are not guaranteed to be fo
 `GEMINIServiceEndpoint` it is Gemini TTS (`generateContent` on `gemini-3.8-flash-tts`; `instructions`
 as the speech style), which reads the text verbatim: one of its 30 studio voices goes as
 `prebuiltVoiceConfig.voiceName`, any other voice — an Extended Voice Library voice, a `voice_…` id or a
-`voicekey_…` key — as `voiceConfig.voice`, sent as given. An empty `input`, a voice the Realtime session
+`voicekey_…` key — as `voiceConfig.voice`, sent as given; `language` becomes `speechConfig.languageCode`,
+and a dialogue (`input` a `Vector{SpeechTurn}`, `speakers` each speaker's voice) one part per turn
+(`speechMetadata.speaker`/`style`) with `multiSpeakerVoiceConfig.speakerVoiceConfigs`; a turn whose
+speaker is not among `speakers`, a speaker named twice, a dialogue with `voice` or `instructions`, and a
+dialogue, `speakers` or `language` on OpenAI or Ollama throw `ArgumentError` before I/O (three speakers
+and a designed voice beside a prebuilt one were spoken, 2026-11-17: not refused). An empty `input`, a voice the Realtime session
 lacks, a blank Gemini voice, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
 flac are refused), a `speed` out of range and any `speed` on Gemini throw `ArgumentError` before any
 request, as does `GEMINIOpenAIServiceEndpoint` (no speech route there: the error points to
@@ -2805,11 +2856,80 @@ in Ollama's words, and the reply is read by its `Content-Type`: JSON, or the bar
 `"text"`; any other label (Ollama before 0.40.12 labelled its JSON `application/x-ndjson`) is an
 `AudioCallError`. On OpenAI, `srt`, `vtt` and `verbose_json` (subtitles and
 timestamps) are documented only for `whisper-1` and `diarized_json` (speaker labels) only for
-`gpt-4o-transcribe-diarize`, models that shut down on 2027-02-26. `transcribe` needs
+`gpt-4o-transcribe-diarize`, models that shut down on 2027-02-26; those replies' segments and words are
+typed (`TranscriptSegment`, `TranscriptWord`). OpenAI's further options go out as OpenAI reads them:
+`include[]`, `timestamp_granularities[]` (refused without `verbose_json`, where OpenAI answers without
+them), `chunking_strategy` as one field (`auto`, or the `TranscriptionVAD` as JSON: OpenAI ignored
+bracketed `chunking_strategy[type]` fields, 2026-11-17), `known_speaker_names[]` and
+`known_speaker_references[]` (data URLs). `stream = true` (not on `whisper-1`, refused) returns a
+`Task`; the callback gets each `transcript.text.delta` as a `String` and each `transcript.text.segment`
+as a `TranscriptSegment`, and the result is the `transcript.text.done` event's (`raw` that event, with
+its `usage`); `close[] = true` ends it with `cause = UniLMCancelled`; an in-stream `{"error": …}` is an
+`AudioFailure` with `status = nothing`; a stream that ends before its done event is an
+`AudioCallError`. `diarization`, `mode` and `source_text` are refused on every OpenAI-wire service.
+On `GEMINIServiceEndpoint` `transcribe` is one `generateContent` request to `gemini-3.5-transcribe`, the
+file inline, `generationConfig.audioTranscriptionConfig` holding `languageCodes`, `customVocabulary`,
+`diarization`, `wordTimestamp`, `mode` (VERBATIM/SMART) and `sourceText`; each reply part is a speaker
+turn (`TranscriptSegment`, speaker `"spk:N"`), its words `TranscriptWord`s, the text the turns joined
+with spaces; custom vocabulary beside diarization or word timestamps (Gemini's 400), smart mode
+beside either, and `prompt`, `temperature`, `response_format`, `include`, `chunking_strategy`, known
+speakers, `stream` and segment timestamps throw `ArgumentError` before I/O. Transcription is not
+priced, streamed or not: `token_usage` and `estimated_cost` throw for a `TranscriptionSuccess`, whose
+`raw` keeps the reported usage. `transcribe` needs
 `:transcription`, which `has_capability` reports for any endpoint declaring `:audio`; `speak` needs
 `:speech` (OpenAI, through a Realtime session, `GEMINIServiceEndpoint`, through Gemini TTS, and
 `OllamaEndpoint`, through its `/v1/audio/speech`), and
 `translate` needs `:realtime`, or on Ollama `:audio`.
+
+### Custom voices (OpenAI `/v1/audio/voices` and `/v1/audio/voice_consents`; Gemini `/v1beta/voices`)
+
+```julia
+@kwdef struct Voice
+    id::Union{String,Nothing}                       # what speak takes as voice on that service; nothing for a Gemini
+                                                    #   voice replicated with store = false (it has a key)
+    name::Union{String,Nothing} = nothing           # OpenAI name / Gemini display_name
+    type::String                                    # OpenAI "audio_sample" | "prompt"; Gemini "replicated" | "prompted" | "prebuilt"
+    created_at::Union{Int,Nothing} = nothing        # OpenAI only (Unix seconds)
+    key::Union{String,Nothing} = nothing            # Gemini stateless replication key ("voicekey_…")
+    raw::Dict{String,Any} = Dict{String,Any}()      # e.g. Gemini sample_audio (base64 WAV), usage, expire_time
+end
+@kwdef struct VoiceList;        data::Vector{Voice};        has_more::Bool = false; raw::Dict{String,Any} = Dict{String,Any}(); end
+@kwdef struct VoiceConsent;     id::String; name::String; language::String; created_at::Int; raw::Dict{String,Any} = Dict{String,Any}(); end
+@kwdef struct VoiceConsentList; data::Vector{VoiceConsent}; has_more::Bool = false; raw::Dict{String,Any} = Dict{String,Any}(); end
+# results: VoiceSuccess(response::Voice) · VoiceListSuccess(response::VoiceList) ·
+#   VoiceConsentSuccess(response::VoiceConsent) · VoiceConsentListSuccess(response::VoiceConsentList) ·
+#   VoiceDeleteSuccess(id, deleted, object=nothing) · VoiceFailure(response, status, request_id) ·
+#   VoiceCallError(error, status, cause)
+
+create_voice(; name=nothing, prompt=nothing, audio_sample=nothing, consent=nothing, consent_audio=nothing,
+             model=nothing, script_hint=nothing, base_voice=nothing, store=nothing, language=nothing, region=nothing,
+             accent=nothing, persona=nothing, context=nothing, gender=nothing, pitch=nothing, description=nothing,
+             service=OPENAIServiceEndpoint, config=nothing, cancel=nothing) -> VoiceSuccess | VoiceFailure | VoiceCallError
+list_voices(; service, limit=nothing, after=nothing, type=nothing, language=nothing, region=nothing, accent=nothing,
+            gender=nothing, pitch=nothing, persona=nothing, context=nothing, search=nothing, config, cancel)   # Gemini only
+get_voice(voice_id; service, config, cancel)        # Gemini only (stored voices)
+delete_voice(voice_id; service, config, cancel) -> VoiceDeleteSuccess | VoiceFailure | VoiceCallError
+create_voice_consent(recording; name, language, service, config, cancel)   # OpenAI only, as are the four below
+list_voice_consents(; limit=nothing, after=nothing, service, config, cancel)
+get_voice_consent(consent_id; service, config, cancel)
+update_voice_consent(consent_id; name, service, config, cancel)
+delete_voice_consent(consent_id; service, config, cancel)
+```
+
+`create_voice` takes a `prompt` or an `audio_sample` (a path), one of the two. OpenAI: `name` (1–256 characters)
+required; a prompt (≤ 2,000) with optional `script_hint` and `model` is sent as JSON — OpenAI supports such a voice
+"only in Live, not in Realtime or the speech endpoint" (a Realtime session refused one, 2026-11-17); an
+`audio_sample` (≤ 10 MiB) with `consent` (a `VoiceConsent` id) goes as a form, an access "limited to eligible
+customers" (HTTP 404 "Your organization does not have access to this endpoint" otherwise). Gemini: `{"store", "voice"}`
+with a `prompted` (`input`, `base_voice`) or `replicated` (`source_audio`, `consent_audio`, each MIME type and base64)
+voice, `store` true unless set (`store = false` returns a `key`), `name` as `display_name`, and `model`,
+`language`, `region`, `accent`, `persona`, `context`, `gender`, `pitch` (low/medium/high) and `description`. Options
+a service does not take throw `ArgumentError` before I/O. `list_voices` (page_size ≤ 1000, page_token, repeated
+filters) and `get_voice` are Gemini's: OpenAI throws `ArgumentError` naming `GEMINIServiceEndpoint`; the consent
+verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record (`object` `"audio.voice.deleted"`, or
+`"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers `{}` (the id requested). Each verb is
+one bounded attempt, never retried, capability `:voices`. A Gemini voice's `id` (`voice_…`, or a catalog id such as
+`"achernar"`) and `key` are what `speak` takes as `voice`; on OpenAI `speak` sends built-in voices only.
 
 ---
 
@@ -2851,7 +2971,7 @@ has_capability(service, cap::Symbol) -> Bool
 |---|---|
 | OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:token_count`, `:webhooks`, `:safety`, `:content_provenance` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
-| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch` |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch`, `:transcription`, `:voices` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models`, `:files`, `:token_count`, `:batch` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
@@ -2928,7 +3048,7 @@ reset_default_config!()                     # cleared: as if none had been set
 (per request), `list_models`, `retrieve_model`, `count_tokens`, `delete_model` on `OllamaEndpoint`, and the `tool_loop` family (streams retry only
 before the first callback fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, file (`upload_file` included: a create is never
-retried), fine-tuning (and `delete_model` on OpenAI), upload, vector-store, webhook endpoint, safety and provenance, speech
+retried), fine-tuning (and `delete_model` on OpenAI), upload, vector-store, voice, webhook endpoint, safety and provenance, speech
 and translation on OpenAI's Realtime API (`speak`,
 `translate`: a retry after the session's `response.create`, or after its audio, may bill a second
 response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
@@ -2956,7 +3076,7 @@ Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToke
 `count_tokens`, the Ollama model calls, `poll_batch`,
 `poll_file_batch`, `poll_file`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
 lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, containers, batch, fine-tuning,
-webhook endpoints, safety cases and alerts, content provenance checks,
+webhook endpoints, safety cases and alerts, content provenance checks, custom voices and voice consents,
 `moderate`, `speak`, `transcribe`, `translate`, `mint_realtime_secret`, and `get_response`,
 `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`).
 `nothing` resolves the ambient token, and an explicit token wins over it. The exception is
@@ -3044,6 +3164,7 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
 ├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
 ├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
+├─ Voices             VoiceSuccess · VoiceListSuccess · VoiceConsentSuccess · VoiceConsentListSuccess · VoiceDeleteSuccess · VoiceFailure · VoiceCallError
 ├─ Batch              BatchSuccess · BatchListSuccess · BatchResultsSuccess · BatchDeleteSuccess · BatchFailure · BatchCallError
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningDeleteSuccess · FineTuningFailure · FineTuningCallError
 ├─ Webhook endpoints  WebhookEndpointSuccess · WebhookEndpointListSuccess · WebhookEndpointDeleteSuccess · WebhookTestSuccess · WebhookEventTypesSuccess · WebhookEndpointFailure · WebhookEndpointCallError
@@ -3290,7 +3411,7 @@ Every exported symbol (487), grouped by area:
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 
-**Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
+**Audio**: `SpeechRequest`, `SpeechTurn`, `TranscriptionRequest`, `TranscriptionVAD`, `SpeechSuccess`, `TranscriptionSuccess`, `TranscriptSegment`, `TranscriptWord`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`, `Voice`, `VoiceList`, `VoiceConsent`, `VoiceConsentList`, `VoiceSuccess`, `VoiceListSuccess`, `VoiceConsentSuccess`, `VoiceConsentListSuccess`, `VoiceDeleteSuccess`, `VoiceFailure`, `VoiceCallError`, `create_voice`, `list_voices`, `get_voice`, `delete_voice`, `create_voice_consent`, `list_voice_consents`, `get_voice_consent`, `update_voice_consent`, `delete_voice_consent`
 
 **Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchResultsSuccess`, `BatchDeleteSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`, `batch_results`, `delete_batch`, `update_batch`
 

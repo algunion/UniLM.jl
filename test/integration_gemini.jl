@@ -355,4 +355,61 @@ end
     end
 end
 
+@testset "Gemini embeddings — native embedContent and batchEmbedContents: vectors, usage, and gemini-embedding-001's task type" begin
+    # A few short texts on gemini-embedding-2 ($0.20 per million tokens) and gemini-embedding-001 ($0.15): USD ~2e-6 a run.
+    one = Embeddings("How long do refunds take?"; service=GEMINIServiceEndpoint, task=:search_query, dimensions=128)
+    r = embeddingrequest!(one)
+    @test r isa EmbeddingSuccess && length(one.embeddings) == 128 && r.usage.prompt_tokens > 0 && estimated_cost(r) > 0
+    many = Embeddings([EmbeddingInput("Refunds take 5 days."; title="Refund policy"), EmbeddingInput("Shipping is free in the EU.")];
+                      service=GEMINIServiceEndpoint, task=:document, dimensions=128)
+    r2 = embeddingrequest!(many)
+    @test r2 isa EmbeddingSuccess && length.(many.embeddings) == [128, 128] && r2.usage.prompt_tokens > 0
+    # gemini-embedding-001 reads the task as its taskType: on 2026-11-17 RETRIEVAL_DOCUMENT moved a text's vector away
+    # from its RETRIEVAL_QUERY one, which equals the task-less vector; were the task not sent, the two would be equal.
+    text = "Refunds take 5 days."
+    q = Embeddings(text; service=GEMINIServiceEndpoint, model="gemini-embedding-001", task=:search_query, dimensions=128)
+    d = Embeddings(EmbeddingInput(text; title="Refund policy"); service=GEMINIServiceEndpoint, model="gemini-embedding-001",
+                   task=:document, dimensions=128)
+    rq, rd = embeddingrequest!(q), embeddingrequest!(d)
+    @test rq isa EmbeddingSuccess && rd isa EmbeddingSuccess && length(q.embeddings) == length(d.embeddings) == 128
+    @test q.embeddings != d.embeddings
+    @info "Gemini native embeddings" tokens = r.usage.prompt_tokens + r2.usage.prompt_tokens cost = estimated_cost(r) + estimated_cost(r2)
+end
+
+@testset "Gemini batches — embeddings: create (named), update the priority, run to the end, read at the batch rate, delete" begin
+    # Two gemini-embedding-2 requests of one word each (USD ~1e-7); a batch of 2026-11-17 succeeded in about 90 seconds,
+    # and the poll gives it ten minutes. The batch is deleted (cancelled first if the poll gave up).
+    requests = ["a" => Embeddings("alpha"; service=GEMINIServiceEndpoint, dimensions=128),
+                "b" => Embeddings("beta"; service=GEMINIServiceEndpoint, task=:clustering, dimensions=128)]
+    created = create_batch(requests; display_name="unilm-live-embeddings")
+    @test created isa BatchSuccess
+    if created isa BatchSuccess
+        id = created.response.id
+        @test created.response.raw["metadata"]["displayName"] == "unilm-live-embeddings"
+        @test endswith(created.response.raw["metadata"]["@type"], ".EmbedContentBatch")
+        done = false
+        try
+            up = update_batch(id; priority=5, service=GEMINIServiceEndpoint)      # on updateEmbedContentBatch
+            @test up isa BatchSuccess && up.response.raw["priority"] == "5"
+            seconds = @elapsed (ended = poll_batch(id; service=GEMINIServiceEndpoint, interval=15.0, timeout=600.0))
+            done = ended isa BatchSuccess && ended.response.status == "BATCH_STATE_SUCCEEDED"
+            @test done
+            if done
+                r = batch_results(id; service=GEMINIServiceEndpoint, requests)
+                @test r isa BatchResultsSuccess && first.(r.results) == ["a", "b"]
+                for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
+                    @test x isa EmbeddingSuccess && length(x.embeddings.embeddings) == 128 && x.embeddings.input == Dict(requests)[cid].input
+                    x isa EmbeddingSuccess || continue
+                    standard = EmbeddingSuccess(embeddings=x.embeddings, raw=x.raw, usage=UniLM._standard_tier(x.usage))
+                    @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
+                end
+                @info "Gemini embedding batch" id seconds
+            end
+        finally
+            done || cancel_batch(id; service=GEMINIServiceEndpoint)
+            @test delete_batch(id; service=GEMINIServiceEndpoint) isa BatchDeleteSuccess
+        end
+    end
+end
+
 end  # if GEMINI_API_KEY

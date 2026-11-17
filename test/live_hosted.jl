@@ -11,6 +11,9 @@
 # a file ran no test: a suite whose guard on these variables is not met skips itself. A suite
 # with sections for several providers can skip one section and still run tests, which the
 # variable check catches. Not listed: the Ollama and MCP suites, which need local servers.
+# Two needs on state an earlier run left, each failing its test when unmet (integration.jl):
+# - the Chat and the embeddings Batch API tests each read a batch an earlier run left (rolling: a run leaves one);
+# - the stored Chat Completions test reads the oldest completion OpenAI lists, so it needs one listed.
 
 using Test, HTTP, JSON, UniLM   # the suites call HTTP and JSON, as under test/runtests.jl
 

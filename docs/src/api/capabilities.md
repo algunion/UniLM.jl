@@ -80,6 +80,7 @@ has_capability
 | `:webhooks` | Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): OpenAI |
 | `:safety` | Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): OpenAI |
 | `:content_provenance` | Content provenance checks ([`check_content_provenance`](@ref)): OpenAI |
+| `:skills` | Skills API ([`create_skill`](@ref) and the verbs beside it): OpenAI and Anthropic, each its own |
 
 ## Capabilities by Provider
 

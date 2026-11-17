@@ -14,7 +14,7 @@ are on [Retrieval & file search](@ref retrieval_guide), and images, speech and t
 API on [Images, audio & realtime](@ref openai_media_page); which of these APIs other providers serve
 is on [Capabilities by provider](@ref capabilities_guide). Every verb, type and keyword is in the
 API reference: [Files](@ref files_api), [Uploads](@ref uploads_api),
-[Conversations](@ref conversations_api), [Containers](@ref containers_api), [Batch](@ref batch_api),
+[Conversations](@ref conversations_api), [Containers](@ref containers_api), [Skills](@ref skills_api), [Batch](@ref batch_api),
 [Fine-tuning](@ref fine_tuning_api), [Moderations](@ref moderations_api),
 [Webhooks](@ref webhooks_api) and [Safety & Provenance](@ref safety_api). UniLM does not wrap OpenAI's Agents API, which "gives your
 application access to the Codex harness through an OpenAI-managed API"
@@ -49,14 +49,15 @@ These calls are not recorded, so their output on this page is quoted from dated 
   [pricing page](https://developers.openai.com/api/docs/pricing). A batch's requests are the exception:
   [`batch_results`](@ref) returns each as a Chat result, priced at the Batch rates ([Batches](@ref openai_batch)).
 - **Deletes.** A delete that OpenAI answers with a deletion record — of a file, a vector store, a
-  container, a conversation, a checkpoint permission or a webhook endpoint — counts only when the
+  container, a skill, a conversation, a checkpoint permission or a webhook endpoint — counts only when the
   record says `"deleted": true`: a reply without it, or with `false`, is the call error, the object
   being in place as far as UniLM can tell. The
-  record of a vector store, a container, a file in either, a checkpoint permission or a webhook
-  endpoint must also carry the `id` it deleted (the requested one is not put in its place) and name
-  what it deleted as its `object` — `"vector_store.deleted"`, `"vector_store.file.deleted"`,
-  `"container.deleted"`, `"container.file.deleted"`, `"checkpoint.permission"` or
-  `"webhook_endpoint.deleted"`; one without them, or naming another kind, is the call error.
+  record of a vector store, a container, a file in either, a skill, a skill's version, a checkpoint
+  permission or a webhook endpoint must also carry the `id` it deleted (the requested one is not put in
+  its place) and name what it deleted as its `object` — `"vector_store.deleted"`,
+  `"vector_store.file.deleted"`, `"container.deleted"`, `"container.file.deleted"`, `"skill.deleted"`,
+  `"skill.version.deleted"`, `"checkpoint.permission"` or `"webhook_endpoint.deleted"`; one without
+  them, or naming another kind, is the call error.
   `delete_conversation_item` is answered with the conversation, which UniLM returns as it came.
 - **Pages and statuses.** A list reply, and a page of search results or of a file's content, must
   carry its `data` and `has_more`, and a vector store, a batch of its files, a file in it, a
@@ -64,7 +65,7 @@ These calls are not recorded, so their output on this page is quoted from dated 
   requires: a reply without them is the call error, never an empty last page or a status read as
   unknown.
 - **Capabilities.** Each verb first checks that its `service` has the capability it needs —
-  `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:batch`,
+  `:files`, `:uploads`, `:vector_stores`, `:conversations`, `:containers`, `:skills`, `:batch`,
   `:fine_tuning`, `:moderation`, `:webhooks`, `:safety`, `:content_provenance`, `:transcription`
   (which `:audio` implies) or `:realtime` —, all
   of which `OPENAIServiceEndpoint` declares (`realtime_connect`, which throws rather than returning
@@ -320,9 +321,10 @@ makes a container: `memory_limit` as above, OpenAI's default `"1g"` when not giv
 `network_policy`, its outbound access, [`ContainerNetworkDisabled`](@ref)`()` or
 [`ContainerNetworkAllowlist`](@ref)`(domains; domain_secrets)`, whose
 [`ContainerDomainSecret`](@ref)`(domain, name, value)`s OpenAI injects for an allowlisted domain
-(UniLM never prints a secret's value); and `skills`, [`SkillReference`](@ref)`(skill_id; version)`s
-to skills made with OpenAI's Skills API, which UniLM does not wrap, `version` a positive integer or
-`"latest"`, the skill's default version when not given. An organization whose policy disables
+(UniLM never prints a secret's value); and `skills`, the skills it loads ([Skills](@ref openai_skills)):
+[`SkillReference`](@ref)`(skill_id; version)`s to skills made with [`create_skill`](@ref), `version`
+a positive integer or `"latest"`, the skill's default version when not given, and
+[`InlineSkill`](@ref)`(zip; name, description)`s, whose zip goes with the request. An organization whose policy disables
 container network access gets OpenAI's 400 for an allowlist: "Network policy 'allowlist' is not
 permitted because the organization policy disables container network access" (16 November 2026).
 [`retrieve_container`](@ref), [`list_containers`](@ref)`(; limit, order, after, name)` — `name`
@@ -340,6 +342,45 @@ a [`FileContentSuccess`](@ref), which [`save_file_content`](@ref) writes to disk
 "Eligible container sessions will be billed by the minute, with a 5-minute minimum per session"
 ([pricing](https://developers.openai.com/api/docs/pricing#built-in-tools)), which
 [`estimated_cost`](@ref) leaves out ([Cost and usage](@ref openai_cost)).
+
+## [Skills](@id openai_skills)
+
+A skill is "a directory with a `SKILL.md` manifest containing front matter and instructions"
+([Skills](https://developers.openai.com/api/docs/guides/tools-skills)), which a container loads.
+[`create_skill`](@ref)`(path)` uploads one: the folder, each file a part named by its path under the
+folder's name, or a `.zip` of it; a folder without a SKILL.md at its root, a path that is neither, and
+more than 500 files are refused before anything is sent. The [`SkillObject`](@ref) holds its `name`
+and `description`, from the SKILL.md, its `default_version` — the one a reference without a version
+loads — and its `latest_version`. [`create_skill_version`](@ref)`(id, path; default)` uploads the
+whole skill again as its next version, `default=true` making it the default, and
+[`update_skill`](@ref)`(id; default_version)` moves the default; [`retrieve_skill`](@ref),
+[`list_skills`](@ref)`(; limit, order, after)`, [`list_skill_versions`](@ref) and
+[`retrieve_skill_version`](@ref) read them back, a version by its number. OpenAI notes that "A newly
+uploaded version can briefly return 404". [`skill_content`](@ref)`(id; version)` downloads the zip,
+of the default version without `version`, as a [`FileContentSuccess`](@ref);
+[`delete_skill_version`](@ref) deletes a version other than the default (the last one, the skill),
+and [`delete_skill`](@ref) the skill with its versions. The same verbs reach Anthropic's Skills API
+([Skills API](@ref skills_api)).
+
+A container loads a skill by reference, or inline, its zip sent with the request: across a
+container's inline skills OpenAI's API specification allows "at most 50 MiB" of zip, and
+[`create_container`](@ref) refuses more before sending (OpenAI answered a 51 MiB zip with HTTP 400
+`string_above_max_length`, 17 November 2026). An inline skill is named and described as its
+SKILL.md names and describes it: OpenAI answers other values with HTTP 400 "Inline skill
+name/description must match the values in SKILL.md/Skills.md front matter." Just after a version is
+deleted, [`list_skill_versions`](@ref) may still list it for a moment.
+
+```julia
+s = create_skill("skills/csv-sum")          # csv-sum/SKILL.md and the files beside it
+s isa SkillSuccess || error("upload failed: $s")
+v = create_skill_version(s.response.id, "skills/csv-sum"; default=true)
+v.response.version, retrieve_skill(s.response.id).response.default_version
+# ("2", "2")
+one = skill_content(s.response.id; version=1)   # version 1's zip, named and described as s
+c = create_container(name="sandbox", skills=[SkillReference(s.response),
+                     InlineSkill(one.content; name=s.response.name, description=s.response.description)])
+delete_skill(s.response.id)
+```
 
 ## [Batches](@id openai_batch)
 

@@ -172,8 +172,10 @@ end
 
 A skill sent with [`create_container`](@ref)'s request rather than made beforehand with
 [`create_skill`](@ref): `zip` is the path of a `.zip` of the skill's folder (its SKILL.md at the
-root), or the zip's bytes. Sent as `{"type": "inline", "name": …, "description": …, "source":
-{"type": "base64", "media_type": "application/zip", "data": …}}`, the zip base64-encoded. A path
+root), or the zip's bytes; `name` and `description` are the ones its SKILL.md's front matter gives,
+which OpenAI requires ("Inline skill name/description must match the values in SKILL.md/Skills.md
+front matter.", its HTTP 400 for others). Sent as `{"type": "inline", "name": …, "description": …,
+"source": {"type": "base64", "media_type": "application/zip", "data": …}}`, the zip base64-encoded. A path
 that is no `.zip` file, and bytes that do not start as a zip archive does (a local file header,
 `PK\\x03\\x04`), are an `ArgumentError`. Across a container's inline skills OpenAI takes at most 50 MiB
 of zip: `create_container` refuses more before sending. Printed, it shows its name and its size, not

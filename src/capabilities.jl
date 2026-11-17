@@ -19,6 +19,7 @@ Standard capability symbols include:
   [`register_files`](@ref): `:file_registration`
 - Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`; native Gemini transcribes
   through `generateContent`
+- Custom voices ([`create_voice`](@ref) and the verbs beside it): `:voices` (OpenAI, native Gemini)
 - Translation ([`translate`](@ref)): `:realtime` (OpenAI's Realtime translation sessions); on Ollama,
   `:audio` (its translation route)
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through
@@ -31,7 +32,7 @@ Standard capability symbols include:
 - Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): `:safety` (OpenAI)
 - Content provenance checks ([`check_content_provenance`](@ref)): `:content_provenance` (OpenAI)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :voices])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])

@@ -77,8 +77,8 @@ end
 # Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
 # (`voice_...`), or a Voice replication ID (`voice_...`, or optional stateless `voicekey_...`)"
 # (https://ai.google.dev/gemini-api/docs/generate-content/speech-generation). The Extended Voice
-# Library's hundreds of names are listed only by `GET /v1beta/voices`, so any voice is sent as given,
-# and the API answers one it does not have; a blank one names no voice.
+# Library's hundreds of names are listed by `GET /v1beta/voices` (`list_voices`), not known here, so any
+# voice is sent as given, and the API answers one it does not have; a blank one names no voice.
 function _speech_voice(::_GeminiSpeechWire, v::AbstractString)::String
     isempty(strip(v)) && throw(ArgumentError(
         "Gemini TTS takes a voice by name or id: a prebuilt voice such as \"Kore\" (the Extended Voice " *
@@ -243,7 +243,8 @@ not have or a blank Gemini or Ollama voice, a `response_format` other than `"wav
 `speed` out of range, and any `speed` on Gemini; on Ollama, for a request without a `model`, an
 `input` of more than 4,096 characters and non-empty `instructions`; and for `GEMINIOpenAIServiceEndpoint`,
 which has no speech route, naming `GEMINIServiceEndpoint`. The Extended Voice Library's names are
-listed only by Gemini's `GET /v1beta/voices`, so a Gemini voice is sent as given, and Gemini answers a
+listed by Gemini's `GET /v1beta/voices`, which [`list_voices`](@ref) reads (a [`Voice`](@ref)'s `id` is a
+voice `speak` takes; [`create_voice`](@ref) makes one), so a Gemini voice is sent as given, and Gemini answers a
 name it does not have; an Ollama voice is sent as given too, and Ollama answers one the model does not
 have with HTTP 400 naming those it has.
 Voices: [OpenAI Realtime](https://developers.openai.com/api/reference/resources/realtime/client-events),

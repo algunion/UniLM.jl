@@ -1554,3 +1554,5 @@ end
     @test e3 isa ArgumentError && occursin("OpenAI Realtime takes no speech language", e3.msg)
     @test e4 isa ArgumentError && occursin("Ollama takes no speech language", e4.msg)
 end
+
+include("voices.jl")

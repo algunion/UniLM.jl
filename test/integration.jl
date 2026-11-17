@@ -858,7 +858,15 @@ end
     try
         @test c.response.raw["memory_limit"] == "4g"
         @info "create_container live" c.response.raw
+        # The listing can trail a create by a few seconds (on 2026-11-17 a release-gate run did not list it at once):
+        # ask again for up to 20 s; the filter must then return exactly the new container.
         l = list_containers(; name, order="asc", limit=5)
+        for _ in 1:10
+            l isa ContainerListSuccess && !isempty(l.response.data) && break
+            sleep(2)
+            l = list_containers(; name, order="asc", limit=5)
+        end
+        @info "list_containers(name) live" ids = (l isa ContainerListSuccess ? [x["id"] for x in l.response.data] : l)
         @test l isa ContainerListSuccess && [x["id"] for x in l.response.data] == [cid]
         @test up isa FileSuccess
         byid = add_container_file(cid; file_id=up.response.id)

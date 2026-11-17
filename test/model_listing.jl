@@ -2,8 +2,9 @@
 # into ProviderModels — ids, names, token limits, capabilities, lifecycle dates — with every
 # page fetched, against a local server replaying the listings each provider returned for the
 # repository's keys on 2026-10-22 (test/fixtures/models/); and the provider drift checks of the
-# live drift suite, on those listings and on broken facts, and the models UniLM uses by default on
-# the listings of 2026-11-16 (the *-2026-11-16.json fixtures). Offline.
+# live drift suite, on those listings and on broken facts, the models UniLM uses by default on the
+# listings of 2026-11-16 (the *-2026-11-16.json fixtures), and OpenAI's family on its listing of
+# 2026-11-17 (openai-2026-11-17.json). Offline.
 
 using Dates
 using Logging: with_logger, NullLogger
@@ -672,4 +673,13 @@ end
     @test UniLM._TRANSLATE_DEFAULT_MODEL in _drift_defaults()
     @test UniLM._DECISIONS_MODEL in _drift_defaults()
     @test UniLM._GEMINI_DECISIONS_MODEL in _drift_defaults()
+end
+
+# Refuted if: a model of the family UniLM documents that OpenAI listed on 2026-11-17 lacks its price,
+# price-terms or rule row — gpt-6.2-astra and gpt-6.2-sol were listed that day without any — or the
+# listing holds a chat model that no family, older generation or known kind covers.
+@testset "drift checks: every OpenAI family model listed on 2026-11-17 is priced and ruled" begin
+    o = _ml_quiet(() -> _openai_drift(_ml_models("openai-2026-11-17", UniLM._OpenAIModels())))
+    @test ["gpt-6.2-astra", "gpt-6.2-sol"] ⊆ o.family
+    @test (o.unpriced, o.no_terms, o.unruled, o.unclassified) == ([], [], [], [])
 end

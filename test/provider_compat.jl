@@ -144,13 +144,14 @@ _oa_respond(; kw...) = (r = Respond(; input="hi", kw...); JSON.parse(UniLM.encod
 _oa_chat_err(; kw...) = _oa_err(() -> _oa_chat(; kw...))
 _oa_respond_err(; kw...) = _oa_err(() -> _oa_respond(; kw...))
 const _OA_PING = [Tool(func=FunctionSignature(name="ping"))]
-const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ultrafast\" for gpt-6-astra and " *
-    "gpt-6.1-sol (other models answer HTTP 400 \"Invalid service_tier argument\")"
+const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ultrafast\" for gpt-6-astra, " *
+    "gpt-6.1-sol, gpt-6.2-astra and gpt-6.2-sol (other models answer HTTP 400 \"Invalid service_tier argument\")"
 
 @testset "OpenAI model rules: the exact id or a dated snapshot, never another generation" begin
     rules = UniLM._OPENAI_MODEL_RULES
     @test sort!(collect(keys(rules))) == ["gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
-                                          "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"]
+                                          "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra",
+                                          "gpt-6.2-sol"]
     row(model) = UniLM._openai_row(rules, model)
     @test row("gpt-6-sol-2026-09-14") === rules["gpt-6-sol"]
     @test row("gpt-6.1-sol") === rules["gpt-6.1-sol"]
@@ -160,7 +161,7 @@ const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ul
     @test row("gpt-5.6") === rules["gpt-5.6-sol"]
     # Near misses and future ids have no row: a family prefix, another date form, another generation.
     for model in ("gpt-7-x", "gpt-6", "gpt-6.1", "gpt-5", "gpt-6-sol-mini", "gpt-6-sol-20260914",
-                  "gpt-6-sol-2026-09", "gpt-6.2-sol", "gpt-6-sol-2026-09-14-preview", "gpt-5.6-mini")
+                  "gpt-6-sol-2026-09", "gpt-6.3-sol", "gpt-6-sol-2026-09-14-preview", "gpt-5.6-mini")
         @test isnothing(row(model))
     end
     @test (@inferred Nothing UniLM._openai_row(rules, "gpt-6-luna")) === rules["gpt-6-luna"]
@@ -173,10 +174,11 @@ const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ul
     @test _oa_respond_err(model="gpt-6-sol", service_tier="ultrafast").msg == "gpt-6-sol $_OA_NO_ULTRAFAST"
 end
 
-@testset "GPT-6 Astra and GPT-6.1 Sol: effort low and up, no sampling, tools through Responses, Ultrafast" begin
-    for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01")
+@testset "GPT-6 Astra, GPT-6.1 Sol and GPT-6.2: effort low and up, no sampling, tools through Responses, Ultrafast" begin
+    for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01", "gpt-6.2-astra", "gpt-6.2-sol")
         # No effort reaches "none", so no sampling control or log probability is ever taken
-        # (gpt-6.1-sol: "'temperature' is not supported with this model").
+        # (gpt-6.1-sol, and gpt-6.2-astra and gpt-6.2-sol at "low" on 2026-11-17: "'temperature' is not
+        # supported with this model").
         for effort in (nothing, "low", "xhigh")
             for (kw, name) in ((temperature=0.2,) => "temperature", (top_p=0.5,) => "top_p",
                                (logprobs=true,) => "logprobs", (top_logprobs=2,) => "top_logprobs")
@@ -197,8 +199,8 @@ end
               "$model does not support sampling controls or log probabilities (top_p, top_logprobs)"
         @test _oa_chat(; model, logprobs=false)["logprobs"] == false
         @test _oa_respond(; model, include=["reasoning.encrypted_content"])["include"] == ["reasoning.encrypted_content"]
-        # Chat Completions serves these models without tools (gpt-6.1-sol: "Function tools with
-        # reasoning_effort are not supported"); Responses takes them.
+        # Chat Completions serves these models without tools (gpt-6.1-sol, and the GPT-6.2 models on 2026-11-17:
+        # "Function tools with reasoning_effort are not supported"); Responses takes them.
         for effort in (nothing, "low")
             @test _oa_chat_err(; model, tools=_OA_PING, reasoning_effort=effort).msg ==
                   "$model takes function tools only through the Responses API: send them with Respond " *
@@ -253,10 +255,11 @@ end
     # "max"): Chat Completions refused "max" on every model below — "Supported values are:
     # 'none', 'low', 'medium', 'high', and 'xhigh'", from 'low' on Astra and 6.1 Sol — and
     # "minimal" on GPT-5.6; the Responses API took "max" (gpt-5.6-luna) and refused "minimal"
-    # ("…'xhigh', and 'max'") and, on gpt-6.1-sol, "none".
+    # ("…'xhigh', and 'max'") and, on gpt-6.1-sol, "none". On 2026-11-17 gpt-6.2-astra and gpt-6.2-sol answered
+    # the same as gpt-6.1-sol: Responses took "low" to "max", Chat Completions "low" to "xhigh".
     listed(efforts) = join(repr.(efforts), ", ")
     from_low, from_none = ["low", "medium", "high", "xhigh"], ["none", "low", "medium", "high", "xhigh"]
-    for (models, chat) in ((("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01"), from_low),
+    for (models, chat) in ((("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01", "gpt-6.2-astra", "gpt-6.2-sol"), from_low),
                            (("gpt-6-sol", "gpt-6-luna", "gpt-6-sol-2026-09-14", "gpt-5.6-sol", "gpt-5.6-terra",
                              "gpt-5.6-luna", "gpt-5.6", "gpt-5.6-terra-2026-07-01"), from_none))
         responses = [chat; "max"]
@@ -460,7 +463,7 @@ end
     # Chat Completions answered "ultrafast" on gpt-6.1-sol with "Invalid service_tier argument".
     @test _oa_chat_err(model="gpt-6.1-sol", service_tier="ultrafast").msg ==
           "OpenAI Chat Completions accepts service_tier $chat_tiers (got \"ultrafast\"); \"ultrafast\" is a " *
-          "Responses tier: send it with Respond on gpt-6-astra or gpt-6.1-sol"
+          "Responses tier: send it with Respond on gpt-6-astra, gpt-6.1-sol, gpt-6.2-astra or gpt-6.2-sol"
     @test _oa_chat_err(model="gpt-6-luna", service_tier="turbo").msg ==
           "OpenAI Chat Completions accepts service_tier $chat_tiers (got \"turbo\")"
     @test _oa_respond_err(model="gpt-6-luna", service_tier="turbo").msg ==
@@ -897,7 +900,7 @@ end
 
 @testset "Current models and dated snapshots have price estimates" begin
     for model in ("gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol",
-                  "gpt-6-luna", "gemini-3.8-flash")
+                  "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-sol", "gemini-3.8-flash")
         @test haskey(DEFAULT_PRICING, model)
     end
     # Every model with an OpenAI rule row is priced, so its spend is never a silent 0.0. The

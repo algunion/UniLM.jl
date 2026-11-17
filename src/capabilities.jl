@@ -189,9 +189,12 @@ end
 # on 2026-10-22 Chat Completions refused "max" on every model below with HTTP 400 ("Supported
 # values are: 'none', 'low', 'medium', 'high', and 'xhigh'"; without 'none' on Astra and 6.1
 # Sol), though its reference lists "max"; the Responses API took "max" and refused "minimal".
+# GPT-6.2 Astra and Sol answered the same as 6.1 Sol on 2026-11-17.
 const _OPENAI_MODEL_RULES = let
-    # GPT-6 Astra and GPT-6.1 Sol reason at "low" or more, so they take no sampling control or
-    # log probability, and tools only through the Responses API; both serve Ultrafast.
+    # GPT-6 Astra, GPT-6.1 Sol and GPT-6.2 Astra and Sol reason at "low" or more, so they take no
+    # sampling control or log probability, and tools only through the Responses API; all serve
+    # Ultrafast. On 2026-11-17 the API answered temperature at "low" on both GPT-6.2 models with HTTP
+    # 400, and Chat tools too ("Function tools with reasoning_effort are not supported").
     top = _OpenAIModelRules(efforts=["low", "medium", "high", "xhigh", "max"],
                             chat_efforts=["low", "medium", "high", "xhigh"], sampling_efforts=String[],
                             chat_tool_efforts=String[], ultrafast=true, prompt_cache_retention=false)
@@ -216,7 +219,8 @@ const _OPENAI_MODEL_RULES = let
     gpt56 = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
                               chat_efforts=["none", "low", "medium", "high", "xhigh"],
                               sampling_efforts=["none"], chat_tool_efforts=["none"], prompt_cache_retention=false)
-    Dict{String,_OpenAIModelRules}("gpt-6-astra" => top, "gpt-6.1-sol" => top, "gpt-6.1-terra" => sol_luna,
+    Dict{String,_OpenAIModelRules}("gpt-6.2-astra" => top, "gpt-6.2-sol" => top,
+                                   "gpt-6-astra" => top, "gpt-6.1-sol" => top, "gpt-6.1-terra" => sol_luna,
                                    "gpt-6-sol" => sol_luna, "gpt-6-luna" => sol_luna,
                                    "gpt-5.6-sol" => gpt56, "gpt-5.6-terra" => gpt56, "gpt-5.6-luna" => gpt56,
                                    "gpt-5.6" => gpt56)
@@ -256,7 +260,7 @@ _check_openai_chat_tools(::String, ::Nothing, ::Union{String,Nothing}, ::Bool) =
 _check_openai_retention(::String, ::Nothing, ::Union{String,Nothing}, ::NamedTuple) = nothing
 
 # An effort the model does not list on this API is refused, naming the next one up that it
-# accepts — OpenAI's GPT-6 guide moves a "none" (Astra, 6.1 Sol) or "minimal" request to
+# accepts — OpenAI's GPT-6 guide moves a "none" (Astra, 6.1 Sol, 6.2) or "minimal" request to
 # "low" — or, where none is left, Respond when the Responses API takes it ("max").
 function _check_openai_effort(model::String, rules::_OpenAIModelRules, effort::Union{String,Nothing},
                               api::NamedTuple)::Nothing
@@ -335,9 +339,9 @@ function _check_openai_service_tier(tier::Union{String,Nothing}, api::NamedTuple
     isnothing(tier) && return nothing
     tier in api.tiers || throw(ArgumentError("OpenAI $(api.name) accepts service_tier " *
         "$(join(repr.(api.tiers), ", ")) (got $(repr(tier)))" * (tier == "ultrafast" ?
-        "; \"ultrafast\" is a Responses tier: send it with Respond on $(join(_OPENAI_ULTRAFAST_MODELS, " or "))" : "")))
+        "; \"ultrafast\" is a Responses tier: send it with Respond on $(join(_OPENAI_ULTRAFAST_MODELS, ", ", " or "))" : "")))
     tier == "ultrafast" && !_serves_ultrafast(rules) && throw(ArgumentError("$model has no ultrafast tier: " *
-        "OpenAI serves service_tier=\"ultrafast\" for $(join(_OPENAI_ULTRAFAST_MODELS, " and ")) " *
+        "OpenAI serves service_tier=\"ultrafast\" for $(join(_OPENAI_ULTRAFAST_MODELS, ", ", " and ")) " *
         "(other models answer HTTP 400 \"Invalid service_tier argument\")"))
     nothing
 end

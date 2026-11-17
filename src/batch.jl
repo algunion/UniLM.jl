@@ -242,6 +242,11 @@ _check_batch_chat(id, chat::Chat) = chat.stream === true && throw(ArgumentError(
     "result comes back with the batch's results; leave stream unset"))
 _check_batch_chat(_, ::Embeddings) = nothing
 
+# A batch's name: an option of Gemini's batch create alone (src/gemini_batch.jl).
+_batch_display_name(::_BatchWire, _, input, ::Nothing) = input
+_batch_display_name(::_BatchWire, service, _, ::String) = throw(ArgumentError("create_batch: display_name names a " *
+    "Gemini batch, and $(_service_name(service)) takes none; leave it unset (an OpenAI batch takes metadata)"))
+
 # metadata and output_expires_after are options of OpenAI's batch create.
 _no_openai_options(service, metadata, output_expires_after) =
     isnothing(metadata) && isnothing(output_expires_after) || throw(ArgumentError(
@@ -265,8 +270,8 @@ function _batch_input(::_OpenAIBatches, service, requests, metadata, output_expi
     _openai_input(service, requests, CHAT_COMPLETIONS_PATH, chat -> encode_request(service, chat), metadata, output_expires_after)
 end
 
-# Embeddings: each line's body the one embeddingrequest! sends to /v1/embeddings. "Embeddings batches are also
-# restricted to a maximum of 50,000 embedding inputs across all requests in the batch" (the Batch guide).
+# Embeddings: each line's body the one embeddingrequest! sends to /v1/embeddings. "`/v1/embeddings` batches are
+# also restricted to a maximum of 50,000 embedding inputs across all requests in the batch" (the Batch guide).
 const _OPENAI_BATCH_EMBEDDING_INPUTS = 50_000
 function _batch_input(::_OpenAIBatches, service, requests::AbstractVector{Pair{String,Embeddings}}, metadata,
                       output_expires_after)
@@ -489,7 +494,7 @@ function create_batch(input_file_id::String, endpoint::String; completion_window
 end
 
 """
-    create_batch(requests; service=nothing, metadata=nothing, output_expires_after=nothing)
+    create_batch(requests; service=nothing, metadata=nothing, output_expires_after=nothing, display_name=nothing)
 
 Create a batch of chat requests: `requests` pairs each request's custom id with its [`Chat`](@ref), and
 the batch runs on the endpoint the Chats name (`service`, when given, must be it). Each provider takes the
@@ -505,14 +510,15 @@ Chats as its own Chat requests, encoded as [`chatrequest!`](@ref) encodes them:
   `max_tokens` to 300,000 on a batch).
 - Gemini: inline requests to `models/{model}:batchGenerateContent`, each keyed by its custom id in its
   `metadata`; one model per batch, and no `service_tier` (the API answers a batched request that sets one
-  with HTTP 400).
+  with HTTP 400). `display_name`, a non-empty name, is the batch's `displayName`; the other providers take
+  none.
 
 A batch of embeddings pairs each custom id with an [`Embeddings`](@ref) request instead, encoded as
 [`embeddingrequest!`](@ref) encodes it, on an endpoint that has `:embeddings` too:
 
 - OpenAI: a JSONL file of `/v1/embeddings` requests, as above; one model per batch, and at most 50,000
-  inputs across its requests ("Embeddings batches are also restricted to a maximum of 50,000 embedding
-  inputs across all requests in the batch").
+  inputs across its requests ("`/v1/embeddings` batches are also restricted to a maximum of 50,000
+  embedding inputs across all requests in the batch").
 - Gemini: inline requests to `models/{model}:asyncBatchEmbedContent`, each an embedContent request of one
   input (a request of several inputs is refused: give each its own custom id), keyed in its `metadata`.
 
@@ -525,8 +531,8 @@ $_BATCH_CONFIG_DOC The config bounds the upload and the create together on OpenA
 """
 function create_batch(requests::AbstractVector{<:Pair{<:AbstractString,<:Union{Chat,Embeddings}}};
     service::Union{Nothing,ServiceEndpointSpec}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
-    output_expires_after::Union{Integer,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
-    cancel::Union{Nothing,CancelToken}=nothing)
+    output_expires_after::Union{Integer,Nothing}=nothing, display_name::Union{String,Nothing}=nothing,
+    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     svc = _batch_service(requests, service)
     validate_capability(svc, :batch, "Batch API")
     kind = _batch_kind(requests)
@@ -537,7 +543,7 @@ function create_batch(requests::AbstractVector{<:Pair{<:AbstractString,<:Union{C
     _check_custom_ids(ids)
     _batch_custom_ids(wire, ids)
     foreach(p -> _check_batch_chat(p...), reqs)
-    input = _batch_input(wire, svc, reqs, metadata, output_expires_after)
+    input = _batch_display_name(wire, svc, _batch_input(wire, svc, reqs, metadata, output_expires_after), display_name)
     _batch_call((cfg, t0, tok) -> _create_batch(wire, svc, input, cfg, t0, tok), config, cancel)
 end
 
@@ -618,8 +624,10 @@ end
 
 Set the `priority` of the Gemini batch `id` (batches with a higher priority run first; negative values are
 allowed): `BatchSuccess` with the updated batch, `BatchFailure` or `BatchCallError`. Priority is the one field
-the API updates. OpenAI's and Anthropic's Batch APIs update no batch: there `update_batch` throws
-`ArgumentError` before any request.
+the API updates. A batch of embeddings is updated on `updateEmbedContentBatch`: the update goes there when
+`updateGenerateContentBatch` answers that the batch type does not match (HTTP 400), so it takes two requests.
+OpenAI's and Anthropic's Batch APIs update no batch: there `update_batch` throws `ArgumentError` before any
+request.
 
 $_BATCH_CONFIG_DOC
 """

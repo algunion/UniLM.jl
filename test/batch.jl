@@ -954,3 +954,51 @@ end
     cr = _answered(() -> batch_results("abc123"; service=_GEB), 200; body=JSON.json(chat))
     @test cr isa BatchResultsSuccess && last(only(cr.results)) isa Union{LLMSuccess,LLMCallError}
 end
+
+# updateGenerateContentBatch on a batch of embeddings answered HTTP 400 "Batch type does not match the request type.",
+# and updateEmbedContentBatch with the same priority 200 (2026-11-17).
+# Refuted if: an embeddings batch's update stops at the 400, a generateContent batch's takes a second request, or
+# another 400 is retried on the embeddings method.
+@testset "update_batch on Gemini: a batch of embeddings is updated on updateEmbedContentBatch" begin
+    mismatch = "{\"error\":{\"code\":400,\"message\":\"Batch type does not match the request type.\",\"status\":\"INVALID_ARGUMENT\"}}"
+    updated = JSON.json(_gm_batch(state="BATCH_STATE_RUNNING", priority="5"))
+    u, seen = _with_scripted((n, _) -> n == 1 ? _json(400, mismatch) : _json(200, updated)) do
+        update_batch("abc123"; priority=5, service=_GEB)
+    end
+    @test u isa BatchSuccess && u.response.raw["priority"] == "5"
+    @test _batch_targets(seen) == [("PATCH", "/v1beta/batches/abc123:updateGenerateContentBatch?updateMask=priority"),
+                                   ("PATCH", "/v1beta/batches/abc123:updateEmbedContentBatch?updateMask=priority")]
+    @test all(s -> JSON.parse(s.body) == Dict("priority" => "5"), seen)
+    other = "{\"error\":{\"code\":400,\"message\":\"Request contains an invalid argument.\",\"status\":\"INVALID_ARGUMENT\"}}"
+    f, fseen = _with_scripted((_, _) -> _json(400, other)) do
+        update_batch("abc123"; priority=5, service=_GEB)
+    end
+    @test f isa BatchFailure && f.status == 400 && length(fseen) == 1
+    both, bseen = _with_scripted((_, _) -> _json(400, mismatch)) do
+        update_batch("abc123"; priority=5, service=_GEB)
+    end
+    @test both isa BatchFailure && length(bseen) == 2
+end
+
+# Refuted if: a Gemini batch's name is not its displayName, or another provider's batch, or an empty name, is sent.
+@testset "create_batch(requests; display_name) names a Gemini batch, and Gemini's alone" begin
+    g2(x) = Embeddings(x; service=_GEB, model="gemini-embedding-2")
+    _, seen = _with_scripted((_, _) -> _json(200, JSON.json(_gm_embed_op()))) do
+        create_batch(["a" => g2("alpha")]; display_name="faq vectors")
+    end
+    @test JSON.parse(only(seen).body)["batch"]["displayName"] == "faq vectors"
+    flash = Chat(service=_GMB, model="gemini-3.8-flash", messages=[Message(Val(:user), "q")])
+    _, cseen = _with_scripted((_, _) -> _json(200, JSON.json(_gm_op()))) do
+        create_batch(["a" => flash]; display_name="chats")
+    end
+    @test JSON.parse(only(cseen).body)["batch"]["displayName"] == "chats"
+    for call in (() -> create_batch(["a" => g2("alpha")]; display_name=" "),
+                 () -> create_batch(["a" => _oa_small("x")]; display_name="n"),
+                 () -> create_batch(["a" => Chat(service=_ANB, model="claude-haiku-5-5", messages=[Message(Val(:user), "q")])];
+                                    display_name="n"))
+        e, s = _with_scripted((_, _) -> _json(500, "{}")) do
+            _batch_refused(call)
+        end
+        @test e isa ArgumentError && isempty(s) && occursin("display_name", e.msg)
+    end
+end

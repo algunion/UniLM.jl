@@ -102,10 +102,28 @@ function _batch_deleted(::_GeminiBatches, id::String, ::Dict{String,Any})
 end
 
 # batches.updateGenerateContentBatch takes `priority` alone in its update mask ("The accepted fields are: *,
-# priority"), and answers with the GenerateContentBatch. The API's int64 is a JSON string.
-_update_batch(wire::_GeminiBatches, service, id, priority::Int, cfg, t0, tok) = _batch_object(wire,
-    _batch_send("PATCH", _batch_url(wire, service, id, ":updateGenerateContentBatch?updateMask=priority"),
-                _batch_headers(service, false), cfg, t0, tok, JSON.json(Dict("priority" => string(priority)))))
+# priority"), and answers with the GenerateContentBatch; a batch of embeddings takes the same update on
+# updateEmbedContentBatch. The API answers the first on a batch of embeddings with HTTP 400 "Batch type does not
+# match the request type." (2026-11-17), and that answer sends the update to the second. The API's int64 is a
+# JSON string.
+const _GEMINI_BATCH_TYPE_MISMATCH = "Batch type does not match the request type"
+function _update_batch(wire::_GeminiBatches, service, id, priority::Int, cfg, t0, tok)
+    patch(method) = _batch_send("PATCH", _batch_url(wire, service, id, method * "?updateMask=priority"),
+        _batch_headers(service, false), cfg, t0, tok, JSON.json(Dict("priority" => string(priority))))
+    resp = patch(":updateGenerateContentBatch")
+    resp.status == 400 && occursin(_GEMINI_BATCH_TYPE_MISMATCH, String(copy(resp.body))) &&
+        (resp = patch(":updateEmbedContentBatch"))
+    _batch_object(wire, resp)
+end
+
+# A batch's name, its `displayName` ("The user-defined name of this batch"), set when it is created; the API
+# updates none ("Invalid fields in update mask: display_name").
+function _batch_display_name(::_GeminiBatches, _, input, name::String)
+    isempty(strip(name)) && throw(ArgumentError("create_batch: display_name is empty: name the batch, or leave it unset"))
+    body = JSON.parse(input.body; dicttype=Dict{String,Any})
+    body["batch"]["displayName"] = name
+    merge(input, (; body=JSON.json(body)))
+end
 
 # The kind of request a batch holds, by the type of its resource: an EmbedContentBatch's are Embeddings
 # (`type.googleapis.com/google.ai.generativelanguage.v1main.EmbedContentBatch` in the Operation's metadata), any

@@ -29,8 +29,9 @@ Standard capability symbols include:
 - Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): `:webhooks` (OpenAI)
 - Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): `:safety` (OpenAI)
 - Content provenance checks ([`check_content_provenance`](@ref)): `:content_provenance` (OpenAI)
+- Stored Chat Completions ([`list_chat_completions`](@ref) and the verbs beside it): `:stored_completions` (OpenAI)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :stored_completions])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])

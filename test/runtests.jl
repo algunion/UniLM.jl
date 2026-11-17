@@ -235,6 +235,9 @@ end
     @testset "conversations" begin
         include("conversations.jl")
     end
+    @testset "stored chat completions" begin
+        include("chat_store.jl")
+    end
     @testset "vector_stores" begin
         include("vector_stores.jl")
     end

@@ -67,6 +67,10 @@ end
         include("embeddings_tasks.jl")
     end
 
+    @testset "Gemini embeddings (native)" begin
+        include("gemini_embeddings.jl")
+    end
+
     @testset "config.jl" begin
         include("config.jl")
     end

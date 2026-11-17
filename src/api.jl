@@ -2290,6 +2290,30 @@ _embedding_prompt_family(model::AbstractString)::Union{Symbol,Nothing} =
     occursin("embeddinggemma", lowercase(model)) ? :embeddinggemma :
     model == "gemini-embedding-2" ? :gemini_embedding_2 : nothing
 
+# The embeddings API an endpoint speaks: OpenAI's Embeddings API (and its compatibles) unless it names its
+# own — native Gemini's embedContent (src/gemini_embeddings.jl). Ollama's /api/embed has methods of its own.
+abstract type _EmbeddingsWire end
+struct _OpenAIEmbeddings <: _EmbeddingsWire end
+struct _GeminiEmbeddings <: _EmbeddingsWire end
+_embeddings_wire(_)::_EmbeddingsWire = _OpenAIEmbeddings()
+
+# How a model learns what a text is for on the endpoint's wire: a task prompt written in front of the text
+# (the prompt families above), the request's task type (`:gemini_task_type`, on a wire that has one), or
+# not at all (`nothing`). One table for every endpoint: a model's prompts are the same on each.
+_embedding_task_family(service, model::AbstractString)::Union{Symbol,Nothing} =
+    _wire_task_family(_embeddings_wire(service), model)
+_wire_task_family(::_EmbeddingsWire, model::AbstractString)::Union{Symbol,Nothing} = _embedding_prompt_family(model)
+
+# The models whose request names the task: gemini-embedding-001, whose embedContent takes `taskType` ("For
+# gemini-embedding-001, you can specify the task_type in the embedContent method",
+# https://ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-1), and a `title` with
+# RETRIEVAL_DOCUMENT only (any other task type with a title is an HTTP 400). gemini-embedding-2 "cannot use
+# the task_type field": a taskType or title sent with it left its vector unchanged (2026-11-17), so its task
+# goes in the text, as a prompt. The wire is native Gemini's: the OpenAI-compatible endpoint has no such field.
+const _GEMINI_TASK_TYPE_MODELS = ("gemini-embedding-001",)
+_wire_task_family(::_GeminiEmbeddings, model::AbstractString)::Union{Symbol,Nothing} =
+    model in _GEMINI_TASK_TYPE_MODELS ? :gemini_task_type : _embedding_prompt_family(model)
+
 _embedding_titles(x::EmbeddingInput) = !isnothing(x.title)
 _embedding_titles(::String) = false
 _has_titles(input) = input isa AbstractVector ? any(_embedding_titles, input) : _embedding_titles(input)
@@ -2297,10 +2321,11 @@ _item_media(x::EmbeddingInput) = !isnothing(x.image) || !isnothing(x.audio)
 _item_media(::String) = false
 _has_media(emb) = emb.input isa AbstractVector ? any(_item_media, emb.input) : _item_media(emb.input)
 
-function _check_embeddings(model::String, task::Union{Symbol,Nothing}, dimensions::Union{Int,Nothing}, input)::Nothing
+function _check_embeddings(service, model::String, task::Union{Symbol,Nothing}, dimensions::Union{Int,Nothing},
+                           input)::Nothing
     isnothing(task) || task in _EMBEDDING_TASKS || throw(ArgumentError(
         "embedding task must be one of $(join(repr.(_EMBEDDING_TASKS), ", ")) (got $(repr(task)))"))
-    family = _embedding_prompt_family(model)
+    family = _embedding_task_family(service, model)
     if family === :embeddinggemma
         isnothing(task) && throw(ArgumentError(
             "$model expects a task prompt for what the text is for: pass task = " *
@@ -2312,12 +2337,16 @@ function _check_embeddings(model::String, task::Union{Symbol,Nothing}, dimension
     end
     if isnothing(family)
         # No task sends a title here, so its error comes first: it names the only fix.
+        # A model whose task types only native Gemini's wire carries: the fix names that endpoint.
+        native = model in _GEMINI_TASK_TYPE_MODELS ?
+            " ($model takes a task, and a document's title, as its task type on GEMINIServiceEndpoint)" : ""
         _has_titles(input) && throw(ArgumentError(
             "$(repr(model)) has no task prompts, so a title has nowhere to go: drop it " *
-            "(only task = :document of EmbeddingGemma and gemini-embedding-2 writes titles)"))
+            "(only task = :document of EmbeddingGemma and gemini-embedding-2 writes titles)" * native))
         isnothing(task) || task === :none || throw(ArgumentError(
             "UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only, so " *
-            "$(repr(model)) gets none: pass task = :none and write the model's own prefix into the text, if it has one"))
+            "$(repr(model)) gets none: pass task = :none and write the model's own prefix into the text, if it has one" *
+            native))
     else
         task !== :document && _has_titles(input) && throw(ArgumentError(
             "a title names the document a text comes from, which $model reads with task = :document only " *
@@ -2419,7 +2448,7 @@ struct Embeddings
                         task::Union{Symbol,Nothing})
         input isa AbstractVector && isempty(input) && throw(ArgumentError("input must not be empty"))
         m = _embedding_model(service, model)
-        _check_embeddings(m, task, dimensions, input)
+        _check_embeddings(service, m, task, dimensions, input)
         n = something(dimensions, 1536)
         buf = input isa AbstractVector ? [zeros(Float64, n) for _ in input] : zeros(Float64, n)
         new(service, m, input, buf, user, dimensions, _float_encoding(encoding_format), task)

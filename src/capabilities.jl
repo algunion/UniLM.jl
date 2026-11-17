@@ -129,6 +129,7 @@ default_model(_) = nothing
 """Default embedding model per provider."""
 default_embedding_model(::Type{OPENAIServiceEndpoint})  = "text-embedding-3-small"
 default_embedding_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-embedding-2"
+default_embedding_model(::Type{GEMINIServiceEndpoint})  = "gemini-embedding-2"
 default_embedding_model(::DeepSeekEndpoint)              = nothing
 default_embedding_model(::GenericOpenAIEndpoint)          = nothing
 default_embedding_model(_) = nothing

@@ -272,6 +272,132 @@ end
     @test reg isa FileFailure && reg.status in (400, 403, 404)
 end
 
+@testset "Gemini context caching — a Chat's start cached: made, read, listed, moved, named by a Chat on both endpoints and counted, deleted" begin
+    # gemini-3.8-flash caches from 1,024 tokens (HTTP 400 "min_total_token_count=1024", 2026-11-17): about 1,300 here,
+    # kept two minutes, deleted at the end. A run bills under a cent: the cache's storage (1,300 tokens for minutes at
+    # $0.50 per 1M tokens an hour), two replies reading it at the cache-hit rate, and their few output tokens.
+    doc = join(("Line $i: the quick brown fox jumps over the lazy dog." for i in 1:80), "\n")
+    base = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+                messages=[Message(Val(:system), "Answer in one word."), Message(Val(:user), doc)])
+    @test_throws ArgumentError create_cache(Chat(service=GEMINIServiceEndpoint, model="gemini-4-hydrogen", messages=base.messages))
+    small = create_cache(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", messages=[Message(Val(:user), "hello")]))
+    @test small isa CacheFailure && small.status == 400 && occursin("too small", small.response)
+    made = create_cache(base; ttl=120, display_name="unilm-live")
+    @test made isa CacheSuccess
+    if made isa CacheSuccess
+        c = made.response
+        try
+            @test (c.model, c.display_name) == ("gemini-3.8-flash", "unilm-live") && c.total_tokens >= 1024
+            @test abs((c.expire_time - c.create_time).value / 1000 - 120) < 10       # milliseconds
+            got = retrieve_cache(chopprefix(c.name, "cachedContents/"))
+            @test got isa CacheSuccess && got.response.name == c.name && got.response.total_tokens == c.total_tokens
+            seen, after = false, nothing
+            for _ in 1:5
+                page = list_caches(; limit=100, after)
+                @test page isa CacheListSuccess
+                page isa CacheListSuccess || break
+                seen |= any(x -> x.name == c.name, page.response.data)
+                (seen || !page.response.has_more) && break
+                after = page.response.raw["nextPageToken"]
+            end
+            @test seen
+            moved = update_cache(c.name; ttl=180)
+            @test moved isa CacheSuccess && moved.response.expire_time > c.expire_time
+            ask(service; kw...) = Chat(; service, model="gemini-3.8-flash", cached_content=c, reasoning_effort="low",
+                                       messages=[Message(Val(:user), "Which animal jumps? One word.")], kw...)
+            native = chatrequest!(ask(GEMINIServiceEndpoint; max_tokens=256))
+            @test native isa LLMSuccess && native.usage.cached_tokens == c.total_tokens
+            if native isa LLMSuccess
+                rates = UniLM._price_row(DEFAULT_PRICING, "gemini-3.8-flash")
+                u = native.usage
+                @test estimated_cost(native) ≈ (u.prompt_tokens - u.cached_tokens) * rates.input +
+                                               u.cached_tokens * rates.cached_input + u.completion_tokens * rates.output
+            end
+            compat = chatrequest!(ask(GEMINIOpenAIServiceEndpoint; max_completion_tokens=256))
+            @test compat isa LLMSuccess && compat.usage.cached_tokens == c.total_tokens
+            counted = count_tokens(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", cached_content=c,
+                                        messages=[Message(Val(:user), "Which animal jumps?")]))
+            @test counted isa TokenCountSuccess && counted.raw["cachedContentTokenCount"] == c.total_tokens &&
+                  counted.input_tokens > c.total_tokens
+            @info "Gemini context cache live" c.total_tokens cost = sum(estimated_cost(r) for r in (native, compat) if r isa LLMSuccess; init=0.0)
+        finally
+            @test delete_cache(c.name) isa CacheDeleteSuccess
+        end
+        gone = retrieve_cache(c.name)
+        @test gone isa CacheFailure && gone.status == 403         # "CachedContent not found (or permission denied)"
+    end
+end
+
+@testset "Gemini File Search — a store filled by an upload and an import, polled, listed, searched through Interactions, emptied, deleted" begin
+    # Two notes of under 100 bytes, embedded at indexing (gemini-embedding-001, $0.15 per 1M tokens), and one
+    # gemini-3.8-flash answer at thinking "low" that reads the retrieved chunks as tool-use input: well under a cent a
+    # run. The store, its documents and the Files API file are deleted at the end.
+    dir = mktempdir()
+    note, other = joinpath(dir, "unilm-note.txt"), joinpath(dir, "unilm-other.txt")
+    write(note, "UniLM live note. The secret bird of the UniLM project is the kingfisher.\n")
+    write(other, "UniLM live note two. The secret tree of the UniLM project is the rowan.\n")
+    made = create_file_search_store(; display_name="unilm-live")
+    @test made isa FileSearchStoreSuccess
+    if made isa FileSearchStoreSuccess
+        store = made.response
+        file = nothing
+        try
+            @test store.display_name == "unilm-live" && store.active_documents == 0
+            @test retrieve_file_search_store(chopprefix(store.name, "fileSearchStores/")) isa FileSearchStoreSuccess
+            seen, after = false, nothing
+            for _ in 1:5
+                page = list_file_search_stores(; limit=20, after)
+                @test page isa FileSearchStoreListSuccess
+                page isa FileSearchStoreListSuccess || break
+                seen |= any(s -> s.name == store.name, page.response.data)
+                (seen || !page.response.has_more) && break
+                after = page.response.raw["nextPageToken"]
+            end
+            @test seen
+            up = upload_to_file_search_store(store.name, note; display_name="unilm-note",
+                                             custom_metadata=Dict("topic" => "birds"), max_tokens_per_chunk=100)
+            @test up isa FileSearchOperationSuccess && occursin("/upload/operations/", up.response.name)
+            uploaded = up isa FileSearchOperationSuccess ? poll_file_search_operation(up.response.name; interval=2.0, timeout=120.0) : up
+            @test uploaded isa FileSearchOperationSuccess && uploaded.response.done && isnothing(uploaded.response.error)
+            f = upload_file(other; service=GEMINIServiceEndpoint)
+            @test f isa FileSuccess
+            if f isa FileSuccess
+                file = f.response.id
+                poll_file(file; service=GEMINIServiceEndpoint, interval=1.0, timeout=60.0)
+                im = import_to_file_search_store(store.name, file; custom_metadata=Dict("year" => 1934))
+                @test im isa FileSearchOperationSuccess && occursin("/operations/", im.response.name)
+                imported = im isa FileSearchOperationSuccess ? poll_file_search_operation(im.response.name; timeout=120.0) : im
+                @test imported isa FileSearchOperationSuccess && imported.response.done && !isnothing(imported.response.document)
+            end
+            docs = list_file_search_documents(store.name; limit=20)
+            @test docs isa FileSearchDocumentListSuccess && length(docs.response.data) == 2
+            if uploaded isa FileSearchOperationSuccess && !isnothing(uploaded.response.document)
+                d = retrieve_file_search_document(uploaded.response.document)
+                @test d isa FileSearchDocumentSuccess && d.response.state == "STATE_ACTIVE" &&
+                      d.response.custom_metadata == Dict("topic" => "birds") && d.response.display_name == "unilm-note"
+            end
+            r = respond("What is the secret bird of the UniLM project? Answer from the files."; service=GEMINIServiceEndpoint,
+                        model="gemini-3.8-flash", reasoning=Reasoning(effort="low"), max_output_tokens=512,
+                        tools=[gemini_file_search(store.name; top_k=2, metadata_filter="topic = \"birds\"")])
+            @test r isa ResponseSuccess && occursin("kingfisher", lowercase(output_text(r)))
+            r isa ResponseSuccess && @test any(i -> get(i, "type", "") == "file_search_call", r.response.output)
+            r isa ResponseSuccess && @info "Gemini File Search live answer" cost = estimated_cost(r)
+            refused = delete_file_search_store(store.name)                     # it holds documents
+            @test refused isa FileSearchFailure && refused.status == 400
+            if uploaded isa FileSearchOperationSuccess && !isnothing(uploaded.response.document)
+                @test delete_file_search_document(uploaded.response.document) isa FileSearchDeleteSuccess
+                gone = retrieve_file_search_document(uploaded.response.document)
+                @test gone isa FileSearchFailure && gone.status == 404
+            end
+        finally
+            @test delete_file_search_store(store.name; force=true) isa FileSearchDeleteSuccess
+            isnothing(file) || delete_file(file; service=GEMINIServiceEndpoint)
+        end
+        gone = retrieve_file_search_store(store.name)
+        @test gone isa FileSearchFailure && gone.status == 404
+    end
+end
+
 # countTokens and the Models API's lookup and listing bill no tokens.
 @testset "Gemini count_tokens — a Chat's generateContent request, system instruction and tools counted" begin
     sig = FunctionSignature(name="get_weather", description="Weather", parameters=Dict("type" => "object",

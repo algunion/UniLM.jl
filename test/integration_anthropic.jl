@@ -362,36 +362,42 @@ end
     end
 end
 
-@testset "Message Batches — two requests run to their end: batch-priced successes, each on its request's Chat" begin
-    # Two 16-token claude-haiku-5-5 requests, left to run: a batch of 2026-11-16 ended in under five minutes, and the
-    # poll gives it ten. Each success bills at the Batch rates, half the standard ones; read with the requests, each
-    # result's self is its request's Chat with the reply appended.
-    requests = ["one" => _live_claude("Reply with exactly: ok"; max_tokens=16),
-                "two" => _live_claude("Reply with exactly: ok"; max_tokens=16)]
-    created = create_batch(requests)
-    @test created isa BatchSuccess
-    if created isa BatchSuccess
-        id = created.response.id
-        seconds = @elapsed (ended = poll_batch(id; service=ANTHROPICServiceEndpoint, interval=15.0, timeout=600.0))
-        done = ended isa BatchSuccess && ended.response.status == "ended"
-        @test done
-        if done
-            r = batch_results(id; service=ANTHROPICServiceEndpoint, requests)
-            @test r isa BatchResultsSuccess && sort(first.(r.results)) == ["one", "two"]
-            for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
-                @test x isa LLMSuccess
-                x isa LLMSuccess || continue
-                standard = LLMSuccess(message=x.message, self=x.self, model=x.model, usage=UniLM._standard_tier(x.usage))
-                @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
-                chat = Dict(requests)[cid]
-                @test x.self !== chat && length(x.self.messages) == length(chat.messages) + 1 && last(x.self.messages) === x.message
-            end
-            r isa BatchResultsSuccess && @info "Anthropic batch run to its end" id seconds cost = sum(
-                (estimated_cost(x) for (_, x) in r.results if x isa LLMSuccess); init=0.0)
-            @test delete_batch(id; service=ANTHROPICServiceEndpoint) isa BatchDeleteSuccess
-        else
-            cancel_batch(id; service=ANTHROPICServiceEndpoint)   # the poll gave up: stop the batch
+# A 2-request batch of 2026-11-16 ended in under five minutes and one of 2026-11-17 not in ten, so the gate waits for
+# none: each run leaves one 2-request batch behind and reads the newest ended one an earlier run left; a run that finds
+# none fails. A Message Batch takes no metadata, so the batch is known by its requests' custom ids, read from its
+# results. A run bills two 16-token claude-haiku-5-5 requests at the Batch rates (USD ~2e-5).
+@testset "Message Batches — the results of a batch an earlier run left: batch-priced, each on its request's Chat; one left for the next run" begin
+    # The same requests every run, so the batch read is checked against the requests that made it.
+    gate() = [id => _live_claude("Reply with exactly: ok"; max_tokens=16) for id in ("unilm-gate-one", "unilm-gate-two")]
+    left = create_batch(gate())
+    @test left isa BatchSuccess
+    mine = left isa BatchSuccess ? left.response.id : nothing
+    page = list_batches(; limit=100, service=ANTHROPICServiceEndpoint)
+    @test page isa BatchListSuccess
+    # Ended, both requests succeeded, newest first; the one whose results carry the gate's custom ids.
+    ended(b) = b.id != mine && b.status == "ended" && get(b.request_counts, "succeeded", 0) == 2 &&
+               sum(values(b.request_counts)) == 2
+    candidates = page isa BatchListSuccess ?
+        sort(filter(ended, page.response.data); by=b -> b.raw["created_at"], rev=true) : BatchObject[]
+    tagged(b) = (r = batch_results(b.id; service=ANTHROPICServiceEndpoint);
+                 r isa BatchResultsSuccess && sort(first.(r.results)) == ["unilm-gate-one", "unilm-gate-two"])
+    i = findfirst(tagged, candidates)
+    @test !isnothing(i)
+    if !isnothing(i)
+        b = candidates[i]
+        requests = gate()
+        r = batch_results(b.id; service=ANTHROPICServiceEndpoint, requests)
+        @test r isa BatchResultsSuccess && sort(first.(r.results)) == ["unilm-gate-one", "unilm-gate-two"]
+        for (cid, x) in (r isa BatchResultsSuccess ? r.results : [])
+            @test x isa LLMSuccess
+            x isa LLMSuccess || continue
+            standard = LLMSuccess(message=x.message, self=x.self, model=x.model, usage=UniLM._standard_tier(x.usage))
+            @test x.usage.service_tier == "batch" && 0 < estimated_cost(x) < estimated_cost(standard)
+            chat = Dict(requests)[cid]
+            @test x.self !== chat && length(x.self.messages) == length(chat.messages) + 1 && last(x.self.messages) === x.message
         end
+        r isa BatchResultsSuccess && @info "Anthropic gate batch" read = b.id left = mine cost = sum(
+            (estimated_cost(x) for (_, x) in r.results if x isa LLMSuccess); init=0.0)
     end
 end
 

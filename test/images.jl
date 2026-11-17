@@ -1134,3 +1134,85 @@ end
         @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
     end
 end
+
+# ── OpenAI edits by reference: the JSON edit (EditImageBodyJsonParam) ───────────────────────────────
+
+@testset "ImageRef names an uploaded file or an image URL, exactly one of them" begin
+    # ImageRefParam: "Provide exactly one of `image_url` or `file_id`"; image_url is "A fully qualified URL or
+    # base64-encoded data URL", at most 20971520 characters. The API answered a reference with both, on 2026-11-17,
+    # "Exactly one of 'image_url' or 'file_id' must be provided." (HTTP 400).
+    @test _image_json(ImageRef(file_id="file-abc")) == Dict{String,Any}("file_id" => "file-abc")
+    @test _image_json(ImageRef(image_url="https://example.com/a.png")) ==
+          Dict{String,Any}("image_url" => "https://example.com/a.png")
+    data = "data:image/png;base64," * base64encode(_PNG_SIGNATURE)
+    @test ImageRef(image_url=data).image_url == data
+    for (kw, words) in (((;), ("exactly one",)), ((; file_id="f", image_url="https://x.example"), ("exactly one",)),
+                        ((; file_id=""), ("file_id", "empty")), ((; image_url="room.png"), ("image_url", "URL")),
+                        ((; image_url="https://x.example/" * "a"^20_971_520), ("20971520",)))
+        err = _refusal(() -> ImageRef(; kw...))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+end
+
+@testset "OpenAI image edits by reference go as the JSON edit; files go as multipart, and the two do not mix" begin
+    ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
+    cfg = UniLM.RequestConfig(max_attempts=1)
+    refs = [ImageRef(file_id="file-a"), ImageRef(image_url="https://example.com/b.png")]
+    r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        edit_image(ImageEdit(service=URLProbe, image=refs, prompt="p", model="m", mask=ImageRef(file_id="file-m"),
+                             quality="low", output_format="jpeg", output_compression=50, moderation="low",
+                             safety_identifier="u1"); config=cfg)
+    end
+    @test r isa ImageSuccess && image_data(r) == ["aGVsbG8="]
+    @test only(seen).target == "/v1/images/edits"
+    @test JSON.parse(only(seen).body; dicttype=Dict{String,Any}) == Dict{String,Any}(
+        "model" => "m", "prompt" => "p",
+        "images" => Any[Dict{String,Any}("file_id" => "file-a"), Dict{String,Any}("image_url" => "https://example.com/b.png")],
+        "mask" => Dict{String,Any}("file_id" => "file-m"), "quality" => "low", "output_format" => "jpeg",
+        "output_compression" => 50, "moderation" => "low", "safety_identifier" => "u1")
+    # One reference is a list of one; a markup goes by reference; svg is its JSON object, not form fields.
+    _, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        edit_image(ImageRef(file_id="file-a"), "p"; model="m", service=URLProbe, markup=ImageRef(file_id="file-k"),
+                   output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"), config=cfg)
+    end
+    body = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test body["images"] == Any[Dict{String,Any}("file_id" => "file-a")]
+    @test body["markup"] == Dict{String,Any}("file_id" => "file-k")
+    @test body["svg"] == Dict{String,Any}("model" => "gpt-6-luna", "reasoning" => Dict{String,Any}("effort" => "low"))
+    # OpenAI's endpoint, a JSON body, and the default model of a multipart edit.
+    url, headers, json = withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, ImageEdit(image=ImageRef(file_id="f"),
+                                                                                              prompt="p")),
+                                 "OPENAI_API_KEY" => "sk-test")
+    @test url == "https://api.openai.com/v1/images/edits" && Dict(headers)["Content-Type"] == "application/json"
+    @test JSON.parse(json)["model"] == "gpt-image-2.6-sunburst"
+    # A request is one form or the other, so files and references do not mix: refused before anything is sent.
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        for (call, words) in ((() -> edit_image([path, ImageRef(file_id="f")], "p"; model="m", service=URLProbe),
+                               ("files", "references")),
+                              (() -> edit_image(ImageRef(file_id="f"), "p"; model="m", service=URLProbe, mask=path),
+                               ("mask", "by reference")),
+                              (() -> edit_image(ImageRef(file_id="f"), "p"; model="m", service=URLProbe, markup=read(path)),
+                               ("markup", "by reference")),
+                              (() -> edit_image(path, "p"; model="m", service=URLProbe, mask=ImageRef(file_id="m")),
+                               ("mask", "file")),
+                              (() -> edit_image(ImageRef[], "p"; model="m", service=URLProbe), ("at least one input image",)))
+            err, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                _refusal(call)
+            end
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words) && isempty(seen)
+        end
+        # Files still go as multipart, each read from its path.
+        _, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            edit_image([path, path], "p"; model="m", service=URLProbe, config=cfg)
+        end
+        @test count("name=\"image[]\"", only(seen).body) == 2
+    finally
+        rm(path; force=true)
+    end
+    # Gemini inlines its input images: a reference has no form there.
+    e = ImageEdit(service=GEMINIServiceEndpoint, image=ImageRef(file_id="f"), prompt="p")
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("ImageRef", err.msg)
+end

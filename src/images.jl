@@ -449,25 +449,77 @@ end
 # ─── Image Edits ──────────────────────────────────────────────────────────────
 
 """
+    ImageRef(; file_id=nothing, image_url=nothing)
+
+An input image of an OpenAI image edit given by reference, not read from a local file: the id of
+an image uploaded with [`upload_file`](@ref) (purpose `"vision"`), or `image_url`, "A fully
+qualified URL or base64-encoded data URL" (the edit reference), such as
+`"data:image/png;base64,…"`. Exactly one of the two: the API answers a reference with both
+"Exactly one of 'image_url' or 'file_id' must be provided." (HTTP 400, 2026-11-17), and this
+constructor throws `ArgumentError` for that, for neither, for an empty `file_id`, and for an
+`image_url` with no URL scheme or longer than the 20971520 characters the API takes.
+
+An [`ImageEdit`](@ref) whose `image` is an `ImageRef`, or a vector of them, goes to OpenAI as the
+JSON edit, with its `mask` and `markup` by reference too.
+
+```julia
+up = upload_file("room.png", "vision")
+edit_image(ImageRef(file_id=up.response.id), "Add a large window")
+```
+"""
+struct ImageRef
+    file_id::Union{String,Nothing}
+    image_url::Union{String,Nothing}
+    function ImageRef(; file_id::Union{AbstractString,Nothing}=nothing, image_url::Union{AbstractString,Nothing}=nothing)
+        isnothing(file_id) == isnothing(image_url) && throw(ArgumentError(
+            "an ImageRef names exactly one of file_id and image_url (got $(isnothing(file_id) ? "neither" : "both")): " *
+            "\"Exactly one of 'image_url' or 'file_id' must be provided.\""))
+        if !isnothing(file_id)
+            isempty(file_id) && throw(ArgumentError("an ImageRef's file_id is empty: pass the id of an uploaded file"))
+            return new(String(file_id), nothing)
+        end
+        url = String(image_url)
+        occursin(r"^[A-Za-z][A-Za-z0-9+.-]*:", url) || throw(ArgumentError(
+            "an ImageRef's image_url is \"A fully qualified URL or base64-encoded data URL\", and $(repr(first(url, 80))) " *
+            "names no scheme: pass a local file's path as the edit's image instead"))
+        length(url) <= 20_971_520 || throw(ArgumentError(
+            "an ImageRef's image_url takes at most 20971520 characters (got $(length(url))): upload the image " *
+            "(upload_file(path, \"vision\")) and pass ImageRef(file_id=…)"))
+        new(nothing, url)
+    end
+end
+
+JSON.lower(r::ImageRef) = isnothing(r.file_id) ? Dict(:image_url => r.image_url) : Dict(:file_id => r.file_id)
+
+# A data URL holds a whole image: shown by its length, not printed into the REPL.
+Base.show(io::IO, r::ImageRef) = isnothing(r.file_id) ?
+    print(io, "ImageRef(image_url=", repr(first(something(r.image_url), 48)), length(something(r.image_url)) > 48 ?
+          "…, $(length(something(r.image_url))) characters)" : ")") :
+    print(io, "ImageRef(file_id=", repr(r.file_id), ")")
+
+"""
     ImageEdit(; image, prompt, service=OPENAIServiceEndpoint, model="", kwargs...)
 
-An image-edit request for [`edit_image`](@ref): the image(s) at `image` (a path, or a
-vector of paths) changed as `prompt` asks. OpenAI is sent multipart/form-data at
-`/v1/images/edits`; `GEMINIServiceEndpoint` is sent `generateContent` with each image
-as an inline part ahead of the prompt, its format read from the file's bytes (PNG,
-JPEG, GIF or WebP). `model` left `""` is the service's default image model
-(`"gpt-image-2.6-sunburst"` on OpenAI, `"gemini-nano-banana-2.1"` on Gemini), resolved
-when the edit is sent.
+An image-edit request for [`edit_image`](@ref): the image(s) at `image` changed as `prompt` asks.
+`image` is a path, a vector of paths, or, on OpenAI, an [`ImageRef`](@ref) or a vector of them:
+an uploaded file's id or an image URL. OpenAI is sent the files as multipart/form-data at
+`/v1/images/edits`, and the references as the JSON edit at the same path, "Use `images` (array of
+`ImageRefParam`) instead of multipart `image` uploads" (its API specification); a request is one form
+or the other, so it gives its images, `mask` and `markup` all as files or all by reference.
+`GEMINIServiceEndpoint` is sent `generateContent` with each image as an inline part ahead of the prompt,
+its format read from the file's bytes (PNG, JPEG, GIF or WebP). `model` left `""` is the service's
+default image model (`"gpt-image-2.6-sunburst"` on OpenAI, `"gemini-nano-banana-2.1"` on Gemini),
+resolved when the edit is sent.
 
 # Fields — both providers
 `image` and `model` (above); `service`, `prompt`, `n` and `safety_identifier`, as on
-[`ImageGeneration`](@ref): Gemini takes `n=1` only.
+[`ImageGeneration`](@ref): Gemini takes `n=1` only, and local files only.
 
 # Fields — OpenAI only
-- `mask::Union{String,Nothing}`: path of a mask whose transparent area marks what to edit; not with
-  `output_format="gif"`
-- `markup::Union{String,Vector{UInt8},Nothing}`: a PNG, by path or as its bytes, sent as the form
-  part `markup`: "A transparent PNG overlaid on the first image to guide the edit. Must match that
+- `mask::Union{String,ImageRef,Nothing}`: a mask whose transparent area marks what to edit, by path or,
+  in an edit by reference, as an `ImageRef`; not with `output_format="gif"`
+- `markup::Union{String,Vector{UInt8},ImageRef,Nothing}`: a PNG, by path or as its bytes, sent as the form
+  part `markup`, or in an edit by reference an `ImageRef`: "A transparent PNG overlaid on the first image to guide the edit. Must match that
   image's dimensions after orientation and contain transparent pixels" (the edit reference). It
   "Cannot be combined with mask": set beside one, [`edit_image`](@ref) throws `ArgumentError`, as it
   does for bytes that are no PNG. OpenAI states it "Supports GPT Image 2.5 and 2.6" (its API
@@ -481,17 +533,19 @@ when the edit is sent.
 - `svg::Union{SvgOptions,Nothing}`: as on [`ImageGeneration`](@ref), with `output_format="svg"` only, sent as
   the form fields `svg[model]` and `svg[reasoning][effort]` ("Use multipart fields such as `svg[model]`", the
   edit reference). OpenAI's guide says "The image edit endpoint does not support SVG output", but on
-  2026-11-16 the API answered such an edit with HTTP 200, an SVG and its `svg_usage`. SVG output takes `n=1`
-  and no `output_compression`; a `mask` beside `svg` is sent as given, since no answer of OpenAI's shows a
-  rule for the pair
+  2026-11-16 the API answered such an edit with HTTP 200, an SVG and its `svg_usage`; an edit by reference
+  sends `svg` as its JSON object. SVG output takes `n=1` and no `output_compression`; a `mask` beside `svg`
+  is sent as given, since no answer of OpenAI's shows a rule for the pair
 
 # Fields — Gemini only
 `aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
 image follows the input's aspect ratio.
 
-`image` names at least one file: [`edit_image`](@ref) throws `ArgumentError` for an empty
-vector before any request, as it does for a `markup` beside a `mask` and, naming the provider and the
-field, for a field the request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
+A vector that mixes paths and `ImageRef`s throws `ArgumentError` when the edit is built. `image` names
+at least one image: [`edit_image`](@ref) throws `ArgumentError` for an empty
+vector before any request, as it does for a `markup` beside a `mask`, a `mask` or `markup` of the other
+kind than the images (a file in an edit by reference, a reference in an edit of files) and, naming the provider and the
+field, for a field the request's provider does not take, an `ImageRef` on Gemini, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, a `safety_identifier` outside its provider's rule, a frame field
 without `output_format="gif"`, a `mask` or an `output_compression` with it, `svg` without
 `output_format="svg"`, and SVG output with `n` other than 1 or with an `output_compression`. Other OpenAI
@@ -499,10 +553,10 @@ values are sent as given, for OpenAI to judge.
 """
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    image::Union{String,Vector{String}}
+    image::Union{String,ImageRef,Vector{String},Vector{ImageRef}}
     prompt::String
-    mask::Union{String,Nothing} = nothing
-    markup::Union{String,Vector{UInt8},Nothing} = nothing
+    mask::Union{String,ImageRef,Nothing} = nothing
+    markup::Union{String,Vector{UInt8},ImageRef,Nothing} = nothing
     model::String = ""
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing
@@ -523,11 +577,28 @@ values are sent as given, for OpenAI to judge.
                        output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count,
                        frame_duration_ms, svg, output_compression, moderation)
         _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
-        new(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
+        new(service, _edit_inputs(image), prompt, mask, markup, model, n, size, quality, input_fidelity, background,
             output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms,
             svg, output_compression, moderation)
     end
 end
+
+# An edit's input images: local files (paths) or references, never both, since each of OpenAI's two edit
+# forms carries one kind — multipart/form-data uploads files, the JSON edit references images.
+_edit_inputs(image::AbstractString) = String(image)
+_edit_inputs(image::ImageRef) = image
+_edit_inputs(images::Union{Vector{String},Vector{ImageRef}}) = images
+function _edit_inputs(images::AbstractVector)
+    all(x -> x isa AbstractString, images) && return String[images...]
+    all(x -> x isa ImageRef, images) && return ImageRef[images...]
+    throw(ArgumentError("an image edit's inputs are all local files (paths) or all references (ImageRef), not both: " *
+        "OpenAI uploads files in a multipart edit and references images in a JSON edit; upload the files " *
+        "(upload_file(path, \"vision\")) and pass an ImageRef(file_id=…) for each, or pass every image as a path"))
+end
+_edit_inputs(image) = image   # anything else fails the field's conversion, naming its type
+
+# Whether an edit goes as OpenAI's JSON edit: its images are references.
+_by_reference(e::ImageEdit)::Bool = e.image isa Union{ImageRef,Vector{ImageRef}}
 
 """
     edit_image(e::ImageEdit; config=nothing, cancel=nothing) -> LLMRequestResponse
@@ -542,8 +613,9 @@ Throws `ArgumentError` before any network I/O when `e.service` does not declare
 `:image_edits` (an endpoint type that declares no capabilities at all included), when `e.image`
 is an empty vector, when an input image, the mask or a markup path
 is no file (as [`upload_file`](@ref) and [`transcribe`](@ref) refuse one), when an OpenAI edit sets both
-`mask` and `markup` or gives markup bytes that are no PNG, and when the request sets a
-field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
+`mask` and `markup`, gives markup bytes that are no PNG, or gives a mask or markup of the other kind than
+its images (files and [`ImageRef`](@ref)s do not mix), and when the request sets a
+field its provider does not take, an `ImageRef` on Gemini, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
 `resolution` outside its list, or a `safety_identifier` outside its provider's rule (see
 [`ImageEdit`](@ref)). Other OpenAI values are sent as given.
 
@@ -558,12 +630,13 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
     # An edit needs an input image: sent without one, Gemini would read the prompt alone as a
     # text-to-image request.
     e.image isa Vector && isempty(e.image) && throw(ArgumentError(
-        "an image edit needs at least one input image, and `image` is an empty vector: pass a path or a vector of paths"))
+        "an image edit needs at least one input image, and `image` is an empty vector: pass a path, an ImageRef, " *
+        "or a vector of either"))
     _check_image_request(e.service, e)
     _check_edit_files(e)
     _image_call(e.service, e, config, cancel)
 end
-edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
+edit_image(image, prompt::String; mask::Union{String,ImageRef,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
     edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config, cancel)
@@ -605,17 +678,23 @@ _set_image_fields(r::_ImageRequest, fields)::Vector{String} =
     String[String(f) for f in fields if !isnothing(getfield(r, f))]
 
 # An edit's input paths, each a file: a missing one is the caller's error, which `edit_image`
-# reports before any request (`_check_edit_files`), as `upload_file` and `transcribe` do.
-function _edit_images(e::ImageEdit)::Vector{String}
-    images = e.image isa String ? [e.image] : e.image
+# reports before any request (`_check_edit_files`), as `upload_file` and `transcribe` do. An edit
+# by reference has none: its request is built from the references (`_edit_json`).
+_edit_images(e::ImageEdit)::Vector{String} = _edit_files(e.image)
+_edit_files(image::String)::Vector{String} = _edit_files([image])
+function _edit_files(images::Vector{String})::Vector{String}
     absent = findfirst(!isfile, images)
     isnothing(absent) || throw(ArgumentError("image not found: $(images[absent])"))
     images
 end
+_edit_files(::Union{ImageRef,Vector{ImageRef}}) =
+    throw(ArgumentError("an image edit by reference (ImageRef) reads no local file"))
 
 function _check_edit_files(e::ImageEdit)::Nothing
+    _by_reference(e) && return nothing
     _edit_images(e)
-    isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
+    mask = e.mask
+    mask isa String && !isfile(mask) && throw(ArgumentError("mask not found: $mask"))
     markup = e.markup
     markup isa String && !isfile(markup) && throw(ArgumentError("markup not found: $markup"))
     nothing
@@ -640,8 +719,23 @@ function _check_image_request(service, r::_ImageRequest)
     _check_svg_output(r)
     _check_gif_output(r)
     _check_markup(r)
+    _check_edit_form(r)
 end
 _svg(r::_ImageRequest)::Union{SvgOptions,Nothing} = r.svg
+
+# OpenAI's two edit forms: multipart/form-data uploads files, the JSON edit takes references
+# (`ImageRefParam`) for its images, mask and markup alike. A request is one or the other.
+_check_edit_form(::ImageGeneration)::Nothing = nothing
+function _check_edit_form(e::ImageEdit)::Nothing
+    byref = _by_reference(e)
+    odd = String[String(f) for f in (:mask, :markup) if (v = getfield(e, f); !isnothing(v) && (v isa ImageRef) != byref)]
+    isempty(odd) && return nothing
+    throw(ArgumentError(byref ?
+        "an OpenAI image edit by reference (ImageRef images, sent as the JSON edit) takes its $(join(odd, " and ")) " *
+        "by reference too: pass an ImageRef, a file id or an image URL such as a data URL" :
+        "an OpenAI image edit of local files (sent as multipart/form-data) takes its $(join(odd, " and ")) as a file: " *
+        "pass a path, or give every image as an ImageRef"))
+end
 
 # "SVG generation requires n=1 and does not support streaming, partial images, prompt_rewriter, or
 # output_compression" (the Images reference): neither request streams.
@@ -692,6 +786,8 @@ _image_request(service, ig::ImageGeneration) =
 function _image_request(service, e::ImageEdit)
     model = isempty(e.model) ? something(default_image_model(service), "") : e.model
     isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(service))"))
+    _by_reference(e) &&
+        return (_api_base_url(service) * IMAGES_EDITS_PATH, auth_header(service), JSON.json(_edit_json(e, model)))
     images = _edit_images(e)
     # A Form is consumed by the attempt that sends it, so the retry loop gets a
     # factory: every attempt re-reads the images into its own multipart body.
@@ -702,12 +798,13 @@ function _image_request(service, e::ImageEdit)
         end
         # Bind the optional mask to a local before testing it: the guard then
         # narrows the path that reads the file to a plain path string, instead
-        # of re-reading a nullable field on every use.
+        # of re-reading a nullable field on every use. A multipart edit's mask and
+        # markup are files (`_check_edit_form`).
         mask = e.mask
-        isnothing(mask) ||
+        mask isa String &&
             push!(parts, "mask" => HTTP.Multipart(basename(mask), IOBuffer(read(mask)), _mime_for(mask)))
         markup = e.markup
-        isnothing(markup) || push!(parts, "markup" => _markup_part(markup))
+        markup isa Union{String,Vector{UInt8}} && push!(parts, "markup" => _markup_part(markup))
         for (k, f) in (("n", :n), ("size", :size), ("quality", :quality), ("input_fidelity", :input_fidelity),
                        ("background", :background), ("output_format", :output_format),
                        ("output_compression", :output_compression), ("moderation", :moderation),
@@ -726,6 +823,20 @@ end
 # An edit's `svg` as multipart fields: "Use multipart fields such as `svg[model]`" (the edit reference).
 _svg_form_fields(s::SvgOptions)::Vector{Pair{String,Any}} =
     Pair{String,Any}[k => v for (k, v) in (("svg[model]", s.model), ("svg[reasoning][effort]", s.effort)) if !isnothing(v)]
+
+# The JSON edit (`EditImageBodyJsonParam`) of an edit by reference: "Use `images` (array of `ImageRefParam`)
+# instead of multipart `image` uploads", its mask and markup references, and the edit's other fields as on a
+# multipart edit, `svg` as its JSON object.
+function _edit_json(e::ImageEdit, model::String)::Dict{Symbol,Any}
+    image = e.image
+    d = Dict{Symbol,Any}(:model => model, :prompt => e.prompt, :images => image isa ImageRef ? [image] : image)
+    for f in (:mask, :markup, :n, :size, :quality, :input_fidelity, :background, :output_format, :output_compression,
+              :moderation, :safety_identifier, :complexity, :frame_count, :frame_duration_ms, :svg)
+        v = getfield(e, f)
+        isnothing(v) || (d[f] = v)
+    end
+    d
+end
 
 _image_reply(service, resp::HTTP.Response) = parse_image_response(resp)
 
@@ -765,6 +876,9 @@ function _check_image_request(::Type{GEMINIServiceEndpoint}, r::_ImageRequest)
     isempty(openai) || throw(ArgumentError(
         "Gemini $(_image_verb(r)) does not take $(join(openai, ", ")), which only the OpenAI Images API takes" *
         ("size" in openai ? "; size a Gemini image with aspect_ratio and resolution" : "")))
+    r isa ImageEdit && _by_reference(r) && throw(ArgumentError(
+        "Gemini image editing reads its input images from local files, sent inline: an ImageRef (an OpenAI file id " *
+        "or image URL) has no form there; pass the image's path"))
     isnothing(r.n) || r.n == 1 || throw(ArgumentError(
         "Gemini returns one image per request; n must be 1 (got $(r.n))"))
     ratio = r.aspect_ratio

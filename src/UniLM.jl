@@ -296,6 +296,7 @@ export
     image_data,
     save_image,
     ImageEdit,
+    ImageRef,
     edit_image
 
 # ─── FIM / Completions API ──────────────────────────────────────────────────

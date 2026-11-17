@@ -117,9 +117,12 @@ RealtimeSession(ws, model::String) = RealtimeSession(ws, model, current_config()
 # cannot outlive the upgrade, so an abandoned handshake releases its socket
 # instead of holding it forever. No native read-idle bound is armed:
 # `realtime_receive` owns idle enforcement, so a breach surfaces as UniLMTimeout.
+# A redirected upgrade fails instead of being followed, as every request does
+# (`_request_kwargs`): the upgrade carries the endpoint's key header.
 _realtime_native_kwargs(cfg::RequestConfig) =
     (connect_timeout = _native_seconds_real(cfg.connect_timeout),
-     response_header_timeout = _native_seconds_real(cfg.connect_timeout))
+     response_header_timeout = _native_seconds_real(cfg.connect_timeout),
+     redirect = false)
 
 # Split out of `realtime_connect` so the target the WebSocket opens is assertable
 # without a live upgrade.

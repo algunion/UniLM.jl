@@ -526,6 +526,42 @@ end
     end
 end
 
+@testset "a redirect comes back as the reply: no credential follows it to another origin" begin
+    # HTTP.jl follows a 3xx by default and, to another origin, strips only Authorization, Cookie and
+    # Proxy-Authorization: a provider's own key header (x-goog-api-key, Azure's api-key, x-api-key) and a custom one
+    # went on to the redirect's target. Both seams return the 3xx instead, and a verb its Failure with the status.
+    landed = Pair{String,String}[]
+    guard = ReentrantLock()
+    target, target_url = _seam_server(function (req)
+        @lock guard append!(landed, [String(k) => String(v) for (k, v) in req.headers])
+        HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
+    end)
+    away() = HTTP.Response(302, ["Location" => target_url * "/landed"], "")
+    origin, origin_url = _seam_server(_ -> away())
+    secrets = ["Authorization" => "Bearer SECRET-1", "x-goog-api-key" => "SECRET-2", "api-key" => "SECRET-3",
+               "x-api-key" => "SECRET-4", "X-Custom-Token" => "SECRET-5"]
+    try
+        cfg = RequestConfig()
+        r = UniLM._http("GET", origin_url * "/redir", secrets; cfg, remaining=10.0)
+        @test r.status == 302 && HTTP.header(r, "Location") == target_url * "/landed"
+        s = UniLM._http_open("GET", origin_url * "/redir", secrets; cfg, t0=time_ns()) do io
+            HTTP.closewrite(io)
+            HTTP.startread(io)
+            read(io)
+        end
+        @test s.status == 302
+        f, seen = _with_scripted((_, _) -> away()) do
+            retrieve_file("file-1"; service=URLProbe)
+        end
+        @test f isa FileFailure && f.status == 302 && length(seen) == 1
+        @test [k for (k, v) in landed if occursin("SECRET", v)] == String[]
+        @test isempty(landed)
+    finally
+        close(origin)
+        close(target)
+    end
+end
+
 # ─── Retry-loop hooks ────────────────────────────────────────────────────────
 
 @testset "retry hooks: a retry header numbers the retries, never the first attempt; off by default" begin

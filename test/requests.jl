@@ -1619,6 +1619,18 @@ end
     @test UniLM._mask_auth_headers("api-key: $secret") == "api-key: secr…[redacted]"
 end
 
+@testset "one list of credential headers: masked in error text, redacted in shows" begin
+    # The error-text mask and the shows of caller headers read the same names: a Cookie value was redacted in a
+    # transport's show yet printed in an error's text.
+    secret = "secret-value-0123456789"
+    @test UniLM._mask_auth_headers("Cookie: $secret") == "Cookie: secr…[redacted]"
+    @test "cookie" in UniLM._CREDENTIAL_HEADERS
+    for name in UniLM._CREDENTIAL_HEADERS, shown in (name, uppercase(name))
+        @test UniLM._mask_auth_headers("$shown: $secret") == "$shown: secr…[redacted]"
+        @test UniLM._redacted_headers([shown => secret]) == [shown => "secr…[redacted]"]
+    end
+end
+
 # A server on an OS-assigned port that reads each request and answers nothing for
 # `hold` seconds; `hits` counts the requests that reached it.
 function _mute_request_server(; hold::Real=10.0)

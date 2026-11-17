@@ -509,9 +509,7 @@ _transport_connect!(t::HTTPTransport) = (t.connected = true; nothing)
 # the header NAMES and redact every auth-shaped value, matching the policy the
 # service-endpoint shows already apply to a stored API key.
 function _redacted_headers(headers)::Vector{Pair{String,String}}
-    [lowercase(k) in ("authorization", "proxy-authorization", "x-api-key",
-                      "x-goog-api-key", "api-key", "cookie") ?
-     (k => _redact_api_key(v)) : (k => v) for (k, v) in headers]
+    [lowercase(k) in _CREDENTIAL_HEADERS ? (k => _redact_api_key(v)) : (k => v) for (k, v) in headers]
 end
 
 function Base.show(io::IO, t::HTTPTransport)

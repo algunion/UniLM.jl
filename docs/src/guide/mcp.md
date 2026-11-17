@@ -63,6 +63,9 @@ session = mcp_connect("https://mcp.example.com/mcp";
 session = mcp_connect(StdioTransport(`my-server`))
 ```
 
+An HTTP server's URL names its MCP endpoint itself: a redirect is not followed, and the call fails
+naming the status, so the `headers` never reach another host.
+
 The do-block form automatically disconnects when done:
 
 ```julia

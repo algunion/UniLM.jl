@@ -39,6 +39,13 @@ DeepSeekEndpoint
 
 [`OllamaEndpoint`](@ref) and its options are on the [Ollama](@ref ollama_api) page.
 
+No request follows an HTTP redirect: a 3xx reply is a status like any other refusal, the verb's
+`*Failure` result with that status (an MCP session and a Realtime connection throw). Followed to
+another host, a redirect would carry a provider's own key header (`x-goog-api-key`, Azure's `api-key`,
+`x-api-key`) and an MCP server's custom headers there, as HTTP.jl removes only `Authorization`,
+`Cookie` and `Proxy-Authorization` when a redirect changes host. A `base_url` names the API itself,
+not an address that redirects to it.
+
 ## Configuration
 
 Each endpoint reads its configuration from environment variables:

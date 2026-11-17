@@ -189,17 +189,21 @@ function _unwrap_exception(e)
     end
 end
 
-# Header names whose VALUE is a credential. HTTP.jl masks only Authorization,
-# Proxy-Authorization and Cookie when it renders a request, so a provider that
-# authenticates with its own header — Gemini native `x-goog-api-key`, Azure
-# `api-key`, Anthropic's legacy `x-api-key` — has its key printed verbatim inside the
-# request dump that some transport exceptions carry in their message. Matches the
-# wire form (`name: value`) and the Julia pair form (`"name" => "value"`). The
-# leading `\b` holds a name to header position, so a longer word merely ENDING in
-# one (`reauthorization:`) is left alone; the alternation stays longest-first so the
-# leftmost match of `x-api-key` starts at its own `x`, not at its `api-key` tail.
-const _AUTH_HEADER_PATTERN =
-    r"(?i)\b(x-goog-api-key|x-api-key|api-key|proxy-authorization|authorization)(\"?\s*(?::|=>|=)\s*\"?)([^\r\n\"]*)"
+# Header names whose VALUE is a credential, lowercase: the standard ones and the providers' own (Gemini native
+# `x-goog-api-key`, Azure `api-key`, Anthropic's legacy `x-api-key`). The error-text mask below and the shows of
+# caller headers (`_redacted_headers`) read this one list.
+const _CREDENTIAL_HEADERS = ("x-goog-api-key", "x-api-key", "api-key", "proxy-authorization", "authorization", "cookie")
+
+# HTTP.jl masks only Authorization, Proxy-Authorization and Cookie when it renders
+# a request, so a provider that authenticates with its own header has its key
+# printed verbatim inside the request dump that some transport exceptions carry in
+# their message. Matches the wire form (`name: value`) and the Julia pair form
+# (`"name" => "value"`). The leading `\b` holds a name to header position, so a
+# longer word merely ENDING in one (`reauthorization:`) is left alone; the
+# alternation stays longest-first so the leftmost match of `x-api-key` starts at
+# its own `x`, not at its `api-key` tail.
+const _AUTH_HEADER_PATTERN = Regex("(?i)\\b(" * join(_CREDENTIAL_HEADERS, "|") *
+                                   ")(\"?\\s*(?::|=>|=)\\s*\"?)([^\\r\\n\"]*)")
 
 # Replace every auth-shaped header value with the same short, non-reversible
 # marker the endpoint `show` methods use.
@@ -291,9 +295,13 @@ end
 # The kwargs the seam imposes on HTTP.jl, after any caller kwargs so they win.
 # Every call is ONE attempt (the retry budget lives in _http_with_retries; the
 # library's own retry layer would multiply wire attempts behind its back), and
-# callers branch on the status instead of catching StatusError.
+# callers branch on the status instead of catching StatusError. A redirect is
+# that status too, never followed: HTTP.jl follows one by default and, when it
+# leads to another origin, drops only Authorization, Cookie and
+# Proxy-Authorization, so a provider's own key header (`_CREDENTIAL_HEADERS`) or
+# a caller's custom one would reach whatever host the Location names.
 _request_kwargs(cfg::RequestConfig, bound::Float64) =
-    (status_exception = false, retry = false, _native_timeout_kwargs(cfg, bound)...)
+    (status_exception = false, retry = false, redirect = false, _native_timeout_kwargs(cfg, bound)...)
 
 # Streams also pin HTTP/1.1. HTTP.jl negotiates HTTP/2 for https and then
 # multiplexes every concurrent call to a host over ONE connection with shared
@@ -302,7 +310,7 @@ _request_kwargs(cfg::RequestConfig, bound::Float64) =
 # (the official OpenAI and Anthropic SDKs also stream over HTTP/1.1 by default).
 # Non-streaming requests keep protocol negotiation (:auto).
 _open_kwargs(cfg::RequestConfig, bound::Float64) =
-    (status_exception = false, retry = false, protocol = :h1, _native_stream_kwargs(cfg, bound)...)
+    (status_exception = false, retry = false, redirect = false, protocol = :h1, _native_stream_kwargs(cfg, bound)...)
 
 # Phase attribution for a native TimeoutError operation label.
 _timeout_phase(operation::AbstractString)::Symbol =

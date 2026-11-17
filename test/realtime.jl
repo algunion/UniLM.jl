@@ -172,6 +172,42 @@ UniLM._realtime_upgraded(::Type{RTFailEndpoint}) = (sleep(_rt_fail_after[]); err
     end
 end
 
+# A Realtime endpoint keyed by a header of its own (Azure's `api-key`), at a peer that redirects the upgrade.
+struct RTRedirEndpoint <: UniLM.ServiceEndpoint end
+const _rt_redir_url = Ref("")
+UniLM._realtime_ws_url(::Type{RTRedirEndpoint}) = _rt_redir_url[]
+UniLM.auth_header(::Type{RTRedirEndpoint}) = ["api-key" => "SECRET-RT", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{RTRedirEndpoint}) = Set([:realtime])
+
+@testset "realtime_connect: a redirected upgrade fails, and the key stays at its origin" begin
+    # HTTP.jl followed a 3xx to another origin with every header but Authorization, Cookie and
+    # Proxy-Authorization, so the upgrade carried an `api-key` there.
+    landed = Pair{String,String}[]
+    guard = ReentrantLock()
+    target = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
+        @lock guard append!(landed, [String(k) => String(v) for (k, v) in req.headers])
+        HTTP.Response(200, "")
+    end
+    origin = HTTP.serve!(_ -> HTTP.Response(302, ["Location" => "http://127.0.0.1:$(HTTP.port(target))/landed"], ""),
+                         "127.0.0.1", 0; verbose=false)
+    _rt_redir_url[] = "ws://127.0.0.1:$(HTTP.port(origin))"
+    try
+        t = Threads.@spawn try
+            realtime_connect(_ -> error("the handler must never run"); service=RTRedirEndpoint,
+                             config=RequestConfig(connect_timeout=5.0, total_deadline=Inf))
+        catch e
+            e
+        end
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        @test fetch(t) isa Exception
+        @test [k for (k, v) in landed if occursin("SECRET", v)] == String[]
+        @test isempty(landed)
+    finally
+        close(origin)
+        close(target)
+    end
+end
+
 # A client-secret endpoint whose 200 body the test chooses.
 struct RTSecretEndpoint <: UniLM.ServiceEndpoint end
 const _rt_secret_base = Ref("")

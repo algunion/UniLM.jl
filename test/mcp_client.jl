@@ -2872,6 +2872,33 @@ end
     @test occursin("tools=1", ss)
 end
 
+@testset "HTTP transport: a redirect is the server's answer; the caller's headers never follow it" begin
+    # Credentials travel as caller headers of any name, and HTTP.jl followed a 3xx to another origin with every one
+    # but Authorization, Cookie and Proxy-Authorization.
+    landed = Pair{String,String}[]
+    guard = ReentrantLock()
+    target, target_url = _mcp_http_fixture(function (req)
+        @lock guard append!(landed, [String(k) => String(v) for (k, v) in req.headers])
+        HTTP.Response(200, ["Content-Type" => "application/json"], "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}")
+    end)
+    origin, origin_url = _mcp_http_fixture(_ -> HTTP.Response(307, ["Location" => target_url * "/mcp"], ""))
+    t = UniLM.HTTPTransport(origin_url * "/mcp"; headers=["X-Api-Token" => "SECRET-MCP", "api-key" => "SECRET-KEY"])
+    try
+        UniLM._transport_connect!(t)
+        e = try
+            UniLM._transport_send!(t, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}")
+        catch x
+            x
+        end
+        @test e isa ErrorException && occursin("status 307", e.msg)
+        @test [k for (k, v) in landed if occursin("SECRET", v)] == String[]
+        @test isempty(landed)
+    finally
+        close(origin)
+        close(target)
+    end
+end
+
 @testset "call_tool accepts the natural Dict literal" begin
     # `Dict("path" => "/x")` infers Dict{String,String}, so a signature demanding
     # Dict{String,Any} MethodErrors on the exact form the docs show. Arguments are

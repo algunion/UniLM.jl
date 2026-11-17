@@ -3291,6 +3291,8 @@ wire — see [Streaming](@ref streaming_guide).
 **Credentials never reach a result value.** API keys and request bodies are
 redacted from the `error` strings these types carry, and a `*CallError`'s
 `cause` is named by type rather than dumped when the result is displayed.
+**Nor another host:** no request follows a redirect; a 3xx reply is the verb's
+failure, with its status.
 
 **Standard pattern-matching idiom**:
 

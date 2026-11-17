@@ -94,6 +94,7 @@ include("fine_tuning.jl")
 include("webhooks.jl")
 include("safety.jl")
 include("containers.jl")
+include("skills.jl")
 include("uploads.jl")
 include("realtime.jl")
 include("tool_loop.jl")
@@ -605,6 +606,30 @@ export
     retrieve_container_file,
     container_file_content,
     delete_container_file
+
+# ─── Skills API ───────────────────────────────────────────────────────────────
+export
+    SkillObject,
+    SkillVersionObject,
+    SkillList,
+    SkillVersionList,
+    SkillSuccess,
+    SkillListSuccess,
+    SkillVersionSuccess,
+    SkillVersionListSuccess,
+    SkillDeleteSuccess,
+    SkillFailure,
+    SkillCallError,
+    create_skill,
+    list_skills,
+    retrieve_skill,
+    update_skill,
+    delete_skill,
+    skill_content,
+    create_skill_version,
+    list_skill_versions,
+    retrieve_skill_version,
+    delete_skill_version
 
 # ─── Uploads API ──────────────────────────────────────────────────────────────
 export

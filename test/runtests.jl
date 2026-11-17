@@ -228,6 +228,10 @@ end
         include("containers.jl")
     end
 
+    @testset "skills" begin
+        include("skills.jl")
+    end
+
     @testset "conversations" begin
         include("conversations.jl")
     end

@@ -58,11 +58,13 @@ UniLM.provider_capabilities(::Type{_RealtimeOnly}) = Set([:realtime])
     has(cap) = [has_capability(s, cap) for s in builtins]
     # `speak` reaches an OpenAI Realtime session, Gemini TTS on the native endpoint and Ollama's speech route,
     # and no other endpoint; `respond` the Responses API of OpenAI, Ollama and a generic server, and Gemini
-    # Interactions; `transcribe` OpenAI's Audio API route, which Ollama and a generic server serve too.
+    # Interactions; `transcribe` OpenAI's Audio API route, which Ollama and a generic server serve too, and
+    # Gemini's generateContent.
     @test (speech = has(:speech) == [s === OPENAIServiceEndpoint || s === GEMINIServiceEndpoint || s isa OllamaEndpoint
                                      for s in builtins],
            agentic = has(:agentic) == (has(:responses) .| [s === GEMINIServiceEndpoint for s in builtins]),
-           audio = has(:audio) == has(:transcription)) == (speech = true, agentic = true, audio = true)
+           audio = has(:transcription) == (has(:audio) .| [s === GEMINIServiceEndpoint for s in builtins])) ==
+          (speech = true, agentic = true, audio = true)
     # `speak` refuses, before any request, an endpoint that declares its capabilities without `:speech`.
     err = try speak("hi"; service=_RealtimeOnly) catch e; e end
     @test err isa ArgumentError && startswith(err.msg, "speak (OpenAI Realtime API) is not supported by _RealtimeOnly")

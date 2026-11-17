@@ -17,7 +17,8 @@ Standard capability symbols include:
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
 - Files ([`upload_file`](@ref) and its family): `:files` (OpenAI, Anthropic, Gemini); Gemini's
   [`register_files`](@ref): `:file_registration`
-- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`
+- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`; native Gemini transcribes
+  through `generateContent`
 - Translation ([`translate`](@ref)): `:realtime` (OpenAI's Realtime translation sessions); on Ollama,
   `:audio` (its translation route)
 - Speech ([`speak`](@ref)): `:speech` (OpenAI, through a Realtime session; native Gemini, through

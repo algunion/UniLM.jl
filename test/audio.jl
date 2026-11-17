@@ -1148,3 +1148,337 @@ end
         @test timedwait(() -> istaskdone(call), 15.0) === :ok
     end
 end
+
+# ─── OpenAI transcription options, typed segments and words, and streaming ───
+
+# An OpenAI-wire transcription endpoint served by `_with_scripted`, held to OpenAI's own rules.
+struct OpenAIAudioProbe <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::Type{OpenAIAudioProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{OpenAIAudioProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{OpenAIAudioProbe}) = Set([:transcription])
+UniLM._check_transcription(::Type{OpenAIAudioProbe}, t::UniLM.TranscriptionRequest) =
+    UniLM._check_transcription(OPENAIServiceEndpoint, t)
+
+# The values a multipart body gives the field `name`, in order (the file part excluded).
+function _mp_values(body::AbstractString, name::String)::Vector{String}
+    vals = String[]
+    for part in split(body, "\r\n--")
+        i = findfirst("\r\n\r\n", part)
+        i === nothing && continue
+        head = part[1:first(i)-1]
+        occursin("name=\"$name\"", head) && !occursin("filename=", head) && push!(vals, String(part[last(i)+1:end]))
+    end
+    vals
+end
+
+# Server-sent events as OpenAI streams them (each payload, then [DONE]).
+_sse(payloads...) = HTTP.Response(200, ["Content-Type" => "text/event-stream; charset=utf-8"],
+    Vector{UInt8}(join(("data: " * (p isa AbstractString ? p : JSON.json(p)) * "\n\n" for p in (payloads..., "[DONE]")))))
+_tdelta(d; kw...) = Dict{String,Any}("type" => "transcript.text.delta", "delta" => d, (String(k) => v for (k, v) in kw)...)
+_tdone(text; kw...) = Dict{String,Any}("type" => "transcript.text.done", "text" => text, (String(k) => v for (k, v) in kw)...)
+_tseg(id, text, speaker, s, e) = Dict{String,Any}("type" => "transcript.text.segment", "id" => id, "text" => text,
+                                                  "speaker" => speaker, "start" => s, "end" => e)
+const _T_USAGE = Dict{String,Any}("type" => "tokens", "input_tokens" => 14, "output_tokens" => 8, "total_tokens" => 22,
+                                  "input_token_details" => Dict{String,Any}("text_tokens" => 0, "audio_tokens" => 14))
+
+@testset "OpenAI transcription options go out as OpenAI reads them" begin
+    ref = "data:audio/wav;base64,UklGRg=="
+    vad = TranscriptionVAD(threshold=0.4, silence_duration_ms=150)
+    r, seen = _with_scripted((_, _) -> _json(200, "{\"text\":\"ok\"}")) do
+        transcribe(_SP_WAV; service=OpenAIAudioProbe, model="gpt-4o-transcribe-diarize", include=["logprobs"],
+                   chunking_strategy=vad, known_speaker_names=["agent", "customer"],
+                   known_speaker_references=[ref, _SP_WAV])
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == "ok"
+    body = only(seen).body
+    @test _mp_values(body, "include[]") == ["logprobs"]
+    # One field holding the VadConfig's JSON: OpenAI ignores the bracketed fields a form gives other objects.
+    @test JSON.parse(only(_mp_values(body, "chunking_strategy"))) ==
+          Dict("type" => "server_vad", "threshold" => 0.4, "silence_duration_ms" => 150)
+    @test isempty(_mp_values(body, "chunking_strategy[type]"))
+    @test _mp_values(body, "known_speaker_names[]") == ["agent", "customer"]
+    @test _mp_values(body, "known_speaker_references[]") ==
+          [ref, "data:audio/wav;base64," * base64encode(read(_SP_WAV))]       # a path goes as its data URL
+    @test isempty(_mp_values(body, "stream")) && isempty(_mp_values(body, "timestamp_granularities[]"))
+    r2, seen2 = _with_scripted((_, _) -> _json(200, "{\"text\":\"ok\"}")) do
+        transcribe(_SP_WAV; service=OpenAIAudioProbe, model="whisper-1", response_format="verbose_json",
+                   timestamp_granularities=["word", "segment"], chunking_strategy="auto")
+    end
+    @test r2 isa TranscriptionSuccess
+    @test _mp_values(only(seen2).body, "timestamp_granularities[]") == ["word", "segment"]
+    @test _mp_values(only(seen2).body, "chunking_strategy") == ["auto"]
+    # A generic server takes every field as given: OpenAI's own rules are OpenAI's.
+    _, seen3 = _with_scripted((_, _) -> _json(200, "{\"text\":\"ok\"}")) do
+        transcribe(_SP_WAV; service=GenericOpenAIEndpoint(_url_probe_base[], ""), model="m",
+                   timestamp_granularities=["word"])
+    end
+    @test _mp_values(only(seen3).body, "timestamp_granularities[]") == ["word"]
+end
+
+@testset "OpenAI transcription options are refused before any request where OpenAI refuses or ignores them" begin
+    refusal(f) = try f(); nothing catch x; x end
+    req(; kw...) = TranscriptionRequest(; file=_SP_WAV, kw...)
+    for (kw, says) in ((; include=["bogus"]) => "include takes one or more of \"logprobs\"",
+                       (; include=String[]) => "include takes",
+                       (; timestamp_granularities=["char"]) => "timestamp_granularities takes one or more of \"word\", \"segment\"",
+                       (; chunking_strategy="manual") => "chunking_strategy is \"auto\" or a TranscriptionVAD",
+                       (; known_speaker_names=["a"]) => "go together, one reference per name; got 1 names and 0 references",
+                       (; known_speaker_names=["a", "b"], known_speaker_references=["data:x"]) => "got 2 names and 1 references",
+                       (; known_speaker_names=fill("a", 5), known_speaker_references=fill("data:x", 5)) => "1 to 4",
+                       (; known_speaker_names=[" "], known_speaker_references=["data:x"]) => "name is blank",
+                       (; known_speaker_names=["a"], known_speaker_references=["/no/such/clip.wav"]) => "is neither",
+                       (; mode="fast") => "mode is \"verbatim\" or \"smart\"",
+                       (; source_text="Hi") => "set mode = \"smart\" with it")
+        e = refusal(() -> req(; kw...))
+        @test e isa ArgumentError && occursin(says, e.msg)
+    end
+    for (kw, says) in (((; threshold=1.5), "from 0.0 to 1.0"), ((; prefix_padding_ms=-1), "≥ 0"),
+                       ((; silence_duration_ms=-5), "≥ 0"))
+        e = refusal(() -> TranscriptionVAD(; kw...))
+        @test e isa ArgumentError && occursin(says, e.msg)
+    end
+    # OpenAI's rules: timestamps with verbose_json only (with json it answers without them); whisper-1 does not stream.
+    _, seen = _with_scripted((_, _) -> _json(200, "{\"text\":\"x\"}")) do
+        e1 = refusal(() -> transcribe(_SP_WAV; service=OpenAIAudioProbe, timestamp_granularities=["word"]))
+        @test e1 isa ArgumentError && occursin("only with response_format=\"verbose_json\"", e1.msg)
+        e2 = refusal(() -> transcribe(_SP_WAV; service=OpenAIAudioProbe, model="whisper-1", stream=true))
+        @test e2 isa ArgumentError && occursin("whisper-1 does not stream", e2.msg)
+        # Gemini's options on an OpenAI-wire route.
+        for kw in ((; diarization=true), (; mode="smart"), (; mode="smart", source_text="x"))
+            e3 = refusal(() -> transcribe(_SP_WAV; service=OpenAIAudioProbe, kw...))
+            @test e3 isa ArgumentError && occursin("options of Gemini's transcription", e3.msg) &&
+                  occursin("gpt-4o-transcribe-diarize", e3.msg)
+        end
+        e4 = refusal(() -> transcribe(_SP_WAV; service=OpenAIAudioProbe, callback=(_, _) -> nothing))
+        @test e4 isa ArgumentError && occursin("set stream = true", e4.msg)
+    end
+    @test isempty(seen)
+    @test UniLM._check_transcription(OPENAIServiceEndpoint, req(timestamp_granularities=["word"],
+                                     response_format="verbose_json", model="whisper-1")) === nothing
+    # Ollama lists none of them but `stream`.
+    ollama = OllamaEndpoint()
+    for kw in ((; include=["logprobs"]), (; timestamp_granularities=["word"]), (; chunking_strategy="auto"),
+               (; known_speaker_names=["a"], known_speaker_references=["data:x"]), (; diarization=true))
+        e = refusal(() -> UniLM._check_transcription(ollama, req(; service=ollama, model="gemma4:e4b", kw...)))
+        @test e isa ArgumentError && occursin("Ollama's OpenAI-compatibility page lists no", e.msg)
+    end
+    @test UniLM._check_transcription(ollama, req(; service=ollama, model="gemma4:e4b", stream=true)) === nothing
+end
+
+@testset "OpenAI transcription replies: verbose and diarized segments and words are typed" begin
+    verbose = """{"task":"transcribe","language":"english","duration":1.48,"text":"The secret word is banana.",
+      "segments":[{"id":0,"seek":0,"start":0.0,"end":1.16,"text":" The secret word is banana.","tokens":[50364],
+      "temperature":0.0,"avg_logprob":-0.58,"compression_ratio":0.81,"no_speech_prob":0.005}],
+      "words":[{"word":"The","start":0,"end":0.2},{"word":"banana","start":0.98,"end":1.16}],
+      "usage":{"type":"duration","seconds":2}}"""
+    r, _ = _with_scripted((_, _) -> _json(200, verbose)) do
+        transcribe(_SP_WAV; service=OpenAIAudioProbe, model="whisper-1", response_format="verbose_json",
+                   timestamp_granularities=["word", "segment"])
+    end
+    @test r isa TranscriptionSuccess && r.raw["usage"]["seconds"] == 2
+    @test r.segments == [TranscriptSegment(text=" The secret word is banana.", start_time=0.0, end_time=1.16, id=0)]
+    @test r.words == [TranscriptWord(text="The", start_time=0.0, end_time=0.2),
+                      TranscriptWord(text="banana", start_time=0.98, end_time=1.16)]
+    @test r.words[1].start_time isa Float64
+    diarized = """{"text":"Hello, Jane. Hi Joe.","task":"transcribe","duration":4.92,"segments":[
+      {"type":"transcript.text.segment","text":" Hello, Jane.","speaker":"A","start":0.0,"end":1.05,"id":"seg_0"},
+      {"type":"transcript.text.segment","text":" Hi Joe.","speaker":"B","start":1.9,"end":2.7,"id":"seg_1"}],
+      "usage":{"type":"tokens","total_tokens":240,"input_tokens":49,"output_tokens":191}}"""
+    d, _ = _with_scripted((_, _) -> _json(200, diarized)) do
+        transcribe(_SP_WAV; service=OpenAIAudioProbe, model="gpt-4o-transcribe-diarize", response_format="diarized_json")
+    end
+    @test d isa TranscriptionSuccess && isempty(d.words)
+    @test d.segments == [TranscriptSegment(text=" Hello, Jane.", start_time=0.0, end_time=1.05, speaker="A", id="seg_0"),
+                         TranscriptSegment(text=" Hi Joe.", start_time=1.9, end_time=2.7, speaker="B", id="seg_1")]
+    # A segment without its start, or words that are not a list, are a malformed reply, never a guess.
+    for bad in ("""{"text":"x","segments":[{"id":"s","text":"x","end":1.0}]}""", """{"text":"x","words":{"word":"x"}}""",
+                """{"text":"x","segments":[{"id":1.5,"text":"x","start":0,"end":1}]}""")
+        b, _ = _with_scripted((_, _) -> _json(200, bad)) do
+            transcribe(_SP_WAV; service=OpenAIAudioProbe)
+        end
+        @test b isa UniLM.AudioCallError
+    end
+    # The two-field constructor still builds, with no segments or words.
+    two = TranscriptionSuccess("x", nothing)
+    @test (two.text, two.raw, two.segments, two.words) == ("x", nothing, TranscriptSegment[], TranscriptWord[])
+end
+
+@testset "a streamed transcription: its deltas reach the callback, and its done event is the result" begin
+    reply = _sse(_tdelta("The"), _tdelta(" secret", logprobs=[Dict("token" => " secret", "logprob" => -0.1, "bytes" => [32])]),
+                 _tdelta(" word."), _tdone("The secret word.", usage=_T_USAGE, languages=[Dict("code" => "en")],
+                                         logprobs=[Dict("token" => "The", "logprob" => 0.0, "bytes" => [84])]))
+    heard = Any[]
+    task, seen = _with_scripted((_, _) -> reply) do
+        t = transcribe(_SP_WAV; service=OpenAIAudioProbe, stream=true, include=["logprobs"],
+                       callback=(c, _) -> push!(heard, c))
+        t isa Task ? fetch(t) : t
+    end
+    @test task isa TranscriptionSuccess
+    @test transcript_text(task) == "The secret word." && heard == ["The", " secret", " word."]
+    @test task.raw["usage"] == _T_USAGE && task.raw["languages"] == [Dict("code" => "en")] && length(task.raw["logprobs"]) == 1
+    @test _mp_values(only(seen).body, "stream") == ["true"] && _mp_values(only(seen).body, "include[]") == ["logprobs"]
+    # A diarized stream: segments, no deltas.
+    seg_reply = _sse(_tseg("seg_0", " Hello,", "A", 0.0, 0.55), _tseg("seg_1", " Hi Joe.", "B", 1.8, 2.6),
+                     _tdone("Hello, Hi Joe.", usage=_T_USAGE))
+    heard2 = Any[]
+    d, _ = _with_scripted((_, _) -> seg_reply) do
+        fetch(transcribe(_SP_WAV; service=OpenAIAudioProbe, model="gpt-4o-transcribe-diarize", stream=true,
+                         response_format="diarized_json", chunking_strategy="auto", callback=(c, _) -> push!(heard2, c)))
+    end
+    want = [TranscriptSegment(text=" Hello,", start_time=0.0, end_time=0.55, speaker="A", id="seg_0"),
+            TranscriptSegment(text=" Hi Joe.", start_time=1.8, end_time=2.6, speaker="B", id="seg_1")]
+    @test d isa TranscriptionSuccess && d.segments == want && heard2 == want
+    # No callback: the stream still yields the result.
+    n, _ = _with_scripted((_, _) -> reply) do
+        fetch(transcribe(TranscriptionRequest(file=_SP_WAV, service=OpenAIAudioProbe, stream=true)))
+    end
+    @test n isa TranscriptionSuccess && transcript_text(n) == "The secret word."
+end
+
+@testset "a streamed transcription's failures are typed, and its usage prices as the unstreamed reply's" begin
+    run(reply; kw...) = first(_with_scripted(reply) do
+        fetch(transcribe(_SP_WAV; service=OpenAIAudioProbe, stream=true, kw...))
+    end)
+    # An error the stream carries (Ollama's mid-stream failure) is the provider's failure; no status.
+    e = run((_, _) -> _sse(_tdelta("The"), Dict("error" => Dict("message" => "model crashed", "code" => 500))))
+    @test e isa UniLM.AudioFailure && e.status === nothing && occursin("model crashed", e.response)
+    # A stream that ends before its done event, and one whose done event lacks the text, hold no transcript.
+    for reply in (_sse(_tdelta("The")), _sse(_tdelta("The"), Dict("type" => "transcript.text.done")))
+        c = run((_, _) -> reply)
+        @test c isa UniLM.AudioCallError && occursin("ended before its transcript.text.done", c.error)
+    end
+    # A status before the stream: an AudioFailure, a transient one sent again.
+    f = run((_, _) -> _json(400, "{\"error\":{\"message\":\"bad\"}}"))
+    @test f isa UniLM.AudioFailure && f.status == 400 && occursin("bad", f.response)
+    ok, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}") : _sse(_tdone("x", usage=_T_USAGE))) do
+        fetch(transcribe(_SP_WAV; service=OpenAIAudioProbe, stream=true, config=RequestConfig(max_attempts=2, total_deadline=60.0)))
+    end
+    @test ok isa TranscriptionSuccess && length(seen) == 2 && all(q -> _mp_values(q.body, "stream") == ["true"], seen)
+    # The close flag stops the call; a callback's exception is its cause.
+    stopped = run((_, _) -> _sse(_tdelta("a"), _tdelta("b"), _tdone("ab")); callback=(_, close) -> (close[] = true))
+    @test stopped isa UniLM.AudioCallError && stopped.cause isa UniLMCancelled && stopped.cause.source === :callback
+    boom = run((_, _) -> _sse(_tdelta("a"), _tdone("a")); callback=(_, _) -> error("callback failed"))
+    @test boom isa UniLM.AudioCallError && boom.cause isa ErrorException && occursin("callback failed", boom.error)
+    # The usage: unpriced streamed and unstreamed alike — the same object in raw, and the same refusal.
+    s = run((_, _) -> _sse(_tdone("x", usage=_T_USAGE)))
+    u, _ = _with_scripted((_, _) -> _json(200, JSON.json(Dict("text" => "x", "usage" => _T_USAGE)))) do
+        transcribe(_SP_WAV; service=OpenAIAudioProbe)
+    end
+    @test s isa TranscriptionSuccess && u isa TranscriptionSuccess && s.raw["usage"] == u.raw["usage"] == _T_USAGE
+    for r in (s, u)
+        @test_throws ArgumentError token_usage(r)
+        @test_throws ArgumentError estimated_cost(r)
+    end
+end
+
+# ─── Gemini transcription (generateContent on gemini-3.5-transcribe) ─────────
+
+# Gemini's transcription served by `_with_scripted`, held to Gemini's rules and default.
+struct GeminiTranscribeProbe <: UniLM.ServiceEndpoint end
+UniLM._transcription_wire(::Type{GeminiTranscribeProbe}) = UniLM._GeminiTranscriptionWire()
+UniLM._gemini_speech_base(::Type{GeminiTranscribeProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{GeminiTranscribeProbe}) = ["x-goog-api-key" => "test-key", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{GeminiTranscribeProbe}) = Set([:transcription])
+UniLM._check_transcription(::Type{GeminiTranscribeProbe}, t::UniLM.TranscriptionRequest) =
+    UniLM._check_transcription(GEMINIServiceEndpoint, t)
+UniLM._default_transcription_model(::Type{GeminiTranscribeProbe}) = UniLM._default_transcription_model(GEMINIServiceEndpoint)
+
+# A transcription reply as gemini-3.5-transcribe gave it (2026-11-17): one part per speaker turn.
+_gt_turn(text; speaker=nothing, words=nothing) = Dict{String,Any}("text" => text, "audioTranscription" => Dict{String,Any}(
+    "text" => text, (isnothing(speaker) ? () : ("speakerLabel" => speaker,))...,
+    (isnothing(words) ? () : ("words" => [Dict("word" => w, "startOffset" => s, "endOffset" => e) for (w, s, e) in words],))...))
+_gt_reply(parts...; finish="STOP") = JSON.json(Dict(
+    "candidates" => [Dict("content" => Dict("role" => "model", "parts" => collect(Any, parts)), "finishReason" => finish, "index" => 0)],
+    "usageMetadata" => Dict("promptTokenCount" => 124, "candidatesTokenCount" => 14, "totalTokenCount" => 138),
+    "modelVersion" => "gemini-3.5-transcribe"))
+
+@testset "transcribe on Gemini: generateContent with the audio inline, its turns and words typed" begin
+    @test has_capability(GEMINIServiceEndpoint, :transcription)
+    @test UniLM._transcription_model(TranscriptionRequest(file=_SP_WAV, service=GEMINIServiceEndpoint)) == "gemini-3.5-transcribe"
+    @test UniLM._transcription_wire(GEMINIServiceEndpoint) isa UniLM._GeminiTranscriptionWire
+    reply = _gt_reply(_gt_turn("Hello, Jane."; speaker="spk:0", words=[("Hello,", "0.400s", "0.900s"), ("Jane.", "0.900s", "1.400s")]),
+                      _gt_turn("Hi, Joe."; speaker="spk:1", words=[("Hi,", "2.200s", "2.500s"), ("Joe.", "2.500s", "3s")]))
+    r, seen = _with_scripted((_, _) -> _json(200, reply)) do
+        transcribe(_SP_WAV; service=GeminiTranscribeProbe, languages=["en-US"], diarization=true,
+                   timestamp_granularities=["word"])
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == "Hello, Jane. Hi, Joe."
+    @test r.segments == [TranscriptSegment(text="Hello, Jane.", start_time=0.4, end_time=1.4, speaker="spk:0"),
+                         TranscriptSegment(text="Hi, Joe.", start_time=2.2, end_time=3.0, speaker="spk:1")]
+    @test r.words == [TranscriptWord(text="Hello,", start_time=0.4, end_time=0.9, speaker="spk:0"),
+                      TranscriptWord(text="Jane.", start_time=0.9, end_time=1.4, speaker="spk:0"),
+                      TranscriptWord(text="Hi,", start_time=2.2, end_time=2.5, speaker="spk:1"),
+                      TranscriptWord(text="Joe.", start_time=2.5, end_time=3.0, speaker="spk:1")]
+    @test r.raw["usageMetadata"]["totalTokenCount"] == 138
+    req = only(seen)
+    @test req.method == "POST" && req.target == "/models/gemini-3.5-transcribe:generateContent"
+    body = JSON.parse(req.body)
+    @test body["contents"] == [Dict("role" => "user", "parts" => [Dict("inlineData" =>
+        Dict("mimeType" => "audio/wav", "data" => base64encode(read(_SP_WAV))))])]
+    @test body["generationConfig"] == Dict("audioTranscriptionConfig" =>
+        Dict("languageCodes" => ["en-US"], "diarization" => true, "wordTimestamp" => true))
+    # Plain: no config at all; one turn without speaker or words.
+    p, seen2 = _with_scripted((_, _) -> _json(200, _gt_reply(Dict("audioTranscription" => Dict("text" => "The secret word is banana."))))) do
+        transcribe(_SP_WAV; service=GeminiTranscribeProbe, model="gemini-3.5-transcribe-001")
+    end
+    @test p isa TranscriptionSuccess && transcript_text(p) == "The secret word is banana." && isempty(p.words)
+    @test p.segments == [TranscriptSegment(text="The secret word is banana.")]
+    @test only(seen2).target == "/models/gemini-3.5-transcribe-001:generateContent"
+    @test !haskey(JSON.parse(only(seen2).body), "generationConfig")
+    # Smart mode with a source text; one language as a list; the keywords as custom vocabulary.
+    _, seen3 = _with_scripted((_, _) -> _json(200, _gt_reply(_gt_turn("x")))) do
+        transcribe(_SP_WAV; service=GeminiTranscribeProbe, mode="smart", source_text="Dear Ann,", language="en-GB",
+                   keywords=["UniLM"])
+    end
+    @test JSON.parse(only(seen3).body)["generationConfig"]["audioTranscriptionConfig"] ==
+          Dict("mode" => "SMART", "sourceText" => "Dear Ann,", "languageCodes" => ["en-GB"], "customVocabulary" => ["UniLM"])
+    # Unpriced, as every transcription is.
+    @test_throws ArgumentError token_usage(r)
+end
+
+@testset "transcribe on Gemini: what it does not take is refused before any request" begin
+    refusal(f) = try f(); nothing catch x; x end
+    cases = ((; prompt="x") => "takes no prompt", (; temperature=0.2) => "takes no temperature",
+             (; response_format="json") => "takes no response_format", (; include=["logprobs"]) => "takes no include",
+             (; chunking_strategy="auto") => "takes no chunking_strategy", (; stream=true) => "takes no stream",
+             (; known_speaker_names=["a"], known_speaker_references=["data:x"]) => "known_speaker_names, known_speaker_references",
+             (; timestamp_granularities=["segment"]) => "Gemini timestamps words only",
+             (; timestamp_granularities=["word", "segment"]) => "Gemini timestamps words only",
+             (; keywords=["a"], diarization=true) => "custom vocabulary (keywords) beside diarization",
+             (; keywords=["a"], timestamp_granularities=["word"]) => "custom vocabulary (keywords) beside diarization",
+             (; mode="smart", diarization=true) => "smart mode takes neither",
+             (; mode="smart", timestamp_granularities=["word"]) => "smart mode takes neither",
+             (; keywords=fill("w", 1001)) => "up to 1000 custom vocabulary terms")
+    _, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        for (kw, says) in cases
+            e = refusal(() -> transcribe(_SP_WAV; service=GeminiTranscribeProbe, kw...))
+            @test e isa ArgumentError && occursin(says, e.msg)
+        end
+    end
+    @test isempty(seen)
+    @test UniLM._check_transcription(GEMINIServiceEndpoint,
+        TranscriptionRequest(file=_SP_WAV, service=GEMINIServiceEndpoint, keywords=fill("w", 1000), mode="smart")) === nothing
+end
+
+@testset "transcribe on Gemini: unfinished, failed and malformed replies are typed" begin
+    run(status, reply; kw...) = first(_with_scripted((_, _) -> _json(status, reply)) do
+        transcribe(_SP_WAV; service=GeminiTranscribeProbe, kw...)
+    end)
+    for finish in ("MAX_TOKENS", "SAFETY")
+        f = run(200, _gt_reply(_gt_turn("cut"); finish))
+        @test f isa UniLM.AudioFailure && f.status == 200 && occursin(finish, f.response)
+    end
+    blocked = run(200, JSON.json(Dict("promptFeedback" => Dict("blockReason" => "OTHER"))))
+    @test blocked isa UniLM.AudioFailure && blocked.status == 200
+    @test run(400, "{\"error\":{\"code\":400}}") isa UniLM.AudioFailure
+    for bad in (_gt_reply(Dict("text" => "no transcription")),                       # a part that is no transcription
+                _gt_reply(_gt_turn("x"; words=[("x", "0.4", "1s")])),                  # an offset without its unit
+                _gt_reply(Dict("audioTranscription" => Dict("speakerLabel" => "spk:0"))),  # a turn without its text
+                JSON.json(Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("role" => "model"))])))
+        @test run(200, bad) isa UniLM.AudioCallError
+    end
+    ok, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}") : _json(200, _gt_reply(_gt_turn("x")))) do
+        transcribe(_SP_WAV; service=GeminiTranscribeProbe, config=RequestConfig(max_attempts=2, total_deadline=60.0))
+    end
+    @test ok isa TranscriptionSuccess && length(seen) == 2 && seen[1].body == seen[2].body
+end

@@ -364,6 +364,7 @@ end
 # https://ai.google.dev/gemini-api/docs/speech-generation. The base is a function so tests can
 # route their own endpoint types to a local server.
 
+# Gemini's audio models (TTS, and Transcribe for `transcribe`) answer on generateContent.
 _gemini_speech_base(::Type{GEMINIServiceEndpoint}) = GEMINI_NATIVE_BASE
 _gemini_speech_url(service, model::String)::String =
     _gemini_speech_base(service) * "/models/" * _uripart(model) * ":generateContent"
@@ -528,15 +529,53 @@ function _pcm16le(x::AbstractVector{<:Real})::Vector{UInt8}
     out
 end
 
-# ─── Transcription (multipart upload → text or JSON) ─────────────────────────
+# ─── Transcription (OpenAI-wire multipart upload; Gemini generateContent) ────
 
 const _TRANSCRIPTION_FORMATS = ("json", "text", "srt", "verbose_json", "vtt", "diarized_json")
+# OpenAI's CreateTranscriptionRequest enums: the `include` items and the timestamp granularities. An `include`
+# item other than "logprobs" is answered with HTTP 400 "Input should be 'logprobs'" (2026-11-17).
+const _TRANSCRIPTION_INCLUDES = ("logprobs",)
+const _TIMESTAMP_GRANULARITIES = ("word", "segment")
+# Gemini 3.5 Transcribe's two modes (https://ai.google.dev/gemini-api/docs/transcribe#transcription-modes).
+const _TRANSCRIPTION_MODES = ("verbatim", "smart")
+# "Up to 4 speakers are supported" (CreateTranscriptionRequest.known_speaker_names).
+const _KNOWN_SPEAKERS_MAX = 4
 
 """
-    TranscriptionRequest(; file, model=nothing, service=OPENAIServiceEndpoint)
+    TranscriptionVAD(; threshold=nothing, prefix_padding_ms=nothing, silence_duration_ms=nothing)
+
+Server-side voice activity detection that cuts a transcription's audio into chunks: OpenAI's
+`chunking_strategy` `{"type": "server_vad", …}`, given to [`TranscriptionRequest`](@ref) as
+`chunking_strategy` (the string `"auto"` lets the server choose the chunking). A field left
+`nothing` is the API's default: `threshold` (sensitivity, `0` to `1`; `0.5`), `prefix_padding_ms`
+(audio kept before detected speech; `300`) and `silence_duration_ms` (the silence that ends speech;
+`200`). A threshold outside `0 … 1` or a negative duration throws `ArgumentError`.
+"""
+struct TranscriptionVAD
+    threshold::Union{Float64,Nothing}
+    prefix_padding_ms::Union{Int,Nothing}
+    silence_duration_ms::Union{Int,Nothing}
+    function TranscriptionVAD(threshold::Union{Real,Nothing}, prefix_padding_ms::Union{Integer,Nothing},
+                              silence_duration_ms::Union{Integer,Nothing})
+        # OpenAI answers a threshold above 1 with HTTP 400 "Expected a value <= 1.0" (2026-11-17).
+        isnothing(threshold) || 0 <= threshold <= 1 || throw(ArgumentError(
+            "TranscriptionVAD threshold is a sensitivity from 0.0 to 1.0 (got $threshold)"))
+        for (name, ms) in (("prefix_padding_ms", prefix_padding_ms), ("silence_duration_ms", silence_duration_ms))
+            isnothing(ms) || ms >= 0 || throw(ArgumentError("TranscriptionVAD $name is a duration in milliseconds, ≥ 0 (got $ms)"))
+        end
+        new(threshold, prefix_padding_ms, silence_duration_ms)
+    end
+end
+TranscriptionVAD(; threshold::Union{Real,Nothing}=nothing, prefix_padding_ms::Union{Integer,Nothing}=nothing,
+                 silence_duration_ms::Union{Integer,Nothing}=nothing) =
+    TranscriptionVAD(threshold, prefix_padding_ms, silence_duration_ms)
+
+"""
+    TranscriptionRequest(; file, model=nothing, service=OPENAIServiceEndpoint, …)
 
 An audio transcription request. `file` is a path on disk. `model` left
-`nothing` is the service's default: `gpt-transcribe` for OpenAI; Ollama has none, so a
+`nothing` is the service's default: `gpt-transcribe` for OpenAI, `gemini-3.5-transcribe` for
+`GEMINIServiceEndpoint`; Ollama has none, so a
 request to it names an installed model that hears audio (e.g. `model="gemma4:e4b"`) or
 throws `ArgumentError` before any request, and so does a [`GenericOpenAIEndpoint`](@ref),
 whose request names the model its server serves. Optional
@@ -550,10 +589,36 @@ On OpenAI, `srt`, `vtt` and `verbose_json` (subtitles and timestamps) are docume
 for `whisper-1`, and `diarized_json` (speaker labels) only for `gpt-4o-transcribe-diarize`:
 deprecated models that shut down on February 26, 2027
 ([speech to text](https://developers.openai.com/api/docs/guides/speech-to-text)).
+
+OpenAI's further options ([create transcription](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create)):
+- `include`: `["logprobs"]` adds the tokens' log probabilities to the reply (`raw["logprobs"]`).
+- `timestamp_granularities`: `"word"` and/or `"segment"`, with `response_format = "verbose_json"`
+  only (OpenAI's rule: with `json` it answers without them); the reply's segments and words are
+  the result's [`TranscriptSegment`](@ref)s and [`TranscriptWord`](@ref)s.
+- `chunking_strategy`: `"auto"`, or a [`TranscriptionVAD`](@ref) with server VAD settings.
+- `known_speaker_names` and `known_speaker_references`: up to 4 speakers for a diarization model,
+  one reference each — an audio sample of 2 to 10 seconds, as a data URL (`data:audio/wav;base64,…`)
+  or a path to an audio file, which UniLM sends as one.
+- `stream = true`: [`transcribe`](@ref) streams the transcript (see there); `whisper-1` does not
+  stream ("Streaming is not supported for the whisper-1 model and will be ignored"), so a stream on
+  it throws `ArgumentError`.
+
+On `GEMINIServiceEndpoint` (`gemini-3.5-transcribe`, [audio transcription](https://ai.google.dev/gemini-api/docs/transcribe)):
+`languages` (or one `language`) are BCP-47 codes such as `"en-US"`; `keywords` are its custom
+vocabulary (up to 1,000 terms); `diarization = true` labels the speakers; `timestamp_granularities
+= ["word"]` adds word timestamps; `mode` is `"verbatim"` (the default) or `"smart"`, which removes
+disfluencies and formats the text, and `source_text`, in smart mode, is a text the audio edits.
+Gemini rejects custom vocabulary beside diarization or word timestamps, and smart mode beside
+either, so those combinations throw `ArgumentError`, as do the options Gemini's transcription
+does not take (`prompt`, `temperature`, `response_format`, `include`, `chunking_strategy`, known
+speakers, `stream`, segment timestamps). `diarization`, `mode` and `source_text` are Gemini's:
+any other service throws `ArgumentError` for them (on OpenAI, speaker labels come from
+`gpt-4o-transcribe-diarize` with `response_format = "diarized_json"`).
+
 Ollama's `/v1/audio/transcriptions` (Ollama 0.40.12 or later) reads one `language`, the
-`prompt`, `temperature` (any finite number; its default 0) and a `response_format` of `json`, `text` or
-`verbose_json`: a request to it that sets `languages`, `keywords` or another format throws
-`ArgumentError` before any request, in Ollama's words.
+`prompt`, `temperature` (any finite number; its default 0), `stream` and a `response_format` of
+`json`, `text` or `verbose_json`: a request to it that sets `languages`, `keywords`, another
+format or any of OpenAI's further options but `stream` throws `ArgumentError` before any request.
 Pass to [`transcribe`](@ref).
 """
 @kwdef struct TranscriptionRequest
@@ -566,8 +631,19 @@ Pass to [`transcribe`](@ref).
     temperature::Union{Float64,Nothing} = nothing
     languages::Union{Vector{String},Nothing} = nothing
     keywords::Union{Vector{String},Nothing} = nothing
+    include::Union{Vector{String},Nothing} = nothing
+    timestamp_granularities::Union{Vector{String},Nothing} = nothing
+    chunking_strategy::Union{String,TranscriptionVAD,Nothing} = nothing
+    known_speaker_names::Union{Vector{String},Nothing} = nothing
+    known_speaker_references::Union{Vector{String},Nothing} = nothing
+    stream::Bool = false
+    diarization::Bool = false
+    mode::Union{String,Nothing} = nothing
+    source_text::Union{String,Nothing} = nothing
     function TranscriptionRequest(service, file, model, language, prompt, response_format, temperature,
-                                  languages=nothing, keywords=nothing)
+                                  languages=nothing, keywords=nothing, include=nothing, timestamp_granularities=nothing,
+                                  chunking_strategy=nothing, known_speaker_names=nothing, known_speaker_references=nothing,
+                                  stream=false, diarization=false, mode=nothing, source_text=nothing)
         isfile(file) || throw(ArgumentError("file not found: $file"))
         isnothing(language) || isnothing(languages) || throw(ArgumentError("Set language or languages, not both"))
         if !isnothing(keywords) && any(k -> occursin(r"[<>\r\n]", k), keywords)
@@ -577,8 +653,48 @@ Pass to [`transcribe`](@ref).
             "response_format must be one of $(_TRANSCRIPTION_FORMATS); got $(repr(response_format))"))
         refusal = isnothing(temperature) ? nothing : _transcription_temperature_refusal(service, temperature)
         isnothing(refusal) || throw(ArgumentError(refusal))
-        new(service, file, model, language, prompt, response_format, temperature, languages, keywords)
+        _check_listed("include", include, _TRANSCRIPTION_INCLUDES)
+        _check_listed("timestamp_granularities", timestamp_granularities, _TIMESTAMP_GRANULARITIES)
+        chunking_strategy isa AbstractString && chunking_strategy != "auto" && throw(ArgumentError(
+            "chunking_strategy is \"auto\" or a TranscriptionVAD (server VAD settings); got $(repr(chunking_strategy))"))
+        _check_known_speakers(known_speaker_names, known_speaker_references)
+        isnothing(mode) || mode in _TRANSCRIPTION_MODES || throw(ArgumentError(
+            "mode is \"verbatim\" or \"smart\" (Gemini's transcription modes); got $(repr(mode))"))
+        # "When provided in SMART mode, the model evaluates the audio input against this text"
+        # (AudioTranscriptionConfig.sourceText, Gemini API reference).
+        isnothing(source_text) || mode == "smart" || throw(ArgumentError(
+            "source_text is the text a smart transcription edits: set mode = \"smart\" with it"))
+        new(service, file, model, language, prompt, response_format, temperature, languages, keywords, include,
+            timestamp_granularities, chunking_strategy, known_speaker_names, known_speaker_references, stream,
+            diarization, mode, source_text)
     end
+end
+
+# A list option whose items come from a fixed set; an empty list asks for nothing and is refused too.
+function _check_listed(name::String, items, allowed::Tuple)::Nothing
+    isnothing(items) && return nothing
+    (!isempty(items) && all(in(allowed), items)) || throw(ArgumentError(
+        "$name takes one or more of $(join(repr.(allowed), ", ")); got $(repr(items))"))
+    nothing
+end
+
+# Known speakers come in pairs, a name and its reference, at most four: "Optional list of speaker names that
+# correspond to the audio samples provided in `known_speaker_references[]` … Up to 4 speakers are supported".
+# A reference is a data URL or a path to an audio file, sent as one (`_speaker_reference`).
+function _check_known_speakers(names, refs)::Nothing
+    isnothing(names) && isnothing(refs) && return nothing
+    (isnothing(names) || isnothing(refs) || length(names) != length(refs)) && throw(ArgumentError(
+        "known_speaker_names and known_speaker_references go together, one reference per name; got " *
+        "$(something(names, String[]) |> length) names and $(something(refs, String[]) |> length) references"))
+    1 <= length(names) <= _KNOWN_SPEAKERS_MAX || throw(ArgumentError(
+        "known speakers: 1 to $_KNOWN_SPEAKERS_MAX (got $(length(names)))"))
+    any(n -> isempty(strip(n)), names) && throw(ArgumentError("a known speaker's name is blank"))
+    for r in refs
+        startswith(r, "data:") || isfile(r) || throw(ArgumentError(
+            "a known speaker reference is a data URL (data:audio/wav;base64,…) or a path to an audio file; " *
+            "$(repr(first(r, 40))) is neither"))
+    end
+    nothing
 end
 
 # The temperatures a transcription route takes: OpenAI's reference gives 0 to 1; Ollama's route parses any number
@@ -601,12 +717,42 @@ _default_transcription_model(::GenericOpenAIEndpoint) = throw(ArgumentError(
 # `@something` evaluates the default only when no model is named.
 _transcription_model(t::TranscriptionRequest)::String = @something(t.model, _default_transcription_model(t.service))
 
-# What a service's transcription route cannot carry, refused before any request.
-_check_transcription(_, ::TranscriptionRequest) = nothing
+# The options a request sets, of those named: a value given, or a flag set.
+_options_set(t::TranscriptionRequest, names)::Vector{String} =
+    String[String(n) for n in names if (v = getfield(t, n); !(isnothing(v) || v === false))]
+
+# What a service's transcription route cannot carry, refused before any request. Every OpenAI-wire route
+# takes the multipart fields as given; diarization, mode and source_text are Gemini's
+# (AudioTranscriptionConfig), which no OpenAI-wire route has.
+const _GEMINI_TRANSCRIPTION_ONLY = (:diarization, :mode, :source_text)
+function _check_transcription(service, t::TranscriptionRequest)
+    set = _options_set(t, _GEMINI_TRANSCRIPTION_ONLY)
+    isempty(set) || throw(ArgumentError(
+        "$(join(set, ", ")): options of Gemini's transcription (service=GEMINIServiceEndpoint), which " *
+        "$(_service_name(service)) does not take; on OpenAI, speaker labels come from the model " *
+        "gpt-4o-transcribe-diarize with response_format=\"diarized_json\""))
+    nothing
+end
+# OpenAI's own rules (https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create):
+# "`response_format` must be set `verbose_json` to use timestamp granularities" — with json, gpt-transcribe answered
+# 200 without timestamps (2026-11-17) — and "Streaming is not supported for the whisper-1 model and will be
+# ignored": whisper-1 answered stream=true with its JSON (2026-11-17). Neither is left to the server to ignore.
+function _check_transcription(service::Type{OPENAIServiceEndpoint}, t::TranscriptionRequest)
+    invoke(_check_transcription, Tuple{Any,TranscriptionRequest}, service, t)
+    isnothing(t.timestamp_granularities) || t.response_format == "verbose_json" || throw(ArgumentError(
+        "OpenAI returns timestamp_granularities only with response_format=\"verbose_json\" (got " *
+        "$(repr(t.response_format))): set it, on a model that answers it (whisper-1)"))
+    t.stream && _model_family(_transcription_model(t), "whisper-1") && throw(ArgumentError(
+        "whisper-1 does not stream (OpenAI: \"Streaming is not supported for the whisper-1 model and will be " *
+        "ignored\"): unset stream, or stream gpt-transcribe"))
+    nothing
+end
 # Ollama's route (0.40.12 or later) takes one `language` and no `keywords` — its OpenAI-compatibility page lists
 # file, model, language, prompt, response_format, temperature and stream — and answers a format other than json,
 # text and verbose_json with HTTP 400 (server/transcription.go); each is refused in Ollama's words.
 const _OLLAMA_TRANSCRIPTION_FORMATS = ("json", "text", "verbose_json")
+const _OLLAMA_TRANSCRIPTION_UNLISTED = (:include, :timestamp_granularities, :chunking_strategy, :known_speaker_names,
+                                        :known_speaker_references, _GEMINI_TRANSCRIPTION_ONLY...)
 function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
     isnothing(t.languages) || throw(ArgumentError(
         "Ollama's transcription takes one `language`, an \"ISO 639-1 code such as `fr`, or an English language " *
@@ -615,6 +761,10 @@ function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
     isnothing(t.keywords) || throw(ArgumentError(
         "Ollama's OpenAI-compatibility page lists no `keywords` for transcription (it lists file, model, language, " *
         "prompt, response_format, temperature and stream): remove them"))
+    set = _options_set(t, _OLLAMA_TRANSCRIPTION_UNLISTED)
+    isempty(set) || throw(ArgumentError(
+        "Ollama's OpenAI-compatibility page lists no $(join(set, ", ")) for transcription (it lists file, model, " *
+        "language, prompt, response_format, temperature and stream): remove them"))
     fmt = t.response_format
     isnothing(fmt) || fmt in _OLLAMA_TRANSCRIPTION_FORMATS || throw(ArgumentError(
         "Ollama answers HTTP 400 \"response_format $(repr(fmt)) is not supported, use json, text or verbose_json\": " *
@@ -639,11 +789,90 @@ function _ollama_audio_json(resp::HTTP.Response)::Bool
           "the audio replies of Ollama 0.40.12 or later")
 end
 
-"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript or translation (via [`transcript_text`](@ref)), `raw` the parsed JSON a transcription or Ollama translation reply carried (`nothing` for a text reply and for an OpenAI Realtime translation)."
+"""
+    TranscriptSegment(; text, start_time=nothing, end_time=nothing, speaker=nothing, id=nothing)
+
+A stretch of a transcript: its `text`, its start and end in seconds from the start of the audio
+(`nothing` where the reply gives none), the `speaker` it is attributed to, and the provider's `id`
+for it. From OpenAI, a `verbose_json` reply's segments (`id` an integer index; no speaker), a
+`diarized_json` reply's and a streamed diarization's `transcript.text.segment` events (`id` such as
+`"seg_0"`, `speaker` such as `"A"`, or a name from `known_speaker_names`); from Gemini, each part of
+its transcription, one per speaker turn with diarization (`speaker` such as `"spk:0"`), whose start
+and end are those of its first and last word when word timestamps were asked for.
+"""
+@kwdef struct TranscriptSegment
+    text::String
+    start_time::Union{Float64,Nothing} = nothing
+    end_time::Union{Float64,Nothing} = nothing
+    speaker::Union{String,Nothing} = nothing
+    id::Union{String,Int,Nothing} = nothing
+end
+
+"""
+    TranscriptWord(; text, start_time=nothing, end_time=nothing, speaker=nothing)
+
+One recognized word and its start and end in seconds from the start of the audio: OpenAI's
+`verbose_json` words (`timestamp_granularities` including `"word"`), Gemini's word timestamps
+(`timestamp_granularities = ["word"]`), which carry the `speaker` of their turn with diarization.
+"""
+@kwdef struct TranscriptWord
+    text::String
+    start_time::Union{Float64,Nothing} = nothing
+    end_time::Union{Float64,Nothing} = nothing
+    speaker::Union{String,Nothing} = nothing
+end
+
+"""
+    TranscriptionSuccess
+
+Successful [`transcribe`](@ref)/[`translate`](@ref) result. `text` holds the transcript or
+translation (via [`transcript_text`](@ref)); `raw` the parsed JSON a transcription or Ollama
+translation reply carried — for a streamed transcription its `transcript.text.done` event, for
+Gemini its `generateContent` reply — and `nothing` for a text reply and for an OpenAI Realtime
+translation. `segments` and `words` are the reply's [`TranscriptSegment`](@ref)s and
+[`TranscriptWord`](@ref)s, empty when it has none. The reply's usage (`raw["usage"]`, Gemini's
+`raw["usageMetadata"]`) is not priced: [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a
+`TranscriptionSuccess`, streamed or not.
+"""
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
     text::String
     raw::Union{Dict{String,Any},Nothing} = nothing
+    segments::Vector{TranscriptSegment} = TranscriptSegment[]
+    words::Vector{TranscriptWord} = TranscriptWord[]
 end
+TranscriptionSuccess(text, raw) = TranscriptionSuccess(text, raw, TranscriptSegment[], TranscriptWord[])
+
+# A reply field, absent or null where the provider allows it; any other JSON type than the documented one is a
+# malformed reply, and the throw becomes the verb's AudioCallError.
+function _audio_field(d::AbstractDict, key::String, ::Type{T}, what::String)::Union{T,Nothing} where {T}
+    v = get(d, key, nothing)
+    isnothing(v) || v isa T || throw(ArgumentError("the $what's $(repr(key)) holds a $(typeof(v)), not the documented $T"))
+    v
+end
+_audio_required(d::AbstractDict, key::String, ::Type{T}, what::String) where {T} =
+    @something(_audio_field(d, key, T, what), throw(ArgumentError("the $what has no $(repr(key))")))
+_audio_seconds(d::AbstractDict, key::String, what::String)::Union{Float64,Nothing} =
+    (v = _audio_field(d, key, Real, what); isnothing(v) ? nothing : Float64(v))
+
+# OpenAI's segments: a verbose_json TranscriptionSegment (`id` an integer) or a diarized one (`id` a string, and a
+# `speaker`), each requiring its text, start and end.
+function _transcript_segment(s)::TranscriptSegment
+    s isa AbstractDict || throw(ArgumentError("a transcription segment is a JSON object, not a $(typeof(s))"))
+    TranscriptSegment(text=_audio_required(s, "text", String, "segment"),
+                      start_time=Float64(_audio_required(s, "start", Real, "segment")),
+                      end_time=Float64(_audio_required(s, "end", Real, "segment")),
+                      speaker=_audio_field(s, "speaker", String, "segment"),
+                      id=_audio_required(s, "id", Union{String,Int}, "segment"))
+end
+# A TranscriptionWord requires the word; its start and end come with it.
+function _transcript_word(w)::TranscriptWord
+    w isa AbstractDict || throw(ArgumentError("a transcription word is a JSON object, not a $(typeof(w))"))
+    TranscriptWord(text=_audio_required(w, "word", String, "word"), start_time=_audio_seconds(w, "start", "word"),
+                   end_time=_audio_seconds(w, "end", "word"))
+end
+_reply_list(d::AbstractDict, key::String) = something(_audio_field(d, key, AbstractVector, "transcription reply"), Any[])
+_transcript_segments(d::AbstractDict)::Vector{TranscriptSegment} = TranscriptSegment[_transcript_segment(s) for s in _reply_list(d, "segments")]
+_transcript_words(d::AbstractDict)::Vector{TranscriptWord} = TranscriptWord[_transcript_word(w) for w in _reply_list(d, "words")]
 
 """
     transcript_text(r::TranscriptionSuccess) -> String
@@ -670,8 +899,31 @@ function _transcription_parts(t::TranscriptionRequest)::Vector{Pair{String,Any}}
     !isnothing(t.prompt) && push!(parts, "prompt" => t.prompt)
     !isnothing(t.response_format) && push!(parts, "response_format" => t.response_format)
     !isnothing(t.temperature) && push!(parts, "temperature" => string(t.temperature))
+    isnothing(t.include) || append!(parts, ("include[]" => x for x in t.include))
+    isnothing(t.timestamp_granularities) || append!(parts, ("timestamp_granularities[]" => g for g in t.timestamp_granularities))
+    isnothing(t.chunking_strategy) || push!(parts, "chunking_strategy" => _chunking_field(t.chunking_strategy))
+    isnothing(t.known_speaker_names) || append!(parts, ("known_speaker_names[]" => n for n in t.known_speaker_names))
+    isnothing(t.known_speaker_references) ||
+        append!(parts, ("known_speaker_references[]" => _speaker_reference(r) for r in t.known_speaker_references))
+    t.stream && push!(parts, "stream" => "true")
     parts
 end
+
+# OpenAI reads `chunking_strategy` as one form field holding "auto" or the VadConfig object's JSON: that JSON with
+# a bogus type was answered HTTP 400 "Value must be 'server_vad'", while the bracketed fields a form gives other
+# objects (`chunking_strategy[type]=bogus`) were ignored with a 200 (2026-11-17).
+_chunking_field(auto::String)::String = auto
+function _chunking_field(v::TranscriptionVAD)::String
+    d = Dict{String,Any}("type" => "server_vad")
+    isnothing(v.threshold) || (d["threshold"] = v.threshold)
+    isnothing(v.prefix_padding_ms) || (d["prefix_padding_ms"] = v.prefix_padding_ms)
+    isnothing(v.silence_duration_ms) || (d["silence_duration_ms"] = v.silence_duration_ms)
+    JSON.json(d)
+end
+
+# A known speaker's reference as OpenAI takes it, a data URL: one given as such, or an audio file's bytes as one.
+_speaker_reference(r::String)::String =
+    startswith(r, "data:") ? r : string("data:", _mime_for(r), ";base64,", base64encode(read(r)))
 
 """
     transcribe(t::TranscriptionRequest) / transcribe(path; model=nothing, kwargs...)
@@ -708,38 +960,351 @@ Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](
 the call cancellable: once the token is cancelled it returns an `AudioCallError` whose `cause` is a
 [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once
 when mid-request (never retried).
+
+**Streaming** (`stream = true`, on OpenAI and the OpenAI-wire routes): the call returns a `Task`
+whose `fetch` yields the result, and the transcript arrives as OpenAI's server-sent events. Pass a
+`callback`:
+
+```julia
+callback(chunk::Union{String,TranscriptSegment}, close::Ref{Bool})
+```
+
+Each `transcript.text.delta` is a `String` (the text added), and each `transcript.text.segment`
+(a streamed diarization, `gpt-4o-transcribe-diarize` with `response_format = "diarized_json"`) a
+[`TranscriptSegment`](@ref). The result is the same [`TranscriptionSuccess`](@ref) as unstreamed:
+`text` is the `transcript.text.done` event's, `raw` that event (its `usage`, `logprobs` and
+`languages`), `segments` the streamed segments. Setting `close[] = true` stops the stream at once
+with an `AudioCallError` whose `cause` is a `UniLMCancelled`; an exception the callback throws ends
+the call with that exception as `cause`. A status before the stream is an [`AudioFailure`](@ref),
+retried as unstreamed while no callback has run; an error the stream itself carries
+(`{"error": …}`) is an `AudioFailure` with `status = nothing`; a stream that ends before
+`transcript.text.done`, a gap longer than `stream_idle_timeout`, a timeout and a cancel are an
+`AudioCallError`. A `callback` without `stream = true` throws `ArgumentError`.
 """
 function transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing,
-                    cancel::Union{Nothing,CancelToken}=nothing)
+                    cancel::Union{Nothing,CancelToken}=nothing, callback=nothing)
     # An endpoint that declares `:audio` transcribes too (`has_capability`), as does one that declares
     # `:transcription` alone.
     validate_capability(t.service, :transcription, "Audio API")
     # Local validation throws before the request (inside the `try` it would become an AudioCallError).
     _check_transcription(t.service, t)
     _transcription_model(t)
+    t.stream || isnothing(callback) || throw(ArgumentError(
+        "transcribe: a callback runs on a stream only; set stream = true, or drop the callback"))
     cfg = _resolve_config(config); t0 = time_ns()
+    t.stream && return _transcribe_stream(t, callback, cfg, t0, _resolve_cancel(cancel))
     try
-        # Retried as the endpoint's other inference verbs are. The attempt that sends a multipart
-        # Form reads it to its end, so every attempt builds its own from the file (`_BodyFactory`).
-        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
-            auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t)));
-            cancel=_resolve_cancel(cancel))
-        resp.status == 200 ? _transcription_success(_transcription_json(t.service, t, resp), resp) :
-                             _failure(AudioFailure, resp)
+        _transcribe(_transcription_wire(t.service), t, cfg, t0, _resolve_cancel(cancel))
     catch e
         e isa InterruptException && rethrow()
         _callerr(AudioCallError, e)
     end
 end
-transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
-           cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
-    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config, cancel=cancel)
 
-# A 200 transcription or translation reply: the JSON object `{"text": …}`, or the bare text.
+# How a service transcribes: OpenAI's multipart route (OpenAI, Ollama, a generic server, an endpoint of the caller's
+# own), or Gemini's generateContent.
+abstract type _TranscriptionWire end
+struct _OpenAITranscriptionWire <: _TranscriptionWire end
+struct _GeminiTranscriptionWire <: _TranscriptionWire end
+_transcription_wire(_) = _OpenAITranscriptionWire()
+_transcription_wire(::Type{GEMINIServiceEndpoint}) = _GeminiTranscriptionWire()
+
+# Retried as the endpoint's other inference verbs are. The attempt that sends a multipart Form reads it to its
+# end, so every attempt builds its own from the file (`_BodyFactory`).
+function _transcribe(::_OpenAITranscriptionWire, t::TranscriptionRequest, cfg::RequestConfig, t0::UInt64, tok)
+    resp = _http_with_retries(cfg, t0, "POST", _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH,
+        auth_header_multipart(t.service), _BodyFactory(() -> HTTP.Form(_transcription_parts(t))); cancel=tok)
+    resp.status == 200 ? _transcription_success(_transcription_json(t.service, t, resp), resp) :
+                         _failure(AudioFailure, resp)
+end
+transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+           cancel::Union{Nothing,CancelToken}=nothing, callback=nothing, kwargs...) =
+    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config, cancel, callback)
+
+# A 200 transcription or translation reply: the JSON object `{"text": …}`, with its segments and words when it
+# has them (verbose_json, diarized_json), or the bare text.
 function _transcription_success(json::Bool, resp::HTTP.Response)::TranscriptionSuccess
     json || return TranscriptionSuccess(text=String(resp.body))
     d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    TranscriptionSuccess(text=get(d, "text", ""), raw=d)
+    TranscriptionSuccess(text=get(d, "text", ""), raw=d, segments=_transcript_segments(d), words=_transcript_words(d))
+end
+
+# ─── Streamed transcription (OpenAI's server-sent transcript events) ─────────
+# CreateTranscriptionResponseStreamEvent: `transcript.text.delta` (text, with its logprobs when asked),
+# `transcript.text.segment` (a diarized segment) and `transcript.text.done` (the whole text, its usage, logprobs and
+# languages); OpenAI ends the stream with `data: [DONE]` (2026-11-17), and Ollama reports a failure mid-stream as
+# `{"error": …}` (server/transcription.go).
+
+mutable struct _TranscriptStream
+    const carry::IOBuffer
+    const event::Base.RefValue{String}
+    const queue::Vector{Union{String,TranscriptSegment}}   # chunks not yet handed to the callback, in order
+    const segments::Vector{TranscriptSegment}
+    done::Union{Nothing,Dict{String,Any}}                   # the transcript.text.done event
+    error::Union{Nothing,Dict{String,Any}}                  # an error the stream carried
+    dropped::Int                                            # payloads that could not be read
+end
+_TranscriptStream() = _TranscriptStream(IOBuffer(), Ref(""), Union{String,TranscriptSegment}[], TranscriptSegment[],
+                                        nothing, nothing, 0)
+
+# One payload. A delta without its text, a segment without a required field and a done event without the text
+# throw: the reader drops that payload, and a stream whose done event was dropped ends without its transcript.
+function _transcript_event!(s::_TranscriptStream, payload::AbstractString)::Nothing
+    payload == "[DONE]" && return nothing
+    d = JSON.parse(payload; dicttype=Dict{String,Any})
+    d isa Dict{String,Any} || throw(ArgumentError("a transcript event is a JSON object, not a $(typeof(d))"))
+    kind = get(d, "type", nothing)
+    if haskey(d, "error") || kind == "error"
+        s.error = d
+    elseif kind == "transcript.text.delta"
+        push!(s.queue, _audio_required(d, "delta", String, "transcript.text.delta event"))
+    elseif kind == "transcript.text.segment"
+        seg = _transcript_segment(d)
+        push!(s.segments, seg); push!(s.queue, seg)
+    elseif kind == "transcript.text.done"
+        _audio_required(d, "text", String, "transcript.text.done event")
+        s.done = d
+    end
+    nothing
+end
+
+# One read's events, each handed on as it is read: `flush()` passes what it queued to the callback and tells whether
+# the call was stopped, and a stop leaves the events after it unread. True once the stream's outcome — its
+# transcript or its error — has been read.
+function _transcript_events!(s::_TranscriptStream, chunk::String, flush::Function)::Bool
+    for (_, payload) in _sse_events!(s.carry, s.event, chunk)
+        try
+            _transcript_event!(s, payload)
+        catch e
+            e isa InterruptException && rethrow()
+            Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            s.dropped += 1
+            @debug "transcription SSE: dropped undecodable data payload" payload = String(payload) exception = e
+        end
+        flush() && return false
+        (s.done !== nothing || s.error !== nothing) && return true
+    end
+    false
+end
+
+function _flush_transcript!(cb, s::_TranscriptStream, close_ref)::Nothing
+    isnothing(cb) || foreach(x -> cb(x, close_ref), s.queue)
+    empty!(s.queue)
+    nothing
+end
+
+_streamed_transcription(s::_TranscriptStream)::TranscriptionSuccess =
+    TranscriptionSuccess(text=s.done["text"], raw=s.done, segments=copy(s.segments))
+
+_cancelled_transcription(ctl::_StreamCtl, t0::UInt64)::AudioCallError =
+    (c = _stop_cause(ctl, t0); AudioCallError(error=sprint(showerror, c), cause=c))
+
+# The stream driver, the agentic driver's rules on a multipart request (`_respond_stream`): a task whose value is
+# the result; retries only before user code runs; a missing first byte within min(remaining, request_timeout) is a
+# :request timeout and a byte gap beyond stream_idle_timeout a :stream_idle one (time in the callback is no gap);
+# once the outcome is read, teardown noise does not discard it; a stop (the caller's token or the close flag) ends
+# the call with UniLMCancelled, and a callback's exception with that exception. Not recorded: a multipart body's
+# boundary is random, so no recording could be keyed on it.
+function _transcribe_stream(t::TranscriptionRequest, callback, cfg::RequestConfig, t0::UInt64,
+                            token::Union{Nothing,CancelToken})
+    Threads.@spawn begin
+        ctl = _StreamCtl(token, t0)
+        link = _on_cancel(() -> cancel!(ctl.stop), token)
+        try
+            _transcribe_drive(t, callback, cfg, t0, ctl)
+        finally
+            _off_cancel(token, link)
+        end
+    end
+end
+
+function _transcribe_drive(t::TranscriptionRequest, callback, cfg::RequestConfig, t0::UInt64, ctl::_StreamCtl)
+    url = _api_base_url(t.service) * AUDIO_TRANSCRIPTIONS_PATH
+    attempt = 1
+    while true
+        state = _TranscriptStream()
+        raw = IOBuffer()   # the reply's bytes: a failure's body
+        io_ref = Ref{Any}(nothing)
+        guard = Ref{Union{Nothing,_IdleGuard}}(nothing)
+        bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
+        cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, guard[], x, c)
+        ctx = HTTP.RequestContext()
+        body = Ref(UInt8[])
+        function consume(io)
+            io_ref[] = io
+            _with_recorded_deadline(() -> (write(io, body[]); HTTP.closewrite(io); HTTP.startread(io)),
+                                    () -> _abort_request_phase(io, ctx), _first_byte_bound(io, cfg, t0), :request, bound)
+            guard[] = _idle_guard(() -> close(io), _idle_bound(io, cfg))
+            done = false
+            while !done && !iscancelled(ctl.stop)
+                # At EOF a newline completes a last line the peer did not end.
+                at_eof = eof(io)
+                chunk = at_eof ? "\n" : String(readavailable(io))
+                at_eof || (_touch!(guard[]); print(raw, chunk))
+                done = _transcript_events!(state, chunk,
+                                           () -> (_flush_transcript!(cb, state, ctl.close); iscancelled(ctl.stop)))
+                at_eof && break
+            end
+            if iscancelled(ctl.stop)
+                done || throw(_stop_cause(ctl, t0))
+            else
+                if !done
+                    breach = _exit_breach(guard[], bound, cfg)
+                    breach === nothing || throw(breach)
+                end
+                HTTP.closeread(io)
+            end
+        end
+        try
+            # Each attempt reads the file into a form of its own; its boundary names the body's type, as
+            # HTTP.request sets it for an HTTP.Form, and the body goes whole, its length known.
+            form = HTTP.Form(_transcription_parts(t))
+            body[] = read(form)
+            headers = [auth_header_multipart(t.service); "Content-Type" => HTTP.content_type(form);
+                       "Content-Length" => string(length(body[])); "Accept-Encoding" => "identity"]
+            resp = _http_open(consume, "POST", url, headers; cfg, t0, cancel=ctl.stop, context=ctx, decompress=false)
+            if resp.status == 200
+                isnothing(state.done) || return _streamed_transcription(state)
+                isnothing(state.error) ||
+                    return AudioFailure(response=JSON.json(state.error), status=nothing, request_id=_get_request_id(resp))
+                return AudioCallError(error="the transcription stream ended before its transcript.text.done event " *
+                    "(Content-Type $(repr(HTTP.header(resp, "Content-Type", ""))), $(state.dropped) payloads unread)")
+            elseif _is_retryable(resp.status, raw) && !ctl.fired && attempt < cfg.max_attempts
+                action, delay = _retry_pause(cfg, t0, attempt, resp)
+                action === :budget &&
+                    return AudioFailure(response=takestring!(raw), status=resp.status, request_id=_get_request_id(resp))
+                _cancel_sleep(ctl.stop, delay) && return _cancelled_transcription(ctl, t0)
+                attempt += 1
+                continue
+            end
+            return AudioFailure(response=takestring!(raw), status=resp.status, request_id=_get_request_id(resp))
+        catch e
+            _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+            failure = ctl.failure
+            if !isnothing(failure)
+                thrown = failure.thrown
+                _escapes_tool(thrown) && throw(thrown)
+                return AudioCallError(error=_error_text(thrown), cause=thrown isa Exception ? thrown : nothing)
+            end
+            breach = _classify_stream_timeout(e, guard[], cfg, t0)
+            stopped = iscancelled(ctl.stop)
+            if (stopped || _stream_teardown_noise(e, breach)) && !isnothing(state.done)
+                return _streamed_transcription(state)
+            end
+            stopped && return _cancelled_transcription(ctl, t0)
+            breach === nothing || return AudioCallError(error=sprint(showerror, breach), cause=breach)
+            u = _unwrap_exception(e)
+            bt = bound[]
+            mapped = bt !== nothing ? bt : u isa UniLMTimeout ? u :
+                     _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
+            retry = mapped isa UniLMTimeout ? mapped.phase in (:connect, :request) : _is_transport_error(e)
+            if retry && !ctl.fired && attempt < cfg.max_attempts
+                action, delay = _retry_pause(cfg, t0, attempt, nothing)
+                if action !== :budget
+                    _cancel_sleep(ctl.stop, delay) && return _cancelled_transcription(ctl, t0)
+                    attempt += 1; continue
+                end
+            end
+            mapped isa UniLMTimeout && return AudioCallError(error=sprint(showerror, mapped), cause=mapped)
+            return _callerr(AudioCallError, e)
+        finally
+            _warn_sse_drops(state.dropped, _transcription_model(t), "transcription")
+        end
+    end
+end
+
+# ─── Gemini transcription (generateContent on gemini-3.5-transcribe) ─────────
+# https://ai.google.dev/gemini-api/docs/transcribe. The audio goes inline in one generateContent request whose
+# GenerationConfig carries the AudioTranscriptionConfig; each part of the reply carries an AudioTranscription (its
+# text, the speaker's label with diarization, the words with word timestamps), one part per speaker turn. The
+# Interactions API takes the same options as `transcription_config` and gave the same transcript (2026-11-17), but
+# stores the interaction unless told not to and answers words without turns: transcribe uses generateContent.
+
+_default_transcription_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.5-transcribe"
+
+const _GEMINI_TRANSCRIPTION_UNTAKEN = (:prompt, :temperature, :response_format, :include, :chunking_strategy,
+                                       :known_speaker_names, :known_speaker_references, :stream)
+# "Supply up to 1,000 terms in the `custom_vocabulary` array" (the transcription guide).
+const _GEMINI_VOCABULARY_MAX = 1000
+function _check_transcription(::Type{GEMINIServiceEndpoint}, t::TranscriptionRequest)
+    set = _options_set(t, _GEMINI_TRANSCRIPTION_UNTAKEN)
+    isempty(set) || throw(ArgumentError(
+        "Gemini's transcription (AudioTranscriptionConfig) takes no $(join(set, ", ")): remove them"))
+    words = !isnothing(t.timestamp_granularities)
+    words && t.timestamp_granularities != ["word"] && throw(ArgumentError(
+        "Gemini timestamps words only: timestamp_granularities = [\"word\"] (got $(repr(t.timestamp_granularities)))"))
+    vocabulary = t.keywords
+    isnothing(vocabulary) || length(vocabulary) <= _GEMINI_VOCABULARY_MAX || throw(ArgumentError(
+        "Gemini takes up to $_GEMINI_VOCABULARY_MAX custom vocabulary terms (got $(length(vocabulary)) keywords)"))
+    # "You cannot combine `custom_vocabulary` with speaker diarization or word-level timestamps; the API rejects
+    # requests that specify `custom_vocabulary` alongside either feature": answered HTTP 400 "custom_vocabulary is
+    # incompatible with diarization." (2026-11-17).
+    isnothing(vocabulary) || !(t.diarization || words) || throw(ArgumentError(
+        "Gemini rejects custom vocabulary (keywords) beside diarization or word timestamps: drop the keywords, or both"))
+    # "Smart transcription (`"smart"`) cannot be combined with `timestamp_granularities` or `diarization_mode`".
+    t.mode == "smart" && (t.diarization || words) && throw(ArgumentError(
+        "Gemini's smart mode takes neither diarization nor word timestamps: use mode = \"verbatim\" for them"))
+    nothing
+end
+
+# GenerationConfig.audioTranscriptionConfig (https://ai.google.dev/api/generate-content#AudioTranscriptionConfig):
+# languageCodes (BCP-47), customVocabulary, diarization, wordTimestamp, mode (VERBATIM or SMART) and sourceText.
+function _gemini_transcription_body(t::TranscriptionRequest)::String
+    config = Dict{String,Any}()
+    languages = isnothing(t.language) ? t.languages : [t.language]
+    isnothing(languages) || (config["languageCodes"] = languages)
+    isnothing(t.keywords) || (config["customVocabulary"] = t.keywords)
+    t.diarization && (config["diarization"] = true)
+    isnothing(t.timestamp_granularities) || (config["wordTimestamp"] = true)
+    isnothing(t.mode) || (config["mode"] = uppercase(t.mode))
+    isnothing(t.source_text) || (config["sourceText"] = t.source_text)
+    audio = Dict{String,Any}("inlineData" => Dict{String,Any}("mimeType" => _mime_for(t.file),
+                                                            "data" => base64encode(read(t.file))))
+    body = Dict{String,Any}("contents" => [Dict{String,Any}("role" => "user", "parts" => [audio])])
+    isempty(config) || (body["generationConfig"] = Dict{String,Any}("audioTranscriptionConfig" => config))
+    JSON.json(body)
+end
+
+# Retried as Gemini's speech is (a String body goes again as it is).
+function _transcribe(::_GeminiTranscriptionWire, t::TranscriptionRequest, cfg::RequestConfig, t0::UInt64, tok)
+    url = _gemini_speech_url(t.service, _transcription_model(t))
+    resp = _http_with_retries(cfg, t0, "POST", url, auth_header(t.service), _gemini_transcription_body(t); cancel=tok)
+    resp.status == 200 || return _failure(AudioFailure, resp)
+    _gemini_transcription(resp)
+end
+
+# A google.protobuf.Duration in its JSON form, seconds with an "s" suffix ("0.400s", "3s").
+function _google_seconds(d::AbstractDict, key::String)::Union{Float64,Nothing}
+    v = _audio_field(d, key, String, "word")
+    isnothing(v) && return nothing
+    @something(endswith(v, "s") ? tryparse(Float64, chop(v)) : nothing,
+               throw(ArgumentError("the word's $(repr(key)) is no duration in seconds: $(repr(v))")))
+end
+
+# A finished candidate's parts, each an AudioTranscription (a part that holds a thought is skipped). A turn's start
+# and end are its first and last word's; the text is the turns' joined with spaces, as Interactions' output_text
+# joins them. A candidate that did not finish, or a blocked prompt, is the provider's failure.
+function _gemini_transcription(resp::HTTP.Response)::LLMRequestResponse
+    d = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    cand = _gemini_finished_candidate(d)
+    cand === nothing && return _failure(AudioFailure, resp)
+    content = _audio_required(cand, "content", AbstractDict, "candidate")
+    segments, words = TranscriptSegment[], TranscriptWord[]
+    for p in _audio_required(content, "parts", AbstractVector, "candidate's content")
+        p isa AbstractDict || throw(ArgumentError("a reply part is a JSON object, not a $(typeof(p))"))
+        get(p, "thought", false) === true && continue
+        a = _audio_required(p, "audioTranscription", AbstractDict, "reply part")
+        speaker = _audio_field(a, "speakerLabel", String, "audioTranscription")
+        turn = TranscriptWord[TranscriptWord(text=_audio_required(w, "word", String, "word"),
+                                             start_time=_google_seconds(w, "startOffset"),
+                                             end_time=_google_seconds(w, "endOffset"), speaker=speaker)
+                              for w in _reply_list(a, "words")]
+        append!(words, turn)
+        push!(segments, TranscriptSegment(text=_audio_required(a, "text", String, "audioTranscription"), speaker=speaker,
+            start_time=isempty(turn) ? nothing : first(turn).start_time, end_time=isempty(turn) ? nothing : last(turn).end_time))
+    end
+    isempty(segments) && throw(ArgumentError("Gemini's transcription reply carried no audioTranscription part"))
+    TranscriptionSuccess(text=join((s.text for s in segments), " "), raw=d, segments=segments, words=words)
 end
 
 # ─── Translation (OpenAI Realtime translation sessions, Ollama) ──────────────

@@ -287,6 +287,7 @@ export
     SvgOptions,
     ImageObject,
     ImageResponse,
+    PartialImage,
     # Result types
     ImageSuccess,
     ImageFailure,

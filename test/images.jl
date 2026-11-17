@@ -1216,3 +1216,166 @@ end
     err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
     @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("ImageRef", err.msg)
 end
+
+# ── OpenAI streamed images: stream, partial_images and the callback ──────────────────────────────────
+
+# An image stream as OpenAI writes it: one `event:` and one `data:` line per event, a blank line after each.
+_sse(events...) = HTTP.Response(200, ["Content-Type" => "text/event-stream; charset=utf-8"],
+    Vector{UInt8}(join(("event: $(e["type"])\ndata: $(JSON.json(e))\n\n" for e in events))))
+
+# The events of the reference's ImageGenStreamEvent and ImageEditStreamEvent, with the members it requires.
+_settings = Dict("size" => "1024x640", "quality" => "low", "background" => "opaque", "output_format" => "png")
+_partial_event(kind, index, bytes) = Dict("type" => "$kind.partial_image", "partial_image_index" => index,
+    "b64_json" => base64encode(bytes), "created_at" => 1_794_901_816, _settings...)
+const _STREAM_USAGE = Dict("input_tokens" => 11, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 11),
+    "output_tokens" => 450, "output_tokens_details" => Dict("image_tokens" => 450, "text_tokens" => 0), "total_tokens" => 461)
+_completed_event(kind, b64) = Dict("type" => "$kind.completed", "b64_json" => b64, "created_at" => 1_794_901_817,
+    "safety_identifier" => nothing, "sequence_number" => 1, "usage" => _STREAM_USAGE, _settings...)
+
+@testset "OpenAI streamed images — partial images reach the callback, and the completed event is the result" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    got = PartialImage[]
+    r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1, 2]),
+                                            _partial_event("image_generation", 1, UInt8[3]),
+                                            _completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=2);
+                       callback=p -> push!(got, p), config=one)
+    end
+    @test r isa ImageSuccess && image_data(r) == [final]
+    @test [(p.index, p.bytes) for p in got] == [(0, UInt8[1, 2]), (1, UInt8[3])]
+    @test (got[1].size, got[1].quality, got[1].background, got[1].output_format, got[1].created_at) ==
+          ("1024x640", "low", "opaque", "png", 1_794_901_816)
+    @test got[1].raw["type"] == "image_generation.partial_image"
+    @test r.response.created == 1_794_901_817 && r.response.raw["type"] == "image_generation.completed"
+    @test r.response.usage == _image_json(_STREAM_USAGE) && isnothing(r.response.svg_usage)
+    sent = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test (sent["stream"], sent["partial_images"]) == (true, 2)
+    @test _image_json(ImageGeneration(prompt="p", stream=true))["stream"] == true      # JSON.json shows the stream
+    @test !haskey(_image_json(ImageGeneration(prompt="p")), "stream")
+    # Priced as the unstreamed reply with the same usage.
+    plain = ImageSuccess(response=UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "created" => 1, "data" => [Dict("b64_json" => final)], "usage" => _STREAM_USAGE))))))
+    rows = Dict("m" => UniLM._price(5.0, 1.25, 30.0))
+    @test token_usage(r) == token_usage(plain) == TokenUsage(prompt_tokens=11, completion_tokens=450, total_tokens=461)
+    @test estimated_cost(r; model="m", pricing=rows) == estimated_cost(plain; model="m", pricing=rows) ≈ (11 * 5.0 + 450 * 30.0) / 1e6
+    # Without a callback the stream still gives the image.
+    r2, _ = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1]), _completed_event("image_generation", final))) do
+        generate_image("p"; model="m", service=URLProbe, stream=true, partial_images=1, config=one)
+    end
+    @test r2 isa ImageSuccess && image_data(r2) == [final]
+end
+
+@testset "OpenAI streamed image edits — multipart and JSON edits stream image_edit events" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        got = Int[]
+        r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_edit", 0, UInt8[9]), _completed_event("image_edit", final))) do
+            edit_image(path, "p"; model="m", service=URLProbe, stream=true, partial_images=1, config=one,
+                       callback=p -> push!(got, p.index))
+        end
+        @test r isa ImageSuccess && image_data(r) == [final] && got == [0]
+        body = only(seen).body
+        @test occursin("name=\"stream\"\r\n\r\ntrue\r\n", body) && occursin("name=\"partial_images\"\r\n\r\n1\r\n", body)
+        @test occursin("name=\"image[]\"", body)
+        r, seen = _with_scripted((_, _) -> _sse(_completed_event("image_edit", final))) do
+            edit_image(ImageRef(file_id="file-a"), "p"; model="m", service=URLProbe, stream=true, partial_images=0, config=one)
+        end
+        @test r isa ImageSuccess && r.response.raw["type"] == "image_edit.completed"
+        sent = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+        @test (sent["stream"], sent["partial_images"], sent["images"]) == (true, 0, Any[Dict{String,Any}("file_id" => "file-a")])
+        # A generation's events do not answer an edit.
+        r, _ = _with_scripted((_, _) -> _sse(_completed_event("image_generation", final))) do
+            edit_image(path, "p"; model="m", service=URLProbe, stream=true, config=one)
+        end
+        @test r isa ImageCallError && occursin("ended before its completed event", r.error)
+    finally
+        rm(path; force=true)
+    end
+end
+
+@testset "OpenAI streamed images — a stream that fails is a failure or a call error, never an image" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    call(; kw...) = generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=1);
+                                   config=one, kw...)
+    for (reply, words) in ((_sse(_partial_event("image_generation", 0, UInt8[1])), "ended before its completed event"),
+                           (_sse(Dict("type" => "error", "error" => Dict("message" => "boom"))), "boom"),
+                           (_sse(delete!(_completed_event("image_generation", final), "usage")), "has no usage"),
+                           (_sse(delete!(_partial_event("image_generation", 0, UInt8[1]), "partial_image_index")),
+                            "has no partial_image_index"),
+                           (HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}("data: [DONE]\n\n")), "no JSON"))
+        r, _ = _with_scripted((_, _) -> reply) do
+            call()
+        end
+        @test r isa ImageCallError && occursin(words, r.error)
+    end
+    # A non-200 reply is the failure; a retryable one is sent again, before any partial image.
+    r, seen = _with_scripted((_, _) -> _json(400, """{"error":{"message":"bad"}}""")) do
+        call()
+    end
+    @test r isa ImageFailure && r.status == 400 && occursin("bad", r.response) && length(seen) == 1
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}"; headers=["Retry-After" => "0"]) :
+                                       _sse(_completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true);
+                       config=UniLM.RequestConfig(max_attempts=2))
+    end
+    @test r isa ImageSuccess && length(seen) == 2
+    # What the callback throws ends the call, never retried.
+    boom = ErrorException("callback failed")
+    r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1]), _completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=1);
+                       callback=_ -> throw(boom), config=UniLM.RequestConfig(max_attempts=3))
+    end
+    @test r isa ImageCallError && r.cause === boom && length(seen) == 1
+    # A cancelled token sends nothing.
+    r, seen = _with_scripted((_, _) -> _sse(_completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true); cancel=cancel!(CancelToken()))
+    end
+    @test r isa ImageCallError && r.cause isa UniLMCancelled && isempty(seen)
+end
+
+@testset "OpenAI streamed images — what a stream cannot carry is refused before anything is sent" begin
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        # The reference's "Value must be between 0 and 3" (HTTP 400 for 9, 2026-11-17); partial images come only
+        # on a stream, and the callback receives them only there.
+        for (make, words) in ((() -> ImageGeneration(prompt="p", stream=true, partial_images=4), ("partial_images", "0 to 3")),
+                              (() -> ImageEdit(image=path, prompt="p", stream=true, partial_images=-1), ("partial_images", "0 to 3")),
+                              (() -> ImageGeneration(prompt="p", partial_images=1), ("partial_images", "stream=true")),
+                              (() -> ImageEdit(image=path, prompt="p", partial_images=1), ("partial_images", "stream=true")))
+            err = _refusal(make)
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        end
+        calls = ((() -> generate_image("p"; model="m", service=URLProbe, callback=identity), ("callback", "stream=true")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, callback=identity), ("callback", "stream=true")),
+                 # "Streaming is only supported with n=1." (HTTP 400 for n=2, 2026-11-17)
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, n=2), ("n=1", "Streaming is only supported")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, n=3), ("n=1",)),
+                 # "GIF output does not support streaming, partial images", "SVG generation ... does not support streaming"
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, output_format="gif"), ("GIF", "stream")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, output_format="gif"), ("GIF", "stream")),
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, output_format="svg"), ("SVG", "stream")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, output_format="svg"), ("SVG", "stream")))
+        for (call, words) in calls
+            err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+                _refusal(call)
+            end
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words) && isempty(seen)
+        end
+    finally
+        rm(path; force=true)
+    end
+    # Gemini sends an image whole: on 2026-11-17 its streamGenerateContent answered an image request with one event
+    # holding the image, so it has no partial images to stream.
+    for make in (() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", stream=true)),
+                 () -> UniLM._check_image_request(GEMINIServiceEndpoint,
+                                                  ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", stream=true)))
+        err = _refusal(make)
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("stream", err.msg) && occursin("whole", err.msg)
+    end
+end

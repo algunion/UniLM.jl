@@ -170,10 +170,10 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
                 @test startswith(id, "voice_") && v.response.type == "prompted" && haskey(v.response.raw, "sample_audio")
                 s = speak("Hello."; service=GEMINIServiceEndpoint, voice=id)
                 @test s isa SpeechSuccess
-                g = retrieve_voice(id; service=GEMINIServiceEndpoint)
+                g = retrieve_voice(id)   # the lookup and the listing default to Gemini, which alone has them
                 @test g isa VoiceSuccess && g.response.id == id
             end
-            page = list_voices(; service=GEMINIServiceEndpoint, type="prebuilt", limit=3)
+            page = list_voices(; type="prebuilt", limit=3)
             @test page isa VoiceListSuccess && length(page.response.data) == 3 && page.response.has_more
             @test page isa VoiceListSuccess && all(x -> x.type == "prebuilt", page.response.data)
             # A listed prebuilt voice is read by its id (speak sent "achernar" and "am-et-assistant-1", 2026-11-17).

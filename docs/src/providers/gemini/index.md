@@ -10,9 +10,10 @@ Google makes the Gemini models and serves them through two native APIs, both of 
 `Respond` reach. Image generation and speech go through generateContent too.
 `GEMINIOpenAIServiceEndpoint` speaks Google's OpenAI-compatible endpoint, which UniLM uses for
 embeddings. `GEMINIServiceEndpoint` speaks Gemini's Files API ([Files](@ref gemini_files)) and Batch API
-([Batches](@ref gemini_batches)) too, and counts tokens ([Token counts](@ref gemini_token_counts)). Of
-Google's other APIs — the Live API, explicit context caching, managed agents such as Deep Research,
-music and video generation — none is available. The
+([Batches](@ref gemini_batches)) too, counts tokens ([Token counts](@ref gemini_token_counts)), makes the
+explicit context caches a `Chat` names ([Context caching](@ref gemini_caching)) and the File Search stores
+the Interactions API searches ([File Search](@ref gemini_file_search)). Of Google's other APIs — the Live
+API, managed agents such as Deep Research, music and video generation — none is available. The
 verbs of the capabilities the table below lists as not available refuse both endpoints, but one kind:
 the lifecycle verbs of stored responses read, cancel and delete stored interactions
 ([Background requests](@ref gemini_background)). `speak` reads aloud through Gemini TTS, and
@@ -35,6 +36,8 @@ Main.ProviderFacts.at_a_glance(:gemini)
 | [send images, audio and PDFs](@ref gemini_media) | `ImageAttachment`, `AudioAttachment`, `DocumentAttachment` | the files sent inline, before the message's text |
 | [use the Interactions API](@ref gemini_interactions_page) | `respond(input; service=GEMINIServiceEndpoint)` | a `ResponseSuccess`, its steps read by `output_text` and `function_calls` |
 | [search the web, run code or read a page](@ref gemini_hosted_tools) | `gemini_google_search()`, `gemini_code_execution()`, `gemini_url_context()` | tools Google runs, on the Interactions API |
+| [answer from my documents](@ref gemini_file_search) | `create_file_search_store`, `upload_to_file_search_store`, then `gemini_file_search(store)` in `respond` | an answer grounded in the documents, with their citations |
+| [send a long prompt's start once](@ref gemini_caching) | `create_cache(chat; ttl)`, then a `Chat` with `cached_content` | the cached tokens read at the cache-hit rate |
 | [generate or edit an image](@ref gemini_images) | `generate_image`, `edit_image` with `service=GEMINIServiceEndpoint` | an `ImageSuccess` holding the image |
 | [read text aloud](@ref gemini_audio) | `speak(text; service=GEMINIServiceEndpoint)` | 24 kHz speech as WAV or PCM |
 | [store files for 48 hours](@ref gemini_files) | `upload_file(path; service=GEMINIServiceEndpoint)`, `poll_file`, `list_files`, `delete_file`, `register_files` | a `FileObject` for each file, its `uri` in `raw` |
@@ -303,8 +306,9 @@ A field a Gemini API has no counterpart for, or one whose counterpart UniLM does
 not dropped, since dropping it would send a request other than the one asked for. The one exception is a `Chat`'s `parallel_tool_calls`, which a
 `Chat` with tools sets on its own and which is not sent, whatever its value ([Tools](@ref gemini_tools)).
 Each request in the table below that the API would answer with an error is refused too.
-`chatrequest!`, `tool_loop!`, `respond`, `tool_loop`, `generate_image`, `edit_image`, `speak` and
-`embeddingrequest!` throw these `ArgumentError`s before anything is sent. A row that names the
+`chatrequest!`, `tool_loop!`, `respond`, `tool_loop`, `generate_image`, `edit_image`, `speak`,
+`embeddingrequest!`, the cache verbs and the File Search verbs throw these `ArgumentError`s before
+anything is sent. A row that names the
 thinking table holds for the ids of its rows ([Reasoning](@ref gemini_reasoning)); an id no row
 names meets only the other rules.
 
@@ -314,7 +318,15 @@ names meets only the other rules.
 | a `Chat` that ends with an assistant turn, on a model other than those earlier ones | `answers HTTP 400 to a request that ends with a model turn` | end with a user message; shape the answer with a system message or `response_format` |
 | a `Respond` input that ends with an assistant message, on a model other than those earlier ones | `answers HTTP 400 to an input that ends with an assistant message` | end with a user message; shape the answer with `instructions` or `text` |
 | `moderation`, or a `Chat` field native Gemini does not map: `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `stream_options`, `verbosity`, `metadata`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `prompt_cache_retention` | `Native Gemini Chat does not support field(s)`: UniLM sends none of them to generateContent, though some have a counterpart there: `GenerationConfig`'s `presencePenalty`, `frequencyPenalty`, `responseLogprobs`, `logprobs`, `responseModalities` and `speechConfig`, the request's `labels` for `metadata` and `user`, and the `googleSearch` tool for `web_search_options` | remove it, or send the `Chat` through `GEMINIOpenAIServiceEndpoint` |
-| `prompt_cache_options`, on a `Chat` or a `Respond` | `Gemini takes no prompt_cache_options`: Gemini caches repeated prefixes on its own, and UniLM does not wrap its explicit caching | remove it ([Prompt caching](@ref gemini_caching)) |
+| `prompt_cache_options`, on a `Chat` or a `Respond` | `Gemini takes no prompt_cache_options`: Gemini caches repeated prefixes on its own, and an explicit cache is a resource of its own | remove it; for an explicit cache, `create_cache` and `cached_content` ([Context caching](@ref gemini_caching)) |
+| `cached_content` with a system message, `tools` or a `tool_choice`, on either endpoint | `a cache holds the system instruction, tools and tool config`: the API answers HTTP 400 | put them in the `Chat` that `create_cache` caches |
+| `cached_content`, or `create_cache`, for a Gemini 4 model | `takes no explicit cache`: "not supported for Gemini 4 models" | a Gemini 3 or 2.5 model, or implicit caching |
+| `create_cache` of a `Chat` that sets a field a cache does not hold (`max_tokens`, `reasoning_effort`, `stream`, `response_format`, …), or `cached_content`; both `ttl` and `expire_time`; a `ttl` below 1; a `display_name` over 128 characters | `a cache holds a Chat's model, messages, tools and tool_choice`, `a cache holds contents, not another cache`, `set ttl or expire_time, not both`, `ttl is the cache's lifetime in seconds`, `display_name takes at most 128 characters` | set those fields on the `Chat` that names the cache; one expiration |
+| `update_cache` with neither or both of `ttl` and `expire_time` | `only a cache's expiration updates`, `set ttl or expire_time, not both` | one of them |
+| a File Search listing's `limit` outside 1 to 20 | `limit is 1 to 20`: the API answers HTTP 400 | a page size from 1 to 20 |
+| an upload of a file over 100 MB; `max_tokens_per_chunk` outside 1 to 512, a negative `max_overlap_tokens`; over 20 `custom_metadata` keys, or a value that is no string, number or vector of strings | `takes at most 100 MB`, `max_tokens_per_chunk is 1 to 512`, `max_overlap_tokens is a number of tokens`, `takes at most 20 custom_metadata entries`, `is a string, a number or a vector of strings` | a smaller file; settings in those bounds ([File Search](@ref gemini_file_search)) |
+| a cache, store, document, operation or Files API name of another shape | `names a resource as`, `names fileSearchStores/<id>/documents/<id>` | the name as Gemini gives it, or a cache's or store's id |
+| `gemini_file_search` with no store, or a `top_k` below 1 | `name a File Search store to search`, `top_k is the number of chunks to retrieve` | a store's name or id; a `top_k` of 1 or more |
 | `reasoning_effort` `"none"`, `"xhigh"` or `"max"`, on a `Chat` or in a `Reasoning`, for an id no row of the thinking table names | `Gemini thinking effort must be minimal, low, medium, or high`, and for `"xhigh"` the models whose row lists it | one of those four, or a model that takes `"xhigh"` |
 | an effort the model's row of the thinking table does not list (`"minimal"` on `gemini-4-hydrogen`, `"xhigh"` on every row but its), on either endpoint (`GEMINIOpenAIServiceEndpoint` sends a `gemini-2.5-` model's effort as set) | `supports`, then the levels it takes, then `thinking effort` | one of them |
 | any `reasoning_effort` on a `Chat` for a `gemini-2.5-` model | `Gemini 2.5 generateContent uses thinkingBudget` | leave it unset, or send a `Respond` with `Reasoning` |

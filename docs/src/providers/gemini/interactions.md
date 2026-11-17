@@ -203,9 +203,10 @@ r2 = respond(Respond(service=GEMINIServiceEndpoint, previous_response_id=r1.resp
 
 ## [Hosted tools](@id gemini_hosted_tools)
 
-Of the tools Google runs for the model on this API, UniLM builds three:
+Of the tools Google runs for the model on this API, UniLM builds four:
 [`gemini_google_search`](@ref) (`{"type": "google_search"}`), [`gemini_code_execution`](@ref)
-(`{"type": "code_execution"}`) and [`gemini_url_context`](@ref) (`{"type": "url_context"}`). Pass
+(`{"type": "code_execution"}`), [`gemini_url_context`](@ref) (`{"type": "url_context"}`) and
+[`gemini_file_search`](@ref), which searches your File Search stores ([File Search](@ref gemini_file_search)). Pass
 them in `tools`:
 
 ```@example gemini
@@ -231,13 +232,65 @@ and the message UniLM builds from a `model_output` step keeps them on its text, 
 [`url_citations`](@ref) reads the `url_citation`s, as the last block above does. Their `start_index`
 and `end_index` count bytes of the text, "measured in bytes"
 ([Interactions reference](https://ai.google.dev/api/interactions-api)). Another tool the API takes — Google's error
-reference names `mcp_server`, `file_search`, `google_maps` and `computer_use` among its tool types
+reference names `mcp_server`, `google_maps` and `computer_use` among its tool types
 ([Interactions errors](https://ai.google.dev/gemini-api/docs/api-errors)) — goes as a `Dict` in the
 API's own shape, which UniLM sends as it is. The input a tool read
 counts as prompt tokens ([First interaction](@ref gemini_interactions_first)), but the fees of the
 tools themselves are not priced: Google search grounding, for one, has "5,000 free search requests
 per month (shared across all Gemini 3 and newer models), then \$14 per 1,000 requests"
 ([pricing](https://ai.google.dev/gemini-api/docs/pricing)).
+
+## [File Search](@id gemini_file_search)
+
+File Search grounds an answer in your documents: they are chunked, embedded and indexed in a File
+Search store, which the model searches when [`gemini_file_search`](@ref)`(store)` is among the tools
+([file search](https://ai.google.dev/gemini-api/docs/file-search)). A document enters a store from a local
+file, [`upload_to_file_search_store`](@ref), or from a file of Gemini's Files API,
+[`import_to_file_search_store`](@ref); either answers with the operation that indexes it, and
+[`poll_file_search_operation`](@ref) waits for that to be done:
+
+```julia
+store = create_file_search_store(; display_name="handbook").response
+op = upload_to_file_search_store(store.name, "handbook.pdf"; custom_metadata=Dict("topic" => "leave")).response
+done = poll_file_search_operation(op.name)                  # done.response.document: the document's name
+r = respond("How many days of leave do I get?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+            tools=[gemini_file_search(store.name; metadata_filter="topic = \"leave\"")])
+output_text(r)
+delete_file_search_store(store.name; force=true)            # with its documents
+```
+
+- The tool is `{"type": "file_search", "file_search_store_names": […]}`, with `top_k`, the chunks to
+  retrieve, and `metadata_filter`, a filter on the documents' custom metadata, when given. The search's
+  steps, `file_search_call` and `file_search_result`, are in `response.output` as Google sent them, and
+  the answer's citations are `file_citation` annotations on its text — each with the document's
+  `file_name`, the retrieved `source` text, its `custom_metadata` and the store's `document_uri` — kept
+  as sent: [`url_citations`](@ref) reads `url_citation`s only.
+- A store keeps its documents until they are deleted; a Files API file is deleted after 48 hours, the
+  document imported from it is not. [`list_file_search_documents`](@ref) and
+  [`retrieve_file_search_document`](@ref) read a store's documents — state, size, MIME type, custom
+  metadata — and [`delete_file_search_document`](@ref) deletes one, with `force=true` by default: a
+  document with chunks is deleted only so, and every indexed document has them (the API answered HTTP 400
+  "Cannot delete non-empty Document" without it). A store with documents is deleted only with
+  `force=true` too ("Cannot delete non-empty FileSearchStore"), which [`delete_file_search_store`](@ref)
+  leaves to you. The verbs are on [Gemini Context Caching & File Search](@ref gemini_caching_api).
+- Google's limits, which UniLM checks before any request: a document of at most 100 MB ("Maximum file
+  size / per document limit: 100 MB"), at most 20 custom metadata keys, chunks of 1 to 512 tokens
+  (HTTP 400 "Number of tokens per chunk must be between 0 and 512" for 5,000), listings of 1 to 20 per
+  page. The project's stores total 1 GB on the free tier, 10 GB on Tier 1, 100 GB on Tier 2 and 1 TB
+  on Tier 3, about three times the input, which Google computes; that, "Audio and video formats are not
+  currently supported", the models that take the tool — Gemini 4 Carbon, Argon and Hydrogen, 3.8 Flash,
+  3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 3.1 Flash-Lite, 3 Flash Preview, 2.5 Pro and 2.5
+  Flash-Lite — and "File Search cannot be combined with other tools like Grounding with Google Search,
+  URL Context, etc." are the API's to answer.
+- Cost: indexing bills the embeddings, "Charged for embeddings at" the embedding model's rate — the
+  store's `embedding_model`, `gemini-embedding-001` unless it was made with another; "Storage is free of
+  charge", "Query time embeddings are free of charge", and "Retrieved document tokens are charged as
+  regular context tokens": the reply reports them as `total_tool_use_tokens`, which UniLM counts as
+  input ([First interaction](@ref gemini_interactions_first)), so [`estimated_cost`](@ref) prices them.
+  It does not price the indexing. A `gemini-3.8-flash` answer from a two-document store at thinking
+  `"low"` read 17 input and 398 tool-use tokens and wrote 42 (17 November 2026).
+
+On generateContent, `Tool.fileSearch` is not mapped: a `Chat`'s `tools` hold functions only.
 
 ## [Structured output](@id gemini_interactions_structured_output)
 

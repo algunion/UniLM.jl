@@ -191,6 +191,11 @@ There UniLM is an OpenAI-compatible client, and of these pages only these rules 
   `"none"` on `gemini-3.8-flash` and thought anyway (16 November 2026). A `gemini-2.5-` model takes a
   thinking budget there, which `"none"` turns off, so its effort goes as set, as does an effort for an
   id no row names.
+- **A context cache.** `cached_content` goes as `extra_body.google.cached_content`, the field Google's
+  compatibility page names, under the rules of [Context caching](@ref gemini_caching): a system message,
+  `tools` or a `tool_choice` beside it, and a Gemini 4 model, are refused before the request (this wire
+  answered the first two with the same HTTP 400 as generateContent on 17 November 2026). A reply that
+  read the cache reports it in `prompt_tokens_details.cached_tokens`, read as `cached_tokens`.
 - **Everything else is sent as set.** No other check runs: `prompt_cache_options`, a request that ends
   with an assistant turn and the other refusals of [Limits and refusals](@ref gemini_limits) reach
   Google, which answered the first two with HTTP 400 on 22 October 2026, returned as an `LLMFailure`.

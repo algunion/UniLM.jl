@@ -42,6 +42,7 @@ UniLM.jl wraps these surfaces:
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
 6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a probability distribution instead of generated text. One surface over four backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`), Google's Gemini Decisions API (`GEMINIServiceEndpoint`) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
 7. **OpenAI platform APIs** — files, uploads, vector stores, conversations, containers, batch, fine-tuning, moderation, webhooks and webhook endpoints, safety cases and alerts, content provenance checks and realtime, through `OPENAIServiceEndpoint`; the file verbs also through `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint`, each provider's own Files API, with `poll_file` and Gemini's `register_files`. Batches run on `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` too: `create_batch` takes `custom_id => Chat` pairs on all three, and `batch_results` returns each request's Chat result, priced at the provider's Batch rates. This page lists their names (Complete Exports List) and result types (Result Type Hierarchy), and the shared contracts that cover them (Which verbs retry, Cancellation, Cost Tracking); their signatures and defaults are on their API reference pages, starting at [Files API](@ref files_api). The OpenAI entry shows them in use: [Platform APIs](@ref openai_platform_page), with vector stores on [Retrieval & file search](@ref retrieval_guide) and realtime sessions on [Images, audio & realtime](@ref openai_media_page). Audio — speech, transcription, translation — is below, under its own heading.
+8. **Gemini context caches and File Search stores** (`GEMINIServiceEndpoint`) — `create_cache(chat; ttl)` stores a `Chat`'s system messages, messages and tools as a cache a later `Chat` names in `cached_content` (read at the cache-hit rate; its storage, billed by the hour, is not priced), with `retrieve_cache`, `list_caches`, `update_cache` (expiration only) and `delete_cache`; `create_file_search_store`, `upload_to_file_search_store` / `import_to_file_search_store` (a long-running operation, `poll_file_search_operation`) and the store, document and operation verbs fill a store that `respond` searches through the hosted tool `gemini_file_search(store)`. See [Gemini Context Caching & File Search](@ref gemini_caching_api).
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
@@ -696,8 +697,8 @@ build a `Respond` with keywords, which name each field.
     answers it with HTTP 400),
     `safety_identifier` (the request label `safety_identifier`) and `seed`
     (`generation_config.seed`). Every other field — `moderation`,
-    `prompt_cache_options` (Gemini caches prompts implicitly; UniLM does not wrap its
-    explicit caching), and the rest of the OpenAI-only options — is rejected; leave it
+    `prompt_cache_options` (Gemini caches prompts implicitly; "The Interactions API only
+    supports implicit caching"), and the rest of the OpenAI-only options — is rejected; leave it
     unset, or send the request to an OpenAI Responses service. A `FunctionTool` with
     `async`, `allowed_callers`, `defer_loading`, or `output_schema` set is rejected the
     same way.
@@ -890,8 +891,8 @@ on Responses and on its Decisions API; on `ANTHROPICServiceEndpoint` the options
 top-level `cache_control` (automatic caching, the breakpoint on the last cacheable block) with
 `ttl` `"5m"` or `"1h"` and `mode` `"implicit"` or unset — `prewarm=true`,
 `comparison_response_id` and the OpenAI ttls throw; native Gemini (Chat and Interactions) and
-`OllamaEndpoint` refuse `prompt_cache_options` (Gemini caches prompts implicitly; UniLM does not
-wrap its explicit caching); Azure, `GEMINIOpenAIServiceEndpoint`, DeepSeek and generic
+`OllamaEndpoint` refuse `prompt_cache_options` (Gemini caches prompts implicitly; its explicit
+caches are made with `create_cache` and named in a `Chat`'s `cached_content`); Azure, `GEMINIOpenAIServiceEndpoint`, DeepSeek and generic
 endpoints send the object unchanged, the server's answer being the check. A `Chat` with
 `mode="explicit"` throws `ArgumentError` when it is built, whatever its endpoint (below).
 
@@ -2853,7 +2854,7 @@ has_capability(service, cap::Symbol) -> Bool
 |---|---|
 | OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:token_count`, `:webhooks`, `:safety`, `:content_provenance` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
-| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch` |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch`, `:context_caching`, `:file_search_stores` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:models`, `:files`, `:token_count`, `:batch` (the bare type and an instance alike) |
 | TypeSafe (System One) | `:system_one`, `:models` |
@@ -2866,7 +2867,7 @@ own endpoint:
 
 - **Platform and lifecycle verbs** (files, vector stores, conversations,
   moderations, audio, batch, fine-tuning, containers, uploads, realtime, webhook
-  endpoints, safety, content provenance, token counting, FIM,
+  endpoints, safety, content provenance, token counting, Gemini context caches and File Search stores, FIM,
   prefix completion, System One, model listing) and the image verbs
   (`generate_image`, `:images`; `edit_image`, `:image_edits`) validate
   **strictly**: an endpoint with no declaration at all is not dispatched — the
@@ -3055,6 +3056,8 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ├─ Model listings     ModelListSuccess · ModelSuccess · ModelDeleteSuccess · ModelListFailure · ModelListCallError
 ├─ Token counts       TokenCountSuccess · TokenCountFailure · TokenCountCallError
+├─ Context caches     CacheSuccess · CacheListSuccess · CacheDeleteSuccess · CacheFailure · CacheCallError
+├─ File Search        FileSearchStoreSuccess · FileSearchStoreListSuccess · FileSearchDocumentSuccess · FileSearchDocumentListSuccess · FileSearchOperationSuccess · FileSearchDeleteSuccess · FileSearchFailure · FileSearchCallError
 ├─ Ollama models      OllamaSuccess · OllamaFailure · OllamaCallError
 └─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```
@@ -3250,7 +3253,7 @@ Every exported symbol (487), grouped by area:
 - *Input builders*: `input_text`, `input_image`, `input_file`, `configuration_update`
 - *Tool types*: `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `ShellTool`, `ApplyPatchTool`, `CustomTool`
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
-- *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`
+- *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`, `gemini_file_search`
 - *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
 - *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`, `input_transformations`, `InputTransformation`
 
@@ -3265,6 +3268,8 @@ Every exported symbol (487), grouped by area:
 **Provider model listings**: `ProviderModel`, `ModelListSuccess`, `ModelSuccess`, `ModelDeleteSuccess`, `ModelListFailure`, `ModelListCallError`, `retrieve_model` (and `list_models` with `service=OPENAIServiceEndpoint`, `ANTHROPICServiceEndpoint` or `GEMINIServiceEndpoint`)
 
 **Token counting**: `count_tokens`, `TokenCountSuccess`, `TokenCountFailure`, `TokenCountCallError`
+
+**Gemini context caching & File Search**: `CacheObject`, `CacheList`, `CacheSuccess`, `CacheListSuccess`, `CacheDeleteSuccess`, `CacheFailure`, `CacheCallError`, `create_cache`, `retrieve_cache`, `list_caches`, `update_cache`, `delete_cache`, `FileSearchStoreObject`, `FileSearchDocumentObject`, `FileSearchOperation`, `FileSearchStoreList`, `FileSearchDocumentList`, `FileSearchStoreSuccess`, `FileSearchStoreListSuccess`, `FileSearchDocumentSuccess`, `FileSearchDocumentListSuccess`, `FileSearchOperationSuccess`, `FileSearchDeleteSuccess`, `FileSearchFailure`, `FileSearchCallError`, `create_file_search_store`, `retrieve_file_search_store`, `list_file_search_stores`, `delete_file_search_store`, `upload_to_file_search_store`, `import_to_file_search_store`, `retrieve_file_search_operation`, `poll_file_search_operation`, `list_file_search_documents`, `retrieve_file_search_document`, `delete_file_search_document` (and `gemini_file_search` among the hosted Gemini tools)
 
 **Ollama model management**: `OllamaModel`, `OllamaModelInfo`, `OllamaRunningModel`, `OllamaPullProgress`, `OllamaSuccess`, `OllamaFailure`, `OllamaCallError`, `model_info`, `pull_model`, `running_models`, `load_model`, `unload_model`, `delete_model` (and `list_models` with `service=OllamaEndpoint()`)
 

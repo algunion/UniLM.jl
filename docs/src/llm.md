@@ -3025,7 +3025,7 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:token_count`, `:webhooks`, `:safety`, `:content_provenance`, `:skills`, `:stored_completions` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:transcription`, `:speech`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API), `:models`, `:token_count`, `:webhooks`, `:safety`, `:content_provenance`, `:skills`, `:stored_completions`, `:voices` |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
 | Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic`, `:images`, `:image_edits`, `:models`, `:speech`, `:system_one` (its Decisions API), `:files`, `:file_registration`, `:token_count`, `:batch`, `:context_caching`, `:file_search_stores`, `:embeddings`, `:transcription`, `:voices` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
@@ -3038,8 +3038,8 @@ has_capability(service, cap::Symbol) -> Bool
 Validation comes in two strengths, and the difference matters if you write your
 own endpoint:
 
-- **Platform and lifecycle verbs** (files, vector stores, conversations,
-  moderations, audio, batch, fine-tuning, containers, skills, uploads, realtime, webhook
+- **Platform and lifecycle verbs** (files, vector stores, conversations, stored Chat Completions,
+  moderations, audio, custom voices, batch, fine-tuning, containers, skills, uploads, realtime, webhook
   endpoints, safety, content provenance, token counting, Gemini context caches and File Search stores, FIM,
   prefix completion, System One, model listing) and the image verbs
   (`generate_image`, `:images`; `edit_image`, `:image_edits`) validate
@@ -3104,18 +3104,19 @@ reset_default_config!()                     # cleared: as if none had been set
 (per request), `list_models`, `retrieve_model`, `count_tokens`, `delete_model` on `OllamaEndpoint`, and the `tool_loop` family (streams retry only
 before the first callback fires); and to `moderate`, which is free and changes nothing when it is sent again. Platform and
 lifecycle verbs — batch, container, conversation, stored chat completion, file (`upload_file` and `create_skill` included: a create is never
-retried), fine-tuning (and `delete_model` on OpenAI), skill, upload, vector-store, voice, webhook endpoint, safety and provenance, speech
+retried), fine-tuning (and `delete_model` on OpenAI), skill, upload, vector-store, voice, Gemini context cache and
+File Search store, webhook endpoint, safety and provenance, speech
 and translation on OpenAI's Realtime API (`speak`,
 `translate`: a retry after the session's `response.create`, or after its audio, may bill a second
 response), realtime, and the Responses lifecycle operations — make a **single bounded attempt**, and
 `max_attempts` has no effect on them. A 429 that no retry can serve — spent credit, a
 reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded`
 (the codes under `chatrequest!`) — is never retried. `poll_batch`,
-`poll_file_batch` and `poll_file` poll through retryable statuses (such a 429 ends the poll with its failure) and
-per-attempt timeouts until their own wall-clock `timeout`
+`poll_file_batch`, `poll_file` and `poll_file_search_operation` poll through retryable statuses (such a 429 ends the
+poll with its failure) and per-attempt timeouts until their own wall-clock `timeout`
 (`interval` and `timeout` must be > 0); a poll that times out returns the family's
 call error with `cause = UniLMTimeout(:deadline, …)` and the last object seen in
-`last_observed`. All three take `cancel`.
+`last_observed`. All four take `cancel`.
 
 ### Cancellation
 
@@ -3130,8 +3131,9 @@ Every verb that sends a provider request takes `cancel::Union{Nothing,CancelToke
 `chatrequest!`, `respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
 `prefix_complete`, `ask`, `ask_each`, `list_models`, `retrieve_model`, `delete_model` (on OpenAI too),
 `count_tokens`, the Ollama model calls, `poll_batch`,
-`poll_file_batch`, `poll_file`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`, and every platform and
-lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, containers, skills, batch, fine-tuning,
+`poll_file_batch`, `poll_file`, `poll_file_search_operation`, the tool loops, `nl_dispatch`, `nl_classify`, `@branch`,
+and every platform and lifecycle verb (files, `register_files` included, uploads, vector stores, conversations, stored
+Chat Completions, containers, skills, batch, fine-tuning, Gemini context caches and File Search stores,
 webhook endpoints, safety cases and alerts, content provenance checks, custom voices and voice consents,
 `moderate`, `speak`, `transcribe`, `translate`, `mint_realtime_secret`, and `get_response`,
 `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`).
@@ -3204,7 +3206,7 @@ not observe the token (`speak` and `translate`, which run Realtime sessions of t
 
 ## Result Type Hierarchy
 
-All 101 API call result types inherit from `LLMRequestResponse`, in 22 per-API
+All 128 API call result types inherit from `LLMRequestResponse`, in 26 per-API
 families:
 
 ```
@@ -3420,7 +3422,7 @@ handlers mutate ([Write your own backend](@ref custom_backends_guide)): `get_url
 
 ## Complete Exports List
 
-Every exported symbol (487), grouped by area:
+Every exported symbol (590), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `DocumentAttachment`, `AudioOutput`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`

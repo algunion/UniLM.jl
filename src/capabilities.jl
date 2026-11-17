@@ -27,6 +27,7 @@ Standard capability symbols include:
   a model by id ([`retrieve_model`](@ref)) on OpenAI, Anthropic and Gemini
 - Token counting ([`count_tokens`](@ref)): `:token_count` (OpenAI, Anthropic, Gemini)
 - Context caches ([`create_cache`](@ref) and the verbs beside it): `:context_caching` (native Gemini)
+- File Search stores ([`create_file_search_store`](@ref) and the verbs beside it): `:file_search_stores` (native Gemini)
 - Webhook endpoint management ([`create_webhook_endpoint`](@ref) and the verbs beside it): `:webhooks` (OpenAI)
 - Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): `:safety` (OpenAI)
 - Content provenance checks ([`check_content_provenance`](@ref)): `:content_provenance` (OpenAI)

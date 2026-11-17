@@ -66,6 +66,7 @@ include("capabilities.jl")
 include("anthropic.jl")
 include("gemini.jl")
 include("gemini_caching.jl")
+include("gemini_file_search.jl")
 include("interactions.jl")
 include("deepseek.jl")
 include("completions.jl")
@@ -533,6 +534,33 @@ export
     list_caches,
     update_cache,
     delete_cache
+
+# ─── Gemini File Search ───────────────────────────────────────────────────────
+export
+    FileSearchStoreObject,
+    FileSearchDocumentObject,
+    FileSearchOperation,
+    FileSearchStoreList,
+    FileSearchDocumentList,
+    FileSearchStoreSuccess,
+    FileSearchStoreListSuccess,
+    FileSearchDocumentSuccess,
+    FileSearchDocumentListSuccess,
+    FileSearchOperationSuccess,
+    FileSearchDeleteSuccess,
+    FileSearchFailure,
+    FileSearchCallError,
+    create_file_search_store,
+    retrieve_file_search_store,
+    list_file_search_stores,
+    delete_file_search_store,
+    upload_to_file_search_store,
+    import_to_file_search_store,
+    retrieve_file_search_operation,
+    poll_file_search_operation,
+    list_file_search_documents,
+    retrieve_file_search_document,
+    delete_file_search_document
 
 # ─── Fine-tuning API ──────────────────────────────────────────────────────────
 export

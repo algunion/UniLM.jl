@@ -267,6 +267,8 @@ function _voice_call(decode::Function, method::String, url::String, headers, bod
     end
 end
 
+const _CONSENT_UNTESTED_DOC = "Untested: no live run has seen this call succeed (the live tests' organization gets HTTP 404 from the consent routes); it is built from OpenAI's reference and tested offline only."
+
 const _CANCEL_DOC = "Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token) to make the call cancellable: once the token is cancelled it returns a `VoiceCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token was already cancelled, at once when mid-request (never retried)."
 
 """
@@ -285,7 +287,9 @@ session refused one with "Prompt-based voices are not supported by the Realtime 
 `speak` cannot use it. An `audio_sample` (at most 10 MiB) with `consent`, the id of the speaker's
 [`VoiceConsent`](@ref), makes a voice from the recording; that access is "limited to eligible
 customers", and an organization without it gets HTTP 404 "Your organization does not have access to
-this endpoint" as a [`VoiceFailure`](@ref).
+this endpoint" as a [`VoiceFailure`](@ref). Untested: no live run has made a voice from a recording (the
+live tests' organization gets that 404); the request is built from OpenAI's reference and tested offline
+only.
 
 On `GEMINIServiceEndpoint` ([voice design](https://ai.google.dev/gemini-api/docs/voice-design),
 [voice replication](https://ai.google.dev/gemini-api/docs/voice-replication)): a `prompt` designs a
@@ -296,6 +300,8 @@ storing it and returns its `key` (`voicekey_…`, seven days). `name` is its dis
 `language` (a BCP-47 tag), `region`, `accent`, `persona`, `context`, `gender`, `pitch` (`"low"`,
 `"medium"` or `"high"`) and `description` describe it. A designed voice's reply carries a WAV preview
 (`raw["sample_audio"]`) and its token usage (`raw["usage"]`), which UniLM does not price.
+Untested: no live run has replicated a voice, made one with `store = false` or edited a `base_voice`;
+those requests are built from Gemini's guides and tested offline only.
 
 An option the service does not take, a missing name on OpenAI, both or neither of `prompt` and
 `audio_sample`, a missing consent and a missing file throw `ArgumentError` before any request.
@@ -424,7 +430,7 @@ label `name`, `language` being the BCP 47 tag of the phrase (`"en-US"`); the [`V
 `id` is the `consent` of [`create_voice`](@ref). OpenAI's custom voices from recordings are limited to
 eligible customers: an organization without access gets HTTP 404, a [`VoiceFailure`](@ref). A blank
 name or language, a missing or too large file, and a service other than OpenAI throw `ArgumentError`
-before any request. A single attempt, never retried.
+before any request. A single attempt, never retried. $_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function create_voice_consent(recording::AbstractString; name::AbstractString, language::AbstractString,
@@ -447,6 +453,7 @@ end
 
 OpenAI's voice consents, a page at a time: `limit` 1 to 100 (OpenAI's default 20), `after` the id of
 the last consent of the page before (`raw["last_id"]`). A `limit` out of range throws `ArgumentError`.
+$_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function list_voice_consents(; limit::Union{Int,Nothing}=nothing, after::Union{AbstractString,Nothing}=nothing,
@@ -466,7 +473,7 @@ end
 """
     get_voice_consent(consent_id; service=OPENAIServiceEndpoint) -> VoiceConsentSuccess | VoiceFailure | VoiceCallError
 
-An OpenAI voice consent by id.
+An OpenAI voice consent by id. $_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function get_voice_consent(consent_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
@@ -481,7 +488,7 @@ end
         -> VoiceConsentSuccess | VoiceFailure | VoiceCallError
 
 Relabel an OpenAI voice consent (its `name`, the only field OpenAI updates); a blank name throws
-`ArgumentError` before any request.
+`ArgumentError` before any request. $_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function update_voice_consent(consent_id::AbstractString; name::AbstractString,
@@ -498,7 +505,7 @@ end
     delete_voice_consent(consent_id; service=OPENAIServiceEndpoint) -> VoiceDeleteSuccess | VoiceFailure | VoiceCallError
 
 Delete an OpenAI voice consent; `object` of the result is `"audio.voice_consent"`, as OpenAI's
-reference gives its deletion record.
+reference gives its deletion record. $_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function delete_voice_consent(consent_id::AbstractString; service::ServiceEndpointSpec=OPENAIServiceEndpoint,

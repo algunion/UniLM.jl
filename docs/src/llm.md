@@ -2848,7 +2848,8 @@ transcript_text(r::TranscriptionSuccess) -> String
 **Speech.** On `OPENAIServiceEndpoint`, `speak` runs on a Realtime API session
 (`wss://api.openai.com/v1/realtime`, `gpt-realtime-2.1-mini` unless `model` names another — OpenAI's
 replacement for its text-to-speech models, which shut down on 2027-01-06): UniLM sets the voice
-(`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`), 24 kHz PCM
+(`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`, or a custom voice's
+`voice_…` id as `{"id": …}`), 24 kHz PCM
 output and instructions to read the text word for word, and collects the response's audio (Realtime
 models are conversational; OpenAI notes instructions are not guaranteed to be followed). On
 `GEMINIServiceEndpoint` it is Gemini TTS (`generateContent` on `gemini-3.8-flash-tts`; `instructions`
@@ -2982,7 +2983,9 @@ filters) and `get_voice` are Gemini's: OpenAI throws `ArgumentError` naming `GEM
 verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record (`object` `"audio.voice.deleted"`, or
 `"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers `{}` (the id requested). Each verb is
 one bounded attempt, never retried, capability `:voices`. A Gemini voice's `id` (`voice_…`, or a catalog id such as
-`"achernar"`) and `key` are what `speak` takes as `voice`; on OpenAI `speak` sends built-in voices only.
+`"achernar"`) and `key` are what `speak` takes as `voice`; on OpenAI `speak` sends a custom voice's `voice_…` id as
+`{"id": …}`, the form a Realtime session takes, which refuses a prompt voice ("Prompt-based voices are not supported by
+the Realtime API").
 
 ---
 

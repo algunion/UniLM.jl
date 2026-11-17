@@ -402,7 +402,7 @@ const _REALTIME_READ_ALOUD = "Read the user's message aloud, word for word, exac
 
 # session.update for speech: audio output as 24 kHz PCM16, in the request's voice and speed.
 function _speech_session(req::SpeechRequest)::Dict{Symbol,Any}
-    output = Dict{Symbol,Any}(:format => Dict(:type => "audio/pcm", :rate => _SPEECH_RATE), :voice => req.voice)
+    output = Dict{Symbol,Any}(:format => Dict(:type => "audio/pcm", :rate => _SPEECH_RATE), :voice => _realtime_voice(req.voice))
     isnothing(req.speed) || (output[:speed] = req.speed)
     instructions = isnothing(req.instructions) ? _REALTIME_READ_ALOUD :
                    string(_REALTIME_READ_ALOUD, " Delivery: ", req.instructions)

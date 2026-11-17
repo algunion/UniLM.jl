@@ -533,6 +533,16 @@ end
                           _sp_item("Good morning."), Dict{String,Any}("type" => "response.create")]
 end
 
+# A Realtime session takes a custom voice as an object (VoiceIdsOrCustomVoice): sent as a plain string, a voice_… id
+# was answered "Supported values are: 'alloy', …" (2026-11-17). Refuted if: the id goes as a string, or is refused
+# before the session.
+@testset "speak on OpenAI: a custom voice goes as {\"id\": …}" begin
+    _, seen = _sp_with_realtime(_sp_speech_reply([UInt8[1, 0]])) do
+        speak("Hi."; service=SpeechWSProbe, voice="voice_abc123")
+    end
+    @test seen.events[1] == _sp_session_update(voice=Dict("id" => "voice_abc123"))
+end
+
 @testset "speak on OpenAI: an error event is the provider's refusal, never partial audio" begin
     err = _sp_event("error"; error=Dict("type" => "invalid_request_error", "code" => "invalid_value",
                                         "message" => "Voice 'marin' is not available for this session.",

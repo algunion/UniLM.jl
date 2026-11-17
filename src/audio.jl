@@ -67,11 +67,16 @@ _speech_rules(::_RealtimeSpeechWire) = _REALTIME_SPEECH
 _speech_rules(::_GeminiSpeechWire) = _GEMINI_SPEECH
 _speech_rules(::_OllamaSpeechWire) = _OLLAMA_SPEECH
 
-# The voice a request names, as its wire takes it: a Realtime session one of its built-in voices.
+# A Realtime session takes a built-in voice by name and a custom one as an object, {"id": "voice_…"}
+# (VoiceIdsOrCustomVoice): a custom id sent as a plain string was answered "Supported values are: 'alloy', …"
+# (2026-11-17).
+_realtime_voice(v::String) = startswith(v, "voice_") ? Dict(:id => v) : v
+# The voice a request names, as its wire takes it: a Realtime session one of its built-in voices, or a custom
+# voice's id.
 function _speech_voice(w::_RealtimeSpeechWire, v::AbstractString)::String
     r = _speech_rules(w)
-    v in r.voices || throw(ArgumentError(
-        "$(r.provider) voices are $(join(r.voices, ", ")) (got $(repr(v))): $(r.docs)"))
+    v in r.voices || (startswith(v, "voice_") && length(v) > 6) || throw(ArgumentError(
+        "$(r.provider) voices are $(join(r.voices, ", ")), or a custom voice's voice_… id (got $(repr(v))): $(r.docs)"))
     String(v)
 end
 # Gemini 3.8 TTS takes "a prebuilt voice name, an Extended Voice Library ID, a custom Voice design ID
@@ -209,7 +214,7 @@ Gemini a dialogue: a vector of [`SpeechTurn`](@ref)s, read in the voices `speake
 
 | `service` | speaks through | default `model` | default `voice` | `voice` | `speed` |
 |:--|:--|:--|:--|:--|:--|
-| `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
+| `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`, or a custom voice's `voice_…` id, sent as `{"id": …}` | `0.25` to `1.5` |
 | `GEMINIServiceEndpoint` | Gemini TTS | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key | none |
 | [`OllamaEndpoint`](@ref) | Ollama's speech route (Ollama 0.40.9 or later) | none: name an installed speech model, such as `phonon` | the model's own (`voice` not sent) | one of the model's voices, which [`model_info`](@ref) lists (`voices`), sent as given | `1` only |
 

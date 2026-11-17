@@ -79,7 +79,7 @@ t = translate("memo.wav"; language="fr", service=OllamaEndpoint(), model="gemma4
 
 | `service` | speaks through | default `model` | default `voice` | voices | `speed` |
 |:--|:--|:--|:--|:--|:--|
-| `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` | `0.25` to `1.5` |
+| `OPENAIServiceEndpoint` | a Realtime API session | `gpt-realtime-2.1-mini` | `marin` | `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`, or a custom voice's `voice_…` id, sent as `{"id": …}` | `0.25` to `1.5` |
 | `GEMINIServiceEndpoint` | Gemini TTS (`generateContent`) | `gemini-3.8-flash-tts` | `Kore` | a prebuilt voice (the 30 studio voices or one of the Extended Voice Library), a designed or replicated voice's `voice_…` id, or a replicated voice's `voicekey_…` key, sent as given | none |
 | [`OllamaEndpoint`](@ref) | Ollama's `/v1/audio/speech` (Ollama 0.40.9 or later) | none: name an installed speech model, such as `phonon` | the model's own (`voice` is not sent) | one of the model's voices, which [`model_info`](@ref) lists as `voices`, sent as given | `1` only |
 
@@ -351,8 +351,8 @@ voice from a recording needs the speaker's consent ([`create_voice_consent`](@re
 404 "Your organization does not have access to this endpoint" from both, a [`VoiceFailure`](@ref).
 OpenAI's API lists and looks up no voices, so `list_voices` and `get_voice` on it throw
 `ArgumentError` naming `GEMINIServiceEndpoint`. The Realtime API takes a custom voice as an object,
-`{"id": "voice_…"}` (a plain string answered "Supported values are: 'alloy', …"); `speak` sends
-the built-in voices only, so on OpenAI it refuses a `voice_…` id
+`{"id": "voice_…"}` (a plain string answered "Supported values are: 'alloy', …"), and so `speak`
+on OpenAI sends a `voice_…` id
 ([custom voices](https://developers.openai.com/api/docs/guides/custom-voices)).
 
 Each verb is one bounded attempt, never retried (a create that timed out may still have made the

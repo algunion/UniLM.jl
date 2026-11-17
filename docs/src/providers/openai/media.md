@@ -229,8 +229,9 @@ instructions "are not guaranteed to be followed by the model"
 
 - **`voice`**: `"marin"`, the default, or one of OpenAI's other built-in voices, `"alloy"`, `"ash"`,
   `"ballad"`, `"coral"`, `"echo"`, `"sage"`, `"shimmer"`, `"verse"` and `"cedar"`: "We recommend
-  `marin` and `cedar` for best quality". A custom voice, which a session takes by its id, is
-  refused ([Limits and refusals](@ref openai_media_limits)).
+  `marin` and `cedar` for best quality". A custom voice's `voice_…` id goes to the session as
+  `{"id": "voice_…"}`, the form it takes a custom voice in; a prompt voice the session refuses
+  ([Custom voices](@ref audio_voices)).
 - **`speed`**: from 0.25 to 1.5 — "1.0 is the default speed" —, "a post-processing adjustment to
   the audio after it is generated".
 - **`response_format`**: `"wav"`, the default, a WAV file with a 44-byte header, or `"pcm"`, the
@@ -484,7 +485,7 @@ WAV file. These are refused with an `ArgumentError` before anything is sent:
 | SVG output (`output_format="svg"`) with an `n` other than 1, or with an `output_compression` | `SVG output takes n=1`, `SVG output takes no output_compression`: "SVG generation requires n=1 and does not support [...] output_compression" | `n=1`, no compression |
 | an `SvgOptions` with no `model` or an empty one, or an `effort` other than `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` and `"max"` (when it is built) | `SvgOptions needs its model`, `SvgOptions model`, `SvgOptions effort`: an SVG without `svg.model` was HTTP 400, "SVG generation requires 'svg.model'." (2026-11-16), "When model selection is disabled, omit this object"; the reference's `minLength: 1` and its efforts | a model name, or no `svg` at all where model selection is disabled; one of the efforts |
 | `speak` with empty or blank text | `speak needs text to read: input is empty` | the text to read |
-| a `voice` that is not one of the ten built-in voices, a custom voice among them | `OpenAI Realtime voices are`: UniLM sends the built-in voices only | one of them |
+| a `voice` that is neither one of the ten built-in voices nor a custom voice's `voice_…` id | `OpenAI Realtime voices are`: UniLM sends the built-in voices and custom voices only | one of them |
 | a `speak` `response_format` other than `"wav"` and `"pcm"` | `response_format must be "wav"`: the session's audio is 24 kHz PCM, which UniLM returns as a WAV file or as samples | `"wav"` or `"pcm"` |
 | a `speed` outside 0.25 to 1.5 | `OpenAI Realtime speed must be between 0.25 and 1.5`: the session's range | a speed in the range |
 | `transcribe` or `translate` with a path that is no file | `file not found:` | the path of the file |

@@ -84,7 +84,7 @@ end
 
 # ─── Transcription options, streaming, dialogues and custom voices (live) ────
 # OpenAI: gpt-transcribe with logprobs and server VAD, then streamed; gpt-4o-transcribe-diarize streamed; a prompt
-# voice made and deleted, and the consent listing (HTTP 404 to an organization without the eligibility). Gemini:
+# voice made, sent to speak (whose session refuses a prompt voice before any audio) and deleted, and the consent listing (HTTP 404 to an organization without the eligibility). Gemini:
 # gemini-3.5-transcribe with diarization and word timestamps; a two-speaker dialogue; a designed voice made, read,
 # looked up and deleted, and the prebuilt catalog's first page, one of its voices read. About two cents a run,
 # whatever OpenAI charges for a prompt voice aside (its price is not on the pricing page).
@@ -116,6 +116,14 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test v isa VoiceSuccess
         try
             @test v isa VoiceSuccess && startswith(v.response.id, "voice_") && v.response.type == "prompt"
+            # speak sends the voice to its Realtime session as {"id": …}, which reads a voice made from a recording
+            # and refuses a prompt voice by name (2026-11-17); a plain string was refused as no built-in voice.
+            if v isa VoiceSuccess
+                s = speak("Hello."; voice=v.response.id)
+                @test s isa SpeechSuccess ||
+                      (s isa AudioFailure && occursin("Prompt-based voices are not supported by the Realtime API", s.response))
+                @info "OpenAI speak with a custom voice" result = (s isa SpeechSuccess ? length(s.audio) : s)
+            end
         finally
             if v isa VoiceSuccess
                 d = delete_voice(v.response.id)

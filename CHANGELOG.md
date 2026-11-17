@@ -88,6 +88,9 @@
   session and a Realtime connection throw). Error text now also masks `Cookie` values.
 - **`MCPTool` shows its `authorization` token and credential header values redacted**, and so does a `Respond`
   holding one; the request body still sends them.
+- **A `total_deadline`, or what is left of it, below one microsecond counts as spent**: the verb returns its
+  `UniLMTimeout(:deadline, …)` before any network I/O. Two back-to-back clock reads can be identical (Apple
+  Silicon's monotonic clock steps every 41 ns), so such a budget could still look positive and the request went out.
 
 ## 0.34.0
 

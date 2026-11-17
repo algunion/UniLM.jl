@@ -2985,9 +2985,9 @@ voice, `store` true unless set (`store = false` returns a `key`), `name` as `dis
 a service does not take throw `ArgumentError` before I/O. `list_voices` (page_size ≤ 1000, page_token, repeated
 filters) and `retrieve_voice` are Gemini's, their default service: OpenAI throws `ArgumentError` naming
 `GEMINIServiceEndpoint`; the consent verbs are OpenAI's: Gemini throws `ArgumentError`. Deletes: OpenAI's record
-(`object` `"audio.voice.deleted"`, or
-`"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers `{}` (the id requested). Each verb is
-one bounded attempt, never retried, capability `:voices`. A Gemini voice's `id` (`voice_…`, or a catalog id such as
+(`object` `"audio.voice.deleted"`, or `"audio.voice_consent"`) is checked and its `deleted` confirmed; Gemini answers
+`{}` (the id requested). Each verb is one bounded attempt, never retried, capability `:voices`; a missing key and an
+unreadable recording are a `VoiceCallError`, and a pre-cancelled call reads no file. A Gemini voice's `id` (`voice_…`, or a catalog id such as
 `"achernar"`) and `key` are what `speak` takes as `voice`; on OpenAI `speak` sends a custom voice's `voice_…` id as
 `{"id": …}`, the form a Realtime session takes, which refuses a prompt voice ("Prompt-based voices are not supported by
 the Realtime API").

@@ -156,6 +156,9 @@ function _voice_audio_file(verb::String, what::String, path::AbstractString; max
         "$verb: OpenAI takes a $what of at most 10 MiB (got $(filesize(path)) bytes)"))
     String(path)
 end
+# Gemini takes a recording inline: its MIME type and its base64 bytes.
+_voice_audio_part(path::String)::Dict{String,Any} =
+    Dict{String,Any}("mime_type" => _mime_for(path), "data" => base64encode(read(path)))
 
 const _VOICE_PITCHES = ("low", "medium", "high")
 # Gemini's descriptive fields of a created voice, by the keyword each comes from.
@@ -184,9 +187,11 @@ function _voice_source(verb::String, prompt, audio_sample)::Pair{Symbol,String}
     :prompt => String(prompt)
 end
 
+# A create's options are checked here, before any I/O; what reads the key or a recording is the returned
+# `() -> (headers, body)`, which the exchange calls.
 # OpenAI's CreateVoicePromptRequest (JSON: type "prompt", name 1–256 characters, prompt and script_hint 1–2000, not
 # blank, model) or CreateVoiceFromConsentRequest (multipart: type "audio_sample", name, audio_sample, consent).
-function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)
+function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)::Function
     verb = "create_voice"
     _refuse_voice_options(verb, "OpenAI", opts, (:consent_audio, :base_voice, :store, first.(_GEMINI_VOICE_FIELDS)...),
         "those are Gemini's (service=GEMINIServiceEndpoint)")
@@ -202,7 +207,7 @@ function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)
         body = Dict{String,Any}("type" => "prompt", "name" => name, "prompt" => value)
         isnothing(hint) || (body["script_hint"] = hint)
         isnothing(opts.model) || (body["model"] = opts.model)
-        return auth_header(service), JSON.json(body)
+        return () -> (auth_header(service), JSON.json(body))
     end
     isnothing(opts.script_hint) || throw(ArgumentError("$verb: a script_hint goes with a prompt, not an audio_sample"))
     consent = something(opts.consent, "")
@@ -211,16 +216,16 @@ function _create_voice_request(::_OpenAIVoices, service, opts::NamedTuple)
         "(create_voice_consent makes one)"))
     sample = _voice_audio_file(verb, "audio_sample", value; max=_VOICE_AUDIO_MAX)
     isnothing(opts.model) || throw(ArgumentError("$verb: OpenAI takes a model for a prompt voice only"))
-    fields = Pair{String,Any}["type" => "audio_sample", "name" => name, "consent" => consent,
-        "audio_sample" => HTTP.Multipart(basename(sample), IOBuffer(read(sample)), _mime_for(sample))]
-    auth_header_multipart(service), HTTP.Form(fields)
+    () -> (auth_header_multipart(service), HTTP.Form(Pair{String,Any}["type" => "audio_sample", "name" => name,
+        "consent" => consent,
+        "audio_sample" => HTTP.Multipart(basename(sample), IOBuffer(read(sample)), _mime_for(sample))]))
 end
 
 # Gemini's CreateVoice: `store` (true unless set: "stateful storage enabled by default") and the `voice`, a prompted one
 # (`prompted.input`, an optional `base_voice` to edit) or a replicated one (`replicated.source_audio` and
 # `consent_audio`, each the audio's MIME type and base64 bytes), with its optional model, display name and
 # descriptive fields (https://ai.google.dev/gemini-api/docs/voice-design, /voice-replication).
-function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)
+function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)::Function
     verb = "create_voice"
     _refuse_voice_options(verb, "Gemini", opts, (:consent, :script_hint),
         "Gemini takes the consent recording itself (consent_audio) and no script hint")
@@ -235,31 +240,39 @@ function _create_voice_request(::_GeminiVoices, service, opts::NamedTuple)
         isnothing(v) || (voice[field] = v)
     end
     consent_audio = opts.consent_audio
+    store = something(opts.store, true)
+    request(v::Dict{String,Any}) = (auth_header(service), JSON.json(Dict{String,Any}("store" => store, "voice" => v)))
     if source === :prompt
         isnothing(consent_audio) || throw(ArgumentError("$verb: consent_audio goes with an audio_sample, not a prompt"))
         voice["type"] = "prompted"
         voice["prompted"] = Dict{String,Any}("input" => value,
             (isnothing(opts.base_voice) ? () : ("base_voice" => opts.base_voice,))...)
-    else
-        isnothing(opts.base_voice) || throw(ArgumentError("$verb: a base_voice goes with a prompt, not an audio_sample"))
-        isnothing(consent_audio) && throw(ArgumentError(
-            "$verb: Gemini replicates a voice from an audio_sample and the speaker's consent recording: pass consent_audio"))
-        audio(path::AbstractString, what::String) = (p = _voice_audio_file(verb, what, path);
-            Dict{String,Any}("mime_type" => _mime_for(p), "data" => base64encode(read(p))))
-        voice["type"] = "replicated"
-        voice["replicated"] = Dict{String,Any}("source_audio" => audio(value, "audio_sample"),
-                                               "consent_audio" => audio(consent_audio, "consent_audio"))
+        return () -> request(voice)
     end
-    auth_header(service), JSON.json(Dict{String,Any}("store" => something(opts.store, true), "voice" => voice))
+    isnothing(opts.base_voice) || throw(ArgumentError("$verb: a base_voice goes with a prompt, not an audio_sample"))
+    isnothing(consent_audio) && throw(ArgumentError("$verb: Gemini replicates a voice from an audio_sample and " *
+        "the speaker's consent recording: pass consent_audio"))
+    sample =_voice_audio_file(verb, "audio_sample", value)
+    consent = _voice_audio_file(verb, "consent_audio", consent_audio)
+    voice["type"] = "replicated"
+    () -> request(merge(voice, Dict{String,Any}("replicated" => Dict{String,Any}(
+        "source_audio" => _voice_audio_part(sample), "consent_audio" => _voice_audio_part(consent)))))
 end
 
-# One exchange: a 200's JSON to `decode`, another status the VoiceFailure, anything thrown the VoiceCallError. A
-# single bounded attempt: a create that timed out may still have made the voice, and a second would make another.
-function _voice_call(decode::Function, method::String, url::String, headers, body, config, cancel)
-    cfg = _resolve_config(config); t0 = time_ns()
+# The request of a verb that sends no body: the service's headers, which read its key.
+_voice_bare(service)::Function = () -> (auth_header(service), nothing)
+
+# One exchange. `request()` builds the headers and the body inside it, once the token is checked, so a missing key
+# or an unreadable recording is the VoiceCallError and a cancelled call reads no file; a 200's JSON goes to
+# `decode`, another status is the VoiceFailure, and anything thrown the VoiceCallError. A single bounded attempt: a
+# create that timed out may still have made the voice, and a second would make another.
+function _voice_call(decode::Function, method::String, url::String, request::Function, config, cancel)
+    cfg = _resolve_config(config); t0 = time_ns(); tok = _resolve_cancel(cancel)
     try
-        resp = isnothing(body) ? _http(method, url, headers; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel)) :
-            _http(method, url, headers, body; cfg, remaining=_remaining_s(cfg, t0), cancel=_resolve_cancel(cancel))
+        iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
+        headers, body = request()
+        resp = isnothing(body) ? _http(method, url, headers; cfg, remaining=_remaining_s(cfg, t0), cancel=tok) :
+            _http(method, url, headers, body; cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
         resp.status == 200 ? decode(_json_object(resp.body)) : _failure(VoiceFailure, resp)
     catch e
         e isa InterruptException && rethrow()
@@ -304,7 +317,9 @@ Untested: no live run has replicated a voice, made one with `store = false` or e
 those requests are built from Gemini's guides and tested offline only.
 
 An option the service does not take, a missing name on OpenAI, both or neither of `prompt` and
-`audio_sample`, a missing consent and a missing file throw `ArgumentError` before any request.
+`audio_sample`, a missing consent and a missing file throw `ArgumentError` before any request; a
+file that cannot be read and a missing API key are a [`VoiceCallError`](@ref), and a call whose
+token was already cancelled reads no file.
 A create is a single attempt, never retried: one that timed out may still have made the voice.
 $_CANCEL_DOC
 """
@@ -322,9 +337,8 @@ function create_voice(; name::Union{AbstractString,Nothing}=nothing, prompt::Uni
     wire = _voices_wire(service)
     opts = (; name, prompt, audio_sample, consent, consent_audio, model, script_hint, base_voice, store, language,
             region, accent, persona, context, gender, pitch, description)
-    headers, body = _create_voice_request(wire, service, opts)
-    _voice_call(d -> VoiceSuccess(response=_parse_voice(wire, d)), "POST", _voices_url(service), headers, body,
-                config, cancel)
+    _voice_call(d -> VoiceSuccess(response=_parse_voice(wire, d)), "POST", _voices_url(service),
+                _create_voice_request(wire, service, opts), config, cancel)
 end
 
 # The wire of a verb only Gemini's Voices API serves: OpenAI's API has no voice listing or lookup (its custom voices
@@ -373,8 +387,7 @@ function list_voices(; service::ServiceEndpointSpec=GEMINIServiceEndpoint, limit
     end
     isnothing(search) || push!(query, "search=" * _uripart(search))
     url = _voices_url(service) * (isempty(query) ? "" : "?" * join(query, "&"))
-    _voice_call(d -> VoiceListSuccess(response=_voice_page(wire, d)), "GET", url, auth_header(service), nothing,
-                config, cancel)
+    _voice_call(d -> VoiceListSuccess(response=_voice_page(wire, d)), "GET", url, _voice_bare(service), config, cancel)
 end
 
 """
@@ -390,7 +403,7 @@ function retrieve_voice(voice_id::AbstractString; service::ServiceEndpointSpec=G
     validate_capability(service, :voices, "Voices API")
     wire = _gemini_voices_wire(_voices_wire(service), "retrieve_voice")
     _voice_call(d -> VoiceSuccess(response=_parse_voice(wire, d)), "GET", _voices_url(service) * "/" * _uripart(voice_id),
-                auth_header(service), nothing, config, cancel)
+                _voice_bare(service), config, cancel)
 end
 
 """
@@ -406,8 +419,7 @@ function delete_voice(voice_id::AbstractString; service::ServiceEndpointSpec=OPE
     wire = _voices_wire(service)
     decode = wire isa _GeminiVoices ? (_ -> VoiceDeleteSuccess(id=String(voice_id), deleted=true)) :
                                       (d -> _voice_deleted(d, "audio.voice.deleted"))
-    _voice_call(decode, "DELETE", _voices_url(service) * "/" * _uripart(voice_id), auth_header(service), nothing,
-                config, cancel)
+    _voice_call(decode, "DELETE", _voices_url(service) * "/" * _uripart(voice_id), _voice_bare(service), config, cancel)
 end
 
 # ─── OpenAI voice consents ────────────────────────────────────────────────────
@@ -430,7 +442,9 @@ label `name`, `language` being the BCP 47 tag of the phrase (`"en-US"`); the [`V
 `id` is the `consent` of [`create_voice`](@ref). OpenAI's custom voices from recordings are limited to
 eligible customers: an organization without access gets HTTP 404, a [`VoiceFailure`](@ref). A blank
 name or language, a missing or too large file, and a service other than OpenAI throw `ArgumentError`
-before any request. A single attempt, never retried. $_CONSENT_UNTESTED_DOC
+before any request; a file that cannot be read and a missing API key are a [`VoiceCallError`](@ref),
+and a call whose token was already cancelled reads no file. A single attempt, never retried.
+$_CONSENT_UNTESTED_DOC
 $_CANCEL_DOC
 """
 function create_voice_consent(recording::AbstractString; name::AbstractString, language::AbstractString,
@@ -441,10 +455,11 @@ function create_voice_consent(recording::AbstractString; name::AbstractString, l
         isempty(strip(v)) && throw(ArgumentError("create_voice_consent: the $k is blank"))
     end
     path = _voice_audio_file("create_voice_consent", "recording", recording; max=_VOICE_AUDIO_MAX)
-    form = HTTP.Form(Pair{String,Any}["name" => String(name), "language" => String(language),
-        "recording" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
     _voice_call(d -> VoiceConsentSuccess(response=_parse_voice_consent(d)), "POST", _voice_consents_url(service),
-                auth_header_multipart(service), form, config, cancel)
+                () -> (auth_header_multipart(service), HTTP.Form(Pair{String,Any}["name" => String(name),
+                    "language" => String(language),
+                    "recording" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])),
+                config, cancel)
 end
 
 """
@@ -463,7 +478,7 @@ function list_voice_consents(; limit::Union{Int,Nothing}=nothing, after::Union{A
     isnothing(limit) || 1 <= limit <= 100 || throw(ArgumentError(
         "list_voice_consents: limit is 1 to 100 (got $limit)"))
     url = _voice_consents_url(service) * _vs_list_query("list_voice_consents", "limit" => limit, "after" => after)
-    _voice_call("GET", url, auth_header(service), nothing, config, cancel) do d
+    _voice_call("GET", url, _voice_bare(service), config, cancel) do d
         page, has_more = _vs_page(d)
         VoiceConsentListSuccess(response=VoiceConsentList(data=VoiceConsent[_parse_voice_consent(c) for c in page],
                                                           has_more=has_more, raw=Dict{String,Any}(d)))
@@ -482,7 +497,7 @@ function retrieve_voice_consent(consent_id::AbstractString; service::ServiceEndp
                                 cancel::Union{Nothing,CancelToken}=nothing)
     _consents_service(service, "retrieve_voice_consent")
     _voice_call(d -> VoiceConsentSuccess(response=_parse_voice_consent(d)), "GET",
-                _voice_consents_url(service) * "/" * _uripart(consent_id), auth_header(service), nothing, config, cancel)
+                _voice_consents_url(service) * "/" * _uripart(consent_id), _voice_bare(service), config, cancel)
 end
 
 """
@@ -499,8 +514,8 @@ function update_voice_consent(consent_id::AbstractString; name::AbstractString,
     _consents_service(service, "update_voice_consent")
     isempty(strip(name)) && throw(ArgumentError("update_voice_consent: the name is blank"))
     _voice_call(d -> VoiceConsentSuccess(response=_parse_voice_consent(d)), "POST",
-                _voice_consents_url(service) * "/" * _uripart(consent_id), auth_header(service),
-                JSON.json(Dict("name" => name)), config, cancel)
+                _voice_consents_url(service) * "/" * _uripart(consent_id),
+                () -> (auth_header(service), JSON.json(Dict("name" => name))), config, cancel)
 end
 
 """
@@ -514,5 +529,5 @@ function delete_voice_consent(consent_id::AbstractString; service::ServiceEndpoi
                               config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     _consents_service(service, "delete_voice_consent")
     _voice_call(d -> _voice_deleted(d, "audio.voice_consent"), "DELETE",
-                _voice_consents_url(service) * "/" * _uripart(consent_id), auth_header(service), nothing, config, cancel)
+                _voice_consents_url(service) * "/" * _uripart(consent_id), _voice_bare(service), config, cancel)
 end

@@ -253,6 +253,47 @@ end
     @test isempty(seen4)
 end
 
+@testset "voice verbs: a missing key, an unreadable file and a cancelled token are call errors" begin
+    outcome(f) = try f() catch x; x end
+    # A missing key is the verb's call error, as in every platform family. The spent budget keeps a request that got
+    # past its headers from leaving the machine.
+    withenv("OPENAI_API_KEY" => nothing, "GEMINI_API_KEY" => nothing) do
+        kw = (; config=_TINY_DEADLINE)
+        for f in (() -> create_voice(; name="n", prompt="p", kw...),
+                  () -> create_voice(; prompt="p", service=GEMINIServiceEndpoint, kw...),
+                  () -> list_voices(; kw...), () -> retrieve_voice("voice_1"; kw...), () -> delete_voice("voice_1"; kw...),
+                  () -> delete_voice("voice_1"; service=GEMINIServiceEndpoint, kw...),
+                  () -> create_voice_consent(_SP_WAV; name="n", language="en-US", kw...),
+                  () -> list_voice_consents(; kw...), () -> retrieve_voice_consent("cons_1"; kw...),
+                  () -> update_voice_consent("cons_1"; name="n", kw...), () -> delete_voice_consent("cons_1"; kw...))
+            r = outcome(f)
+            @test r isa VoiceCallError && r.cause isa KeyError
+        end
+    end
+    # A recording that cannot be read is a call error too; a cancelled call reads no file.
+    unreadable = tempname() * ".wav"
+    write(unreadable, read(_SP_WAV))
+    chmod(unreadable, 0o000)
+    try
+        tok = cancel!(CancelToken())
+        _, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            for f in (cancel -> create_voice(; name="n", audio_sample=unreadable, consent="cons_1", service=_OAVoices, cancel),
+                      cancel -> create_voice(; audio_sample=unreadable, consent_audio=_SP_WAV, service=_GVoices, cancel),
+                      cancel -> create_voice(; audio_sample=_SP_WAV, consent_audio=unreadable, service=_GVoices, cancel),
+                      cancel -> create_voice_consent(unreadable; name="n", language="en-US", service=_OAVoices, cancel))
+                r = outcome(() -> f(nothing))
+                @test r isa VoiceCallError && r.cause isa SystemError
+                c = outcome(() -> f(tok))
+                @test c isa VoiceCallError && c.cause isa UniLMCancelled
+            end
+        end
+        @test isempty(seen)
+    finally
+        chmod(unreadable, 0o644)
+        rm(unreadable; force=true)
+    end
+end
+
 @testset "voice verbs: a spent budget and a cancelled token send nothing" begin
     _, seen = _with_scripted((_, _) -> _json(200, _OA_VOICE)) do
         @test _seam_timeout(create_voice(; service=_OAVoices, name="n", prompt="p", config=_TINY_DEADLINE), VoiceCallError)

@@ -364,7 +364,9 @@ on OpenAI sends a `voice_…` id
 Each verb is one bounded attempt, never retried (a create that timed out may still have made the
 voice), and takes `config` and `cancel` as the other platform verbs do; a status the service answers
 is a [`VoiceFailure`](@ref), a reply that is not the documented object (a voice without its type, a
-deletion record of another kind, a page without `has_more`) a [`VoiceCallError`](@ref).
+deletion record of another kind, a page without `has_more`) a [`VoiceCallError`](@ref), as are a
+missing API key and a recording that cannot be read; a call whose token was already cancelled reads
+no file.
 
 ```@docs
 Voice

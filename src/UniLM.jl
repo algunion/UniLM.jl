@@ -67,6 +67,7 @@ include("anthropic.jl")
 include("gemini.jl")
 include("gemini_caching.jl")
 include("gemini_file_search.jl")
+include("gemini_embeddings.jl")
 include("interactions.jl")
 include("deepseek.jl")
 include("completions.jl")
@@ -87,6 +88,7 @@ include("model_listing.jl")
 include("token_count.jl")
 include("vector_stores.jl")
 include("conversations.jl")
+include("chat_store.jl")
 include("moderations.jl")
 include("audio.jl")
 include("batch.jl")
@@ -398,6 +400,24 @@ export
     list_conversation_items,
     retrieve_conversation_item,
     delete_conversation_item
+
+# ─── Stored Chat Completions ──────────────────────────────────────────────────
+export
+    StoredCompletion,
+    StoredCompletionList,
+    StoredCompletionMessage,
+    StoredCompletionMessageList,
+    StoredCompletionSuccess,
+    StoredCompletionListSuccess,
+    StoredCompletionMessageListSuccess,
+    StoredCompletionDeleteSuccess,
+    StoredCompletionFailure,
+    StoredCompletionCallError,
+    list_chat_completions,
+    get_chat_completion,
+    update_chat_completion,
+    delete_chat_completion,
+    list_chat_completion_messages
 
 # ─── Moderations API ──────────────────────────────────────────────────────────
 export

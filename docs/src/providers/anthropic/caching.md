@@ -136,7 +136,8 @@ carries — and each request's `params` are its Messages body, encoded as [`chat
 it, so the request rules of these pages hold for it. A custom id is 1 to 64 letters, digits, hyphens and
 underscores, unique in its batch; a streamed `Chat` and fast mode (`service_tier="fast"`, which goes as
 `speed`, a parameter a batched request does not take) are refused with an `ArgumentError` before
-anything is sent, as is a `Chat` for another endpoint.
+anything is sent, as is a `Chat` for another endpoint, and `display_name`, which names a Gemini batch. Anthropic
+serves no embeddings, so a batch of `Embeddings` is refused there too.
 
 ```julia
 ask() = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", max_tokens=16,

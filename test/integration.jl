@@ -976,4 +976,67 @@ end
     end
 end
 
+# On 2026-11-17 this organization's stored completions read but did not change: a completion sent with store=true was
+# still unknown (HTTP 404, unlisted) 90 minutes later, on gpt-6-luna and gpt-5.4-nano, while a Responses API store read
+# back at once; a metadata update was answered HTTP 500 "server_error"; a delete was answered `"deleted": true` and left
+# the completion listed and readable minutes later, a second delete answering the same. So the gate stores none and
+# waits for none: it takes the oldest completion the listing shows, reads its reply and input messages, sends a metadata
+# update (the updated completion, or the HTTP 5xx the API answered) and a delete (the confirmed delete). USD 0 a run.
+@testset "Stored Chat Completions — the oldest listed: get, messages, metadata update, delete" begin
+    page = list_chat_completions(; order="asc", limit=1)
+    @test page isa StoredCompletionListSuccess
+    listed = page isa StoredCompletionListSuccess ? page.response.data : StoredCompletion[]
+    @test length(listed) == 1
+    if length(listed) == 1
+        c = only(listed)
+        got = get_chat_completion(c.id)
+        @test got isa StoredCompletionSuccess && got.response.id == c.id && got.response.message.role == "assistant"
+        msgs = list_chat_completion_messages(c.id; order="asc", limit=10)
+        @test msgs isa StoredCompletionMessageListSuccess && !isempty(msgs.response.data)
+        marked = update_chat_completion(c.id, Dict("unilm_gate" => "deleting"))
+        @test (marked isa StoredCompletionSuccess && get(marked.response.metadata, "unilm_gate", nothing) == "deleting") ||
+              (marked isa StoredCompletionFailure && marked.status >= 500 && occursin("server_error", marked.response))
+        filtered = list_chat_completions(; metadata=Dict("unilm_gate" => "deleting"), model=c.model, limit=100)
+        @test filtered isa StoredCompletionListSuccess
+        d = delete_chat_completion(c.id)
+        @test d isa StoredCompletionDeleteSuccess && d.id == c.id
+        after = get_chat_completion(c.id)
+        @info "Stored completion read, updated and deleted" c.id c.model c.created messages = length(msgs.response.data) update = (
+            marked isa StoredCompletionFailure ? marked.status : "updated") filtered = (
+            filtered isa StoredCompletionListSuccess ? length(filtered.response.data) : nothing) read_after_delete = (
+            after isa StoredCompletionFailure ? after.status : typeof(after))
+    end
+end
+
+# OpenAI's queue held a batch for over an hour on 2026-11-16, so the gate waits for none: each run leaves one tagged
+# 2-request batch of embeddings behind and reads the newest completed one an earlier run left (a curl witness of
+# 2026-11-17 left the first). A run that finds none fails. A run bills 3 tokens of text-embedding-3-small at the
+# batch rate (USD ~3e-8).
+@testset "Batch API — embeddings: the results of a batch an earlier run left; one left for the next run" begin
+    tag = "unilm_gate" => "embeddings"
+    small(x) = Embeddings(x; model="text-embedding-3-small", dimensions=8)
+    requests = ["one" => small("alpha"), "two" => small(["beta", "gamma"])]
+    left = create_batch(requests; metadata=Dict(tag), output_expires_after=2_592_000)
+    @test left isa BatchSuccess && left.response.endpoint == "/v1/embeddings" && left.response.raw["metadata"] == Dict(tag)
+    mine = left isa BatchSuccess ? left.response.id : nothing
+    page = list_batches(; limit=100)
+    @test page isa BatchListSuccess
+    tagged(b) = b.id != mine && b.status == "completed" && b.endpoint == "/v1/embeddings" &&
+                get(something(get(b.raw, "metadata", nothing), Dict()), first(tag), nothing) == last(tag)
+    earlier = page isa BatchListSuccess ?
+        sort(filter(tagged, page.response.data); by=b -> b.raw["created_at"], rev=true) : BatchObject[]
+    @test !isempty(earlier)
+    if !isempty(earlier)
+        b = first(earlier)
+        r = batch_results(b.id; requests)
+        @test r isa BatchResultsSuccess && sort(first.(r.results)) == ["one", "two"]
+        got = r isa BatchResultsSuccess ? Dict(r.results) : Dict()
+        @test get(got, "one", nothing) isa EmbeddingSuccess && length(got["one"].embeddings.embeddings) == 8
+        @test get(got, "two", nothing) isa EmbeddingSuccess && length.(got["two"].embeddings.embeddings) == [8, 8]
+        @test all(x -> x isa EmbeddingSuccess && x.usage.service_tier == "batch" && estimated_cost(x) > 0, values(got))
+        @info "OpenAI embedding gate batch" read = b.id left = mine cost = sum(
+            (estimated_cost(x) for x in values(got) if x isa EmbeddingSuccess); init=0.0)
+    end
+end
+
 end  # if OPENAI_API_KEY

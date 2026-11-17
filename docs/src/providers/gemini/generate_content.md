@@ -496,7 +496,41 @@ success, so the conversation goes on with `chatrequest!`.
 `raw["nextPageToken"]`; [`cancel_batch`](@ref) answers with the batch as read right after the cancel, which
 Google answers with an empty body; [`delete_batch`](@ref) removes a batch from the list; and
 [`update_batch`](@ref) sets its `priority` — the one field the API updates ("The accepted fields are: *,
-priority") — so a batch with a higher one runs first.
+priority") — so a batch with a higher one runs first. A batch of embeddings is updated on
+`updateEmbedContentBatch`: the API answers `updateGenerateContentBatch` on it with HTTP 400 "Batch type does
+not match the request type.", and `update_batch` then sends the update there. `display_name`, a keyword of
+[`create_batch`](@ref)`(requests)` on Gemini alone, names the batch (its `displayName`, in `raw`); the API
+updates no display name ("Invalid fields in update mask: display_name"). The listing's `filter` and
+`returnPartialSuccess` are not sent: on 17 November 2026 the API answered a `filter` (`state=…`, `done=true`)
+with HTTP 400 "Request contains an invalid argument.", and `returnPartialSuccess=true` with the same page and
+no `unreachable` list — it applies to reads across collections, and the batches are one. A batch made from an
+input file uploaded to the Files API (`inputConfig.fileName`) cannot be created through UniLM; its results,
+from its responses file, are read as above.
+
+### [Batches of embeddings](@id gemini_embedding_batches)
+
+[`create_batch`](@ref) takes `custom_id => Embeddings` pairs on `GEMINIServiceEndpoint` too, and sends them
+inline to `models/{model}:asyncBatchEmbedContent`: each request the embedContent body
+[`embeddingrequest!`](@ref) sends for one input, naming its model, keyed by its custom id in its `metadata`.
+A request of several inputs is refused before anything is sent (an embedContent request embeds one: give each
+input its own custom id), as are requests for two models, an `Embeddings` with a `user`, and `metadata` or
+`output_expires_after`. [`batch_results`](@ref) reads the batch's responses — an `EmbedContentBatch`, as its
+`@type` names it — as the results `embeddingrequest!` returns: an [`EmbeddingSuccess`](@ref) whose usage
+names the tier `"batch"`, billed at the Batch tab's price, half the standard one (`gemini-embedding-2`
+\$0.10 and `gemini-embedding-001` \$0.075 per 1M input tokens), and an [`EmbeddingCallError`](@ref) for a
+request's error status or a response without a vector. Given the pairs that created the batch, each success
+holds a copy of its request filled with the vector; without them, a stand-in `Embeddings` holding it.
+
+```julia
+docs = ["refunds" => Embeddings("Refunds take 5 days."; service=GEMINIServiceEndpoint, dimensions=128),
+        "shipping" => Embeddings("Shipping is free in the EU."; service=GEMINIServiceEndpoint, dimensions=128)]
+batch = create_batch(docs; display_name="faq-vectors")
+poll_batch(batch.response.id; service=GEMINIServiceEndpoint, interval=15)
+results = batch_results(batch.response.id; service=GEMINIServiceEndpoint, requests=docs)
+[(id, length(embedding_vectors(r)), r.usage.service_tier) for (id, r) in results.results]
+# A batch of two such requests, sent on 17 November 2026 with curl, succeeded in about 90 seconds; its inlined
+# responses were the embedContent replies, in the requests' order, each keyed in its metadata.
+```
 
 ## [Context caching](@id gemini_caching)
 

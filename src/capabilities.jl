@@ -32,8 +32,9 @@ Standard capability symbols include:
 - Safety cases and alerts ([`retrieve_safety_case`](@ref), [`retrieve_safety_alert`](@ref)): `:safety` (OpenAI)
 - Content provenance checks ([`check_content_provenance`](@ref)): `:content_provenance` (OpenAI)
 - Skills ([`create_skill`](@ref) and the verbs beside it): `:skills` (OpenAI, Anthropic)
+- Stored Chat Completions ([`list_chat_completions`](@ref) and the verbs beside it): `:stored_completions` (OpenAI)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :skills])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :speech, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one, :models, :token_count, :webhooks, :safety, :content_provenance, :skills, :stored_completions])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])
@@ -132,6 +133,7 @@ default_model(_) = nothing
 """Default embedding model per provider."""
 default_embedding_model(::Type{OPENAIServiceEndpoint})  = "text-embedding-3-small"
 default_embedding_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-embedding-2"
+default_embedding_model(::Type{GEMINIServiceEndpoint})  = "gemini-embedding-2"
 default_embedding_model(::DeepSeekEndpoint)              = nothing
 default_embedding_model(::GenericOpenAIEndpoint)          = nothing
 default_embedding_model(_) = nothing

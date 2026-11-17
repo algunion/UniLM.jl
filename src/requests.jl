@@ -2384,12 +2384,14 @@ _prompt_message(role::String, prompt::AbstractString)::Message = Message(; role,
 _prompt_message(::String, prompt::Message)::Message = prompt
 
 
-# The embeddings wire: the OpenAI Embeddings API unless the endpoint speaks its own.
+# The embeddings wire: the OpenAI Embeddings API unless the endpoint speaks its own (`_embeddings_wire`).
 # Encoding runs before any I/O, so a request the endpoint cannot express throws.
 # Decoding yields the OpenAI-shaped rows (`{"embedding", "index"}`) and the usage.
 # `_wire_texts` first: its refusal stays a plain ArgumentError whatever JSON.json does with errors thrown in `lower`.
-_encode_embeddings(_, emb::Embeddings)::String = (_wire_texts(emb); JSON.json(emb))
-_decode_embeddings(_, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
+_encode_embeddings(s, emb::Embeddings)::String = _encode_embeddings(_embeddings_wire(s), s, emb)
+_decode_embeddings(s, data::Dict{String,Any}) = _decode_embeddings(_embeddings_wire(s), s, data)
+_encode_embeddings(::_OpenAIEmbeddings, _, emb::Embeddings)::String = (_wire_texts(emb); JSON.json(emb))
+_decode_embeddings(::_OpenAIEmbeddings, _, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
 # Mistral's embeddings reference names the vector size `output_dimension`, "The dimension of the
 # output embeddings when feature available", and lists no `dimensions`
 # (https://docs.mistral.ai/api/endpoint/embeddings): on Mistral's host the size goes out under that

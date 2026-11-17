@@ -294,10 +294,11 @@ The row's rates bill fresh input tokens and cache writes at `input`, cache reads
 `cached_input` and completion tokens at `output`, except where UniLM models a provider's
 surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref)).
 
-A Chat result whose usage names the tier `"batch"` — a request of a batch, as [`batch_results`](@ref)
-returns it — is billed at its provider's Batch rates: on OpenAI half of every rate of the models its
-pricing page's Batch table lists (a cache read bills as batch input where the table gives no cached-input
-price); on Anthropic half of every rate, the cache, region and long-prompt multipliers stacking; on native
+A Chat or Embeddings result whose usage names the tier `"batch"` — a request of a batch, as
+[`batch_results`](@ref) returns it — is billed at its provider's Batch rates: on OpenAI half of every rate of
+the models its pricing page's Batch table lists (a cache read bills as batch input where the table gives no
+cached-input price) and of its embedding models, which the Batch guide's "50% cost discount" covers; on
+Anthropic half of every rate, the cache, region and long-prompt multipliers stacking; on native
 Gemini half of every rate, except a cache hit on the models whose Batch table keeps its standard price
 (`gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`, `gemini-3-flash-preview`, the
 `gemini-2.5-` models). A model the page gives no Batch price for is estimated at the standard rates, with
@@ -402,7 +403,9 @@ end
 # provider's standard ones scaled as its pricing page lists them (each page read on 2026-11-16):
 # - OpenAI (https://developers.openai.com/api/docs/pricing, "Batch"): half of every Standard rate, cache writes and
 #   long-context rates included, on the models the Batch table lists. Where it lists no cached-input price ("-":
-#   gpt-4.1, gpt-4.1-mini, o3) a cache read bills as batch input.
+#   gpt-4.1, gpt-4.1-mini, o3) a cache read bills as batch input. The embedding models, which the page prices
+#   without a Batch column, at half too: the Batch guide (https://developers.openai.com/api/docs/guides/batch)
+#   gives a "50% cost discount compared to synchronous APIs" on every endpoint it batches, /v1/embeddings included.
 # - Anthropic (https://platform.claude.com/docs/en/about-claude/pricing.md, "Batch processing"): "a 50 percent
 #   discount on both input and output tokens", which the cache, data-residency and long-prompt multipliers stack with.
 # - Gemini (https://ai.google.dev/gemini-api/docs/pricing, each model's "Batch" tab): half the Standard input price
@@ -430,7 +433,11 @@ const _OPENAI_BATCH_PRICES = let
         "gpt-5.6-sol" => both, "gpt-5.6-terra" => both, "gpt-5.6-luna" => both, "gpt-5.5" => both, "gpt-5.4" => both,
         "gpt-5.5-pro" => (cached=false, long=false), "gpt-5.4-pro" => (cached=false, long=true),
         "gpt-5.4-mini" => short, "gpt-5.4-nano" => short, "gpt-5.2" => short, "gpt-5.2-pro" => (cached=false, long=false),
-        "gpt-4.1" => (cached=false, long=false), "gpt-4.1-mini" => (cached=false, long=false), "o3" => (cached=false, long=false))
+        "gpt-4.1" => (cached=false, long=false), "gpt-4.1-mini" => (cached=false, long=false), "o3" => (cached=false, long=false),
+        # The embedding models: the pricing page gives them no Batch column, and the Batch guide its "50% cost
+        # discount compared to synchronous APIs" on every endpoint it batches, /v1/embeddings among them.
+        "text-embedding-3-small" => (cached=false, long=false), "text-embedding-3-large" => (cached=false, long=false),
+        "text-embedding-ada-002" => (cached=false, long=false))
 end
 
 function _batch_cost(service::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64

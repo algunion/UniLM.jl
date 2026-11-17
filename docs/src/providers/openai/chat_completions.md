@@ -226,7 +226,8 @@ of their own are on [Audio](@ref openai_audio).
   128 characters; `user`, which OpenAI replaces with it and `prompt_cache_key`, is refused
   ([Limits and refusals](@ref openai_limits)).
 - **`store`, `metadata`.** `store=true` keeps the completion "for use in our model distillation or evals
-  products"; UniLM reads no stored completion back. `metadata` holds up to 16 key-value pairs.
+  products"; [Stored completions](@ref openai_stored_completions) reads it back. `metadata` holds up to 16
+  key-value pairs.
 - **`verbosity`, `prediction`, `seed`, `stop`, `presence_penalty`, `frequency_penalty`, `logit_bias`.**
   Sent as given, within the ranges the `Chat` constructor checks; `n` is 1 or unset, since a result holds
   one reply.
@@ -239,6 +240,57 @@ chat = Chat(service=OPENAIServiceEndpoint, max_tokens=200, service_tier="flex", 
 push!(chat, Message(Val(:system), "You are a concise assistant."))
 push!(chat, Message(Val(:user), "Count to five."))
 print(UniLM.encode_request(chat.service, chat))
+```
+
+## [Stored completions](@id openai_stored_completions)
+
+A completion sent with `store=true` is kept by OpenAI under `/v1/chat/completions`, and five verbs reach it
+([Stored Chat Completions](@ref stored_completions_api)):
+
+| verb | OpenAI operation | result |
+|:--|:--|:--|
+| [`list_chat_completions`](@ref)`(; model, metadata, after, limit, order)` | `GET /v1/chat/completions` | a page of [`StoredCompletion`](@ref)s |
+| [`get_chat_completion`](@ref)`(id)` | `GET /v1/chat/completions/{id}` | the [`StoredCompletion`](@ref) |
+| [`update_chat_completion`](@ref)`(id, metadata)` | `POST /v1/chat/completions/{id}` | the completion with its new metadata |
+| [`delete_chat_completion`](@ref)`(id)` | `DELETE /v1/chat/completions/{id}` | the confirmed delete |
+| [`list_chat_completion_messages`](@ref)`(id; after, limit, order)` | `GET /v1/chat/completions/{id}/messages` | a page of the request's input messages |
+
+- A stored completion's `message` is its reply, decoded as [`chatrequest!`](@ref) decodes it, beside its
+  `model`, `created`, `metadata` and `usage`; the request's parameters (`temperature`, `tools`, `seed`, …)
+  are in its `raw`. Its input messages come with their content parts as sent (`"text"`, `"image_url"`,
+  `"input_audio"`, `"file"`).
+- Metadata is "the only supported modification". Its bounds — 16 pairs, keys of at most 64 characters,
+  string values of at most 512 — and `order` (`"asc"`, OpenAI's default, or `"desc"`) are checked before
+  any request (`ArgumentError`); the `metadata` filter of `list_chat_completions` sends each pair as
+  `metadata[key]=value`.
+- A completion is listed, and read, only once OpenAI has stored it, and that can take long: on 17 November
+  2026 completions sent with `store=true` were still unknown to `get_chat_completion` (HTTP 404) and
+  unlisted more than 90 minutes later on `gpt-6-luna` (sent with `metadata`), and 14 minutes later on
+  `gpt-5.4-nano` (sent without), while a Responses API response stored by the same key was read back at
+  once — so the organization does not run under Zero Data Retention, which would treat `store` as `false`
+  on both APIs; the listing then showed the completions of a run some hours earlier, which set no `store`.
+  The same day a metadata update was answered HTTP 500 `"server_error"` (a [`StoredCompletionFailure`](@ref)),
+  and a delete was answered `"deleted": true` and left the completion listed and readable minutes later. OpenAI's
+  reference states no delay, and the cause is not known. A completion's id is its reply's `id`, which an
+  [`LLMSuccess`](@ref) does not keep: find a completion by the `metadata` you sent with it.
+- A reply without a field the reference requires (a completion's `id`, `model`, `created` or choice; a page's
+  `data`, `has_more`, `first_id` or `last_id`; a message's `id`, `role`, `content` or `content_parts`) is a
+  [`StoredCompletionCallError`](@ref), never a partial object or an empty page.
+
+```julia
+chat = Chat(model="gpt-6-luna", reasoning_effort="none", store=true, metadata=Dict("job" => "nightly"))
+push!(chat, Message(Val(:system), "Be brief."))
+push!(chat, Message(Val(:user), "Reply with exactly: ok"))
+chatrequest!(chat)
+
+page = list_chat_completions(; metadata=Dict("job" => "nightly"), order="desc", limit=10)
+if page isa StoredCompletionListSuccess && !isempty(page.response.data)
+    c = first(page.response.data)
+    println(c.id, " ", c.model, ": ", c.message.content)
+    msgs = list_chat_completion_messages(c.id)
+    update_chat_completion(c.id, Dict("job" => "nightly", "reviewed" => "yes"))
+    delete_chat_completion(c.id)
+end
 ```
 
 The concepts every provider shares are on [Conversations with Chat](@ref chat_guide).

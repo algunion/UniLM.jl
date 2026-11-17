@@ -162,7 +162,7 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   [`nl_classify`](@ref), [`nl_dispatch`](@ref), [`@branch`](@ref), Ollama's model calls,
   [`poll_batch`](@ref), [`poll_file_batch`](@ref), [`poll_file`](@ref), and every platform and
   lifecycle verb: files ([`register_files`](@ref) included), uploads, vector stores,
-  conversations, containers, batches ([`batch_results`](@ref), [`delete_batch`](@ref) and
+  conversations, stored chat completions, containers, batches ([`batch_results`](@ref), [`delete_batch`](@ref) and
   [`update_batch`](@ref) included), fine-tuning, webhook endpoints, safety cases and alerts,
   content provenance checks,
   [`moderate`](@ref), [`speak`](@ref), [`transcribe`](@ref), [`translate`](@ref),

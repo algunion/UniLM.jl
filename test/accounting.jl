@@ -949,6 +949,43 @@ end
 end
 _oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
 
+# Refuted if: an estimate for gpt-6.2-astra or gpt-6.2-sol departs from OpenAI's pricing page of 2026-11-17 —
+# "| gpt-6.2-astra | $8.00 | $40.00 | $0.40 | $10.00 | $20.00 | $16.00 | $60.00 | $0.80 | $20.00 | $40.00 |" and
+# "| gpt-6.2-sol | $2.00 | $10.00 | $0.10 | $2.50 | $5.00 | $4.00 | $15.00 | $0.20 | $5.00 | $10.00 |" (input,
+# output, cached input, 30-minute and 12-hour writes, then the same over 272K input tokens), Batch half and Fast
+# twice those, no Flex row, and "Ultrafast costs 3 times the Standard rate through February 28, 2027, and 6 times
+# the Standard rate starting March 1, 2027 (Pacific time)" — or the switch reaches the earlier Ultrafast models.
+@testset "gpt-6.2-astra and gpt-6.2-sol: price rows, long prompts, writes, Batch, Fast, Ultrafast 3x then 6x, no Flex" begin
+    on(day, f) = with(f, UniLM._PRICING_DATE => day)
+    for (model, i, c, o) in (("gpt-6.2-astra", 8.0, 0.40, 40.0), ("gpt-6.2-sol", 2.0, 0.10, 10.0))
+        @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
+        cost(u) = estimated_cost(_oa_result(model, u))
+        standard, long = (1_000 * i + 100 * o) / 1e6, (300_000 * 2i + 100 * 1.5o) / 1e6
+        @test cost(_oa_tiered(1_000, 100, nothing)) ≈ standard
+        @test cost(_oa_tiered(300_000, 100, nothing)) ≈ long
+        @test cost(TokenUsage(prompt_tokens=10_000, cached_tokens=2_000, cache_write_tokens=4_000,
+                              cache_write_extended_tokens=1_000, completion_tokens=100, total_tokens=10_100)) ≈
+              (4_000 * i + 2_000 * c + 3_000 * 1.25i + 1_000 * 2.5i + 100 * o) / 1e6
+        @test cost(_oa_tiered(1_000, 100, "batch")) ≈ standard / 2
+        @test cost(_oa_tiered(300_000, 100, "batch")) ≈ long / 2
+        @test cost(_oa_tiered(1_000, 100, "fast")) ≈ 2 * standard
+        @test cost(_oa_tiered(300_000, 100, "fast")) ≈ 2 * long
+        # The switch at 00:00 UTC on 2027-03-01, eight hours before midnight Pacific time: never an underestimate.
+        for (day, multiple) in ((Date(2026, 11, 17), 3), (Date(2027, 2, 28), 3), (Date(2027, 3, 1), 6), (Date(2028, 1, 1), 6))
+            @test on(day, () -> cost(_oa_tiered(1_000, 100, "ultrafast"))) ≈ multiple * standard
+            @test on(day, () -> cost(_oa_tiered(300_000, 100, "ultrafast"))) ≈ multiple * long
+        end
+        # OpenAI answered service_tier "flex" on both with HTTP 400 ("This model does not support service_tier=flex",
+        # 2026-11-17), and the page lists no Flex price: a reported Flex tier bills the standard rates, with a warning.
+        @test (@test_logs (:warn, r"lists no price for this service tier") cost(_oa_tiered(1_000, 100, "flex"))) ≈ standard
+    end
+    # GPT-6 Astra and GPT-6.1 Sol keep Ultrafast at 6x on every date.
+    for day in (Date(2026, 11, 17), Date(2027, 3, 1))
+        @test on(day, () -> estimated_cost(_oa_result("gpt-6.1-sol", _oa_tiered(1_000, 100, "ultrafast")))) ≈
+              6 * (1_000 * 2.0 + 100 * 10.0) / 1e6
+    end
+end
+
 @testset "OpenAI cost: cache writes by lifetime" begin
     # The prompt-caching guide's worked example: 12,000 input tokens, of which 4,000 cache reads,
     # 3,000 30-minute and 4,000 12-hour writes, at $1 input and $0.10 cached per 1M tokens:

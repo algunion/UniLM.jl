@@ -714,16 +714,18 @@ function _openai_long_multiples(model::String)::NTuple{3,Float64}
 end
 
 # A billed tier's cell: the multiple of every rate it costs, for prompts up to the short-context
-# limit and over it where the model has a long-context rate and the two differ; "—" where
-# OpenAI's pricing page gives the tier no price.
+# limit and over it where the model has a long-context rate and the two differ, then each change
+# the terms schedule for it, which an estimate bills from its date: "× 3; from 2027‑03‑01: × 6";
+# "—" where OpenAI's pricing page gives the tier no price.
 function _openai_tier_cell(terms, tier::String)::Vector{Any}
     short, long = get(terms.tiers, tier, nothing), get(terms.long_tiers, tier, nothing)
     limit = _thousands(UniLM._OPENAI_SHORT_CONTEXT) * " input tokens"
     isnothing(short) && isnothing(long) && return _cell("—")
-    (!terms.long_context || isequal(short, long)) && return _cell(_times(something(short, long)))
-    isnothing(long) && return _cell(_times(short), " up to ", limit)
-    isnothing(short) && return _cell(_times(long), " over ", limit)
-    _cell(_times(short), " up to ", limit, ", ", _times(long), " over")
+    changes = join("; from $(_date(c.from)): $(_times(c.multiple))" for c in terms.tier_changes if c.tier == tier)
+    (!terms.long_context || isequal(short, long)) && return _cell(_times(something(short, long)) * changes)
+    isnothing(long) && return _cell(_times(short), " up to " * limit * changes)
+    isnothing(short) && return _cell(_times(long), " over " * limit * changes)
+    _cell(_times(short), " up to ", limit, ", ", _times(long), " over" * changes)
 end
 
 """
@@ -733,7 +735,8 @@ One row per OpenAI model that `estimated_cost` bills beyond its price row's rate
 (`UniLM._OPENAI_PRICE_TERMS`), sorted by id: what a cache write costs for each lifetime, as a
 multiple of the input rate; the multiples of the input, cached-input and output rates for a
 prompt over the short-context limit, read from the estimate; and the multiple of every rate
-that each billed service tier costs. "—": OpenAI's pricing page gives no such price.
+that each billed service tier costs, with each change scheduled for it and its date. "—":
+OpenAI's pricing page gives no such price.
 """
 function openai_price_terms()::Markdown.MD
     limit = _thousands(UniLM._OPENAI_SHORT_CONTEXT)

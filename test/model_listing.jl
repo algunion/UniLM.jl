@@ -478,8 +478,8 @@ end
     end
     @test isempty(_openai_drift(oa).unpriced)
     # A newer GPT-6 model with no rows.
-    d = _ml_quiet(() -> _openai_drift([oa; _ml_model("gpt-6.2-sol")]))
-    @test (d.unpriced, d.no_terms, d.unruled) == (["gpt-6.2-sol"], ["gpt-6.2-sol"], ["gpt-6.2-sol"])
+    d = _ml_quiet(() -> _openai_drift([oa; _ml_model("gpt-6.3-sol")]))
+    @test (d.unpriced, d.no_terms, d.unruled) == (["gpt-6.3-sol"], ["gpt-6.3-sol"], ["gpt-6.3-sol"])
 
     an = _ml_models("anthropic", UniLM._AnthropicModels())
     # A listed capability flipped against its row.

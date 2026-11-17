@@ -29,8 +29,8 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
 """Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22 (OpenAI's
 `gpt-5-search-api` on 2026-10-25, `gpt-5.2-pro` on 2026-10-26, `gpt-6-rosalind` and
-`gpt-6-astra-law` on 2026-11-02, `gpt-6-cyber` on 2026-11-16; Anthropic's `claude-fable-5-2` and
-`claude-mythos-5-2` on 2026-11-16; Gemini's `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-decision-1` on
+`gpt-6-astra-law` on 2026-11-02, `gpt-6-cyber` on 2026-11-16, `gpt-6.2-astra` and `gpt-6.2-sol` on
+2026-11-17; Anthropic's `claude-fable-5-2` and `claude-mythos-5-2` on 2026-11-16; Gemini's `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-decision-1` on
 2026-11-16), TypeSafe rows on 2026-10-25,
 DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 
@@ -39,7 +39,10 @@ one of them — Google has, for several Gemini models ([Cost and usage](@ref gem
 dates) — [`estimated_cost`](@ref) bills the new rates in every estimate computed on or after that
 date, from 00:00 UTC (Google's page names no time zone), and the table keeps the shipped row. A row
 you set yourself, here or in a `pricing` table, is never replaced; a row equal to the shipped one
-counts as the shipped one.
+counts as the shipped one. OpenAI has scheduled a new multiple for a service tier: Ultrafast on
+`gpt-6.2-astra` and `gpt-6.2-sol` costs 3 times the standard rates through 2027-02-28 and 6 times
+from 2027-03-01 (Pacific time), which estimates bill from 00:00 UTC that day
+([Cost and usage](@ref openai_cost)).
 
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
@@ -78,6 +81,8 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     # for prompts of at most 272K input tokens. Cache writes, longer prompts and the billed
     # service tier are priced from these rows by the OpenAI endpoint's `_billed_cost`, which
     # bills an audio model's audio tokens at its audio-token rates.
+    "gpt-6.2-astra" => _price(8.0,  0.40, 40.0),   # the page of 2026-11-17
+    "gpt-6.2-sol"   => _price(2.0,  0.10, 10.0),   # the page of 2026-11-17
     "gpt-6-astra"   => _price(10.0, 1.0,  50.0),
     "gpt-6.1-sol"   => _price(2.0,  0.10, 10.0),
     "gpt-6.1-terra" => _price(1.0,  0.05, 5.0),    # listed 2026-10-29
@@ -429,6 +434,7 @@ _batch_cost(service::_AnthropicEndpoint, model::String, u::TokenUsage, rates::Pr
 const _OPENAI_BATCH_PRICES = let
     both, short = (cached=true, long=true), (cached=true, long=false)
     Dict{String,@NamedTuple{cached::Bool, long::Bool}}(
+        "gpt-6.2-astra" => both, "gpt-6.2-sol" => both,
         "gpt-6-astra" => both, "gpt-6.1-sol" => both, "gpt-6.1-terra" => both, "gpt-6-sol" => both, "gpt-6-luna" => both,
         "gpt-5.6-sol" => both, "gpt-5.6-terra" => both, "gpt-5.6-luna" => both, "gpt-5.5" => both, "gpt-5.4" => both,
         "gpt-5.5-pro" => (cached=false, long=false), "gpt-5.4-pro" => (cached=false, long=true),

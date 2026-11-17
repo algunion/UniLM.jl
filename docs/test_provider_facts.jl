@@ -81,28 +81,43 @@ end
     @test ids == sort!(collect(keys(terms)))                         # every model with terms, once
     plain(m, col) = String(strip(Markdown.plain(Markdown.Paragraph(rows[1 + findfirst(==(m), ids)][col]))))
     limit = UniLM._OPENAI_SHORT_CONTEXT
-    # the estimate of `n` input and 100 output tokens at `tier`, its warnings for an unpriced tier muted
-    cost(m, n, tier; cached=0) = with_logger(NullLogger()) do
-        estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(model=m),
-                                  usage=UniLM.TokenUsage(prompt_tokens=n, completion_tokens=100, cached_tokens=cached,
-                                                         service_tier=tier)))
+    # the estimate of `n` input and 100 output tokens at `tier` on `day`, its warnings for an unpriced tier muted
+    cost(m, n, tier; cached=0, day=today()) = with_logger(NullLogger()) do
+        Base.ScopedValues.with(UniLM._PRICING_DATE => day) do
+            estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(model=m),
+                                      usage=UniLM.TokenUsage(prompt_tokens=n, completion_tokens=100, cached_tokens=cached,
+                                                             service_tier=tier)))
+        end
     end
-    # the multiple a cell names for prompts up to the limit (`long=false`) or over it, `nothing` for "—"
-    function named(cell::String, long::Bool)::Union{Float64,Nothing}
+    # the multiple a cell names on `day` for prompts up to the limit (`long=false`) or over it, `nothing` for "—":
+    # its own, or the last change it names ("; from 2027‑03‑01: × 6") whose date has come
+    function named(cell::String, long::Bool, day::Date)::Union{Float64,Nothing}
         cell == "—" && return nothing
-        parts = split(cell, ", ")
+        own, changes... = split(cell, "; from ")
+        parts = split(own, ", ")
         part = something(findfirst(p -> occursin(long ? " over" : " up to", p), parts),
                          findfirst(p -> !occursin(" over", p) && !occursin(" up to", p), parts), Some(nothing))
-        isnothing(part) ? nothing : parse(Float64, match(r"× ([0-9.]+)", parts[part])[1])
+        multiple = isnothing(part) ? nothing : parse(Float64, match(r"× ([0-9.]+)", parts[part])[1])
+        for c in changes
+            from, then = match(r"^(\S+): × ([0-9.]+)$", c)
+            Date(replace(from, '\u2011' => '-')) <= day && (multiple = parse(Float64, then))
+        end
+        multiple
     end
+    # today, and each date a change is scheduled from and the day before it
+    days = sort!(unique!([today(); [d for t in values(terms) for c in t.tier_changes for d in (c.from - Day(1), c.from)]]))
+    @test length(days) > 1                                            # premise: a tier change is scheduled
     n_tiers = 0
-    for m in ids, (col, tier) in ((4, "flex"), (5, "fast"), (6, "ultrafast")), long in (false, true)
+    for m in ids, (col, tier) in ((4, "flex"), (5, "fast"), (6, "ultrafast")), long in (false, true), day in days
         n = long ? limit + 1000 : 1000
-        multiple = named(plain(m, col), long && terms[m].long_context)
-        @test cost(m, n, tier) ≈ something(multiple, 1.0) * cost(m, n, nothing)   # "—": the standard rates
+        multiple = named(plain(m, col), long && terms[m].long_context, day)
+        @test cost(m, n, tier; day) ≈ something(multiple, 1.0) * cost(m, n, nothing; day)   # "—": the standard rates
         n_tiers += !isnothing(multiple)
     end
     @test n_tiers > 0
+    # GPT-6.2's Ultrafast cell gives its multiple until 2027-02-28 and the one from 2027-03-01 (Pacific time on
+    # OpenAI's page; from 00:00 UTC in the estimate).
+    @test plain("gpt-6.2-sol", 6) == "× 3; from 2027\u201103\u201101: × 6"
     for m in ids                                                      # the long-context cell is the estimate's
         if terms[m].long_context
             input, cached, output = ProviderFacts._openai_long_multiples(m)

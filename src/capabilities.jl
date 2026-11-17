@@ -425,13 +425,17 @@ end
 # (https://developers.openai.com/api/docs/pricing, 2026-10-22). `tiers` maps a billed service
 # tier to the multiple of every standard rate the page lists for prompts of at most 272K
 # input tokens, `long_tiers` the same for longer prompts; a tier missing from them has no
-# price there.
+# price there. `tier_changes` are the new multiples the page schedules for a tier, in date order:
+# from 00:00 UTC on `from`, `multiple` bills the tier in place of its own, at every prompt length
+# the tier has a price for.
+const _OpenAITierChange = @NamedTuple{tier::String, from::Date, multiple::Float64}
 @kwdef struct _OpenAIPriceTerms
     cache_writes::Bool = false     # 30-minute writes cost 1.25× input, 12-hour writes 2.5×
     long_context::Bool = false     # over 272K input tokens: input and cache rates 2×, output 1.5×
     tiers::Dict{String,Float64} = Dict{String,Float64}()
     long_tiers::Dict{String,Float64} = Dict{String,Float64}()
     long_cache_writes::Bool = true # the page prices a long prompt's writes (the write multiples of its input rate)
+    tier_changes::Vector{_OpenAITierChange} = _OpenAITierChange[]
 end
 
 const _OPENAI_PRICE_TERMS = let
@@ -440,7 +444,15 @@ const _OPENAI_PRICE_TERMS = let
     # Astra and GPT-6.1 Sol.
     current(more::Pair{String,Float64}...) = (t = Dict{String,Float64}("flex" => 0.5, "fast" => 2.0, more...);
         _OpenAIPriceTerms(cache_writes=true, long_context=true, tiers=t, long_tiers=t))
+    # GPT-6.2 Astra and Sol (2026-11-17) list no Flex price — the API answered service_tier "flex" with HTTP 400,
+    # "This model does not support service_tier=flex" — and "Ultrafast costs 3 times the Standard rate through
+    # February 28, 2027, and 6 times the Standard rate starting March 1, 2027 (Pacific time)": the estimate switches
+    # at 00:00 UTC that day, eight hours before OpenAI does, so it never bills those hours below OpenAI's price.
+    gpt62 = (t = Dict{String,Float64}("fast" => 2.0, "ultrafast" => 3.0);
+             _OpenAIPriceTerms(cache_writes=true, long_context=true, tiers=t, long_tiers=t,
+                               tier_changes=[(tier="ultrafast", from=Date(2027, 3, 1), multiple=6.0)]))
     Dict{String,_OpenAIPriceTerms}(
+        "gpt-6.2-astra" => gpt62, "gpt-6.2-sol" => gpt62,
         "gpt-6-astra" => current("ultrafast" => 6.0), "gpt-6.1-sol" => current("ultrafast" => 6.0),
         "gpt-6.1-terra" => current(),   # listed 2026-10-29
         "gpt-6-sol" => current(), "gpt-6-luna" => current(),
@@ -497,14 +509,24 @@ _cache_write_multiples(::Nothing, ::Bool) = (1.0, 1.0)
 _cache_write_multiples(terms::_OpenAIPriceTerms, long::Bool) =
     long && !terms.long_cache_writes ? (1.0, 1.0) : _cache_write_multiples(terms)
 
-# The multiple of the standard rates the billed tier costs. GPT-5.6 and earlier report Fast
-# mode as "priority", its former name. A tier the pricing page gives no number for is
-# estimated at the standard rates, and says so once per model and tier.
+# The multiple of the standard rates `tier` costs on `day`: the latest change scheduled for it whose date
+# has come, else the tier's own; `nothing` where the page gives the tier no price at this prompt length.
+function _tier_multiple_on(terms::_OpenAIPriceTerms, tier::String, long::Bool, day::Date)::Union{Float64,Nothing}
+    multiple = get(long ? terms.long_tiers : terms.tiers, tier, nothing)
+    isnothing(multiple) && return nothing
+    i = findlast(c -> c.tier == tier && c.from <= day, terms.tier_changes)
+    isnothing(i) ? multiple : terms.tier_changes[i].multiple
+end
+
+# The multiple of the standard rates the billed tier costs on the day the estimate bills
+# (`_pricing_today`). GPT-5.6 and earlier report Fast mode as "priority", its former name. A tier
+# the pricing page gives no number for is estimated at the standard rates, and says so once per
+# model and tier.
 function _openai_tier_multiple(terms::Union{_OpenAIPriceTerms,Nothing}, model::String,
                                reported::Union{String,Nothing}, long::Bool)::Float64
     (isnothing(reported) || reported == "default") && return 1.0
     tier = reported == "priority" ? "fast" : reported
-    multiple = isnothing(terms) ? nothing : get(long ? terms.long_tiers : terms.tiers, tier, nothing)
+    multiple = isnothing(terms) ? nothing : _tier_multiple_on(terms, tier, long, _pricing_today())
     isnothing(multiple) || return multiple
     @warn "OpenAI's pricing page lists no $(long ? "long-context " : "")price for this service tier of this " *
           "model; its cost is estimated at the standard rates" model tier = reported _id = Symbol(

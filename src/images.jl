@@ -48,7 +48,7 @@ provider takes it.
 - `background::Union{String,Nothing}`: Background (`"transparent"`, `"opaque"`, `"auto"`)
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"`);
   GIF output "Requires access to the GIF preview for the selected model" and takes no
-  `output_compression`
+  `output_compression`. Gemini takes `"jpeg"` (below)
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `moderation::Union{String,Nothing}`: Content-moderation strictness (`"auto"`, `"low"`)
 - `complexity::Union{String,Nothing}`: `"low"`, `"medium"` or `"high"`, "Computation spent planning
@@ -78,10 +78,15 @@ provider takes it.
   unset, the image is square
 - `resolution::Union{String,Nothing}`: `"512"`, `"1K"`, `"2K"` or `"4K"`; unset, `"1K"`.
   `gemini-nano-banana-2.1` renders at `"1K"`, `"2K"` or `"4K"`.
+- `output_format`: on Gemini `"jpeg"` only, sent as `generationConfig.responseFormat.image.mimeType`
+  `IMAGE_JPEG`, the one format Gemini's reference lists (it answers JPEG unasked)
+- `delivery::Union{String,Nothing}`: `"inline"` or `"uri"`, Gemini's "delivery mode for the image
+  output" (`responseFormat.image.delivery`): the image in the reply, or a URI, which becomes the
+  image's `url`. On 2026-11-17 `gemini-nano-banana-2.1` answered `"uri"` with the image inline
 
 A field the request's provider does not take (an OpenAI-only field on Gemini;
-`aspect_ratio` or `resolution` on OpenAI), `n` other than 1 on Gemini, a Gemini
-`aspect_ratio` or `resolution` outside the lists above, and a `safety_identifier` outside
+`aspect_ratio`, `resolution` or `delivery` on OpenAI), `n` other than 1 on Gemini, a Gemini
+`aspect_ratio`, `resolution`, `output_format` or `delivery` outside the values above, and a `safety_identifier` outside
 its provider's rule throw `ArgumentError` naming the provider and the field — when the
 request is serialized, and in [`generate_image`](@ref) before any request — as do a frame
 field without `output_format="gif"`, `svg` without `output_format="svg"`, SVG output with `n`
@@ -130,14 +135,15 @@ ImageGeneration(service=GEMINIServiceEndpoint, prompt="A lighthouse at dusk",
     svg::Union{SvgOptions,Nothing} = nothing
     stream::Bool = false
     partial_images::Union{Int,Nothing} = nothing
+    delivery::Union{String,Nothing} = nothing
     function ImageGeneration(service, model, prompt, n, size, quality, background, output_format, output_compression,
                              safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count,
-                             frame_duration_ms, svg, stream, partial_images)
+                             frame_duration_ms, svg, stream, partial_images, delivery)
         _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
         _check_partial_images(stream, partial_images)
         new(service, model, prompt, n, size, quality, background, output_format, output_compression,
             safety_identifier, moderation, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms, svg,
-            stream, partial_images)
+            stream, partial_images, delivery)
     end
 end
 
@@ -665,8 +671,8 @@ resolved when the edit is sent.
   is sent as given, since no answer of OpenAI's shows a rule for the pair
 
 # Fields — Gemini only
-`aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
-image follows the input's aspect ratio.
+`aspect_ratio`, `resolution`, `output_format` (`"jpeg"`) and `delivery`, as on
+[`ImageGeneration`](@ref); unset, the edited image follows the input's aspect ratio.
 
 A vector that mixes paths and `ImageRef`s throws `ArgumentError` when the edit is built. `image` names
 at least one image: [`edit_image`](@ref) throws `ArgumentError` for an empty
@@ -703,14 +709,15 @@ edit is built. Other OpenAI values are sent as given, for OpenAI to judge.
     moderation::Union{String,Nothing} = nothing
     stream::Bool = false
     partial_images::Union{Int,Nothing} = nothing
+    delivery::Union{String,Nothing} = nothing
     function ImageEdit(service, image, prompt, mask, markup, model, n, size, quality, input_fidelity, background,
                        output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count,
-                       frame_duration_ms, svg, output_compression, moderation, stream, partial_images)
+                       frame_duration_ms, svg, output_compression, moderation, stream, partial_images, delivery)
         _check_image_controls("OpenAI image", complexity, frame_count, frame_duration_ms)
         _check_partial_images(stream, partial_images)
         new(service, _edit_inputs(image), prompt, mask, markup, model, n, size, quality, input_fidelity, background,
             output_format, safety_identifier, aspect_ratio, resolution, complexity, frame_count, frame_duration_ms,
-            svg, output_compression, moderation, stream, partial_images)
+            svg, output_compression, moderation, stream, partial_images, delivery)
     end
 end
 
@@ -1002,15 +1009,15 @@ end
 
 # ── OpenAI Images API (the default) ──
 
-# The Images API has no aspect-ratio or resolution field: `size` names both. A safety
-# identifier is 1 to 128 characters: OpenAI's guide says to keep it to 128 or fewer, and
-# the API reads an empty one as none
+# The Images API has no aspect-ratio or resolution field: `size` names both; and no delivery mode: its image
+# models return base64 data. A safety identifier is 1 to 128 characters: OpenAI's guide says to keep it to 128 or
+# fewer, and the API reads an empty one as none
 # (https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers).
 function _check_image_request(service, r::_ImageRequest)
-    gemini = _set_image_fields(r, (:aspect_ratio, :resolution))
+    gemini = _set_image_fields(r, (:aspect_ratio, :resolution, :delivery))
     isempty(gemini) || throw(ArgumentError(
-        "the OpenAI Images API has no $(join(gemini, " or ")), which only Gemini takes; " *
-        "set size=\"WIDTHxHEIGHT\" instead"))
+        "the OpenAI Images API has no $(join(gemini, " or ")), which only Gemini takes" *
+        (any(in(("aspect_ratio", "resolution")), gemini) ? "; set size=\"WIDTHxHEIGHT\" instead" : "")))
     id = r.safety_identifier
     isnothing(id) || 1 <= length(id) <= 128 || throw(ArgumentError(
         "the OpenAI Images API takes a safety_identifier of 1 to 128 characters (got $(length(id))); it reads " *
@@ -1158,6 +1165,8 @@ _image_reply(service, resp::HTTP.Response) = parse_image_response(resp)
 const _GEMINI_ASPECT_RATIOS = ("1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
                                "9:16", "16:9", "21:9")
 const _GEMINI_RESOLUTIONS = ("512", "1K", "2K", "4K")
+# ImageResponseFormat.delivery (https://ai.google.dev/api/generate-content): INLINE or URI.
+const _GEMINI_DELIVERIES = ("inline", "uri")
 const _GEMINI_MODEL_RESOLUTIONS = (("gemini-nano-banana-2.1", ("1K", "2K", "4K")),)
 
 # A model's own resolution list, where its docs give one.
@@ -1170,10 +1179,10 @@ end
 # the request. Gemini streams no partial images: on 2026-11-17 its streamGenerateContent answered an
 # image request with one event that held the whole image.
 _openai_only_image_fields(::ImageGeneration) =
-    (:size, :quality, :background, :output_format, :output_compression, :moderation, :complexity, :frame_count,
+    (:size, :quality, :background, :output_compression, :moderation, :complexity, :frame_count,
      :frame_duration_ms, :svg, :stream, :partial_images)
 _openai_only_image_fields(::ImageEdit) =
-    (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_format, :output_compression, :moderation,
+    (:mask, :markup, :size, :quality, :input_fidelity, :background, :output_compression, :moderation,
      :complexity, :frame_count, :frame_duration_ms, :svg, :stream, :partial_images)
 _image_verb(::ImageGeneration) = "image generation"
 _image_verb(::ImageEdit) = "image editing"
@@ -1206,6 +1215,13 @@ function _check_image_request(::Type{GEMINIServiceEndpoint}, r::_ImageRequest)
     end
     id = r.safety_identifier
     isnothing(id) || _gemini_safety_label(id)
+    fmt = r.output_format
+    isnothing(fmt) || fmt == "jpeg" || throw(ArgumentError(
+        "Gemini image output_format is \"jpeg\", the one format its ImageResponseFormat lists (IMAGE_JPEG) " *
+        "(got $(repr(fmt))): Gemini answers JPEG; set \"jpeg\", or unset output_format"))
+    d = r.delivery
+    isnothing(d) || d in _GEMINI_DELIVERIES || throw(ArgumentError(
+        "Gemini image delivery is \"inline\" or \"uri\", the image in the reply or a URI to fetch it from (got $(repr(d)))"))
     nothing
 end
 
@@ -1213,13 +1229,20 @@ _gemini_image_url(r::_ImageRequest) =
     "$(GEMINI_NATIVE_BASE)/models/$(_uripart(_gemini_image_model(r))):generateContent"
 
 # Image output only (`responseModalities`), sized by `imageConfig` when the request sets a
-# control; the end user's id goes in the request label Google documents for it.
+# control, its format and delivery in `responseFormat.image` (ImageResponseFormat, whose aspect
+# ratio and size are the controls imageConfig already carries); the end user's id goes in the
+# request label Google documents for it.
 function _gemini_image_body(parts::Vector{Dict{Symbol,Any}}, r::_ImageRequest)::Dict{Symbol,Any}
     config = Dict{Symbol,Any}()
     isnothing(r.aspect_ratio) || (config[:aspectRatio] = r.aspect_ratio)
     isnothing(r.resolution) || (config[:imageSize] = r.resolution)
     gen = Dict{Symbol,Any}(:responseModalities => ["IMAGE"])
     isempty(config) || (gen[:imageConfig] = config)
+    format = Dict{Symbol,Any}()
+    isnothing(r.output_format) || (format[:mimeType] = "IMAGE_JPEG")
+    d = r.delivery
+    isnothing(d) || (format[:delivery] = uppercase(d))
+    isempty(format) || (gen[:responseFormat] = Dict(:image => format))
     body = Dict{Symbol,Any}(:contents => [Dict{Symbol,Any}(:role => "user", :parts => parts)],
                             :generationConfig => gen)
     isnothing(r.safety_identifier) || (body[:labels] = Dict(:safety_identifier => r.safety_identifier))
@@ -1241,7 +1264,7 @@ function _image_request(::Type{GEMINIServiceEndpoint}, e::ImageEdit)
 end
 
 # A generateContent reply → ImageResponse. Every image part of the first candidate, in
-# order, is an ImageObject carrying the candidate's text, if any, as its revised prompt;
+# order — inline data, or a URI (fileData) — is an ImageObject carrying the candidate's text, if any, as its revised prompt;
 # thought parts (a thinking image model's interim images and reasoning) are skipped. A
 # reply without an image fails loud with Gemini's reason, which the verb returns as an
 # ImageCallError.
@@ -1253,14 +1276,18 @@ function _image_reply(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::Image
     cand = cands[1]
     content = get(cand, "content", nothing)
     parts = content isa AbstractDict ? get(content, "parts", Any[]) : Any[]
-    images = String[]
+    images = ImageObject[]          # each without its revised prompt yet: the text comes from every part
     text = IOBuffer()
     for p in parts
         (p isa AbstractDict && get(p, "thought", false) !== true) || continue
-        inline = get(p, "inlineData", nothing)
+        inline, file = get(p, "inlineData", nothing), get(p, "fileData", nothing)
         if inline isa AbstractDict && startswith(string(get(inline, "mimeType", "")), "image/")
             b64 = get(inline, "data", nothing)
-            b64 isa AbstractString && push!(images, b64)
+            b64 isa AbstractString && push!(images, ImageObject(b64_json=b64))
+        elseif file isa AbstractDict && startswith(string(get(file, "mimeType", "image/")), "image/")
+            # An image delivered by URI (`delivery="uri"`): a FileData part, whose mimeType is optional.
+            uri = get(file, "fileUri", nothing)
+            uri isa AbstractString && push!(images, ImageObject(url=uri))
         elseif (t = get(p, "text", nothing)) isa AbstractString
             print(text, t)
         end
@@ -1274,7 +1301,7 @@ function _image_reply(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::Image
     end
     revised = isempty(said) ? nothing : said
     ImageResponse(created=trunc(Int64, time()),
-                  data=[ImageObject(b64_json=b64, revised_prompt=revised) for b64 in images],
+                  data=[ImageObject(b64_json=img.b64_json, url=img.url, revised_prompt=revised) for img in images],
                   usage=_gemini_image_usage(get(data, "usageMetadata", nothing)), raw=data)
 end
 

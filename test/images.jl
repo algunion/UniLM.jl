@@ -641,14 +641,14 @@ end
 
 @testset "Gemini images — OpenAI-only fields are refused, naming Gemini and the field" begin
     for (field, value) in (:size => "1024x1024", :quality => "high", :background => "opaque",
-                           :output_format => "png", :output_compression => 50, :moderation => "low")
+                           :output_compression => 50, :moderation => "low")
         err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
         @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take $field,")
     end
     err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", size="1024x1024")))
     @test occursin("aspect_ratio", err.msg) && occursin("resolution", err.msg)   # the fix: Gemini's own controls
     for (field, value) in (:mask => "mask.png", :input_fidelity => "high", :size => "1024x1024",
-                           :quality => "high", :background => "opaque", :output_format => "png")
+                           :quality => "high", :background => "opaque")
         e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
         err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
         @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
@@ -1419,4 +1419,59 @@ end
     delete!(meta, "promptTokensDetails"); delete!(meta, "candidatesTokensDetails")
     g2 = ImageSuccess(response=UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(gemini)))))
     @test image_usage(g2) == ImageUsage(input_tokens=1131, output_tokens=1713, total_tokens=2844)
+end
+
+# ── Gemini image output format and delivery: generationConfig.responseFormat.image ──────────────────
+
+@testset "Gemini images — output_format \"jpeg\" and delivery go in responseFormat.image; a fileData image is its URL" begin
+    # Gemini's ImageResponseFormat: mimeType IMAGE_JPEG (the one value besides MIME_TYPE_UNSPECIFIED), delivery
+    # INLINE or URI. On 2026-11-17 Gemini took both beside imageConfig and answered delivery URI with the image
+    # inline; it took IMAGE_PNG too, a value its reference does not list, and answered a JPEG.
+    config(; kw...) = _image_json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", kw...))["generationConfig"]
+    @test config(output_format="jpeg") == Dict{String,Any}("responseModalities" => Any["IMAGE"],
+        "responseFormat" => Dict{String,Any}("image" => Dict{String,Any}("mimeType" => "IMAGE_JPEG")))
+    both = config(output_format="jpeg", delivery="uri", aspect_ratio="1:1")
+    @test both["responseFormat"] == Dict{String,Any}("image" => Dict{String,Any}("mimeType" => "IMAGE_JPEG", "delivery" => "URI"))
+    @test both["imageConfig"] == Dict{String,Any}("aspectRatio" => "1:1")
+    @test config(delivery="inline")["responseFormat"]["image"] == Dict{String,Any}("delivery" => "INLINE")
+    @test !haskey(config(), "responseFormat")
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        _, _, body = _gemini_wire(ImageEdit(service=GEMINIServiceEndpoint, image=path, prompt="p", output_format="jpeg",
+                                            delivery="uri"))
+        @test JSON.parse(body)["generationConfig"]["responseFormat"]["image"] == Dict{String,Any}("mimeType" => "IMAGE_JPEG",
+                                                                                                "delivery" => "URI")
+    finally
+        rm(path; force=true)
+    end
+    # Refused before anything is sent: another format or delivery on Gemini, and delivery on OpenAI.
+    for (kw, words) in ((; output_format="png") => ("Gemini image output_format is \"jpeg\"", "png"),
+                        (; delivery="URI") => ("Gemini image delivery is", "\"inline\"", "\"uri\""),
+                        (; delivery="url") => ("Gemini image delivery is",))
+        err = _refusal(() -> config(; kw...))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", kw...)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", delivery="uri")))
+    @test err isa ArgumentError && occursin("the OpenAI Images API has no delivery", err.msg) && !occursin("size", err.msg)
+    err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, ImageEdit(image="never-read.png", prompt="p",
+                                                                                    delivery="inline")))
+    @test err isa ArgumentError && occursin("the OpenAI Images API has no delivery", err.msg)
+    # A part Gemini delivers by URI (Part.fileData) is the image's url, as image_data lists it.
+    uri = "https://generativelanguage.googleapis.com/v1beta/files/abc123"
+    reply = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("text" => "Three squares."),
+        Dict("fileData" => Dict("mimeType" => "image/jpeg", "fileUri" => uri)),
+        Dict("fileData" => Dict("mimeType" => "image/jpeg", "fileUri" => "https://x.example/thought"), "thought" => true)]))])
+    ir = UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
+    @test ir.data == [ImageObject(url=uri, revised_prompt="Three squares.")]
+    @test image_data(ImageSuccess(response=ir)) == [uri]
+    # FileData's mimeType is optional: a part without one is an image too; one of another type is not.
+    bare = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("fileData" => Dict("fileUri" => uri)), Dict("fileData" => Dict("mimeType" => "text/plain", "fileUri" => "x"))]))])
+    @test UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(bare)))).data ==
+          [ImageObject(url=uri)]
 end

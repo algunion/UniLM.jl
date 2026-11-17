@@ -273,3 +273,23 @@ end
     @test r isa FileSearchCallError && r.cause isa UniLMCancelled && isempty(seen)
     @test _seam_timeout(retrieve_file_search_store(_STORE_NAME; service=_FS, config=_TINY_DEADLINE), FileSearchCallError)
 end
+
+# The Interactions reference's FileSearch tool: `type` "file_search", `file_search_store_names`, `top_k`,
+# `metadata_filter`. Refuted if: the tool takes another shape, a store is named in another form, a request sends it
+# changed, or an empty store list or a top_k below 1 is sent.
+@testset "gemini_file_search — the Interactions file_search tool" begin
+    @test gemini_file_search("unilmwitness-5r9bfby3t61y") ==
+          Dict("type" => "file_search", "file_search_store_names" => [_STORE_NAME])
+    t = gemini_file_search([_STORE_NAME, "other"]; top_k=2, metadata_filter="topic = \"birds\"")
+    @test t == Dict("type" => "file_search", "file_search_store_names" => [_STORE_NAME, "fileSearchStores/other"],
+                    "top_k" => 2, "metadata_filter" => "topic = \"birds\"")
+    body = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="Which bird?", tools=[t])))
+    @test body["tools"] == [t]
+    for (call, says) in ((() -> gemini_file_search(String[]), "store"),
+                         (() -> gemini_file_search("a/b"), "fileSearchStores/"),
+                         (() -> gemini_file_search("s"; top_k=0), "top_k"))
+        e = _fs_err(call)
+        @test e isa ArgumentError && occursin(says, e.msg)
+    end
+end

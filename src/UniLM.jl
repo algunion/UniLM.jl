@@ -263,6 +263,7 @@ export
     gemini_google_search,
     gemini_code_execution,
     gemini_url_context,
+    gemini_file_search,
     # Tool types
     MCPTool,
     ComputerTool,

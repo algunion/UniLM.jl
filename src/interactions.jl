@@ -183,6 +183,38 @@ Hosted URL-context tool for the Gemini Interactions API. Pass in
 """
 gemini_url_context()    = Dict{String,Any}("type" => "url_context")
 
+"""
+    gemini_file_search(stores; top_k=nothing, metadata_filter=nothing) -> Dict
+
+Hosted File Search tool for the Gemini Interactions API: the model searches the File Search stores
+`stores` — a store's name, `"fileSearchStores/<id>"`, or its id, or a vector of them — and grounds its
+answer in the chunks it retrieves. `top_k` is the number of chunks to retrieve (≥ 1), `metadata_filter` a
+filter on the documents' custom metadata, such as `"author = \\"Robert Graves\\""`. Pass in
+`respond(...; tools=[gemini_file_search(store.name)], service=GEMINIServiceEndpoint)`. The search's steps
+(`file_search_call`, `file_search_result`) and the answer's `file_citation` annotations stay in the
+result's output as Gemini sent them.
+
+Fill a store with [`create_file_search_store`](@ref), [`upload_to_file_search_store`](@ref) and
+[`import_to_file_search_store`](@ref) ([File Search](@ref gemini_file_search)). Google says File Search
+"cannot be combined with other tools like Grounding with Google Search, URL Context" and lists the models
+that take it; the API answers for both. No store, a malformed name or a `top_k` below 1 throws
+`ArgumentError`.
+"""
+function gemini_file_search(stores::Union{AbstractString,AbstractVector{<:AbstractString}};
+                            top_k::Union{Integer,Nothing}=nothing, metadata_filter::Union{AbstractString,Nothing}=nothing)
+    names = stores isa AbstractString ? [stores] : stores
+    # FileSearch.file_search_store_names: "Required. The names of the file_search_stores to retrieve from."
+    isempty(names) && throw(ArgumentError("gemini_file_search: name a File Search store to search, or more"))
+    tool = Dict{String,Any}("type" => "file_search",
+        "file_search_store_names" => String[_gemini_resource_name("fileSearchStores", s, "gemini_file_search") for s in names])
+    if !isnothing(top_k)
+        top_k >= 1 || throw(ArgumentError("gemini_file_search: top_k is the number of chunks to retrieve, >= 1 (got $top_k)"))
+        tool["top_k"] = top_k
+    end
+    isnothing(metadata_filter) || (tool["metadata_filter"] = String(metadata_filter))
+    tool
+end
+
 # Neutral input items → Interactions input, a list of steps: the API refuses a list of
 # conversation turns ("use step_list input format instead of turn_list", HTTP 400 on
 # 2026-10-22). A message — an InputMessage, or a Dict with a `role` — is a `user_input` step

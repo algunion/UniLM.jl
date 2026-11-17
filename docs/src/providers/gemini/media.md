@@ -18,12 +18,27 @@ request is sent, and the model goes in the URL. Size the image with two fields o
   ([Nano Banana 2.1](https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1)).
 
 They go in `generationConfig.imageConfig`, and `safety_identifier` in the request label
-([Request options](@ref gemini_request_options)). A request returns one image, so `n` takes only 1,
-and the image fields generateContent has no counterpart for — `size`, `quality`, `background`,
-`output_format`, `output_compression`, `moderation`, OpenAI's GPT-Image-2.6 controls (`complexity`,
-`frame_count`, `frame_duration_ms` and `svg`), and an edit's `mask` and `input_fidelity` — are
-refused before the request ([Limits and refusals](@ref gemini_limits)). An image request is not recorded, so its
-output here is quoted from a live run:
+([Request options](@ref gemini_request_options)). Two more go in `generationConfig.responseFormat.image`,
+Gemini's "Configuration for image output format":
+
+- `output_format`: `"jpeg"`, its `mimeType` `IMAGE_JPEG`, the one format Gemini's API reference lists;
+  another is refused before the request. Gemini answers JPEG unasked, and on 17 November 2026 it answered
+  `IMAGE_PNG`, a value its reference does not list, with a JPEG too;
+- `delivery`: `"inline"` or `"uri"`, "The delivery mode for the image output": the image in the reply, or
+  a URI to fetch it from, which becomes the image's `url`. On 17 November 2026 `gemini-nano-banana-2.1`
+  answered `"uri"` with the image inline, and the result carries it as base64 as it does any image.
+
+`responseFormat.image` takes an aspect ratio and a size too, the controls that `aspect_ratio` and
+`resolution` set, and those stay in `imageConfig`: one name for each control. On 17 November 2026 Gemini
+took the two objects side by side.
+
+A request returns one image, so `n` takes only 1, and the image fields generateContent has no counterpart
+for — `size`, `quality`, `background`, `output_compression`, `moderation`, OpenAI's GPT-Image-2.6
+controls (`complexity`, `frame_count`, `frame_duration_ms` and `svg`), `stream` and `partial_images`,
+and an edit's `mask`, `markup` and `input_fidelity` — are refused before the request
+([Limits and refusals](@ref gemini_limits)). Gemini has no partial images to stream: on 17 November 2026
+its `streamGenerateContent` answered an image request with one event that held the whole image. An image
+request is not recorded, so its output here is quoted from a live run:
 
 ```julia
 result = generate_image("A lighthouse on a rocky coast at dusk, oil painting";
@@ -44,14 +59,15 @@ u = token_usage(result)
 ```
 
 The reply's image parts are the result's images, in order, each as base64 in `b64_json`, which
-[`image_data`](@ref) lists and [`save_image`](@ref) decodes into a file; their MIME type is in the
-reply, `result.response.raw`. Text the model sends with an image is its `revised_prompt`, and the interim
+[`image_data`](@ref) lists and [`save_image`](@ref) decodes into a file — or, for a part Gemini delivers
+by URI (`fileData`), as its `url`; their MIME type is in the reply, `result.response.raw`. Text the model sends with an image is its `revised_prompt`, and the interim
 images of the model's thinking are not results. A reply with no image — a filter stopped it, say — is
 an [`ImageCallError`](@ref) naming the finish reason (`IMAGE_SAFETY`, `NO_IMAGE`, …), and a reply has
 no creation time, so `result.response.created` is the time it arrived. "All generated images include a
 SynthID watermark" ([image generation](https://ai.google.dev/gemini-api/docs/image-generation)).
 
-An edit sends its input images inline, before the prompt, and decodes the same way:
+An edit sends its input images inline, before the prompt, and decodes the same way; it reads them from
+files, so an [`ImageRef`](@ref), OpenAI's image by reference, is refused:
 
 ```julia
 edited = edit_image("lighthouse.jpg", "Make it a winter night with snow on the rocks";
@@ -68,7 +84,11 @@ eu = token_usage(edited)
 [`token_usage`](@ref) reads the reply's usage as a `Chat`'s ([First call](@ref gemini_first_call)),
 its thinking counted as output; the image is output too — 1,120 of the generation's tokens above, by
 the `candidatesTokensDetails` of its `raw` usage, as Google says "Output images at 1K (1024x1024px)
-consume 1120 tokens" ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). UniLM does not price
+consume 1120 tokens" ([pricing](https://ai.google.dev/gemini-api/docs/pricing)). [`image_usage`](@ref)
+gives the same counts with those apart, as on OpenAI: the input's text and image tokens, by modality
+(`promptTokensDetails`), and the output's image tokens and the rest, its text and thinking, which Google
+prices apart ("\$30.00 (images)", "\$7.50 (text and thinking)" per million output tokens for
+`gemini-nano-banana-2.1`, 17 November 2026). UniLM does not price
 images: [`estimated_cost`](@ref) throws `ArgumentError` for an image result unless you pass `model=`,
 which it prices by a `pricing` row of your own, and estimates at `0.0`, with a warning, where no row
 names it. The options every provider shares are on [Image Generation](@ref images_guide).

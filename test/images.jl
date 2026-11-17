@@ -641,14 +641,14 @@ end
 
 @testset "Gemini images — OpenAI-only fields are refused, naming Gemini and the field" begin
     for (field, value) in (:size => "1024x1024", :quality => "high", :background => "opaque",
-                           :output_format => "png", :output_compression => 50, :moderation => "low")
+                           :output_compression => 50, :moderation => "low")
         err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
         @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take $field,")
     end
     err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", size="1024x1024")))
     @test occursin("aspect_ratio", err.msg) && occursin("resolution", err.msg)   # the fix: Gemini's own controls
     for (field, value) in (:mask => "mask.png", :input_fidelity => "high", :size => "1024x1024",
-                           :quality => "high", :background => "opaque", :output_format => "png")
+                           :quality => "high", :background => "opaque")
         e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
         err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
         @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
@@ -1103,4 +1103,375 @@ end
     priced = (10 * 5.0 + 400 * 30.0) / 1e6
     @test (@test_logs (:warn, r"SVG authoring tokens") estimated_cost(with_svg; model="img", pricing=rows)) ≈ priced
     @test (@test_logs estimated_cost(plain; model="img", pricing=rows)) ≈ priced
+end
+
+@testset "OpenAI image edits — output_compression and moderation are form fields, checked as on a generation" begin
+    # The edit reference: output_compression, "The compression level (0-100%)" of a webp or jpeg, and moderation, "low"
+    # or "auto". On 2026-11-17 a multipart edit with moderation=bogus and one with output_compression=999 were HTTP 400
+    # naming the field (invalid_value, integer_above_max_value), where a made-up field is "Unknown parameter".
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        form = _edit_form(ImageEdit(image=path, prompt="p", output_format="webp", output_compression=40, moderation="low"))
+        @test occursin("name=\"output_compression\"\r\n\r\n40\r\n", form) && occursin("name=\"moderation\"\r\n\r\nlow\r\n", form)
+        bare = _edit_form(ImageEdit(image=path, prompt="p"))
+        @test !occursin("name=\"output_compression\"", bare) && !occursin("name=\"moderation\"", bare)
+        # As on a generation: SVG and GIF output take no output_compression, refused before anything is sent.
+        for (kw, words) in ((; output_format="svg", output_compression=50) => ("output_compression", "SVG"),
+                            (; output_format="gif", output_compression=50) => ("output_compression", "GIF"))
+            thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+                _refusal(() -> edit_image(path, "p"; model="m", service=URLProbe, kw...))
+            end
+            @test thrown isa ArgumentError && all(w -> occursin(w, thrown.msg), words) && isempty(seen)
+        end
+    finally
+        rm(path; force=true)
+    end
+    # Gemini has neither: OpenAI-only fields, refused naming Gemini and the field.
+    for (field, value) in (:output_compression => 50, :moderation => "low")
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
+    end
+end
+
+# ── OpenAI edits by reference: the JSON edit (EditImageBodyJsonParam) ───────────────────────────────
+
+@testset "ImageRef names an uploaded file or an image URL, exactly one of them" begin
+    # ImageRefParam: "Provide exactly one of `image_url` or `file_id`"; image_url is "A fully qualified URL or
+    # base64-encoded data URL", at most 20971520 characters. The API answered a reference with both, on 2026-11-17,
+    # "Exactly one of 'image_url' or 'file_id' must be provided." (HTTP 400).
+    @test _image_json(ImageRef(file_id="file-abc")) == Dict{String,Any}("file_id" => "file-abc")
+    @test _image_json(ImageRef(image_url="https://example.com/a.png")) ==
+          Dict{String,Any}("image_url" => "https://example.com/a.png")
+    data = "data:image/png;base64," * base64encode(_PNG_SIGNATURE)
+    @test ImageRef(image_url=data).image_url == data
+    for (kw, words) in (((;), ("exactly one",)), ((; file_id="f", image_url="https://x.example"), ("exactly one",)),
+                        ((; file_id=""), ("file_id", "empty")), ((; image_url="room.png"), ("image_url", "URL")),
+                        ((; image_url="https://x.example/" * "a"^20_971_520), ("20971520",)))
+        err = _refusal(() -> ImageRef(; kw...))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+end
+
+@testset "OpenAI image edits by reference go as the JSON edit; files go as multipart, and the two do not mix" begin
+    ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
+    cfg = UniLM.RequestConfig(max_attempts=1)
+    refs = [ImageRef(file_id="file-a"), ImageRef(image_url="https://example.com/b.png")]
+    r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        edit_image(ImageEdit(service=URLProbe, image=refs, prompt="p", model="m", mask=ImageRef(file_id="file-m"),
+                             quality="low", output_format="jpeg", output_compression=50, moderation="low",
+                             safety_identifier="u1"); config=cfg)
+    end
+    @test r isa ImageSuccess && image_data(r) == ["aGVsbG8="]
+    @test only(seen).target == "/v1/images/edits"
+    @test JSON.parse(only(seen).body; dicttype=Dict{String,Any}) == Dict{String,Any}(
+        "model" => "m", "prompt" => "p",
+        "images" => Any[Dict{String,Any}("file_id" => "file-a"), Dict{String,Any}("image_url" => "https://example.com/b.png")],
+        "mask" => Dict{String,Any}("file_id" => "file-m"), "quality" => "low", "output_format" => "jpeg",
+        "output_compression" => 50, "moderation" => "low", "safety_identifier" => "u1")
+    # One reference is a list of one; a markup goes by reference; svg is its JSON object, not form fields.
+    _, seen = _with_scripted((_, _) -> _json(200, ok)) do
+        edit_image(ImageRef(file_id="file-a"), "p"; model="m", service=URLProbe, markup=ImageRef(file_id="file-k"),
+                   output_format="svg", svg=SvgOptions(model="gpt-6-luna", effort="low"), config=cfg)
+    end
+    body = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test body["images"] == Any[Dict{String,Any}("file_id" => "file-a")]
+    @test body["markup"] == Dict{String,Any}("file_id" => "file-k")
+    @test body["svg"] == Dict{String,Any}("model" => "gpt-6-luna", "reasoning" => Dict{String,Any}("effort" => "low"))
+    # OpenAI's endpoint, a JSON body, and the default model of a multipart edit.
+    url, headers, json = withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, ImageEdit(image=ImageRef(file_id="f"),
+                                                                                              prompt="p")),
+                                 "OPENAI_API_KEY" => "sk-test")
+    @test url == "https://api.openai.com/v1/images/edits" && Dict(headers)["Content-Type"] == "application/json"
+    @test JSON.parse(json)["model"] == "gpt-image-2.6-sunburst"
+    # A request is one form or the other, so files and references do not mix: refused before anything is sent.
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        for (call, words) in ((() -> edit_image([path, ImageRef(file_id="f")], "p"; model="m", service=URLProbe),
+                               ("files", "references")),
+                              (() -> edit_image(ImageRef(file_id="f"), "p"; model="m", service=URLProbe, mask=path),
+                               ("mask", "by reference")),
+                              (() -> edit_image(ImageRef(file_id="f"), "p"; model="m", service=URLProbe, markup=read(path)),
+                               ("markup", "by reference")),
+                              (() -> edit_image(path, "p"; model="m", service=URLProbe, mask=ImageRef(file_id="m")),
+                               ("mask", "file")),
+                              (() -> edit_image(ImageRef[], "p"; model="m", service=URLProbe), ("at least one input image",)))
+            err, seen = _with_scripted((_, _) -> _json(200, ok)) do
+                _refusal(call)
+            end
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words) && isempty(seen)
+        end
+        # Files still go as multipart, each read from its path.
+        _, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            edit_image([path, path], "p"; model="m", service=URLProbe, config=cfg)
+        end
+        @test count("name=\"image[]\"", only(seen).body) == 2
+    finally
+        rm(path; force=true)
+    end
+    # Gemini inlines its input images: a reference has no form there.
+    e = ImageEdit(service=GEMINIServiceEndpoint, image=ImageRef(file_id="f"), prompt="p")
+    err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+    @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("ImageRef", err.msg)
+end
+
+# ── OpenAI streamed images: stream, partial_images and the callback ──────────────────────────────────
+
+# An image stream as OpenAI writes it: one `event:` and one `data:` line per event, a blank line after each.
+_sse(events...) = HTTP.Response(200, ["Content-Type" => "text/event-stream; charset=utf-8"],
+    Vector{UInt8}(join(("event: $(e["type"])\ndata: $(JSON.json(e))\n\n" for e in events))))
+
+# The events of the reference's ImageGenStreamEvent and ImageEditStreamEvent, with the members it requires.
+_settings = Dict("size" => "1024x640", "quality" => "low", "background" => "opaque", "output_format" => "png")
+_partial_event(kind, index, bytes) = Dict("type" => "$kind.partial_image", "partial_image_index" => index,
+    "b64_json" => base64encode(bytes), "created_at" => 1_794_901_816, _settings...)
+const _STREAM_USAGE = Dict("input_tokens" => 11, "input_tokens_details" => Dict("image_tokens" => 0, "text_tokens" => 11),
+    "output_tokens" => 450, "output_tokens_details" => Dict("image_tokens" => 450, "text_tokens" => 0), "total_tokens" => 461)
+_completed_event(kind, b64) = Dict("type" => "$kind.completed", "b64_json" => b64, "created_at" => 1_794_901_817,
+    "safety_identifier" => nothing, "sequence_number" => 1, "usage" => _STREAM_USAGE, _settings...)
+
+@testset "OpenAI streamed images — partial images reach the callback, and the completed event is the result" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    got = PartialImage[]
+    r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1, 2]),
+                                            _partial_event("image_generation", 1, UInt8[3]),
+                                            _completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=2);
+                       callback=p -> push!(got, p), config=one)
+    end
+    @test r isa ImageSuccess && image_data(r) == [final]
+    @test [(p.index, p.bytes) for p in got] == [(0, UInt8[1, 2]), (1, UInt8[3])]
+    @test (got[1].size, got[1].quality, got[1].background, got[1].output_format, got[1].created_at) ==
+          ("1024x640", "low", "opaque", "png", 1_794_901_816)
+    @test got[1].raw["type"] == "image_generation.partial_image"
+    @test r.response.created == 1_794_901_817 && r.response.raw["type"] == "image_generation.completed"
+    @test r.response.usage == _image_json(_STREAM_USAGE) && isnothing(r.response.svg_usage)
+    sent = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+    @test (sent["stream"], sent["partial_images"]) == (true, 2)
+    @test _image_json(ImageGeneration(prompt="p", stream=true))["stream"] == true      # JSON.json shows the stream
+    @test !haskey(_image_json(ImageGeneration(prompt="p")), "stream")
+    # Priced as the unstreamed reply with the same usage.
+    plain = ImageSuccess(response=UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "created" => 1, "data" => [Dict("b64_json" => final)], "usage" => _STREAM_USAGE))))))
+    rows = Dict("m" => UniLM._price(5.0, 1.25, 30.0))
+    @test token_usage(r) == token_usage(plain) == TokenUsage(prompt_tokens=11, completion_tokens=450, total_tokens=461)
+    @test estimated_cost(r; model="m", pricing=rows) == estimated_cost(plain; model="m", pricing=rows) ≈ (11 * 5.0 + 450 * 30.0) / 1e6
+    # Without a callback the stream still gives the image.
+    r2, _ = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1]), _completed_event("image_generation", final))) do
+        generate_image("p"; model="m", service=URLProbe, stream=true, partial_images=1, config=one)
+    end
+    @test r2 isa ImageSuccess && image_data(r2) == [final]
+end
+
+@testset "OpenAI streamed image edits — multipart and JSON edits stream image_edit events" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        got = Int[]
+        r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_edit", 0, UInt8[9]), _completed_event("image_edit", final))) do
+            edit_image(path, "p"; model="m", service=URLProbe, stream=true, partial_images=1, config=one,
+                       callback=p -> push!(got, p.index))
+        end
+        @test r isa ImageSuccess && image_data(r) == [final] && got == [0]
+        body = only(seen).body
+        @test occursin("name=\"stream\"\r\n\r\ntrue\r\n", body) && occursin("name=\"partial_images\"\r\n\r\n1\r\n", body)
+        @test occursin("name=\"image[]\"", body)
+        r, seen = _with_scripted((_, _) -> _sse(_completed_event("image_edit", final))) do
+            edit_image(ImageRef(file_id="file-a"), "p"; model="m", service=URLProbe, stream=true, partial_images=0, config=one)
+        end
+        @test r isa ImageSuccess && r.response.raw["type"] == "image_edit.completed"
+        sent = JSON.parse(only(seen).body; dicttype=Dict{String,Any})
+        @test (sent["stream"], sent["partial_images"], sent["images"]) == (true, 0, Any[Dict{String,Any}("file_id" => "file-a")])
+        # A generation's events do not answer an edit.
+        r, _ = _with_scripted((_, _) -> _sse(_completed_event("image_generation", final))) do
+            edit_image(path, "p"; model="m", service=URLProbe, stream=true, config=one)
+        end
+        @test r isa ImageCallError && occursin("ended before its completed event", r.error)
+    finally
+        rm(path; force=true)
+    end
+end
+
+@testset "OpenAI streamed images — a stream that fails is a failure or a call error, never an image" begin
+    final = base64encode(_PNG_SIGNATURE)
+    one = UniLM.RequestConfig(max_attempts=1)
+    call(; kw...) = generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=1);
+                                   config=one, kw...)
+    for (reply, words) in ((_sse(_partial_event("image_generation", 0, UInt8[1])), "ended before its completed event"),
+                           (_sse(Dict("type" => "error", "error" => Dict("message" => "boom"))), "boom"),
+                           (_sse(delete!(_completed_event("image_generation", final), "usage")), "has no usage"),
+                           (_sse(delete!(_partial_event("image_generation", 0, UInt8[1]), "partial_image_index")),
+                            "has no partial_image_index"),
+                           (HTTP.Response(200, ["Content-Type" => "text/event-stream"], Vector{UInt8}("data: [DONE]\n\n")), "no JSON"))
+        r, _ = _with_scripted((_, _) -> reply) do
+            call()
+        end
+        @test r isa ImageCallError && occursin(words, r.error)
+    end
+    # A non-200 reply is the failure; a retryable one is sent again, before any partial image.
+    r, seen = _with_scripted((_, _) -> _json(400, """{"error":{"message":"bad"}}""")) do
+        call()
+    end
+    @test r isa ImageFailure && r.status == 400 && occursin("bad", r.response) && length(seen) == 1
+    r, seen = _with_scripted((n, _) -> n == 1 ? _json(503, "{}"; headers=["Retry-After" => "0"]) :
+                                       _sse(_completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true);
+                       config=UniLM.RequestConfig(max_attempts=2))
+    end
+    @test r isa ImageSuccess && length(seen) == 2
+    # What the callback throws ends the call, never retried.
+    boom = ErrorException("callback failed")
+    r, seen = _with_scripted((_, _) -> _sse(_partial_event("image_generation", 0, UInt8[1]), _completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true, partial_images=1);
+                       callback=_ -> throw(boom), config=UniLM.RequestConfig(max_attempts=3))
+    end
+    @test r isa ImageCallError && r.cause === boom && length(seen) == 1
+    # A cancelled token sends nothing.
+    r, seen = _with_scripted((_, _) -> _sse(_completed_event("image_generation", final))) do
+        generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, stream=true); cancel=cancel!(CancelToken()))
+    end
+    @test r isa ImageCallError && r.cause isa UniLMCancelled && isempty(seen)
+end
+
+@testset "OpenAI streamed images — what a stream cannot carry is refused before anything is sent" begin
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        # The reference's "Value must be between 0 and 3" (HTTP 400 for 9, 2026-11-17); partial images come only
+        # on a stream, and the callback receives them only there.
+        for (make, words) in ((() -> ImageGeneration(prompt="p", stream=true, partial_images=4), ("partial_images", "0 to 3")),
+                              (() -> ImageEdit(image=path, prompt="p", stream=true, partial_images=-1), ("partial_images", "0 to 3")),
+                              (() -> ImageGeneration(prompt="p", partial_images=1), ("partial_images", "stream=true")),
+                              (() -> ImageEdit(image=path, prompt="p", partial_images=1), ("partial_images", "stream=true")))
+            err = _refusal(make)
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        end
+        calls = ((() -> generate_image("p"; model="m", service=URLProbe, callback=identity), ("callback", "stream=true")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, callback=identity), ("callback", "stream=true")),
+                 # "Streaming is only supported with n=1." (HTTP 400 for n=2, 2026-11-17)
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, n=2), ("n=1", "Streaming is only supported")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, n=3), ("n=1",)),
+                 # "GIF output does not support streaming, partial images", "SVG generation ... does not support streaming"
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, output_format="gif"), ("GIF", "stream")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, output_format="gif"), ("GIF", "stream")),
+                 (() -> generate_image("p"; model="m", service=URLProbe, stream=true, output_format="svg"), ("SVG", "stream")),
+                 (() -> edit_image(path, "p"; model="m", service=URLProbe, stream=true, output_format="svg"), ("SVG", "stream")))
+        for (call, words) in calls
+            err, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+                _refusal(call)
+            end
+            @test err isa ArgumentError && all(w -> occursin(w, err.msg), words) && isempty(seen)
+        end
+    finally
+        rm(path; force=true)
+    end
+    # Gemini sends an image whole: on 2026-11-17 its streamGenerateContent answered an image request with one event
+    # holding the image, so it has no partial images to stream.
+    for make in (() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", stream=true)),
+                 () -> UniLM._check_image_request(GEMINIServiceEndpoint,
+                                                  ImageEdit(service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", stream=true)))
+        err = _refusal(make)
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("stream", err.msg) && occursin("whole", err.msg)
+    end
+end
+
+# ── image_usage: an image result's usage, typed, on both providers ──────────────────────────────────
+
+@testset "image_usage types an image result's usage on OpenAI and Gemini, the text and image tokens apart" begin
+    # OpenAI's ImageGenUsage and ImagesUsage: input_tokens_details {text_tokens, image_tokens} (required) and
+    # output_tokens_details {image_tokens, text_tokens}; the edit on OpenAI's page: 640 image and 26 text tokens.
+    reply(usage) = ImageSuccess(response=UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(
+        Dict("created" => 1, "data" => [Dict("b64_json" => "QQ==")], "usage" => usage))))))
+    full = reply(Dict("input_tokens" => 666, "output_tokens" => 107, "total_tokens" => 773,
+                      "input_tokens_details" => Dict("text_tokens" => 26, "image_tokens" => 640),
+                      "output_tokens_details" => Dict("image_tokens" => 100, "text_tokens" => 7)))
+    @test image_usage(full) == ImageUsage(input_tokens=666, output_tokens=107, total_tokens=773, input_text_tokens=26,
+                                          input_image_tokens=640, output_image_tokens=100, output_text_tokens=7)
+    @test image_usage(full) == image_usage(full.response)
+    u, t = image_usage(full), token_usage(full)
+    @test (u.input_tokens, u.output_tokens, u.total_tokens) == (t.prompt_tokens, t.completion_tokens, t.total_tokens)
+    # A split the reply does not give is nothing, not a zero.
+    bare = image_usage(reply(Dict("input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)))
+    @test bare == ImageUsage(input_tokens=11, output_tokens=22, total_tokens=33)
+    @test all(isnothing, (bare.input_text_tokens, bare.input_image_tokens, bare.output_image_tokens, bare.output_text_tokens))
+    # A reply without usage, and a failure, have none.
+    @test isnothing(image_usage(ImageSuccess(response=ImageResponse(created=1, data=ImageObject[], raw=Dict{String,Any}()))))
+    @test isnothing(image_usage(ImageFailure(response="{}", status=400))) && isnothing(image_usage(ImageCallError(error="x")))
+    # Gemini's usageMetadata: the input by modality (promptTokensDetails), the output's image tokens
+    # (candidatesTokensDetails IMAGE) and the rest of the output, its text and thinking, which Google prices apart.
+    meta = Dict("promptTokenCount" => 1131, "candidatesTokenCount" => 1263, "thoughtsTokenCount" => 450,
+                "totalTokenCount" => 2844,
+                "promptTokensDetails" => [Dict("modality" => "TEXT", "tokenCount" => 11),
+                                          Dict("modality" => "IMAGE", "tokenCount" => 1120)],
+                "candidatesTokensDetails" => [Dict("modality" => "IMAGE", "tokenCount" => 1120)])
+    gemini = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("inlineData" => Dict("mimeType" => "image/jpeg", "data" => "/9j/"))]))], "usageMetadata" => meta)
+    g = ImageSuccess(response=UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(gemini)))))
+    @test image_usage(g) == ImageUsage(input_tokens=1131, output_tokens=1713, total_tokens=2844, input_text_tokens=11,
+                                       input_image_tokens=1120, output_image_tokens=1120, output_text_tokens=593)
+    @test token_usage(g) == UniLM._gemini_usage(meta)
+    # Without the per-modality lists, Gemini gives no split.
+    delete!(meta, "promptTokensDetails"); delete!(meta, "candidatesTokensDetails")
+    g2 = ImageSuccess(response=UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(gemini)))))
+    @test image_usage(g2) == ImageUsage(input_tokens=1131, output_tokens=1713, total_tokens=2844)
+end
+
+# ── Gemini image output format and delivery: generationConfig.responseFormat.image ──────────────────
+
+@testset "Gemini images — output_format \"jpeg\" and delivery go in responseFormat.image; a fileData image is its URL" begin
+    # Gemini's ImageResponseFormat: mimeType IMAGE_JPEG (the one value besides MIME_TYPE_UNSPECIFIED), delivery
+    # INLINE or URI. On 2026-11-17 Gemini took both beside imageConfig and answered delivery URI with the image
+    # inline; it took IMAGE_PNG too, a value its reference does not list, and answered a JPEG.
+    config(; kw...) = _image_json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", kw...))["generationConfig"]
+    @test config(output_format="jpeg") == Dict{String,Any}("responseModalities" => Any["IMAGE"],
+        "responseFormat" => Dict{String,Any}("image" => Dict{String,Any}("mimeType" => "IMAGE_JPEG")))
+    both = config(output_format="jpeg", delivery="uri", aspect_ratio="1:1")
+    @test both["responseFormat"] == Dict{String,Any}("image" => Dict{String,Any}("mimeType" => "IMAGE_JPEG", "delivery" => "URI"))
+    @test both["imageConfig"] == Dict{String,Any}("aspectRatio" => "1:1")
+    @test config(delivery="inline")["responseFormat"]["image"] == Dict{String,Any}("delivery" => "INLINE")
+    @test !haskey(config(), "responseFormat")
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        _, _, body = _gemini_wire(ImageEdit(service=GEMINIServiceEndpoint, image=path, prompt="p", output_format="jpeg",
+                                            delivery="uri"))
+        @test JSON.parse(body)["generationConfig"]["responseFormat"]["image"] == Dict{String,Any}("mimeType" => "IMAGE_JPEG",
+                                                                                                "delivery" => "URI")
+    finally
+        rm(path; force=true)
+    end
+    # Refused before anything is sent: another format or delivery on Gemini, and delivery on OpenAI.
+    for (kw, words) in ((; output_format="png") => ("Gemini image output_format is \"jpeg\"", "png"),
+                        (; delivery="URI") => ("Gemini image delivery is", "\"inline\"", "\"uri\""),
+                        (; delivery="url") => ("Gemini image delivery is",))
+        err = _refusal(() -> config(; kw...))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", kw...)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && all(w -> occursin(w, err.msg), words)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", delivery="uri")))
+    @test err isa ArgumentError && occursin("the OpenAI Images API has no delivery", err.msg) && !occursin("size", err.msg)
+    err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, ImageEdit(image="never-read.png", prompt="p",
+                                                                                    delivery="inline")))
+    @test err isa ArgumentError && occursin("the OpenAI Images API has no delivery", err.msg)
+    # A part Gemini delivers by URI (Part.fileData) is the image's url, as image_data lists it.
+    uri = "https://generativelanguage.googleapis.com/v1beta/files/abc123"
+    reply = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("text" => "Three squares."),
+        Dict("fileData" => Dict("mimeType" => "image/jpeg", "fileUri" => uri)),
+        Dict("fileData" => Dict("mimeType" => "image/jpeg", "fileUri" => "https://x.example/thought"), "thought" => true)]))])
+    ir = UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
+    @test ir.data == [ImageObject(url=uri, revised_prompt="Three squares.")]
+    @test image_data(ImageSuccess(response=ir)) == [uri]
+    # FileData's mimeType is optional: a part without one is an image too; one of another type is not.
+    bare = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("fileData" => Dict("fileUri" => uri)), Dict("fileData" => Dict("mimeType" => "text/plain", "fileUri" => "x"))]))])
+    @test UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(bare)))).data ==
+          [ImageObject(url=uri)]
 end

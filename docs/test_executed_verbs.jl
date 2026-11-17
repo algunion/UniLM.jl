@@ -24,7 +24,7 @@ const LOCAL = Set{String}([
     "tool_choice_custom", "tool_choice_function", "tool_choice_hosted", "tool_choice_mcp", "to_tool",
     "realtime_event", "session_update", "input_audio_append", "response_create",
     # accessors
-    "answer", "answers", "text", "output_text", "fim_text", "transcript_text", "embedding_vectors", "image_data",
+    "answer", "answers", "text", "output_text", "fim_text", "transcript_text", "embedding_vectors", "image_data", "image_usage",
     "function_calls", "reasoning_text", "reasoning_items", "reasoning_summaries", "refusals", "url_citations",
     "web_search_results", "file_search_results", "code_interpreter_outputs", "image_generation_results",
     "mcp_approval_requests", "mcp_call_outputs", "incomplete_details", "response_status", "usage_details", "tool_usage",

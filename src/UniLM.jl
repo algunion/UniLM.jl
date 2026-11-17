@@ -288,6 +288,8 @@ export
     SvgOptions,
     ImageObject,
     ImageResponse,
+    ImageUsage,
+    PartialImage,
     # Result types
     ImageSuccess,
     ImageFailure,
@@ -295,8 +297,10 @@ export
     # Functions
     generate_image,
     image_data,
+    image_usage,
     save_image,
     ImageEdit,
+    ImageRef,
     edit_image
 
 # ─── FIM / Completions API ──────────────────────────────────────────────────

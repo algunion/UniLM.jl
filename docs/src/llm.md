@@ -1146,7 +1146,7 @@ println(tokens["input_tokens"])
     size::Union{String,Nothing} = nothing                   # OpenAI: "1024x1024","1536x1024","1024x1536","auto"; gpt-image-2+: any WIDTHxHEIGHT, multiples of 16, up to 3840x2160
     quality::Union{String,Nothing} = nothing                # OpenAI: "low","medium","high","auto"; gpt-image-2.6/2.5 Sunburst and Flare add "xhigh","max"
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
-    output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg","gif","svg"
+    output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg","gif","svg"; Gemini: "jpeg" (responseFormat.image.mimeType IMAGE_JPEG)
     output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only; not with "svg" or "gif")
     safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 lowercase letters, numerals, _ or -, any script)
     moderation::Union{String,Nothing} = nothing             # OpenAI: "auto","low"
@@ -1156,6 +1156,9 @@ println(tokens["input_tokens"])
     frame_count::Union{Int,Nothing} = nothing               # OpenAI: 2–16, with output_format "gif"
     frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI: ≥ 20 (no largest), with output_format "gif"
     svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: the SVG author, with output_format "svg" (and n 1, no output_compression)
+    stream::Bool = false                                    # OpenAI: stream the image; partial images go to the verb's callback (n 1; not "gif"/"svg")
+    partial_images::Union{Int,Nothing} = nothing            # OpenAI: 0–3, with stream=true only (ArgumentError otherwise, at construction)
+    delivery::Union{String,Nothing} = nothing               # Gemini: "inline","uri" (responseFormat.image.delivery)
 end
 
 struct SvgOptions                                           # the Images API's and the image tool's `svg` object
@@ -1168,10 +1171,12 @@ SvgOptions(; model, effort=nothing)                         # SvgOptions() or Sv
 
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
+    image::Union{String,ImageRef,Vector{String},Vector{ImageRef}}  # input file path(s), or OpenAI references (the JSON edit);
+                                                            #   a vector mixing both throws when built, an empty one in edit_image
     prompt::String
-    mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit; not with output_format "gif"
-    markup::Union{String,Vector{UInt8},Nothing} = nothing   # OpenAI: a transparent PNG (path or bytes) overlaid on the first
+    mask::Union{String,ImageRef,Nothing} = nothing          # OpenAI: transparent area = what to edit; not with output_format "gif";
+                                                            #   a file in an edit of files, an ImageRef in an edit by reference
+    markup::Union{String,Vector{UInt8},ImageRef,Nothing} = nothing  # OpenAI: a transparent PNG (path, bytes, or ImageRef) overlaid on the first
                                                             #   image to guide the edit; not with mask (ArgumentError); OpenAI
                                                             #   states "Supports GPT Image 2.5 and 2.6" and judges the model (on
                                                             #   2026-11-16 it took one on gpt-image-2.6-flare)
@@ -1189,8 +1194,19 @@ SvgOptions(; model, effort=nothing)                         # SvgOptions() or Sv
     frame_count::Union{Int,Nothing} = nothing               # OpenAI, as on ImageGeneration
     frame_duration_ms::Union{Int,Nothing} = nothing         # OpenAI, as on ImageGeneration
     svg::Union{SvgOptions,Nothing} = nothing                # OpenAI: as on ImageGeneration, sent as svg[model] and svg[reasoning][effort]
-                                                            #   (n 1 with "svg"; a mask beside it is sent as given)
+                                                            #   (n 1 with "svg"; a mask beside it is sent as given); JSON edit: the object
+    output_compression::Union{Int,Nothing} = nothing        # OpenAI, as on ImageGeneration
+    moderation::Union{String,Nothing} = nothing             # OpenAI, as on ImageGeneration
+    stream::Bool = false                                    # OpenAI, as on ImageGeneration
+    partial_images::Union{Int,Nothing} = nothing            # OpenAI, as on ImageGeneration
+    delivery::Union{String,Nothing} = nothing               # Gemini, as on ImageGeneration
 end
+
+struct ImageRef                                             # an OpenAI edit's image (mask, markup) by reference: exactly one of
+    file_id::Union{String,Nothing}                          #   an uploaded file's id (upload_file(path, "vision")), or
+    image_url::Union{String,Nothing}                        #   "A fully qualified URL or base64-encoded data URL" (≤ 20971520 chars)
+end
+ImageRef(; file_id=nothing, image_url=nothing)              # both, neither, an empty id or a URL with no scheme → ArgumentError
 ```
 
 `input_fidelity` is an edit-only parameter: it lives on `ImageEdit`, and
@@ -1203,8 +1219,15 @@ serialized, and in `generate_image` / `edit_image` before any request; other Ope
 are sent as given, for OpenAI to judge. The GPT-Image-2.6 controls are checked: `complexity`,
 `frame_count` and `frame_duration_ms` values at construction, the frame fields only with
 `output_format="gif"`, `svg` only with `output_format="svg"`, SVG output only with `n` 1 and no
-`output_compression`, and GIF output with no `output_compression` (a generation) or `mask` (an edit)
-(`ArgumentError` when serialized and before any request). A reply's `svg_usage`
+`output_compression`, and GIF output with no `output_compression` or `mask` (an edit)
+(`ArgumentError` when serialized and before any request). A stream (`stream=true`) is OpenAI's only:
+`n` 1 ("Streaming is only supported with n=1.", HTTP 400 for 2, 17 November 2026), not with GIF or SVG
+output, `partial_images` 0–3 and only with `stream=true` (at construction); Gemini, whose
+`streamGenerateContent` sent an image whole in one event (17 November 2026), refuses `stream`. An OpenAI
+edit takes its images, mask and markup as files (multipart) or all by reference (`ImageRef`, the JSON
+edit; a mix throws, a Gemini edit with an `ImageRef` throws). Gemini takes `output_format="jpeg"` only and
+`delivery` `"inline"` or `"uri"`, both in `generationConfig.responseFormat.image`; OpenAI refuses
+`delivery`. A reply's `svg_usage`
 (the SVG author's tokens) is not priced: `estimated_cost(result; model=…)` of an image result that
 carries one bills its `usage` alone and warns once per model that it leaves those tokens out.
 
@@ -1219,13 +1242,14 @@ throws `ArgumentError` at serialization.
 ### generate_image
 
 ```julia
-generate_image(ig::ImageGeneration; config=nothing, cancel=nothing) -> ImageSuccess | ImageFailure | ImageCallError
-generate_image(prompt::String; config=nothing, cancel=nothing, kwargs...) -> same   # convenience
-edit_image(e::ImageEdit; config=nothing, cancel=nothing)                 -> same
-edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, kwargs...)
+generate_image(ig::ImageGeneration; config=nothing, cancel=nothing, callback=nothing) -> ImageSuccess | ImageFailure | ImageCallError
+generate_image(prompt::String; config=nothing, cancel=nothing, callback=nothing, kwargs...) -> same   # convenience
+edit_image(e::ImageEdit; config=nothing, cancel=nothing, callback=nothing)                 -> same
+edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, callback=nothing, kwargs...)
+# callback(p::PartialImage) runs once per partial image of a stream (stream=true; ArgumentError without it)
 ```
 
-Retries transient statuses (408/429/500/502–504/520–524/529) inside the request budget (`RequestConfig.max_attempts`, default 3; the wait a reply asks for, `retry-after-ms` else `Retry-After`, is a floor under the jitter) — a retry whose wait would exceed the remaining `total_deadline` is not attempted, so the call returns the last real response rather than sleeping past it. Bound per call with `config=RequestConfig(...)`; a cancelled call returns `ImageCallError` with `cause::UniLMCancelled`.
+Retries transient statuses (408/429/500/502–504/520–524/529) inside the request budget (`RequestConfig.max_attempts`, default 3; the wait a reply asks for, `retry-after-ms` else `Retry-After`, is a floor under the jitter) — a retry whose wait would exceed the remaining `total_deadline` is not attempted, so the call returns the last real response rather than sleeping past it. Bound per call with `config=RequestConfig(...)`; a cancelled call returns `ImageCallError` with `cause::UniLMCancelled`. A streamed call (OpenAI) returns when the image arrives, the same result with the completed event as `raw` and its `usage`, priced as an unstreamed call's; it is retried only before the reply's head arrives; the callback runs between reads (not idle time), and what it throws ends the call as an `ImageCallError` with that `cause`; a stream that ends without its completed event, an `error` event, or an event without a member OpenAI's reference requires is an `ImageCallError`.
 
 **Gemini (Nano Banana)**: with `service=GEMINIServiceEndpoint` both verbs call `generateContent` (`GEMINI_API_KEY`) with `responseModalities: ["IMAGE"]` and an `imageConfig` from `aspect_ratio` / `resolution`, a `safety_identifier` as the request label `safety_identifier`; an edit sends its input image(s) inline ahead of the prompt (no mask). The model's image parts are the result's images, in order — JPEG as observed (each part's `mimeType` is in `raw`); text it sends with an image is the `revised_prompt`, interim thinking images are not results; a reply with no image is an `ImageCallError` naming Gemini's finish reason (`IMAGE_SAFETY`, `NO_IMAGE`, …); `created` is the reply's arrival time (Gemini sends none); `usage` is the reply's `usageMetadata`, read by `token_usage` (thinking counted as output). `estimated_cost` of an image result throws `ArgumentError` unless `model=` is given (a `model=` with no row in `pricing` is estimated at `0.0`, with the no-row warning).
 
@@ -1243,9 +1267,33 @@ end
     data::Vector{ImageObject}
     usage::Union{Dict{String,Any},Nothing} = nothing
     svg_usage::Union{Dict{String,Any},Nothing} = nothing   # OpenAI SVG output: the author's tokens (input/output/reasoning/total, model)
-    raw::Dict{String,Any}
+    raw::Dict{String,Any}                                  # a streamed call's: its completed event
 end
+
+@kwdef struct PartialImage                                 # a streamed image's partial image, as the callback gets it
+    index::Int                                             # partial_image_index, 0-based
+    bytes::Vector{UInt8}                                   # decoded from the event's b64_json
+    size::String
+    quality::String
+    background::String
+    output_format::String
+    created_at::Int64
+    raw::Dict{String,Any}                                  # the event as sent
+end
+
+@kwdef struct ImageUsage                                   # image_usage(result): both providers
+    input_tokens::Int                                      # as token_usage reads them (Gemini: thinking is output)
+    output_tokens::Int
+    total_tokens::Int
+    input_text_tokens::Union{Int,Nothing} = nothing        # OpenAI input_tokens_details; Gemini promptTokensDetails TEXT
+    input_image_tokens::Union{Int,Nothing} = nothing       # OpenAI input_tokens_details; Gemini promptTokensDetails IMAGE
+    output_image_tokens::Union{Int,Nothing} = nothing      # OpenAI output_tokens_details; Gemini candidatesTokensDetails IMAGE
+    output_text_tokens::Union{Int,Nothing} = nothing       # OpenAI output_tokens_details; Gemini the rest of the output (text, thinking)
+end                                                        # nothing: the reply gives no split
 ```
+
+On Gemini, a `fileData` image part (a `delivery="uri"` reply) is an `ImageObject` with its `url`; on
+17 November 2026 `gemini-nano-banana-2.1` answered `delivery="uri"` with the image inline.
 
 ### Accessors
 
@@ -1253,6 +1301,7 @@ end
 image_data(result::ImageSuccess)::Vector{String}       # per image: its base64 data, else its URL
 image_data(result::ImageFailure)                        # throws LLMResultError
 image_data(result::ImageCallError)                      # throws LLMResultError
+image_usage(result::Union{ImageSuccess,ImageResponse})::Union{ImageUsage,Nothing}   # nothing: no usage; failures → nothing
 save_image(img_b64::String, filepath::String)           # decode + write to disk, returns filepath
 ```
 
@@ -3253,7 +3302,7 @@ Every exported symbol (487), grouped by area:
 - *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
 - *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`, `tool_usage`, `ToolUsage`, `input_transformations`, `InputTransformation`
 
-**Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `SvgOptions`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
+**Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `ImageRef`, `SvgOptions`, `ImageObject`, `ImageResponse`, `ImageUsage`, `PartialImage`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `image_usage`, `save_image`
 
 **Embeddings**: `Embeddings`, `EmbeddingInput`, `embeddingrequest!`, `embedding_vectors`, `EmbeddingSuccess`, `EmbeddingFailure`, `EmbeddingCallError`
 

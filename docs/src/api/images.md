@@ -9,6 +9,7 @@ Types and functions for generating and editing images: OpenAI's Images API
 ```@docs
 ImageGeneration
 ImageEdit
+ImageRef
 SvgOptions
 ```
 
@@ -75,6 +76,8 @@ end
 ```@docs
 ImageObject
 ImageResponse
+ImageUsage
+PartialImage
 ```
 
 ## Result Types
@@ -110,10 +113,23 @@ julia> save_image(image_data(result)[1], "robot_julia.png")
 "robot_julia.png"
 ```
 
+Streamed on OpenAI, the partial images reach a callback while the image is made, and the call
+returns the same result ([Streaming](@ref openai_images_streaming)); an edit takes its images by
+reference as [`ImageRef`](@ref)s ([Edits by reference](@ref openai_images_by_reference)):
+
+```julia
+result = generate_image("A red circle on white"; size="1024x640", quality="low", stream=true,
+                        partial_images=1, callback=p -> write("partial_$(p.index).png", p.bytes))
+
+edited = edit_image([ImageRef(file_id="file-abc"), ImageRef(image_url="https://example.com/b.png")],
+                    "Put both objects on one table")
+```
+
 ## Accessor Functions
 
 ```@docs
 image_data
+image_usage
 save_image
 ```
 
@@ -139,18 +155,22 @@ end
 | `size`               | OpenAI   | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
 | `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on the Sunburst and Flare models of GPT-Image-2.6 and 2.5 |
 | `background`         | OpenAI   | String | `"auto"`          | `"transparent"`, `"opaque"`        |
-| `output_format`      | OpenAI   | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"` |
-| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG or GIF output |
-| `moderation`         | OpenAI   | String | `"auto"`          | `"auto"`, `"low"`                  |
+| `output_format`      | both     | String | `"png"` (OpenAI)  | OpenAI: `"png"`, `"webp"`, `"jpeg"`, `"gif"`, `"svg"`; Gemini: `"jpeg"` only, sent as `responseFormat.image.mimeType` |
+| `output_compression` | OpenAI   | Int    | —                 | 0–100, for webp/jpeg; not with SVG or GIF output; on edits too |
+| `moderation`         | OpenAI   | String | `"auto"`          | `"auto"`, `"low"`; on edits too    |
+| `stream`             | OpenAI   | Bool   | `false`           | Stream the image: partial images go to the verb's `callback`; `n` 1, not with GIF or SVG output |
+| `partial_images`     | OpenAI   | Int    | `0`               | 0–3 partial images, with `stream=true` only |
 | `complexity`         | OpenAI   | String | `"high"` (2.6)    | `"low"`, `"medium"`, `"high"`: planning before rendering, on the GPT-Image-2.6 models |
 | `frame_count`        | OpenAI   | Int    | `9`               | 2–16, with `output_format="gif"` only |
 | `frame_duration_ms`  | OpenAI   | Int    | `200`             | at least 20, with `output_format="gif"` only |
 | `svg`                | OpenAI   | SvgOptions | —             | The SVG author ([`SvgOptions`](@ref)), with `output_format="svg"` and `n=1`; on an edit the form fields `svg[model]` and `svg[reasoning][effort]` |
 | `aspect_ratio`       | Gemini   | String | `"1:1"`           | `"1:1"`, `"1:4"`, `"4:1"`, `"1:8"`, `"8:1"`, `"2:3"`, `"3:2"`, `"3:4"`, `"4:3"`, `"4:5"`, `"5:4"`, `"9:16"`, `"16:9"`, `"21:9"`; an edit keeps its input's ratio by default |
 | `resolution`         | Gemini   | String | `"1K"`            | `"512"`, `"1K"`, `"2K"`, `"4K"`; `gemini-nano-banana-2.1` renders 1K, 2K or 4K |
+| `delivery`           | Gemini   | String | `"inline"`        | `"inline"`, `"uri"`: how Gemini delivers the image (`responseFormat.image.delivery`) |
 
 Defaults shown as quoted strings other than `model` are the **API's** defaults for
-an omitted field; the struct stores `nothing` and omits them from the request body.
+an omitted field; the struct stores `nothing` (`stream` stores `false`) and omits them from the request body.
 A field set for the provider that does not take it throws `ArgumentError` naming the
 provider and the field. `input_fidelity`, `mask` and `markup` are edit parameters (OpenAI): set
-them on [`ImageEdit`](@ref) — `ImageGeneration` does not accept them.
+them on [`ImageEdit`](@ref) — `ImageGeneration` does not accept them. An OpenAI edit takes its images,
+mask and markup as files or, all of them, by reference ([`ImageRef`](@ref)).

@@ -111,11 +111,12 @@ end
             @test occursin("version 1", s.response.description) && abs(s.response.created_at - time()) < 600
             v = create_skill_version(id, skill_dir(2); default=true)
             @test v isa SkillVersionSuccess && (v.response.skill_id, v.response.version, v.response.name) == (id, "2", name)
-            # "A newly uploaded version can briefly return 404": read it back, a few times if need be.
+            # "A newly uploaded version can briefly return 404": read it back until it is visible, for up to 60 s
+            # (on 17 November 2026 it stayed 404 for more than 10 s, and every later step depends on it).
             got = retrieve_skill_version(id, "2")
-            for _ in 1:10
+            for _ in 1:30
                 got isa SkillFailure && got.status == 404 || break
-                sleep(1)
+                sleep(2)
                 got = retrieve_skill_version(id, "2")
             end
             @test got isa SkillVersionSuccess && got.response.id == v.response.id && occursin("version 2", got.response.description)

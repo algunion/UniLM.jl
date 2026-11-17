@@ -553,6 +553,20 @@ end
     @test _drift_named_models(due, :anthropic; named).retired == ["claude-haiku-4-5" => today()]
 end
 
+# Refuted if: an id a live suite looks up to witness the provider's 404 counts as a model UniLM
+# names (the release gate then fails on the very absence the lookup tests), or the listing starts
+# to list such an id and nothing says that lookup's premise is gone.
+@testset "drift checks: ids a live suite asks for to witness a 404 are not named, and must stay unlisted" begin
+    @test "claude-3-opus-20240229" in _DRIFT_ABSENT && "gemini-made-up-0" in _DRIFT_ABSENT
+    @test isempty(intersect(_DRIFT_ABSENT, _drift_suite_ids()))
+    an = _ml_models("anthropic", UniLM._AnthropicModels())
+    @test isempty(_drift_named_models(an, :anthropic; named=String[]).relisted)
+    back = ProviderModel("claude-3-opus-20240229", "Claude Opus 3", nothing, nothing, nothing,
+                         Dict{String,Any}(), nothing, nothing, Dict{String,Any}())
+    @test _drift_named_models([an; back], :anthropic; named=String[]).relisted == ["claude-3-opus-20240229"]
+    @test isempty(_drift_named_models([an; back], :gemini; named=String[]).relisted)
+end
+
 # Refuted if: a chat model of a new generation or of a new name passes unseen on OpenAI or Gemini,
 # or one of a documented family, an older generation or a known other kind is reported. The live
 # suite logs the list: a listing may add models before UniLM has tables for them.

@@ -15,13 +15,14 @@ isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.j
 using .ProviderDriftChecks
 
 # Every model of `provider` that UniLM names is listed, and before its retirement date where the
-# listing gives one.
+# listing gives one; no id a live suite looks up to witness a 404 is listed.
 function _test_named_models(models::Vector{ProviderModel}, provider::Symbol)
     n = _drift_named_models(models, provider)
     @info "models UniLM names" provider named = n.named
     @test !isempty(n.named)
     @test isempty(n.unlisted)
     @test isempty(n.retired)
+    @test isempty(n.relisted)
 end
 
 if get(ENV, "UNILM_LIVE", "") != "1"

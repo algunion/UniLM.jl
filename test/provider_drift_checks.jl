@@ -13,7 +13,7 @@ module ProviderDriftChecks
 using Dates
 using UniLM
 
-export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_docs_ids, _drift_named_models,
+export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_docs_ids, _drift_named_models, _DRIFT_ABSENT,
        _openai_drift, _anthropic_drift, _gemini_drift
 
 # An id UniLM names is checked against the listing of the provider whose prefix
@@ -64,13 +64,20 @@ function _drift_defaults()::Vector{String}
     unique!(named)
 end
 
-# The model ids the code of the live suites (test/integration_*.jl) quotes.
+# Ids a live suite quotes because the provider must NOT list them: a lookup of each witnesses the
+# provider's 404 (`retrieve_model` of a retired Claude model and of a made-up Gemini id). They
+# name no model UniLM uses; a listing that lists one again is reported (`relisted`), since the
+# lookup's premise is then gone.
+const _DRIFT_ABSENT = ("claude-3-opus-20240229", "gemini-made-up-0")
+
+# The model ids the code of the live suites (test/integration_*.jl) quotes, those in
+# `_DRIFT_ABSENT` aside.
 function _drift_suite_ids()::Vector{String}
     ids = String[]
     for f in readdir(@__DIR__; join=true)
         isfile(f) && occursin(r"^integration_.*\.jl$", basename(f)) && append!(ids, _drift_quoted_ids(read(f, String)))
     end
-    unique!(ids)
+    filter!(∉(_DRIFT_ABSENT), unique!(ids))
 end
 
 # A block a docs page fences as ```julia, ```@example or ```@repl, at any indentation (the blocks
@@ -117,7 +124,8 @@ function _drift_named_models(models::Vector{ProviderModel}, provider::Symbol;
     ids = unique!(filter(id -> _drift_provider(id) === provider, named))
     retired = [id => listed[id].retires for id in ids
                if haskey(listed, id) && !isnothing(listed[id].retires) && listed[id].retires <= today()]
-    (; named=ids, unlisted=[id for id in ids if !haskey(listed, id)], retired)
+    relisted = [id for id in _DRIFT_ABSENT if _drift_provider(id) === provider && haskey(listed, id)]
+    (; named=ids, unlisted=[id for id in ids if !haskey(listed, id)], retired, relisted)
 end
 
 # Models whose provider publishes no price, so no price row can hold one, by exact id: Claude

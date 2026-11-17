@@ -212,8 +212,8 @@ end
 
 # ─── Uploads ──────────────────────────────────────────────────────────────────
 
-# OpenAI takes at most 500 files in a skill (CreateSkillBody and CreateSkillVersionBody: `maxItems: 500`);
-# Anthropic names no count.
+# OpenAI takes at most 500 files in a skill (CreateSkillBody and CreateSkillVersionBody: `maxItems: 500`),
+# counted on the parts sent; Anthropic names no count.
 _check_skill_file_count(::_AnthropicSkills, ::String, ::Int)::Nothing = nothing
 _check_skill_file_count(::_OpenAISkills, verb::String, n::Int)::Nothing =
     n <= 500 ? nothing : throw(ArgumentError("$verb: OpenAI takes at most 500 files in a skill (got $n)"))
@@ -227,13 +227,15 @@ const _SkillPart = @NamedTuple{name::String, filename::String, path::String, typ
 
 # The parts of an upload, checked before anything is read or sent: a folder's files, each a `files[]` part
 # named by its path under the folder's name — both providers take a skill as the files of one top-level
-# folder whose root holds its SKILL.md — or one `.zip` of such a folder.
+# folder whose root holds its SKILL.md — or one `.zip` of such a folder. A hidden entry under the folder (a
+# name starting with ".": .env, .git/, .DS_Store), and everything below it, stays on disk.
 function _skill_parts(verb::String, w::_SkillsWire, path::AbstractString)::Vector{_SkillPart}
     if isdir(path)
         any(n -> lowercase(n) == "skill.md" && isfile(joinpath(path, n)), readdir(path)) || throw(ArgumentError(
             "$verb: the folder $path has no SKILL.md at its root, which a skill's folder holds"))
         root = last(splitpath(abspath(path)))
-        files = sort!([joinpath(dir, f) for (dir, _, fs) in walkdir(path) for f in fs])
+        files = sort!([f for (dir, _, fs) in walkdir(path) for f in joinpath.(dir, fs)
+                       if !any(startswith('.'), splitpath(relpath(f, path)))])
         _check_skill_file_count(w, verb, length(files))
         _SkillPart[(name="files[]", filename=join([root; splitpath(relpath(f, path))], "/"), path=f, type=_mime_for(f))
                    for f in files]
@@ -301,15 +303,16 @@ _skill_version_success(w::_SkillsWire) = r -> SkillVersionSuccess(response=_pars
 Upload a skill: `path` is its folder, whose root holds its SKILL.md (the skill's `name` and
 `description` in its front matter, then its instructions), or a `.zip` of that folder. A folder goes
 as one part per file — every file in it, its subfolders' too — each named by its path under the
-folder's name; a zip as one part. Returns [`SkillSuccess`](@ref), [`SkillFailure`](@ref) or
-[`SkillCallError`](@ref).
+folder's name; a zip as one part. Hidden entries under the folder, each name starting with `.`
+(`.env`, `.git/`, `.DS_Store`), at any depth and with all they hold, are never sent. Returns
+[`SkillSuccess`](@ref), [`SkillFailure`](@ref) or [`SkillCallError`](@ref).
 
 - `display_name` (Anthropic only): the skill's label, up to 255 characters on one line; Anthropic
   takes the SKILL.md's `name` without one.
 
 Refused with `ArgumentError` before anything is sent: a `path` that is no folder or `.zip` file, a
-folder without a SKILL.md at its root, more than 500 files on OpenAI, `display_name` on OpenAI, and a
-`display_name` longer than 255 characters or of more than one line.
+folder without a SKILL.md at its root, more than 500 files to send on OpenAI, `display_name` on
+OpenAI, and a `display_name` longer than 255 characters or of more than one line.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single
 bounded attempt; `max_attempts` does not apply): like every create, an upload is never sent again.
@@ -453,7 +456,8 @@ end
     create_skill_version(skill_id, path; default=nothing, service=OPENAIServiceEndpoint)
 
 Upload a new version of skill `skill_id`, from `path` as [`create_skill`](@ref) takes it: the whole
-skill, whose SKILL.md names the skill's name. Returns a [`SkillVersionSuccess`](@ref).
+skill, whose SKILL.md names the skill's name, its hidden entries (a name starting with `.`) never sent.
+Returns a [`SkillVersionSuccess`](@ref).
 
 - `default` (OpenAI only): `true` makes the new version the skill's default.
 

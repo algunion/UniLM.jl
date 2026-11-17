@@ -350,8 +350,9 @@ a [`FileContentSuccess`](@ref), which [`save_file_content`](@ref) writes to disk
 A skill is "a directory with a `SKILL.md` manifest containing front matter and instructions"
 ([Skills](https://developers.openai.com/api/docs/guides/tools-skills)), which a container loads.
 [`create_skill`](@ref)`(path)` uploads one: the folder, each file a part named by its path under the
-folder's name, or a `.zip` of it; a folder without a SKILL.md at its root, a path that is neither, and
-more than 500 files are refused before anything is sent. The [`SkillObject`](@ref) holds its `name`
+folder's name — its hidden entries (a name starting with `.`, such as `.env` or `.git/`) never sent —,
+or a `.zip` of it; a folder without a SKILL.md at its root, a path that is neither, and more than 500
+files to send are refused before anything is sent. The [`SkillObject`](@ref) holds its `name`
 and `description`, from the SKILL.md, its `default_version` — the one a reference without a version
 loads — and its `latest_version`. [`create_skill_version`](@ref)`(id, path; default)` uploads the
 whole skill again as its next version, `default=true` making it the default, and

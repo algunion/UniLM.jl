@@ -25,6 +25,8 @@ must be in the same top-level directory and must include a SKILL.md file at the 
 directory" ([Anthropic](https://platform.claude.com/docs/en/api/skills/create)); "Each part's filename
 includes the path inside a single top-level folder"
 ([OpenAI](https://developers.openai.com/api/docs/guides/tools-skills)). A `.zip` goes as one part.
+Hidden entries under the folder — each name starting with `.`, such as `.env`, `.git/` or `.DS_Store`,
+at any depth and with all they hold — are never sent, and OpenAI's 500 counts only the files sent.
 
 | | OpenAI | Anthropic |
 | :--- | :--- | :--- |

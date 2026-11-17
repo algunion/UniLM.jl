@@ -344,7 +344,8 @@ The endpoint's `skills` capability: the [Skills API](@ref skills_api) verbs reac
 `skills-2025-10-02` beta would select its earlier response shapes
 ([Skills guide](https://platform.claude.com/docs/en/build-with-claude/skills-guide)).
 [`create_skill`](@ref)`(path; display_name, service=ANTHROPICServiceEndpoint)` uploads a skill folder,
-whose root holds its SKILL.md, or a `.zip` of it; `display_name`, one line of at most 255 characters,
+whose root holds its SKILL.md, without its hidden entries (a name starting with `.`, such as `.env` or
+`.git/`), or a `.zip` of it; `display_name`, one line of at most 255 characters,
 is the skill's label, Anthropic's SKILL.md `name` without one. The [`SkillObject`](@ref) holds the
 label as `name`, and the `latest_version_id` as `latest_version`; `source` and `updated_at` are in
 `raw`. A version is addressed by its id (`"skver_…"`), which is its [`SkillVersionObject`](@ref)'s

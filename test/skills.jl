@@ -309,6 +309,35 @@ const _AN_VERSION = """{"id":"skver_01AbCdEfGhIjKlMnOpQrStUv","created_at":"2026
     @test err[2] isa ArgumentError && startswith(err[2].msg, "create_skill: display_name is a single line")
 end
 
+# A folder's hidden entries — each name under it that starts with "." (.env, .git/, .DS_Store), at any depth —
+# stay on disk: a secret or a repository kept beside a skill never reaches the provider, and OpenAI's 500 counts
+# the files sent.
+# Refuted if: a hidden file, or anything under a hidden folder, is in the body; a visible file is left out; or
+# hidden files count toward the 500.
+@testset "create_skill and create_skill_version send no hidden file or folder, at any depth, on either provider" begin
+    dir = _skill_dir()
+    hidden = (".env" => "SECRET-ENV", ".DS_Store" => "DS-STORE", ".git/HEAD" => "GIT-HEAD",
+              ".git/objects/o" => "GIT-OBJECT", "scripts/.cache/c" => "CACHE-BLOB", "scripts/.hidden.py" => "HIDDEN-PY")
+    for (f, s) in hidden
+        mkpath(dirname(joinpath(dir, f)))
+        write(joinpath(dir, f), s)
+    end
+    for call in (s -> create_skill(dir; service=s), s -> create_skill_version("skill_abc", dir; service=s)), s in (_OS, _AS)
+        _, seen = _with_scripted(() -> call(s), (_, _) -> _json(200, "{}"))
+        body = only(seen).body
+        @test count("name=\"files[]\"", body) == 3
+        @test all(n -> occursin("filename=\"csv-sum/$n\"", body), ("SKILL.md", "notes.txt", "scripts/sum.py"))
+        @test !any(((f, s),) -> occursin(f, body) || occursin(s, body), hidden) && !occursin("/.", body)
+    end
+    many = mktempdir()
+    write(joinpath(many, "SKILL.md"), "x")
+    foreach(i -> write(joinpath(many, "f$i.txt"), "x"), 1:499)
+    mkpath(joinpath(many, ".git"))
+    foreach(i -> write(joinpath(many, ".git", "o$i"), "x"), 1:10)
+    _, seen = _with_scripted(() -> create_skill(many; service=_OS), (_, _) -> _json(200, _OA_SKILL))
+    @test count("name=\"files[]\"", only(seen).body) == 500
+end
+
 # Anthropic's lists: `limit`, the `page` cursor and, for skills, `source`; `data` and `next_page`, null or
 # empty on the last page (its SDK ends a listing on either).
 # Refuted if: `after` goes as anything but `page`, OpenAI's order is sent, a page without `data` decodes, or

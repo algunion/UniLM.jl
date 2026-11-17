@@ -1,8 +1,10 @@
 # ============================================================================
-# Gemini batches — the batch verbs of src/batch.jl on the Gemini API's batches and
-# models.batchGenerateContent (https://ai.google.dev/gemini-api/docs/batch-api). A request is its Chat's
-# generateContent body, keyed by its custom id in the request's metadata; a response decodes as a
-# generateContent reply. Each shape below is one the API returned on 2026-11-16.
+# Gemini batches — the batch verbs of src/batch.jl on the Gemini API's batches,
+# models.batchGenerateContent and models.asyncBatchEmbedContent
+# (https://ai.google.dev/gemini-api/docs/batch-api). A request is its Chat's generateContent body (an
+# Embeddings' embedContent body), keyed by its custom id in the request's metadata; a response decodes as a
+# generateContent (embedContent) reply. Each shape below is one the API returned on 2026-11-16 (embeddings:
+# 2026-11-17).
 # ============================================================================
 
 struct _GeminiBatches <: _BatchWire end
@@ -32,11 +34,31 @@ function _batch_input(::_GeminiBatches, service, requests, metadata, output_expi
         Dict("request" => JSON.parse(encode_request(service, chat); dicttype=Dict{String,Any}),
              "metadata" => Dict("key" => String(id)))
     end
-    (; model=only(models), body=JSON.json(Dict("batch" => Dict("inputConfig" => Dict("requests" => Dict("requests" => reqs))))))
+    (; model=only(models), method=":batchGenerateContent",
+       body=JSON.json(Dict("batch" => Dict("inputConfig" => Dict("requests" => Dict("requests" => reqs))))))
+end
+
+# A batch of embeddings: one EmbedContentRequest per custom id, the body embeddingrequest! sends for one input,
+# naming its model as a batchEmbedContents request does; one model per batch, the one its URL names.
+function _batch_input(::_GeminiBatches, service, requests::AbstractVector{Pair{String,Embeddings}}, metadata,
+                      output_expires_after)
+    _no_openai_options(service, metadata, output_expires_after)
+    models = unique(e.model for (_, e) in requests)
+    length(models) == 1 || throw(ArgumentError("create_batch: a Gemini batch runs one model, the one its URL " *
+        "names; the requests name $(join(repr.(models), ", "))"))
+    reqs = map(requests) do (id, e)
+        e.input isa AbstractVector && throw(ArgumentError("create_batch: request $(repr(id)) embeds " *
+            "$(length(e.input)) inputs, and a request of a Gemini batch embeds one (an embedContent request): give " *
+            "each input a custom id of its own"))
+        _gemini_embed_options(e)
+        Dict("request" => _gemini_embed_request(e, e.input; model=true), "metadata" => Dict("key" => id))
+    end
+    (; model=only(models), method=":asyncBatchEmbedContent",
+       body=JSON.json(Dict("batch" => Dict("inputConfig" => Dict("requests" => Dict("requests" => reqs))))))
 end
 
 _create_batch(wire::_GeminiBatches, service, input, cfg, t0, tok) = _batch_object(wire,
-    _batch_send("POST", _batch_root(service) * "/v1beta/models/" * _uripart(input.model) * ":batchGenerateContent",
+    _batch_send("POST", _batch_root(service) * "/v1beta/models/" * _uripart(input.model) * input.method,
                 _batch_headers(service, true), cfg, t0, tok, input.body))
 
 # A batch reply: an Operation — the GenerateContentBatch in its `metadata`, and `done` with `response` or `error`
@@ -85,17 +107,27 @@ _update_batch(wire::_GeminiBatches, service, id, priority::Int, cfg, t0, tok) = 
     _batch_send("PATCH", _batch_url(wire, service, id, ":updateGenerateContentBatch?updateMask=priority"),
                 _batch_headers(service, false), cfg, t0, tok, JSON.json(Dict("priority" => string(priority)))))
 
+# The kind of request a batch holds, by the type of its resource: an EmbedContentBatch's are Embeddings
+# (`type.googleapis.com/google.ai.generativelanguage.v1main.EmbedContentBatch` in the Operation's metadata), any
+# other's Chats.
+_gemini_batch_kind(op::AbstractDict)::Type =
+    endswith(something(_batch_optional(get(op, "metadata", op), "@type", String), ""), ".EmbedContentBatch") ? Embeddings : Chat
+
 # One response — an inlined one, keyed in its `metadata`, or a responses-file line, keyed at its top — as the
 # result of the request its key names: the reply, or the request's error status. A response without a key
 # pairs with no request.
-function _gemini_batch_item(service, model, x::Dict{String,Any}, keyed::AbstractDict)::Pair{String,_BatchItem}
+function _gemini_batch_item(kind::Type, service, model, x::Dict{String,Any},
+                            keyed::AbstractDict)::Pair{String,Union{_BatchItem,_EmbeddingItem}}
     key = _batch_required(keyed, "key", String)
     reply = _batch_optional(x, "response", AbstractDict)
-    key => (isnothing(reply) ? _batch_error(service, JSON.json(_batch_required(x, "error", AbstractDict)), model) :
-            _batch_success(service, reply, model))
+    key => (isnothing(reply) ? _batch_error(kind, service, JSON.json(_batch_required(x, "error", AbstractDict)), model) :
+            _gemini_batch_reply(kind, service, reply, model))
 end
-_gemini_inlined_item(service, model, x::Dict{String,Any}) =
-    _gemini_batch_item(service, model, x, something(_batch_optional(x, "metadata", AbstractDict), Dict{String,Any}()))
+_gemini_batch_reply(::Type{Chat}, service, reply, model) = _batch_success(service, reply, model)
+_gemini_batch_reply(::Type{Embeddings}, service, reply, model) =
+    _batch_embedding(r -> _decode_embeddings(_GeminiEmbeddings(), service, Dict{String,Any}(r)), service, reply, model)
+_gemini_inlined_item(kind::Type, service, model, x::Dict{String,Any}) =
+    _gemini_batch_item(kind, service, model, x, something(_batch_optional(x, "metadata", AbstractDict), Dict{String,Any}()))
 
 # The results of a done batch: the responses inlined in the Operation's `response`, in the requests' order, for a
 # batch of inline requests; else the JSONL file its `responsesFile` names. A batch that ended without results
@@ -112,10 +144,12 @@ function _batch_results(wire::_GeminiBatches, service, id, cfg, t0, tok)
                                           JSON.json(something(_batch_optional(op, "error", AbstractDict), Dict()))))
     model = _batch_optional(get(op, "metadata", op), "model", String)
     model = isnothing(model) ? nothing : String(chopprefix(model, "models/"))
+    kind = _gemini_batch_kind(op)
     inlined = _batch_optional(out, "inlinedResponses", AbstractDict)
     if !isnothing(inlined)
         items = something(_batch_optional(inlined, "inlinedResponses", AbstractVector), [])
-        return BatchResultsSuccess(Pair{String,_BatchItem}[_gemini_inlined_item(service, model, _batch_entry(x)) for x in items])
+        return BatchResultsSuccess(Pair{String,Union{_BatchItem,_EmbeddingItem}}[
+            _gemini_inlined_item(kind, service, model, _batch_entry(x)) for x in items])
     end
     file = _batch_required(out, "responsesFile", String)
     name = chopprefix(file, "files/")
@@ -123,5 +157,6 @@ function _batch_results(wire::_GeminiBatches, service, id, cfg, t0, tok)
     got = _batch_send("GET", _batch_root(service) * "/download/v1beta/files/" * _uripart(name) * ":download?alt=media",
                       _batch_headers(service, false), cfg, t0, tok)
     got.status == 200 || return _failure(BatchFailure, got)
-    BatchResultsSuccess(Pair{String,_BatchItem}[_gemini_batch_item(service, model, x, x) for x in _jsonl_objects(got.body)])
+    BatchResultsSuccess(Pair{String,Union{_BatchItem,_EmbeddingItem}}[
+        _gemini_batch_item(kind, service, model, x, x) for x in _jsonl_objects(got.body)])
 end

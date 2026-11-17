@@ -365,8 +365,8 @@ _batch_jsonl(lines...) = join(JSON.json.(lines), "\n") * "\n"
     @test t isa BatchCallError && occursin("custom_id", t.error)
 end
 
-# batch_results decodes Chat Completions replies; a batch made from a file of another endpoint's requests
-# (create_batch(input_file_id, endpoint)) keeps its results in its output file.
+# batch_results decodes Chat Completions and embeddings replies; a batch made from a file of another endpoint's
+# requests (create_batch(input_file_id, endpoint)) keeps its results in its output file.
 # Refuted if: such a batch's output is decoded as Chat Completions (each billed success an LLMCallError), a file is
 # downloaded, or the refusal does not name the endpoint and file_content.
 @testset "batch_results on OpenAI: a batch of another endpoint is refused, naming file_content" begin
@@ -374,7 +374,7 @@ end
                  "output" => [], "usage" => Dict("input_tokens" => 10, "output_tokens" => 2, "total_tokens" => 12))
     out = _batch_jsonl(Dict("id" => "batch_req_1", "custom_id" => "a", "error" => nothing,
                             "response" => Dict("status_code" => 200, "request_id" => "req_a", "body" => reply)))
-    for endpoint in ("/v1/responses", "/v1/embeddings", nothing)
+    for endpoint in ("/v1/responses", "/v1/images/generations", nothing)
         batch = Dict{String,Any}("id" => "batch_1", "status" => "completed", "output_file_id" => "file-out")
         isnothing(endpoint) || (batch["endpoint"] = endpoint)
         served = Dict("/v1/batches/batch_1" => JSON.json(batch), "/v1/files/file-out/content" => out)
@@ -749,4 +749,208 @@ end
         end
         @test e isa T && isempty(seen)
     end
+end
+
+# ── Batches of embeddings ── OpenAI's /v1/embeddings batches and Gemini's asyncBatchEmbedContent; the replies are
+# the shapes the APIs returned on 2026-11-17.
+# A batch endpoint speaking wire W that embeds too, its paths under the scripted server.
+struct EmbedBatchProbe{W} <: UniLM.ServiceEndpoint end
+UniLM._batch_wire(::Type{EmbedBatchProbe{W}}) where {W} = W()
+UniLM._batch_root(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
+UniLM._resolve_base_url(::Type{<:EmbedBatchProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{<:EmbedBatchProbe}) = ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{<:EmbedBatchProbe}) = Set([:batch, :embeddings, :files])
+const _OEB = EmbedBatchProbe{UniLM._OpenAIBatches}
+const _GEB = EmbedBatchProbe{UniLM._GeminiBatches}
+_oa_small(x; kw...) = Embeddings(x; service=_OEB, model="text-embedding-3-small", kw...)
+
+# Refuted if: the lines are not /v1/embeddings requests whose bodies embeddingrequest! would send, the batch is not
+# created for /v1/embeddings, or a request of another model, of the other kind, or past 50,000 inputs is sent.
+@testset "create_batch of Embeddings on OpenAI: /v1/embeddings bodies in a JSONL for purpose batch, then the batch" begin
+    reqs = ["one" => _oa_small("alpha"; dimensions=8), "two" => _oa_small(["beta", "gamma"]; dimensions=8)]
+    file = Dict("id" => "file-in", "object" => "file", "bytes" => 10, "created_at" => 1,
+                "filename" => "unilm-batch-input.jsonl", "purpose" => "batch")
+    batch = Dict("id" => "batch_e", "object" => "batch", "status" => "validating", "input_file_id" => "file-in",
+                 "endpoint" => "/v1/embeddings", "request_counts" => Dict("total" => 0, "completed" => 0, "failed" => 0))
+    replies = [_json(200, JSON.json(file)), _json(200, JSON.json(batch))]
+    r, seen = _with_scripted((n, _) -> replies[n]) do
+        create_batch(reqs; metadata=Dict("job" => "embed"))
+    end
+    @test r isa BatchSuccess && r.response.id == "batch_e" && r.response.endpoint == "/v1/embeddings"
+    @test _batch_targets(seen) == [("POST", "/v1/files"), ("POST", "/v1/batches")]
+    lines = [JSON.parse(l) for l in split(seen[1].body, r"\r?\n") if startswith(l, "{\"")]
+    @test [l["custom_id"] for l in lines] == ["one", "two"] && all(l -> l["method"] == "POST" && l["url"] == "/v1/embeddings", lines)
+    @test [l["body"] for l in lines] == [Dict("model" => "text-embedding-3-small", "input" => "alpha", "dimensions" => 8),
+                                         Dict("model" => "text-embedding-3-small", "input" => ["beta", "gamma"], "dimensions" => 8)]
+    @test JSON.parse(seen[2].body) == Dict("input_file_id" => "file-in", "endpoint" => "/v1/embeddings",
+                                           "completion_window" => "24h", "metadata" => Dict("job" => "embed"))
+    chat = Chat(service=_OEB, model="gpt-6-luna", messages=[Message(Val(:user), "q")])
+    for call in (() -> create_batch(Pair{String,Union{Chat,Embeddings}}["a" => _oa_small("x"), "b" => chat]),   # two kinds
+                 () -> create_batch(["a" => _oa_small("x"), "b" => Embeddings("y"; service=_OEB, model="text-embedding-3-large")]),
+                 () -> create_batch(["a" => _oa_small(fill("w", 25_000); dimensions=1),                         # 50,001 inputs
+                                     "b" => _oa_small(fill("w", 25_001); dimensions=1)]),
+                 () -> create_batch(["a" => Embeddings("x"; service=ANTHROPICServiceEndpoint, model="m")]),     # no :embeddings
+                 () -> create_batch(["a" => Embeddings("x"; service=GEMINIOpenAIServiceEndpoint)]))             # no :batch
+        e, s = _with_scripted((_, _) -> _json(500, "{}")) do
+            _batch_refused(call)
+        end
+        @test e isa ArgumentError && isempty(s)
+    end
+    @test occursin("50000", _batch_refused(() -> create_batch(["a" => _oa_small(fill("w", 50_001); dimensions=1)])).msg)
+    @test occursin("one kind", _batch_refused(() -> create_batch(Pair{String,Union{Chat,Embeddings}}["a" => _oa_small("x"),
+                                                                                                    "b" => chat])).msg)
+end
+
+_oa_embed_line(id, vectors; status=200) = Dict("id" => "batch_req_$id", "custom_id" => id, "error" => nothing,
+    "response" => Dict("status_code" => status, "request_id" => "req_$id", "body" => status != 200 ?
+        Dict("error" => Dict("message" => "bad input", "type" => "invalid_request_error")) :
+        Dict("object" => "list", "model" => "text-embedding-3-small",
+             "data" => [Dict("object" => "embedding", "embedding" => v, "index" => i - 1) for (i, v) in enumerate(vectors)],
+             "usage" => Dict("prompt_tokens" => length(vectors), "total_tokens" => length(vectors)))))
+
+# Refuted if: a vector is lost or misplaced, a success is not billed at the tier "batch", an HTTP error or an error-file
+# entry is not its request's own result, or with the requests a request is changed or a reply that does not fit it
+# fills it.
+@testset "batch_results of an OpenAI batch of embeddings: each reply's vectors, by custom id" begin
+    out = _batch_jsonl(_oa_embed_line("one", [[0.1, 0.2, 0.3]]), _oa_embed_line("two", [[0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]),
+                       _oa_embed_line("bad", []; status=400),
+                       Dict("custom_id" => "nodata", "response" => Dict("status_code" => 200, "body" => Dict("object" => "list"))))
+    err = _batch_jsonl(Dict("id" => "batch_req_x", "custom_id" => "late", "response" => nothing,
+                            "error" => Dict("code" => "batch_expired", "message" => "not run")))
+    batch = Dict("id" => "batch_e", "status" => "completed", "model" => "text-embedding-3-small", "endpoint" => "/v1/embeddings",
+                 "output_file_id" => "file-out", "error_file_id" => "file-err")
+    served = Dict("/v1/batches/batch_e" => JSON.json(batch), "/v1/files/file-out/content" => out, "/v1/files/file-err/content" => err)
+    script = (_, req) -> _json(200, served[String(req.target)])
+    r, seen = _with_scripted(script) do
+        batch_results("batch_e"; service=_OEB)
+    end
+    @test r isa BatchResultsSuccess && first.(r.results) == ["one", "two", "bad", "nodata", "late"]
+    @test _batch_targets(seen) == [("GET", "/v1/batches/batch_e"), ("GET", "/v1/files/file-out/content"),
+                                   ("GET", "/v1/files/file-err/content")]
+    one, two, bad, nodata, late = last.(r.results)
+    @test one isa EmbeddingSuccess && one.embeddings.embeddings == [0.1, 0.2, 0.3] && one.embeddings.model == "text-embedding-3-small"
+    @test (one.usage.prompt_tokens, one.usage.service_tier) == (1, "batch") && one.embeddings.service === _OEB
+    @test two isa EmbeddingSuccess && two.embeddings.embeddings == [[0.4, 0.5, 0.6], [0.7, 0.8, 0.9]] && embedding_vectors(two) == two.embeddings.embeddings
+    @test bad isa EmbeddingFailure && bad.status == 400 && occursin("bad input", bad.response)
+    @test nodata isa EmbeddingCallError && late isa EmbeddingCallError && occursin("batch_expired", late.error)
+    # With the requests: each success a filled copy of its request.
+    reqs = ["one" => _oa_small("alpha"), "two" => _oa_small(["beta", "gamma"]), "bad" => _oa_small("x"),
+            "nodata" => _oa_small("y"), "late" => _oa_small("z")]
+    rr, _ = _with_scripted(script) do
+        batch_results("batch_e"; service=_OEB, requests=reqs)
+    end
+    @test rr isa BatchResultsSuccess
+    s1, s2 = last(rr.results[1]), last(rr.results[2])
+    @test s1 isa EmbeddingSuccess && s1.embeddings !== last(reqs[1]) && s1.embeddings.input == "alpha" && s1.embeddings.embeddings == [0.1, 0.2, 0.3]
+    @test s2.embeddings.input == ["beta", "gamma"] && s2.embeddings.embeddings == [[0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+    @test all(iszero, last(reqs[1]).embeddings) && s1.usage.service_tier == "batch"   # the request as it was
+    # A reply whose vectors do not fit its request is that request's call error; Chat requests are no embeddings'.
+    misfit, _ = _with_scripted(script) do
+        batch_results("batch_e"; service=_OEB, requests=["one" => _oa_small(["a", "b"]), reqs[2:end]...])
+    end
+    @test last(misfit.results[1]) isa EmbeddingCallError && last(misfit.results[2]) isa EmbeddingSuccess
+    chats, _ = _with_scripted(script) do
+        batch_results("batch_e"; service=_OEB, requests=[id => Chat(service=_OEB, model="m") for (id, _) in reqs])
+    end
+    @test chats isa BatchCallError && chats.cause isa ArgumentError
+end
+
+# OpenAI's embedding models carry no Batch column on the pricing page, and the Batch guide gives every batched endpoint a
+# "50% cost discount"; Gemini's Batch tabs: gemini-embedding-2 $0.10, gemini-embedding-001 $0.075 per million.
+@testset "Batch pricing — embeddings at half the standard rate, on OpenAI and Gemini" begin
+    emb(service, model, n) = EmbeddingSuccess(embeddings=Embeddings("x"; service, model), raw=Dict{String,Any}(),
+                                              usage=TokenUsage(prompt_tokens=n, total_tokens=n, service_tier="batch"))
+    for (model, rate) in (("text-embedding-3-small", 0.01), ("text-embedding-3-large", 0.065), ("text-embedding-ada-002", 0.05))
+        r = emb(OPENAIServiceEndpoint, model, 1000)
+        @test (@test_logs min_level=Base.CoreLogging.Warn estimated_cost(r)) ≈ 1000 * rate / 1e6
+    end
+    @test estimated_cost(emb(GEMINIServiceEndpoint, "gemini-embedding-2", 1000)) ≈ 1000 * 0.10 / 1e6
+    @test estimated_cost(emb(GEMINIServiceEndpoint, "gemini-embedding-001", 1000)) ≈ 1000 * 0.075 / 1e6
+end
+
+UniLM._embeddings_wire(::Type{_GEB}) = UniLM._GeminiEmbeddings()
+_gm_embed_op(; response=nothing, kw...) = let op = _gm_op(; response, kw...)
+    op["metadata"]["@type"] = "type.googleapis.com/google.ai.generativelanguage.v1main.EmbedContentBatch"
+    op["metadata"]["model"] = "models/gemini-embedding-2"
+    op
+end
+_gm_embedding(values; tokens=1) = Dict("embedding" => Dict("values" => values), "usageMetadata" => Dict(
+    "promptTokenCount" => tokens, "promptTokenDetails" => [Dict("modality" => "TEXT", "tokenCount" => tokens)]))
+
+# Refuted if: the batch is not created on asyncBatchEmbedContent, a request is not the embedContent body of its one
+# input naming its model, or a request of several inputs, an end-user id or an OpenAI option is sent.
+@testset "create_batch of Embeddings on Gemini: inline embedContent requests on asyncBatchEmbedContent" begin
+    g2(x; kw...) = Embeddings(x; service=_GEB, model="gemini-embedding-2", kw...)
+    reqs = ["a" => g2("alpha"), "b" => g2("beta"; dimensions=128, task=:clustering)]
+    r, seen = _with_scripted((_, _) -> _json(200, JSON.json(_gm_embed_op()))) do
+        create_batch(reqs)
+    end
+    @test r isa BatchSuccess && r.response.id == "abc123" && r.response.status == "BATCH_STATE_PENDING"
+    @test _batch_targets(seen) == [("POST", "/v1beta/models/gemini-embedding-2:asyncBatchEmbedContent")]
+    @test JSON.parse(only(seen).body) == Dict("batch" => Dict("inputConfig" => Dict("requests" => Dict("requests" => [
+        Dict("request" => Dict("model" => "models/gemini-embedding-2", "content" => Dict("parts" => [Dict("text" => "alpha")])),
+             "metadata" => Dict("key" => "a")),
+        Dict("request" => Dict("model" => "models/gemini-embedding-2", "outputDimensionality" => 128,
+                               "content" => Dict("parts" => [Dict("text" => "task: clustering | query: beta")])),
+             "metadata" => Dict("key" => "b"))]))))
+    one, oseen = _with_scripted((_, _) -> _json(200, JSON.json(_gm_embed_op()))) do
+        create_batch(["d" => Embeddings(EmbeddingInput("Refunds"; title="Policy"); service=_GEB, model="gemini-embedding-001",
+                                        task=:document)])
+    end
+    @test JSON.parse(only(oseen).body)["batch"]["inputConfig"]["requests"]["requests"][1]["request"] ==
+          Dict("model" => "models/gemini-embedding-001", "content" => Dict("parts" => [Dict("text" => "Refunds")]),
+               "taskType" => "RETRIEVAL_DOCUMENT", "title" => "Policy")
+    for call in (() -> create_batch(["a" => g2(["x", "y"])]),                   # one input per request
+                 () -> create_batch(["a" => g2("x"; user="u-1")]),
+                 () -> create_batch(["a" => g2("x")]; metadata=Dict("k" => "v")),
+                 () -> create_batch(["a" => g2("x"), "b" => Embeddings("y"; service=_GEB, model="gemini-embedding-001")]))
+        e, s = _with_scripted((_, _) -> _json(500, "{}")) do
+            _batch_refused(call)
+        end
+        @test e isa ArgumentError && isempty(s)
+    end
+end
+
+# Refuted if: an embedding batch's responses decode as generateContent replies, a vector or a key is lost, a success is
+# not billed at the tier "batch", or a request's error status is not its own result.
+@testset "batch_results of a Gemini batch of embeddings: inlined responses, or the responses file, by key" begin
+    inlined = Dict("@type" => "type.googleapis.com/google.ai.generativelanguage.v1main.EmbedContentBatchOutput",
+        "inlinedResponses" => Dict("inlinedResponses" => [
+            Dict("response" => _gm_embedding([0.1, 0.2]), "metadata" => Dict("key" => "a")),
+            Dict("error" => Dict("code" => 3, "message" => "Request contains an invalid argument."), "metadata" => Dict("key" => "b")),
+            Dict("response" => Dict("usageMetadata" => Dict()), "metadata" => Dict("key" => "c"))]))
+    done = _gm_embed_op(state="BATCH_STATE_SUCCEEDED", done=true, response=inlined)
+    r, seen = _with_scripted((_, _) -> _json(200, JSON.json(done))) do
+        batch_results("abc123"; service=_GEB)
+    end
+    @test r isa BatchResultsSuccess && first.(r.results) == ["a", "b", "c"] && _batch_targets(seen) == [("GET", "/v1beta/batches/abc123")]
+    a, b, c = last.(r.results)
+    @test a isa EmbeddingSuccess && a.embeddings.embeddings == [0.1, 0.2] && a.embeddings.model == "gemini-embedding-2"
+    @test (a.usage.prompt_tokens, a.usage.service_tier) == (1, "batch") && a.raw == inlined["inlinedResponses"]["inlinedResponses"][1]["response"]
+    @test b isa EmbeddingCallError && occursin("invalid argument", b.error)
+    @test c isa EmbeddingCallError
+    # A batch of an input file: its responses file, one {"key", "response" | "error"} line per request.
+    out = _batch_jsonl(Dict("response" => _gm_embedding([0.3, 0.4]), "key" => "f1"),
+                       Dict("key" => "f2", "error" => Dict("code" => 3, "message" => "bad")))
+    filed = _gm_embed_op(state="BATCH_STATE_SUCCEEDED", done=true, output=Dict("responsesFile" => "files/batch-abc123"),
+                         response=Dict("@type" => "x", "responsesFile" => "files/batch-abc123"))
+    fr, fseen = _with_scripted((n, _) -> _json(200, n == 1 ? JSON.json(filed) : out)) do
+        batch_results("abc123"; service=_GEB)
+    end
+    @test _batch_targets(fseen) == [("GET", "/v1beta/batches/abc123"), ("GET", "/download/v1beta/files/batch-abc123:download?alt=media")]
+    @test first.(fr.results) == ["f1", "f2"] && last(fr.results[1]).embeddings.embeddings == [0.3, 0.4]
+    @test last(fr.results[2]) isa EmbeddingCallError
+    # With the requests, each success is a filled copy of its request.
+    req = Embeddings("alpha"; service=_GEB, model="gemini-embedding-2")
+    rr, _ = _with_scripted((_, _) -> _json(200, JSON.json(done))) do
+        batch_results("abc123"; service=_GEB, requests=["a" => req, "b" => req, "c" => req])
+    end
+    s = last(rr.results[1])
+    @test s isa EmbeddingSuccess && s.embeddings !== req && s.embeddings.input == "alpha" && s.embeddings.embeddings == [0.1, 0.2]
+    @test all(iszero, req.embeddings)
+    # A batch of generateContent requests still decodes as Chat results.
+    chat = _gm_op(state="BATCH_STATE_SUCCEEDED", done=true, response=Dict("inlinedResponses" => Dict("inlinedResponses" => [
+        Dict("response" => _gm_reply("ok"), "metadata" => Dict("key" => "q"))])))
+    cr = _answered(() -> batch_results("abc123"; service=_GEB), 200; body=JSON.json(chat))
+    @test cr isa BatchResultsSuccess && last(only(cr.results)) isa Union{LLMSuccess,LLMCallError}
 end

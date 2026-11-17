@@ -4,10 +4,11 @@
 #              https://developers.openai.com/api/reference/resources/batches
 #   Anthropic  Message Batches, /v1/messages/batches (src/anthropic_batch.jl)
 #              https://platform.claude.com/docs/en/api/messages/batches/create
-#   Gemini     batches and models.batchGenerateContent (src/gemini_batch.jl)
+#   Gemini     batches, models.batchGenerateContent and models.asyncBatchEmbedContent (src/gemini_batch.jl)
 #              https://ai.google.dev/gemini-api/docs/batch-api
 # Every verb runs its endpoint's wire (`_batch_wire`). A batch of Chats is encoded by the provider's Chat
-# encoder, and its results decoded by the provider's Chat decoder into the results `chatrequest!` returns.
+# encoder, and its results decoded by the provider's Chat decoder into the results `chatrequest!` returns; a
+# batch of Embeddings (OpenAI and Gemini) likewise, into the results `embeddingrequest!` returns.
 # ============================================================================
 
 """
@@ -59,15 +60,19 @@ end
 @kwdef struct BatchListSuccess <: LLMRequestResponse; response::BatchList; end
 "Successful [`delete_batch`](@ref) result: the provider deleted the batch `id` (`deleted` is always `true`)."
 @kwdef struct BatchDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+const _BatchItem = Union{LLMSuccess,LLMFailure,LLMCallError}
+const _EmbeddingItem = Union{EmbeddingSuccess,EmbeddingFailure,EmbeddingCallError}
+
 """
     BatchResultsSuccess
 
-Successful [`batch_results`](@ref) result: `results`, each request's custom id paired with its result —
-an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or [`LLMCallError`](@ref) — in the order the provider
-returns them.
+Successful [`batch_results`](@ref) result: `results`, each request's custom id paired with its result, in
+the order the provider returns them — for a batch of Chats an [`LLMSuccess`](@ref), [`LLMFailure`](@ref) or
+[`LLMCallError`](@ref), for a batch of [`Embeddings`](@ref) an [`EmbeddingSuccess`](@ref),
+[`EmbeddingFailure`](@ref) or [`EmbeddingCallError`](@ref).
 """
 struct BatchResultsSuccess <: LLMRequestResponse
-    results::Vector{Pair{String,Union{LLMSuccess,LLMFailure,LLMCallError}}}
+    results::Vector{Pair{String,Union{LLMSuccess,LLMFailure,LLMCallError,EmbeddingSuccess,EmbeddingFailure,EmbeddingCallError}}}
 end
 "Batch API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct BatchFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -76,8 +81,6 @@ end
 
 _transient(r::BatchFailure) = _is_retryable(r.status, r.response)
 _transient(r::BatchCallError) = _per_attempt_timeout(r.cause)
-
-const _BatchItem = Union{LLMSuccess,LLMFailure,LLMCallError}
 
 # ─── Wires ───────────────────────────────────────────────────────────────────
 # How a provider runs batches. An endpoint with no wire of its own speaks OpenAI's, /v1/batches under its
@@ -198,17 +201,26 @@ end
 _as_batch_result(r::FileFailure) = BatchFailure(response=r.response, status=r.status, request_id=r.request_id)
 _as_batch_result(r::FileCallError) = BatchCallError(error=r.error, status=r.status, cause=r.cause)
 
-# ─── A batch of Chats ────────────────────────────────────────────────────────
+# ─── A batch of Chats or of Embeddings ───────────────────────────────────────
 
-# The endpoint the batch runs on: every request's Chat names it, and so does `service` when given.
+# The endpoint the batch runs on: every request names it, and so does `service` when given.
 function _batch_service(requests::AbstractVector, service)
     isempty(requests) && throw(ArgumentError("create_batch: a batch needs at least one request"))
     svc = something(service, first(requests).second.service)
-    for (id, chat) in requests
-        chat.service == svc || throw(ArgumentError("create_batch: request $(repr(id)) is a Chat for " *
-            "$(repr(chat.service)), and the batch runs on $(repr(svc)); a batch runs on one endpoint"))
+    for (id, r) in requests
+        r.service == svc || throw(ArgumentError("create_batch: request $(repr(id)) is a $(nameof(typeof(r))) for " *
+            "$(repr(r.service)), and the batch runs on $(repr(svc)); a batch runs on one endpoint"))
     end
     svc
+end
+
+# The kind of request a batch holds, Chats or Embeddings: one kind, as a batch runs one of its provider's endpoints
+# (OpenAI's `endpoint`; Gemini's batchGenerateContent or asyncBatchEmbedContent).
+function _batch_kind(requests::AbstractVector)::Type
+    kinds = unique(typeof(last(p)) for p in requests)
+    length(kinds) == 1 || throw(ArgumentError("create_batch: a batch holds one kind of request, and these are " *
+        "$(join(nameof.(kinds), " and ")): create one batch of each"))
+    only(kinds)
 end
 
 # Every custom id names one request: none is empty and none repeats.
@@ -228,6 +240,7 @@ _batch_custom_ids(::_BatchWire, ids) = nothing
 _check_batch_chat(id, chat::Chat) = chat.stream === true && throw(ArgumentError(
     "create_batch: request $(repr(id)) is a stream (stream=true), and a batched request is not streamed: its " *
     "result comes back with the batch's results; leave stream unset"))
+_check_batch_chat(_, ::Embeddings) = nothing
 
 # metadata and output_expires_after are options of OpenAI's batch create.
 _no_openai_options(service, metadata, output_expires_after) =
@@ -248,15 +261,35 @@ end
 # Chat's encoder builds. "Each input file can only include requests to a single model"
 # (https://developers.openai.com/api/docs/guides/batch).
 function _batch_input(::_OpenAIBatches, service, requests, metadata, output_expires_after)
-    models = unique(chat.model for (_, chat) in requests)
+    _openai_single_model(requests)
+    _openai_input(service, requests, CHAT_COMPLETIONS_PATH, chat -> encode_request(service, chat), metadata, output_expires_after)
+end
+
+# Embeddings: each line's body the one embeddingrequest! sends to /v1/embeddings. "Embeddings batches are also
+# restricted to a maximum of 50,000 embedding inputs across all requests in the batch" (the Batch guide).
+const _OPENAI_BATCH_EMBEDDING_INPUTS = 50_000
+function _batch_input(::_OpenAIBatches, service, requests::AbstractVector{Pair{String,Embeddings}}, metadata,
+                      output_expires_after)
+    _openai_single_model(requests)
+    n = sum(e -> e.input isa AbstractVector ? length(e.input) : 1, last.(requests))
+    n <= _OPENAI_BATCH_EMBEDDING_INPUTS || throw(ArgumentError("create_batch: an OpenAI batch of embeddings holds at " *
+        "most $_OPENAI_BATCH_EMBEDDING_INPUTS inputs across its requests (got $n): split them into several batches"))
+    _openai_input(service, requests, EMBEDDINGS_PATH, e -> _encode_embeddings(service, e), metadata, output_expires_after)
+end
+
+function _openai_single_model(requests)
+    models = unique(r.model for (_, r) in requests)
     length(models) == 1 || throw(ArgumentError("create_batch: an OpenAI batch's input file holds requests to a " *
         "single model; the requests name $(join(repr.(models), ", ")): create one batch per model"))
+end
+
+function _openai_input(service, requests, endpoint::String, encode::Function, metadata, output_expires_after)
     io = IOBuffer()
-    for (id, chat) in requests
-        println(io, JSON.json(Dict("custom_id" => String(id), "method" => "POST", "url" => CHAT_COMPLETIONS_PATH,
-                                   "body" => JSON.parse(encode_request(service, chat); dicttype=Dict{String,Any}))))
+    for (id, r) in requests
+        println(io, JSON.json(Dict("custom_id" => String(id), "method" => "POST", "url" => endpoint,
+                                   "body" => JSON.parse(encode(r); dicttype=Dict{String,Any}))))
     end
-    (; jsonl=takestring!(io), metadata, expires=_batch_expiry(output_expires_after))
+    (; jsonl=takestring!(io), metadata, expires=_batch_expiry(output_expires_after), endpoint)
 end
 
 # The input file goes up as a .jsonl file with purpose "batch", as the Batch API requires, then the batch is
@@ -268,7 +301,7 @@ function _create_batch(::_OpenAIBatches, service, input, cfg, t0, tok)
         upload_file(path, "batch"; service, config=cfg, cancel=tok)
     end
     up isa FileSuccess || return _as_batch_result(up)
-    _create_from_file(service, up.response.id, CHAT_COMPLETIONS_PATH, "24h", input.metadata, input.expires, cfg, t0, tok)
+    _create_from_file(service, up.response.id, input.endpoint, "24h", input.metadata, input.expires, cfg, t0, tok)
 end
 
 function _create_from_file(service, input_file_id, endpoint, completion_window, metadata, expires, cfg, t0, tok)
@@ -303,26 +336,56 @@ end
 _batch_error(service, text::String, model; request_id=nothing)::_BatchItem =
     LLMCallError(error=text, self=_batch_chat(service, model), request_id=request_id)
 
-# A line of an OpenAI output or error file: its custom id, and `response` — the request's HTTP status, request id
-# and body — or, for a request that got none, `error`.
-function _openai_batch_item(service, model, line::Dict{String,Any})::Pair{String,_BatchItem}
-    id = _batch_required(line, "custom_id", String)
-    resp = _batch_optional(line, "response", AbstractDict)
-    isnothing(resp) && return id => _batch_error(service, JSON.json(_batch_required(line, "error", AbstractDict)), model)
-    status = _batch_required(resp, "status_code", Integer)
-    body = _batch_required(resp, "body", AbstractDict)
-    id => (status == 200 ? _batch_success(service, body, model) :
-           LLMFailure(status=status, response=JSON.json(body), self=_batch_chat(service, model),
-                      request_id=_batch_optional(resp, "request_id", String)))
+# An embeddings reply of a batch, as embeddingrequest! reads it: its rows (the reply decoded by the batch's
+# provider, `rows_usage`) fill a stand-in Embeddings on the batch's endpoint — a batch keeps no request: one empty
+# text per vector, a single one for a reply of one vector — naming the model the reply or the batch names, else
+# the endpoint's default; its usage is at the tier "batch". A reply that fills none is that request's call error.
+function _batch_embedding(rows_usage::Function, service, body::AbstractDict, model::Union{String,Nothing})::_EmbeddingItem
+    try
+        rows, usage = rows_usage(body)
+        rows isa AbstractVector || throw(ArgumentError("the embeddings reply's rows are no list"))
+        name = something(_wire_string(body, "model"), model, "")
+        e = Embeddings(length(rows) == 1 ? "" : fill("", length(rows)), service, name, nothing, nothing, nothing, nothing)
+        update!(e, rows)
+        EmbeddingSuccess(embeddings=e, raw=Dict{String,Any}(body),
+                         usage=isnothing(usage) ? nothing : TokenUsage(; _usage_fields(usage)..., service_tier="batch"))
+    catch e
+        e isa InterruptException && rethrow()
+        EmbeddingCallError(error=_error_text(service, e), cause=e isa Exception ? e : nothing)
+    end
 end
 
-# The results decode as Chat Completions replies, the requests create_batch(requests) sends. A batch of another
-# endpoint's requests, created from a file of them, keeps its results in its output file as OpenAI writes them.
-function _chat_completions_batch(b::BatchObject)
-    b.endpoint == CHAT_COMPLETIONS_PATH && return nothing
+# The result of a request with no reply, its error object as JSON: a Chat's or an Embeddings' call error.
+_batch_error(::Type{Chat}, service, text::String, model) = _batch_error(service, text, model)
+_batch_error(::Type{Embeddings}, _, text::String, _) = EmbeddingCallError(error=text)
+
+# A line of an OpenAI output or error file: its custom id, and `response` — the request's HTTP status, request id
+# and body — or, for a request that got none, `error`.
+function _openai_batch_item(kind::Type, service, model, line::Dict{String,Any})::Pair{String,Union{_BatchItem,_EmbeddingItem}}
+    id = _batch_required(line, "custom_id", String)
+    resp = _batch_optional(line, "response", AbstractDict)
+    isnothing(resp) && return id => _batch_error(kind, service, JSON.json(_batch_required(line, "error", AbstractDict)), model)
+    status = _batch_required(resp, "status_code", Integer)
+    body = _batch_required(resp, "body", AbstractDict)
+    id => _openai_batch_reply(kind, service, model, status, body, _batch_optional(resp, "request_id", String))
+end
+_openai_batch_reply(::Type{Chat}, service, model, status, body, request_id) = status == 200 ?
+    _batch_success(service, body, model) :
+    LLMFailure(status=status, response=JSON.json(body), self=_batch_chat(service, model), request_id=request_id)
+_openai_batch_reply(::Type{Embeddings}, service, model, status, body, _) = status == 200 ?
+    _batch_embedding(b -> _decode_embeddings(_OpenAIEmbeddings(), service, Dict{String,Any}(b)), service, body, model) :
+    EmbeddingFailure(status=status, response=JSON.json(body))
+
+# The results decode as the replies of the requests create_batch(requests) sends: Chat Completions, or embeddings.
+# A batch of another endpoint's requests, created from a file of them, keeps its results in its output file as OpenAI
+# writes them.
+function _openai_batch_kind(b::BatchObject)::Type
+    b.endpoint == CHAT_COMPLETIONS_PATH && return Chat
+    b.endpoint == EMBEDDINGS_PATH && return Embeddings
     file = isnothing(b.output_file_id) ? "output_file_id) once it has one" : repr(b.output_file_id) * ")"
     throw(ArgumentError("batch_results: batch $(b.id) " * (isnothing(b.endpoint) ? "names no endpoint" : "runs $(b.endpoint)") *
-        ", and batch_results decodes $CHAT_COMPLETIONS_PATH replies alone; read its results with file_content($file"))
+        ", and batch_results decodes $CHAT_COMPLETIONS_PATH and $EMBEDDINGS_PATH replies alone; read its results with " *
+        "file_content($file"))
 end
 
 # OpenAI's results: the output file's lines, then the error file's, once the batch has either.
@@ -330,7 +393,7 @@ function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
     got = _retrieve_batch(wire, service, id, cfg, t0, tok)
     got isa BatchSuccess || return got
     b = got.response
-    _chat_completions_batch(b)
+    kind = _openai_batch_kind(b)
     files = String[f for f in (b.output_file_id, b.error_file_id) if !isnothing(f)]
     # A batch that ended without either file (it failed validation, or expired or was cancelled before a request
     # ran) will get none: its `errors` say why.
@@ -339,23 +402,24 @@ function _batch_results(wire::_OpenAIBatches, service, id, cfg, t0, tok)
         JSON.json(_batch_optional(b.raw, "errors", AbstractDict)) :
         "batch $id has no output or error file yet (status $(b.status))"))
     model = _batch_optional(b.raw, "model", String)
-    results = Pair{String,_BatchItem}[]
+    results = Pair{String,Union{_BatchItem,_EmbeddingItem}}[]
     for f in files
         c = file_content(f; service, config=_batch_rest(cfg, t0), cancel=tok)
         c isa FileContentSuccess || return _as_batch_result(c)
-        append!(results, (_openai_batch_item(service, model, line) for line in _jsonl_objects(c.content)))
+        append!(results, (_openai_batch_item(kind, service, model, line) for line in _jsonl_objects(c.content)))
     end
     BatchResultsSuccess(results)
 end
 
-# The results for the requests that created the batch: each one as chatrequest! returns it for its request's Chat.
-# A success's `self` is a fork of that Chat with the reply appended and the result's cost added, as chatrequest!
-# appends to and bills the Chat it sends; a failure's `self` is the Chat itself, which nothing changed.
-function _batch_requests(requests)::Union{Nothing,Dict{String,Chat}}
+# The results for the requests that created the batch: each one as chatrequest! (embeddingrequest!) returns it for
+# its request. A Chat success's `self` is a fork of that Chat with the reply appended and the result's cost added,
+# as chatrequest! appends to and bills the Chat it sends; a failure's `self` is the Chat itself, which nothing
+# changed. An Embeddings success holds a copy of its request, filled with the vectors; the request is not changed.
+function _batch_requests(requests)::Union{Nothing,Dict{String}}
     isnothing(requests) && return nothing
     _check_custom_ids(String[first(p) for p in requests], "batch_results")
-    foreach(p -> _validate_reply_slot(p.second), requests)
-    Dict{String,Chat}(String(id) => chat for (id, chat) in requests)
+    foreach(p -> p.second isa Chat && _validate_reply_slot(p.second), requests)
+    Dict(String(id) => r for (id, r) in requests)
 end
 
 _with_self(r::T, self::Chat) where {T<:_BatchItem} = T(map(f -> f === :self ? self : getfield(r, f), fieldnames(T))...)
@@ -365,11 +429,28 @@ function _request_result(r::LLMSuccess, chat::Chat)
     _accumulate_cost!(result.self, result)
     result
 end
+_request_result(r::Union{EmbeddingFailure,EmbeddingCallError}, ::Embeddings) = r
+function _request_result(r::EmbeddingSuccess, e::Embeddings)::_EmbeddingItem
+    filled = Embeddings(e.input, e.service, e.model, e.dimensions, e.encoding_format, e.user, e.task)
+    try
+        update!(filled, _embedding_rows(r.embeddings.embeddings))
+    catch err
+        err isa InterruptException && rethrow()
+        return EmbeddingCallError(error="batch_results: the reply does not fit its request: " * _error_text(err),
+                                  cause=err isa Exception ? err : nothing)
+    end
+    EmbeddingSuccess(embeddings=filled, usage=r.usage, raw=r.raw)
+end
+_request_result(r, req) = throw(ArgumentError("batch_results: the batch's results are $(nameof(typeof(r))) results, " *
+    "and the requests are $(nameof(typeof(req)))s; pass the custom_id => request pairs that created the batch"))
+# A filled stand-in's vectors as the rows a request's Embeddings is filled from.
+_embedding_rows(v::Vector{Float64}) = [Dict{String,Any}("embedding" => v)]
+_embedding_rows(vs::Vector{Vector{Float64}}) = [Dict{String,Any}("embedding" => v, "index" => i - 1) for (i, v) in enumerate(vs)]
 
-_for_requests(r::BatchResultsSuccess, chats::Dict{String,Chat}) = BatchResultsSuccess(Pair{String,_BatchItem}[
-    id => _request_result(item, get(chats, id) do
+_for_requests(r::BatchResultsSuccess, reqs::AbstractDict) = BatchResultsSuccess(Pair{String,Union{_BatchItem,_EmbeddingItem}}[
+    id => _request_result(item, get(reqs, id) do
         throw(ArgumentError("batch_results: the result $(repr(id)) is for none of the requests; pass the " *
-                            "custom_id => Chat pairs that created the batch"))
+                            "custom_id => request pairs that created the batch"))
     end) for (id, item) in r.results])
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
@@ -426,25 +507,37 @@ Chats as its own Chat requests, encoded as [`chatrequest!`](@ref) encodes them:
   `metadata`; one model per batch, and no `service_tier` (the API answers a batched request that sets one
   with HTTP 400).
 
-Throws `ArgumentError` before any request for no request, an empty or repeated custom id, Chats for
-different endpoints, a streamed Chat (`stream=true`), a Chat its provider's encoder refuses, and the
-provider rules above. Returns `BatchSuccess` (its [`BatchObject`](@ref)), `BatchFailure` or
+A batch of embeddings pairs each custom id with an [`Embeddings`](@ref) request instead, encoded as
+[`embeddingrequest!`](@ref) encodes it, on an endpoint that has `:embeddings` too:
+
+- OpenAI: a JSONL file of `/v1/embeddings` requests, as above; one model per batch, and at most 50,000
+  inputs across its requests ("Embeddings batches are also restricted to a maximum of 50,000 embedding
+  inputs across all requests in the batch").
+- Gemini: inline requests to `models/{model}:asyncBatchEmbedContent`, each an embedContent request of one
+  input (a request of several inputs is refused: give each its own custom id), keyed in its `metadata`.
+
+Throws `ArgumentError` before any request for no request, an empty or repeated custom id, requests for
+different endpoints or of both kinds, a streamed Chat (`stream=true`), a request its provider's encoder
+refuses, and the provider rules above. Returns `BatchSuccess` (its [`BatchObject`](@ref)), `BatchFailure` or
 `BatchCallError`; [`batch_results`](@ref) reads the results once the batch ends.
 
 $_BATCH_CONFIG_DOC The config bounds the upload and the create together on OpenAI.
 """
-function create_batch(requests::AbstractVector{<:Pair{<:AbstractString,Chat}};
+function create_batch(requests::AbstractVector{<:Pair{<:AbstractString,<:Union{Chat,Embeddings}}};
     service::Union{Nothing,ServiceEndpointSpec}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
     output_expires_after::Union{Integer,Nothing}=nothing, config::Union{Nothing,RequestConfig}=nothing,
     cancel::Union{Nothing,CancelToken}=nothing)
     svc = _batch_service(requests, service)
     validate_capability(svc, :batch, "Batch API")
+    kind = _batch_kind(requests)
+    kind === Embeddings && validate_capability(svc, :embeddings, "Embeddings API")
     wire = _batch_wire(svc)
-    ids = String[first(p) for p in requests]
+    reqs = Pair{String,kind}[String(id) => r for (id, r) in requests]
+    ids = first.(reqs)
     _check_custom_ids(ids)
     _batch_custom_ids(wire, ids)
-    foreach(p -> _check_batch_chat(p...), requests)
-    input = _batch_input(wire, svc, requests, metadata, output_expires_after)
+    foreach(p -> _check_batch_chat(p...), reqs)
+    input = _batch_input(wire, svc, reqs, metadata, output_expires_after)
     _batch_call((cfg, t0, tok) -> _create_batch(wire, svc, input, cfg, t0, tok), config, cancel)
 end
 
@@ -564,11 +657,21 @@ whose custom id is none of the requests' is a `BatchCallError`. Without `request
 stand-in [`Chat`](@ref) on `service`, without messages: its model is the one the provider names for the
 reply or the batch, else the endpoint's default model.
 
+A batch of embeddings (OpenAI's `"/v1/embeddings"`, Gemini's `asyncBatchEmbedContent`) has the results
+[`embeddingrequest!`](@ref) returns: an [`EmbeddingSuccess`](@ref) whose usage names the tier `"batch"`, an
+[`EmbeddingFailure`](@ref) for an OpenAI request answered with an HTTP error status, and an
+[`EmbeddingCallError`](@ref) for a request with no reply (its `error` the provider's error object as JSON)
+or a reply that is no embedding. A success's `embeddings` is a stand-in [`Embeddings`](@ref) on `service`
+holding the vectors, one empty text per vector (a single one for a reply of one vector), its model the one
+the reply or the batch names; with `requests`, the `custom_id => Embeddings` pairs that created the batch, it
+is a copy of the request filled with them (the request is not changed), and a reply whose vectors do not
+fit its request is that request's `EmbeddingCallError`.
+
 The results are read from OpenAI's output and error files ([`file_content`](@ref): output lines, then error
 lines), Anthropic's results stream, and Gemini's inlined responses or its responses file. On OpenAI the
-batch is a `"/v1/chat/completions"` one, as [`create_batch`](@ref)`(requests)` makes it: a batch of another
-endpoint is a `BatchCallError` whose `ArgumentError` names `file_content(output_file_id)`, raised after the
-batch is read and before any file is downloaded. A batch with no
+batch is a `"/v1/chat/completions"` or `"/v1/embeddings"` one, as [`create_batch`](@ref)`(requests)` makes
+it: a batch of another endpoint is a `BatchCallError` whose `ArgumentError` names
+`file_content(output_file_id)`, raised after the batch is read and before any file is downloaded. A batch with no
 results yet is a `BatchFailure` on Anthropic (its 404) and a `BatchCallError` naming the batch's status on
 OpenAI and Gemini; so is a batch that ended without results on either (the message holds OpenAI's
 `errors`, Gemini's `error`), and a Gemini response without the custom id [`create_batch`](@ref) sets in
@@ -577,14 +680,14 @@ its `metadata` (`key`).
 $_BATCH_CONFIG_DOC The config bounds every request of the call together.
 """
 function batch_results(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
-    requests::Union{Nothing,AbstractVector{<:Pair{<:AbstractString,Chat}}}=nothing,
+    requests::Union{Nothing,AbstractVector{<:Pair{<:AbstractString,<:Union{Chat,Embeddings}}}}=nothing,
     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :batch, "Batch API")
     wire = _batch_wire(service)
-    chats = _batch_requests(requests)
+    reqs = _batch_requests(requests)
     _batch_call(config, cancel) do cfg, t0, tok
         r = _batch_results(wire, service, id, cfg, t0, tok)
-        isnothing(chats) || !(r isa BatchResultsSuccess) ? r : _for_requests(r, chats)
+        isnothing(reqs) || !(r isa BatchResultsSuccess) ? r : _for_requests(r, reqs)
     end
 end
 
